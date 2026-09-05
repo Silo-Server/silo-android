@@ -12,6 +12,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -131,6 +132,78 @@ class AuthRepositoryContractTest {
     }
 
     @Test
+    fun `switchToServer re-probes in the background when the bounded probe times out`() = runTest {
+        // A stale UPDATE_REQUIRED on a since-upgraded server that answers
+        // after the bound must still be corrected for this session.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        // Virtual clock: the bound elapses without the engine answering.
+        repository.switchToServer("b")
+
+        // Returned at the bound with the verdict untouched.
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `background re-probe result is dropped when the active server changed meanwhile`() = runTest {
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            // The user switches away while the replacement probe is in flight.
+            registry.switchTo("a")
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val repository = repository(registry, client, backgroundScope = background)
+
+        repository.switchToServer("b")
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `switchToServer does not re-probe when the bounded probe answered`() = runTest {
+        val registry = ContractRegistry()
+        var requests = 0
+        val client = client {
+            requests++
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val repository = repository(
+            registry,
+            client,
+            backgroundScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        )
+
+        // Real clock: the switch bounds the probe, and virtual time would
+        // skip past that bound while the engine answers.
+        withContext(Dispatchers.Default) { repository.switchToServer("b") }
+        advanceUntilIdle()
+
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        assertEquals(1, requests)
+    }
+
+    @Test
     fun `switchToServer on the already-active id still probes`() = runTest {
         // Removing the active server promotes the next-MRU entry inside the
         // registry; the view model then switches to the id that is already
@@ -198,6 +271,13 @@ class AuthRepositoryContractTest {
     }
 
     private fun unusedClient() = HttpClient(MockEngine { error("Unexpected request") })
+
+    /**
+     * Waits for the fire-and-forget work launched on a background scope. The
+     * mock engine answers on its own thread, so `advanceUntilIdle` alone can
+     * return before the reply has been posted back to the test scheduler.
+     */
+    private suspend fun CoroutineScope.joinChildren() = coroutineContext.job.children.forEach { it.join() }
 
     private fun repository(
         registry: ContractRegistry,

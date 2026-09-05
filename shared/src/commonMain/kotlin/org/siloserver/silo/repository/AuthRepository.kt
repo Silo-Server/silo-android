@@ -227,23 +227,42 @@ class AuthRepository(
      * Callers await this behind a spinner, so only the probe is awaited and
      * only for [SWITCH_PROBE_TIMEOUT_MS]: a server that accepts the socket
      * but never answers leaves the stored verdict alone (the gate still
-     * passes UNKNOWN and V2, and a stale UPDATE_REQUIRED gets the launch-path
-     * refresh). The display-name refresh (branding, then health) is launched
-     * on [backgroundScope] without being awaited; without a scope it runs
-     * inline after the probe.
+     * passes UNKNOWN and V2). When the bound cancels the probe and a
+     * [backgroundScope] is wired in, a replacement unbounded probe (the
+     * client's own timeouts still apply) is launched there for [serverId],
+     * so a stale UPDATE_REQUIRED on a since-upgraded server is corrected
+     * once it answers instead of gating v2 calls until the next launch; the
+     * active-id guard in [recordServerContract] drops the result if the user
+     * switched again meanwhile. Without a scope the verdict stays as stored
+     * until the next switch or launch re-probes. The display-name refresh
+     * (branding, then health) is likewise launched on [backgroundScope]
+     * without being awaited; without a scope it runs inline after the probe.
      */
     suspend fun switchToServer(serverId: String) {
         val registry = serverRegistry ?: return
         registry.switchTo(serverId)
         tokenManager.switchActiveServer(serverId)
-        refreshServerContractBounded()
+        val bounded = refreshServerContractBounded()
         if (registry.activeServerId.value != serverId) return
         val scope = backgroundScope
         if (scope == null) {
             refreshActiveServerDisplayName(serverId)
         } else {
+            if (bounded == null && apiV2Probe != null) scope.launch { refreshServerContractFor(serverId) }
             scope.launch { refreshActiveServerDisplayName(serverId) }
         }
+    }
+
+    /**
+     * Unbounded contract probe pinned to [serverId]: skipped if it is no
+     * longer active by the time this runs, and its verdict is dropped by
+     * [recordServerContract] if the active server changed while in flight.
+     */
+    private suspend fun refreshServerContractFor(serverId: String) {
+        val probe = apiV2Probe ?: return
+        val registry = serverRegistry ?: return
+        if (registry.activeServerId.value != serverId) return
+        recordServerContract(serverId, probe.probe().toServerContract())
     }
 
     /**
