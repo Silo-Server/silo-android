@@ -12,7 +12,7 @@ import org.siloserver.silo.network.apiv2.MembershipV2Api
 
 /** One Koin singleton for both future inline and worker entry points. No producers are activated yet. */
 class MembershipRuntime(
-    dao: DirtyOperationDao,
+    private val dao: DirtyOperationDao,
     api: MembershipV2Api,
     tokens: TokenManager,
     private val authorities: DurableLoginAuthorityProvider,
@@ -47,6 +47,16 @@ class MembershipRuntime(
         return outbox.enqueue(authority.commandAuthority(), itemId, kind, present)
     }
 
+    /** No nested token-store capture inside the barrier: that store shares the same lock. */
+    internal suspend fun enqueueGuarded(authority: DurableLoginAuthority, itemId: String,
+        kind: MembershipOutbox.ListKind, present: Boolean, barrier: IdentityTransitionBarrier): Long {
+        awaitRecovery()
+        check(authority == authorities.snapshotDurableLoginAuthority()) { "The login authority changed" }
+        return checkNotNull(barrier.withCurrentGeneration(authority.scope.identityGeneration) {
+            outbox.enqueueCaptured(authority.commandAuthority(), itemId, kind, present)
+        }) { "The login authority changed" }
+    }
+
     suspend fun send(id: Long, authority: DurableLoginAuthority): MembershipOutbox.Result {
         awaitRecovery()
         if (authority != authorities.snapshotDurableLoginAuthority()) return MembershipOutbox.Result(MembershipOutbox.Resolution.NOT_CLAIMED)
@@ -59,7 +69,15 @@ class MembershipRuntime(
         return outbox.reconcile(id, authority.commandAuthority())
     }
 
-    private fun DurableLoginAuthority.commandAuthority(): MembershipOutbox.Authority {
+    /** Bounded READY-only selection. Uncertain/paused rows never trigger mutation retries. */
+    suspend fun readyCommands(authority: DurableLoginAuthority, limit: Int): List<Long> {
+        require(limit in 1..100)
+        awaitRecovery()
+        if (authority != authorities.snapshotDurableLoginAuthority()) return emptyList()
+        return dao.readyMembershipCommands(authority.commandAuthority().key, limit).map { it.id }
+    }
+
+    internal fun DurableLoginAuthority.commandAuthority(): MembershipOutbox.Authority {
         require(loginId.isNotBlank() && !scope.profileId.isNullOrBlank() && scope.credentialGenerationId == null)
         return MembershipOutbox.Authority(SiloJson.encodeToString(listOf(scope.serverId, loginId, scope.profileId)), scope)
     }

@@ -97,3 +97,38 @@ created once per singleton, never per worker/drain. Application startup ordering
 is therefore not relied upon to exclude workers racing recovery. Producers,
 legacy command conversion and SyncEngine dispatch remain inactive pending their
 own review; existing legacy queue rows retain their original authority metadata.
+
+## Dormant coordinated-cutover schema
+
+`DormantMembershipDatabase` is an unbound candidate schema 10. The production
+`SiloDatabase` remains version 9; its builder, app DI, producers, UI and scheduling
+are unchanged. The candidate migration and callback must not be installed until
+all membership producers and phone/TV consumers cut over together. Existing UI
+still performs legacy writes and does not safely represent uncertain outcomes.
+
+The candidate migration retains each legacy favorite row, changes only its state
+to quarantine, and stores its original state separately. Payload, ID, timestamps,
+attempts, errors and authority fields remain intact. Generic cleanup, recovery,
+coalescing, count, FIFO and terminal projection rollback exclude quarantine. No
+current login is assigned to those rows. Its insertion trigger rejects legacy
+favorite producers and rolls back their whole transaction; this is a future
+cutover backstop, not an intermediate user-facing operating mode. Compatibility
+UI and visibility-controlled server reconciliation remain required before activation.
+
+`DormantMembershipPort` reuses the accepted runtime and exact-claim outbox. It must
+be one process singleton sharing the token store's identity barrier. Admission
+validates captured durable authority, then holds that barrier through one Room
+command/projection transaction. Projections are keyed by server/login/profile,
+item and list kind, with an exact command ID owner. Resolving an old command cannot
+change the projection of a newer command, including identical desired values.
+204 acknowledgements and read reconciliation update projection disposition in the
+same transaction that resolves the claimed command. A recovered sending claim is
+shown as needing reconciliation, never as ready to resend.
+
+The dormant dispatcher makes one bounded READY-only pass through that same
+runtime. It never schedules itself, retries uncertain mutations, or activates the
+legacy worker. Future worker integration must use the precise runnable legacy
+count, keeping unresolved membership and quarantine work out of retry decisions.
+The typed shared port preserves acknowledged, reconciled, paused and uncertain
+outcomes. Publication hints still require the consumer's synchronous authority,
+view generation and command-ownership checks at the actual UI update.

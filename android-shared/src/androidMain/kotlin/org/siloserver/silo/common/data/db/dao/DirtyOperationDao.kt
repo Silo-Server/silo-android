@@ -40,7 +40,7 @@ interface DirtyOperationDao {
     suspend fun deletePendingByCoalesceKey(coalesceKey: String)
 
     @Query(
-        "SELECT * FROM dirty_operations WHERE coalesceKey = :coalesceKey " +
+        "SELECT * FROM dirty_operations WHERE coalesceKey = :coalesceKey AND state != 'legacy_membership_quarantined' " +
             "ORDER BY id DESC LIMIT 1",
     )
     suspend fun getLatestByCoalesceKey(coalesceKey: String): DirtyOperationEntity?
@@ -221,24 +221,33 @@ interface DirtyOperationDao {
             "state = '${DirtyOperationEntity.STATE_PENDING}', " +
             "attemptCount = attemptCount + 1, " +
             "lastAttemptAtMs = :nowMs, nextAttemptAtMs = :nextAttemptAtMs, lastError = :error " +
-            "WHERE id = :id",
+            "WHERE id = :id AND state != 'legacy_membership_quarantined'",
     )
     suspend fun recordFailure(id: Long, nowMs: Long, nextAttemptAtMs: Long, error: String?)
 
     @Query("SELECT * FROM dirty_operations WHERE id = :id")
     suspend fun getById(id: Long): DirtyOperationEntity?
 
-    @Query("DELETE FROM dirty_operations WHERE id = :id")
+    @Query("DELETE FROM dirty_operations WHERE id = :id AND state != 'legacy_membership_quarantined'")
     suspend fun deleteById(id: Long)
 
     @Query(
         "SELECT COUNT(*) FROM dirty_operations " +
-            "WHERE serverId = :serverId AND profileId = :profileId",
+            "WHERE serverId = :serverId AND profileId = :profileId AND state != 'legacy_membership_quarantined'",
     )
     suspend fun countForScope(serverId: String, profileId: String): Int
 
-    @Query("SELECT COUNT(*) FROM dirty_operations")
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE state != 'legacy_membership_quarantined'")
     suspend fun count(): Int
+
+    /** Future worker cutover must use this count, not all unresolved membership states. */
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+        "AND state IN ('pending', 'in_flight')")
+    suspend fun runnableLegacyCountForScope(serverId: String, profileId: String): Int
+
+    @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +
+        "AND state = 'membership_ready' ORDER BY id LIMIT :limit")
+    suspend fun readyMembershipCommands(authority: String, limit: Int): List<DirtyOperationEntity>
 
     /** Membership rows never enter the legacy retry/drain states. */
     @Query("DELETE FROM dirty_operations WHERE coalesceKey = :key AND state = 'membership_ready'")

@@ -35,6 +35,12 @@ class MembershipOutbox(
     suspend fun enqueue(authority: Authority, itemId: String, kind: ListKind, present: Boolean): Long {
         require(authority.key.isNotBlank() && itemId.isNotBlank())
         require(authority.scope == tokens.snapshotCurrentScope()) { "The active authority changed" }
+        return enqueueCaptured(authority, itemId, kind, present)
+    }
+
+    /** Caller holds the identity generation barrier and already validated durable authority. */
+    internal suspend fun enqueueCaptured(authority: Authority, itemId: String, kind: ListKind, present: Boolean): Long {
+        require(authority.key.isNotBlank() && itemId.isNotBlank())
         // Fresh immutable command identity even if a repeated intent has identical payload.
         return dao.enqueueMembership(DirtyOperationEntity(
             opKind = "MEMBERSHIP_${kind.name}", serverId = authority.scope.serverId,

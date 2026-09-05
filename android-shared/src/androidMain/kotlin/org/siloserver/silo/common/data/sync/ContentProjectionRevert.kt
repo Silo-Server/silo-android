@@ -14,6 +14,7 @@ import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
  * background drain (`SyncEngine`). No-op for non-content ops (position/ebook).
  */
 internal suspend fun ContentItemStateDao.revertForTerminalOp(op: DirtyOperationEntity) {
+    if (op.state == "legacy_membership_quarantined") return
     when (op.opKind) {
         OutboxOperation.SET_WATCHED -> clearWatched(op.serverId, op.profileId, op.targetContentId)
         OutboxOperation.SET_FAVORITE -> clearFavorite(op.serverId, op.profileId, op.targetContentId)
