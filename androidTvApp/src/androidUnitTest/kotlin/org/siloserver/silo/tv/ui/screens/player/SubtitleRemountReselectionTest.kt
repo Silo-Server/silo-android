@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.subtitleArtifactTrackId
+import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.playback.playbackSubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import java.io.File
@@ -12,6 +14,27 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SubtitleRemountReselectionTest {
+    @Test
+    fun `native inventory identity remounts only its unique container track`() {
+        val row = PlayerSubtitleInfo(
+            index = 0, language = "en", codec = "mov_text", label = "English",
+            source = "embedded", url = "/subtitles/0.vtt",
+            serverTrackId = "file:42:subtitle:0", serverDelivery = "sidecar",
+            nativeContainerTrackId = "19",
+        )
+        val identity = playbackSubtitleIdentity(row)
+        val intended = track(index = 3, trackId = "0:19", codec = "mov_text")
+        val sibling = track(index = 2, trackId = "0:23", codec = "mov_text")
+        fun consume(tracks: List<PlayerTrackEntry>): TvSubtitleRemountEvent? {
+            val latch = SubtitleRemountReselection()
+            latch.arm(identity, generation = 1)
+            return latch.consume(tracks, listOf(row), snapshotKey = "ready", settled = true)
+        }
+        assertEquals(3, assertIs<TvSubtitleRemountEvent.Select>(consume(listOf(sibling, intended))).trackIndex)
+        assertIs<TvSubtitleRemountEvent.Failed>(consume(listOf(sibling)))
+        assertIs<TvSubtitleRemountEvent.Failed>(consume(listOf(intended, intended.copy(index = 4))))
+    }
+
     @Test
     fun `ViewModel does not settle the first nonempty remount snapshot`() {
         val tracker = TvSubtitleSnapshotSettlementTracker()

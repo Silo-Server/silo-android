@@ -1753,6 +1753,11 @@ class PlayerViewModel(
             }
             currentCoroutineContext().ensureActive()
             if (recoveryGeneration != playbackRecoveryGeneration) return@launch
+            if (queuedRequest.isNonfatalFailure(result)) {
+                showVersionSwitchMessage("Subtitles couldn't load — playback continues.")
+                _uiState.update { it.copy(isLoading = false, isBuffering = false) }
+                return@launch
+            }
             when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {

@@ -204,18 +204,14 @@ internal class SubtitleRemountReselection(
         val mounted = subtitleTracks.map(PlayerTrackEntry::toMountedTvSubtitleTrack)
         val exactTrackId = owner.identity.exactTvMountTrackId()
         val matchIndex = exactTrackId?.let { expected ->
-            // Every candidate here denotes the SAME authored artifact id, so
-            // multiple hits are the one sidecar merged more than once (Media3
-            // prefixes each with its MergingMediaSource child index, e.g.
-            // "1:silo-subtitle:3" and "2:silo-subtitle:3"). That is not the
-            // ambiguity this guard exists for — it cannot select the wrong
-            // language — so refusing on it left the mount unresolved until the
-            // deadline blew and the transaction rolled back to Off. Ambiguity
-            // between genuinely different tracks is still caught by the
-            // metadata path below and by hasAmbiguousTvLabel.
-            mounted.filter { trackIdDenotes(it.trackId, expected) }
-                .minByOrNull { it.index }
-                ?.index
+            // Authored sidecars may be merged more than once; choose the first
+            // copy. A native container identity must resolve to one track.
+            val matches = mounted.filter { trackIdDenotes(it.trackId, expected) }
+            if (owner.identity is SubtitleIdentity.Embedded && owner.identity.containerTrackId != null) {
+                matches.singleOrNull()?.index
+            } else {
+                matches.minByOrNull { it.index }?.index
+            }
         } ?: when {
             // An identity carrying a REAL Media3 id stays exact-only: falling
             // back to metadata could mount a different track that merely looks
@@ -267,7 +263,7 @@ internal class SubtitleRemountReselection(
 private fun SubtitleIdentity.exactTvMountTrackId(): String? = when (this) {
     is SubtitleIdentity.ServerSidecar -> subtitleArtifactTrackId(serverIndex)
     is SubtitleIdentity.Downloaded -> downloadedSubtitleArtifactTrackId(downloadId)
-    is SubtitleIdentity.Embedded -> media.trackId?.trim()?.takeIf(String::isNotEmpty)
+    is SubtitleIdentity.Embedded -> containerTrackId ?: media.trackId?.trim()?.takeIf(String::isNotEmpty)
     is SubtitleIdentity.LocalMedia3 -> media.trackId?.trim()?.takeIf(String::isNotEmpty)
     SubtitleIdentity.Off,
     is SubtitleIdentity.ServerBurnIn,
