@@ -477,6 +477,11 @@ class PlaybackCapabilityDetector(
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
                     subtitles = DeliverySubtitleCapabilities(
+                        nativeEmbedded = listOf(org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability(
+                            container = "mp4",
+                            codecs = listOf("mov_text"),
+                            trackIdentity = "container_track_id",
+                        )),
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,

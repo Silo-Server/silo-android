@@ -15,6 +15,7 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -39,6 +40,8 @@ import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
+import org.siloserver.silo.model.playback.PlaybackEmbeddedSubtitleV3
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
@@ -238,6 +241,62 @@ class PlaybackSessionManagerStagedReplanTest {
         assertEquals(409, assertIs<ApiResult.Error>(consumed).code)
         assertEquals("s2", harness.manager.activeSessionIdForTest())
         assertEquals(listOf("s1"), harness.stoppedSessions)
+    }
+
+    @Test
+    fun `native failure retry waits for publication rollback and preserves explicit subtitle index`() = runTest {
+        val native = sidecarPlan("s2").let { plan ->
+            plan.copy(
+                delivery = PlaybackDelivery.ORIGINAL_HTTP,
+                stream = PlaybackStreamV3(
+                    url = "/stream/s2",
+                    protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
+                    container = "mp4",
+                    mimeType = "video/mp4",
+                ),
+                source = PlaybackSourceDescriptorV3(mediaFileId = 42, container = "mp4"),
+                subtitle = plan.subtitle.copy(
+                    mode = PlaybackSubtitleModeV3.RENDER,
+                    artifact = null,
+                    embedded = PlaybackEmbeddedSubtitleV3(streamIndex = 7, containerTrackId = "19"),
+                    inventory = plan.subtitle.inventory.map { it.copy(codec = "mov_text") },
+                ),
+            )
+        }
+        val harness = Harness(
+            replanResponse = { index, _ ->
+                response(if (index == 0) native else sidecarPlan("s3"))
+            },
+        )
+        harness.start()
+        val stagedNative = harness.stageSidecar()
+        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+            harness.manager.commitStagedVideoReplan(stagedNative, deferPublication = true),
+        )
+
+        // Enter the real publication barrier before checking the HTTP count.
+        // A TV callback that retries before settling its native owner waits here.
+        val retry = async(start = CoroutineStart.UNDISPATCHED) {
+            harness.manager.replanActiveVideoSession(
+                classification = "subtitle_embedded_failed",
+                positionSeconds = 43.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            )
+        }
+        assertFalse(retry.isCompleted)
+        assertEquals(listOf("s1"), harness.replanBaseSessions)
+        assertTrue(harness.manager.rollbackUnpublishedVideoSession("s2"))
+
+        val recovered = assertIs<ApiResult.Success<VideoSessionStartV3>>(retry.await()).data
+        assertEquals("s3", assertIs<VideoSessionStartV3.Ready>(recovered).session.sessionId)
+        assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
+        val request = harness.replanBodies[1]
+        assertEquals("subtitle_embedded_failed", request["failure"]!!.jsonObject["classification"]!!.jsonPrimitive.content)
+        val subtitle = request["selected_tracks"]!!.jsonObject["subtitle"]!!.jsonObject
+        assertEquals(4, subtitle["index"]!!.jsonPrimitive.int)
+        assertEquals("file:42:subtitle:4", subtitle["id"]!!.jsonPrimitive.content)
+        assertEquals(1, harness.stoppedSessions.count { it == "s2" })
     }
 
     @Test
@@ -1304,6 +1363,45 @@ class PlaybackSessionManagerStagedReplanTest {
             mapOf("s1" to 1, "s2" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
+    }
+
+    @Test
+    fun `native subtitle recovery rejection keeps the active session usable for another retry`() = runTest {
+        val rejectedResponses = listOf(
+            terminalResponse("s2", "adaptation_unavailable", "No subtitle route."),
+            response(sidecarPlan(sessionId = "s2")).copy(protocolVersion = 2),
+            response(sidecarPlan(sessionId = "s2").copy(runtimeCorrections = listOf("future_runtime_fix"))),
+        )
+        for (rejectedResponse in rejectedResponses) {
+            val harness = Harness(
+                replanResponse = { index, _ ->
+                    if (index == 0) rejectedResponse else response(sidecarPlan(sessionId = "s3"))
+                },
+            )
+            harness.start()
+
+            val rejected = harness.manager.replanActiveVideoSession(
+                classification = "subtitle_embedded_failed",
+                positionSeconds = 42.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            )
+
+            assertIs<ApiResult.Error>(rejected)
+            assertEquals("s1", harness.manager.activeSessionIdForTest())
+            assertEquals(listOf("s2"), harness.stoppedSessions)
+
+            val retried = harness.manager.replanActiveVideoSession(
+                classification = "subtitle_embedded_failed",
+                positionSeconds = 43.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            )
+            assertIs<VideoSessionStartV3.Ready>(assertIs<ApiResult.Success<VideoSessionStartV3>>(retried).data)
+            harness.awaitStopped("s1")
+            assertEquals("s3", harness.manager.activeSessionIdForTest())
+            assertEquals(mapOf("s1" to 1, "s2" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+        }
     }
 
     @Test

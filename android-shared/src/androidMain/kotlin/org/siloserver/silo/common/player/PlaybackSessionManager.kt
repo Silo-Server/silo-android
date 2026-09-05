@@ -727,7 +727,9 @@ open class PlaybackSessionManager(
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 operation = replanOperationForClassification(classification),
-                preserveImmediateOutcomes = true,
+                // A rejected subtitle retry must not tear down healthy video.
+                // Reuse staged rejection cleanup while successful retries still commit.
+                preserveImmediateOutcomes = classification != "subtitle_embedded_failed",
             )
         ) {
             is ApiResult.Success -> when (val value = prepared.data) {
@@ -1780,6 +1782,9 @@ open class PlaybackSessionManager(
             PlaybackSubtitleModeV3.CONVERT,
             PlaybackSubtitleModeV3.RENDER,
             -> {
+                if (subtitle.embedded != null && candidate.delivery == org.siloserver.silo.model.playback.PlaybackDelivery.ORIGINAL_HTTP &&
+                    subtitle.embedded?.containerTrackId != null && subtitle.artifact == null
+                ) return null
                 val artifact = subtitle.artifact
                 if (artifact == null ||
                     artifact.url.isBlank() ||

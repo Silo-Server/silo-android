@@ -91,6 +91,7 @@ import org.siloserver.silo.common.player.video.selectedMountedAudioOrdinal
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
+import org.siloserver.silo.common.player.isSubtitleSelected
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -423,7 +424,7 @@ fun PlayerScreen(
     // A neutral-v3 replan publishes replacement route state before the
     // corresponding Compose mount effect runs. Subtitle restoration must wait
     // for that exact media generation rather than racing a newly mounted route.
-    var mountedMediaGeneration by remember(videoBackend) { mutableStateOf<Long?>(null) }
+    val mountedSubtitleMount by viewModel.mountedSubtitleMount.collectAsState()
     // False until presets have been applied once for the current backend, so
     // only later capability changes wait for the route to settle.
     var trackPresetsApplied by remember(videoBackend) { mutableStateOf(false) }
@@ -762,8 +763,9 @@ fun PlayerScreen(
                     "${plan?.decisionTrace?.size ?: 0}:${uiState.mediaMountGeneration}",
             )
         }
+        viewModel.onSubtitleMediaMountChanging()
         backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
-        mountedMediaGeneration = uiState.mediaMountGeneration
+        viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
         viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
@@ -828,7 +830,9 @@ fun PlayerScreen(
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
         )
+        viewModel.onSubtitleMediaMountChanging()
         backend.refresh(mediaSpec)
+        viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
     }
 
     // Sync play/pause from ViewModel to player without reclassifying this
@@ -990,18 +994,22 @@ fun PlayerScreen(
                     // already fired (against the OLD tracks), so without this the
                     // auto-selected downloaded/AI track never engages. Reads the
                     // live VM state — `uiState` here can be a stale closure capture.
+                    val mount = viewModel.mountedSubtitleMount.value
+                    val backend = videoBackend ?: return
+                    if (!viewModel.isCurrentSubtitleMount(mount)) return
+                    val currentTracks = backend.player.currentTracks
                     val liveState = viewModel.uiState.value
                     val pendingIdentity = liveState.localSubtitleMountIdentity
                     val targetIdentity = pendingIdentity ?: liveState.committedSubtitleIdentity
-                    val selected = videoBackend?.selectMountedSubtitle(
-                        identity = targetIdentity,
-                    ) == true
+                    val accepted = backend.selectMountedSubtitle(identity = targetIdentity)
+                    val selected = isSubtitleSelected(currentTracks, targetIdentity)
                     if (pendingIdentity != null) {
                         viewModel.onPendingSubtitleMountResult(
+                            mount = mount,
                             identity = pendingIdentity,
                             selected = selected,
-                            snapshotKey = media3TextTrackSnapshotKey(tracks),
-                            settled = videoBackend?.player?.playbackState == Player.STATE_READY,
+                            snapshotKey = media3TextTrackSnapshotKey(currentTracks),
+                            settled = backend.player.playbackState == Player.STATE_READY && (selected || !accepted),
                         )
                     }
                 }
@@ -1172,10 +1180,11 @@ fun PlayerScreen(
         uiState.committedSubtitleIdentity,
         uiState.localSubtitleMountIdentity,
         uiState.mediaMountGeneration,
-        mountedMediaGeneration,
+        mountedSubtitleMount,
     ) {
         val backend = videoBackend ?: return@LaunchedEffect
-        if (mountedMediaGeneration != uiState.mediaMountGeneration) return@LaunchedEffect
+        val mount = mountedSubtitleMount
+        if (!viewModel.isCurrentSubtitleMount(mount)) return@LaunchedEffect
         val pendingIdentity = uiState.localSubtitleMountIdentity
         val targetIdentity = pendingIdentity ?: uiState.committedSubtitleIdentity
         val selectedIndex = resolveMobileSubtitleOrdinal(targetIdentity, uiState.subtitleTracks)
@@ -1186,11 +1195,12 @@ fun PlayerScreen(
             // an empty sidecar entry or refresh the mounted MediaItem.
             backend.selectMountedSubtitle(identity = SubtitleIdentity.Off)
         } else if (targetIdentity.requiresMountedMobileSelection()) {
-            val selected = backend.selectMountedSubtitle(identity = targetIdentity)
+            backend.selectMountedSubtitle(identity = targetIdentity)
             if (pendingIdentity != null) {
                 viewModel.onPendingSubtitleMountResult(
+                    mount = mount,
                     identity = pendingIdentity,
-                    selected = selected,
+                    selected = isSubtitleSelected(backend.player.currentTracks, targetIdentity),
                     snapshotKey = media3TextTrackSnapshotKey(backend.player.currentTracks),
                     // This composition-side attempt can race Media3's first
                     // text-track publication. Only onTracksChanged callbacks

@@ -507,6 +507,14 @@ class PlayerViewModel(
         },
         onSnapshotChanged = ::applyMobileSubtitleSnapshot,
         onCommittedPlayback = ::adoptMobileSubtitlePlayback,
+        onEmbeddedSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
         onCommittedPlaybackFailure = ::recoverFromSubtitleAdoptionFailure,
     )
 
@@ -630,11 +638,11 @@ class PlayerViewModel(
     private var transientNetworkRetries = 0
     private var recoveryJob: Job? = null
 
-    // Latest user track/quality/route change (classification to notice) that
+    // Latest user change or embedded-subtitle failure that
     // arrived while a recovery held the replan single-flight guard. Re-driven
     // once that flight completes so the selection isn't silently dropped;
     // last-write-wins because only the newest selection matters.
-    private var queuedInvalidationReplan: Pair<String, String>? = null
+    private var queuedInvalidationReplan: MobileRecoveryReplan? = null
 
     private enum class ServerSeekRecoveryMode {
         REANCHOR,
@@ -666,6 +674,18 @@ class PlayerViewModel(
     private var serverSeekRecoveryInFlight = false
     private var queuedServerSeek: ServerSeekRecoveryRequest? = null
     private var playbackRecoveryGeneration = 0L
+    // The service and this ViewModel survive screen recreation; applied evidence must too.
+    private val _mountedSubtitleMount = MutableStateFlow<MobileSubtitleMount?>(null)
+    internal val mountedSubtitleMount: StateFlow<MobileSubtitleMount?> = _mountedSubtitleMount
+
+    internal fun onSubtitleMediaMountChanging() {
+        _mountedSubtitleMount.value = null
+    }
+
+    internal fun onSubtitleMediaMountApplied(mount: MobileSubtitleMount) {
+        _mountedSubtitleMount.value = mount
+    }
+
     private var mediaMountSequence = 0L
     private var awaitingMediaMountGeneration: Long? = null
     private val subtitleRefreshGate = SubtitleRefreshGate()
@@ -1663,19 +1683,22 @@ class PlayerViewModel(
         diagnostics: Map<String, String> = emptyMap(),
         failedTrackType: Int? = null,
         audioTrackIndexOverride: Int? = null,
+        subtitleTrackIndexOverride: Int? = null,
     ) {
+        val queuedRequest = MobileRecoveryReplan(classification, notice, subtitleTrackIndexOverride)
         if (recoveryJob?.isActive == true || serverSeekRecoveryInFlight) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
-            // replans stay dropped — onPlayerError re-raises those.
-            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
-                queuedInvalidationReplan = classification to notice
+            // replans stay dropped — onPlayerError re-raises those. Native
+            // subtitle failures have no player-error retry, so retain them.
+            if (queuedRequest.shouldQueue) {
+                queuedInvalidationReplan = queuedRequest
             }
             return
         }
         if (mobileSubtitleTransactions.hasActiveTransaction) {
             if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
-                queuedInvalidationReplan = classification to notice
+                queuedInvalidationReplan = queuedRequest
                 return
             }
             mobileSubtitleTransactions.invalidate()
@@ -1683,7 +1706,7 @@ class PlayerViewModel(
         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId ?: return
         val recoveryGeneration = playbackRecoveryGeneration
         recoveryJob = viewModelScope.launch {
-            val selectedSubtitleTrackIndex = selectedServerSubtitleTrackIndex(
+            val selectedSubtitleTrackIndex = subtitleTrackIndexOverride ?: selectedServerSubtitleTrackIndex(
                 selectedOrdinal = state.selectedSubtitleIndex,
                 subtitleTracks = state.subtitleTracks,
             )
@@ -1742,6 +1765,11 @@ class PlayerViewModel(
             }
             currentCoroutineContext().ensureActive()
             if (recoveryGeneration != playbackRecoveryGeneration) return@launch
+            if (queuedRequest.isNonfatalFailure(result)) {
+                showVersionSwitchMessage("Subtitles couldn't load — playback continues.")
+                _uiState.update { it.copy(isLoading = false, isBuffering = false) }
+                return@launch
+            }
             when (result) {
                 is ApiResult.Success -> when (val decision = result.data) {
                     is VideoSessionStartV3.Ready -> {
@@ -1941,11 +1969,16 @@ class PlayerViewModel(
     }
 
     private fun redriveQueuedInvalidationReplan() {
-        val (classification, notice) = queuedInvalidationReplan ?: return
+        val queued = queuedInvalidationReplan ?: return
         queuedInvalidationReplan = null
         // Current state, not the queuing-time state, so the replan carries the
         // latest committed track/quality selection.
-        startProtocolV3Replan(classification, notice, _uiState.value)
+        startProtocolV3Replan(
+            queued.classification,
+            queued.notice,
+            _uiState.value,
+            subtitleTrackIndexOverride = queued.subtitleTrackIndexOverride,
+        )
     }
 
     /**
@@ -2017,6 +2050,7 @@ class PlayerViewModel(
         queuedServerSeek = null
         awaitingMediaMountGeneration = null
         positionReportsBlockedForPendingLoad = true
+        onSubtitleMediaMountChanging()
         seekRecoveryRollbackInvalidated = false
         clearBufferedSeekCommands()
         pendingNativeSeekAfterMount = null
@@ -3149,12 +3183,22 @@ class PlayerViewModel(
         mobileSubtitleTransactions.select(identity)
     }
 
-    fun onPendingSubtitleMountResult(
+    internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =
+        mount == _mountedSubtitleMount.value && isCurrentMobileSubtitleMount(
+            applied = mount,
+            expected = MobileSubtitleMount(_uiState.value.mediaMountGeneration, _uiState.value.subtitleRefreshNonce),
+            awaitingGeneration = awaitingMediaMountGeneration,
+            loading = positionReportsBlockedForPendingLoad,
+        )
+
+    internal fun onPendingSubtitleMountResult(
+        mount: MobileSubtitleMount?,
         identity: SubtitleIdentity,
         selected: Boolean,
         snapshotKey: String?,
         settled: Boolean,
     ) {
+        if (!isCurrentSubtitleMount(mount)) return
         mobileSubtitleTransactions.reportMountedSelection(
             identity = identity,
             selected = selected,

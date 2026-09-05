@@ -1842,6 +1842,7 @@ fun TvPlayerScreen(
     LaunchedEffect(videoBackend) {
         val backend = videoBackend ?: return@LaunchedEffect
         viewModel.subtitleMountRequests.collect { request ->
+            if (!viewModel.canApplySubtitleMount(request)) return@collect
             if (request.trackIndex == -1) {
                 if (backend.selectSubtitle(null)) {
                     viewModel.onSubtitleSelectionApplied(request)

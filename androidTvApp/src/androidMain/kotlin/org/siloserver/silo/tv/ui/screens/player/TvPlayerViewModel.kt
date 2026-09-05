@@ -180,7 +180,7 @@ internal fun authoritativePlaybackQualityOptions(
 ): List<VideoQualityOption> = available.map { quality ->
     VideoQualityOption(
         id = quality.label,
-        label = quality.label,
+        label = quality.displayName?.takeIf { it.isNotBlank() } ?: quality.label,
         isSelected = quality.label == selectedLabel,
         resolution = quality.height.takeIf { it > 0 }?.let { "${it}p" },
     )
@@ -1126,6 +1126,7 @@ class TvPlayerViewModel(
         )
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
+    private var lastAdapterMountGeneration: Long? = null
 
     /**
      * Authority for the NEXT mount the adapter arms, consumed by the snapshot
@@ -1188,6 +1189,7 @@ class TvPlayerViewModel(
             val localMountIdentity = snapshot.localMountIdentity
             if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
                 subtitleMountGeneration += 1
+                lastAdapterMountGeneration = subtitleMountGeneration
                 subtitleRemountReselection.arm(
                     identity = localMountIdentity,
                     generation = subtitleMountGeneration,
@@ -1202,6 +1204,12 @@ class TvPlayerViewModel(
                     .takeIf(List<PlayerTrackEntry>::isNotEmpty)
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
+                lastAdapterMountGeneration?.let { generation ->
+                    if (subtitleRemountReselection.cancelOwned(generation)) {
+                        subtitleSnapshotSettlement.reset()
+                    }
+                }
+                lastAdapterMountGeneration = null
                 lastAdapterMountIdentity = null
             }
             if (autoSubtitleSelectionInFlight &&
@@ -1245,16 +1253,20 @@ class TvPlayerViewModel(
         onCommittedPlayback = ::adoptSubtitlePlayback,
         onCommittedPlaybackConfirmed = ::confirmSubtitlePlaybackPublication,
         onCommittedPlaybackRollback = ::rollbackSubtitlePlaybackPublication,
+        onEmbeddedSubtitleFailure = { serverIndex ->
+            startProtocolV3Replan(
+                classification = "subtitle_embedded_failed",
+                notice = "Embedded subtitles couldn't load. Retrying with a sidecar.",
+                state = _uiState.value,
+                subtitleTrackIndexOverride = serverIndex,
+            )
+        },
         onCommittedPlaybackFailure = { message ->
             _uiState.update { it.copy(error = message) }
         },
         hasMountableTracks = { _uiState.value.subtitleTracks.isNotEmpty() },
         isLocallyMountable = { identity ->
-            // Row-aware on purpose: a v3 inventory row describing a track muxed
-            // into a direct-play stream is still typed `delivery = sidecar`, so
-            // asking the identity resolver alone answered "not mounted" for the
-            // track Media3 already had, and every app-derived pick of it took
-            // the staged-replan path (see tvResolveMountedSubtitleTrack).
+            // Server-native and sidecar decisions require exact mounted IDs.
             val state = _uiState.value
             tvResolveMountedSubtitleTrack(
                 identity = identity,
@@ -1772,6 +1784,10 @@ class TvPlayerViewModel(
      */
     fun onTransportMountApplied(nonce: Long) {
         if (transportMountGate.applied(nonce)) {
+            // A matching mount has replaced the item. Discard its predecessor's
+            // groups; only the new item's onTracksChanged can resolve subtitles.
+            _uiState.update { it.copy(subtitleTracks = emptyList()) }
+            subtitleSnapshotSettlement.reset()
             // The mounted item was replaced. Facts from the previous
             // transport's window must not be mapped through the new plan's
             // timeline offset — that can overstate the new extent and turn a
@@ -2394,8 +2410,11 @@ class TvPlayerViewModel(
         if (recoveryJob?.isActive == true) {
             // Never silently drop a user selection: queue it (newest wins) and
             // re-drive it when the in-flight recovery completes. Failure-driven
-            // replans stay dropped — onPlayerError re-raises those.
-            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
+            // replans stay dropped — onPlayerError re-raises those. Embedded
+            // mount failures have no player-error retry, so retain those too.
+            if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
+                classification == "subtitle_embedded_failed"
+            ) {
                 queuedRecoveryReplan = QueuedRecoveryReplan(
                     classification = classification,
                     notice = notice,
@@ -2592,6 +2611,10 @@ class TvPlayerViewModel(
                         )
                     }
                     is VideoSessionStartV3.Terminal -> {
+                        if (classification == "subtitle_embedded_failed") {
+                            onReplanRequestFailed(classification, notice, decision.message)
+                            return@launch
+                        }
                         val failedSessionId = state.sessionId ?: return@launch
                         val terminalMessage = serverTerminalUserMessage(decision.message)
                         cancelPendingCatalogSubtitle()
@@ -2623,6 +2646,10 @@ class TvPlayerViewModel(
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         cancelPendingCatalogSubtitle()
+                        if (classification == "subtitle_embedded_failed") {
+                            onReplanRequestFailed(classification, notice, "Server upgrade required")
+                            return@launch
+                        }
                         _uiState.update {
                             it.copy(
                                 error = "This Silo server must be updated to support playback recovery.",
@@ -2671,7 +2698,9 @@ class TvPlayerViewModel(
      * tear playback down with a fatal error banner.
      */
     private fun onReplanRequestFailed(classification: String, notice: String, detail: String?) {
-        if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS) {
+        if (classification in PlaybackSessionManager.USER_INVALIDATION_CLASSIFICATIONS ||
+            classification == "subtitle_embedded_failed"
+        ) {
             Log.w(TAG, "Invalidation replan failed ($classification): $detail")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
@@ -4360,15 +4389,16 @@ class TvPlayerViewModel(
         }
     }
 
+    internal fun canApplySubtitleMount(request: TvSubtitleMountRequest): Boolean =
+        !transportMountGate.suppressPositionReports &&
+            subtitleRemountReselection.ownsResolved(request.owner.generation)
+
     internal fun onSubtitleSelectionApplied(request: TvSubtitleMountRequest) {
-        val owner = request.owner
-        subtitleRemountReselection.acknowledgeResolved(owner.generation)
-        subtitleTransactions.reportMountedSelection(
-            identity = owner.identity,
-            selected = true,
-            snapshotKey = "tv-mounted:${owner.generation}:${request.trackIndex}",
-            settled = true,
-        )
+        if (!subtitleRemountReselection.ownsResolved(request.owner.generation)) return
+        // MediaController accepted the override, but its player may not have
+        // selected that group yet. A synchronous callback may already have
+        // published it; otherwise onTracksChanged will confirm it later.
+        resolveSubtitleRemountReselection(_uiState.value.subtitleTracks)
     }
 
     /**
@@ -4433,7 +4463,7 @@ class TvPlayerViewModel(
 
     internal fun onSubtitleSelectionFailed(request: TvSubtitleMountRequest) {
         val owner = request.owner
-        subtitleRemountReselection.acknowledgeResolved(owner.generation)
+        if (!subtitleRemountReselection.acknowledgeResolved(owner.generation)) return
         Log.w(
             TV_SUBTITLE_LOG_TAG,
             "Subtitle mount rejected by the player: track=${request.trackIndex} " +
@@ -4468,10 +4498,17 @@ class TvPlayerViewModel(
                 subtitleRows = _uiState.value.subtitleUrls,
                 snapshotKey = snapshotKey,
                 settled = subtitleSnapshotSettlement.observe(subtitle),
+                transportMounted = !transportMountGate.suppressPositionReports,
             )
         ) {
             is TvSubtitleRemountEvent.Select -> _subtitleMountRequests.tryEmit(
                 TvSubtitleMountRequest(owner = event.owner, trackIndex = event.trackIndex),
+            )
+            is TvSubtitleRemountEvent.Confirmed -> subtitleTransactions.reportMountedSelection(
+                identity = event.owner.identity,
+                selected = true,
+                snapshotKey = snapshotKey ?: "tv-subtitles-off:${event.owner.generation}",
+                settled = true,
             )
             is TvSubtitleRemountEvent.Failed -> subtitleTransactions.reportMountedSelection(
                 identity = event.owner.identity,

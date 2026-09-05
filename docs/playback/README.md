@@ -62,3 +62,25 @@ feature token has the same name.
 - **Device outcomes** remain unproven until tested on the named device, display,
   HDMI/eARC chain, and AVR. A decoded frame alone does not prove correct HDR or
   passthrough output.
+
+## Native embedded subtitles
+
+Android advertises `embedded_subtitles_v1` only when the original-HTTP delivery
+includes a `native_embedded` capability. The first supported pair is MP4 with
+`mov_text`, using `container_track_id`. Media3 1.11.0 sets a timed-text format's
+ID from the MP4 `tkhd` track ID; FFmpeg stream indexes are not Media3 track IDs.
+See the pinned [Media3 MP4 parser](https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/BoxParser.java).
+
+A plan's `subtitle.embedded` selects the exact container track. Inventory URLs
+remain fallback descriptions and are not mounted alongside that selection.
+Phone and TV commit the preference only after the native track is mounted.
+Missing, ambiguous, or unsupported identities produce `subtitle_embedded_failed`
+and let the server replan with its sidecar path. Matroska and tracks without a
+probed container ID keep using sidecars; metadata similarity is not exact
+identity evidence.
+
+Sidecar cues use absolute source timestamps. Android subtracts the plan's
+`timeline_offset_seconds` once, alongside the user's subtitle delay. Embedded
+cues already follow the extractor timeline and receive only the user delay.
+
+Cast uses the default receiver, which renders VTT in the transport clock. At a nonzero video timeline offset, the VTT URL adds `timestamp_offset=-timeline_offset_seconds`, preserving the file/provider identity and stream authorization query parameters. The server shifts the canonical source-time cues for that response; native Android renderers continue applying their local subtitle offset.

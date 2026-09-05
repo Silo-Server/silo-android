@@ -1705,6 +1705,13 @@ internal fun resolveSubtitleSelection(
     return candidates.firstOrNull { it.track.index == match.track.index }?.selection
 }
 
+/** Whether the exact resolved subtitle is selected in this published snapshot. */
+fun isSubtitleSelected(tracks: Tracks, identity: SubtitleIdentity): Boolean {
+    val selection = resolveSubtitleSelection(tracks, identity) ?: return false
+    return tracks.groups.firstOrNull { it.mediaTrackGroup == selection.mediaTrackGroup }
+        ?.isTrackSelected(selection.trackIndex) == true
+}
+
 private data class TextTrackCandidate(
     val selection: SubtitleSelection,
     val track: MountedSubtitleTrack,

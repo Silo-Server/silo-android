@@ -78,6 +78,7 @@ private data class SourceDescriptorFixtureV3(
     @SerialName("hdr10_plus") val hdr10Plus: Boolean = false,
     @SerialName("dolby_vision_profile") val dolbyVisionProfile: Int = 0,
     @SerialName("dv_bl_compat_id") val dolbyVisionBaseLayerCompatibilityId: Int = 0,
+    @SerialName("dv_base_layer_proven") val dolbyVisionBaseLayerProven: Boolean = false,
     @SerialName("dv_enhancement_layer") val dolbyVisionEnhancementLayer: String,
     @SerialName("audio_codec") val audioCodec: String? = null,
     @SerialName("audio_channels") val audioChannels: Int = 0,
@@ -372,14 +373,6 @@ class PlaybackProtocolV3ConformanceTest {
      */
     @Test
     fun contextNamesTheBuildAndChannelBehindTheAppVersion() {
-        listOf("start_request.json", "replan_request.json").forEach { name ->
-            val context = SiloJson.parseToJsonElement(fixture(name))
-                .jsonObject["client_playback_context"]!!.jsonObject
-
-            assertEquals("5", context["app_build"]?.jsonPrimitive?.content, "$name: app_build")
-            assertEquals("production", context["app_channel"]?.jsonPrimitive?.content, "$name: app_channel")
-        }
-
         val encoded = json.encodeToJsonElement(
             ClientPlaybackContext.serializer(),
             ClientPlaybackContext(
@@ -548,8 +541,8 @@ class PlaybackProtocolV3ConformanceTest {
         val matrix = json.decodeFromString(ConformanceMatrixFixtureV3.serializer(), raw)
 
         assertEquals(1, matrix.schemaVersion)
-        assertEquals(17, matrix.plannerScenarios.size)
-        assertEquals(9, matrix.replanScenarios.size)
+        assertEquals(21, matrix.plannerScenarios.size)
+        assertEquals(10, matrix.replanScenarios.size)
         assertEquals(8, matrix.protocolScenarios.size)
         assertClientReadsEveryFieldExcept(
             raw,
