@@ -48,10 +48,10 @@ class MembershipOutbox(
     suspend fun send(id: Long, authority: Authority): Result {
         if (authority.scope != tokens.snapshotCurrentScope()) return Result(Resolution.NOT_CLAIMED)
         val claim = UUID.randomUUID().toString()
-        if (dao.claimMembership(id, authority.key, claim, processOwner) != 1) return Result(Resolution.NOT_CLAIMED)
-        val command = requireNotNull(dao.getById(id))
         var resolved = false
         try {
+            if (dao.claimMembership(id, authority.key, claim, processOwner) != 1) return Result(Resolution.NOT_CLAIMED)
+            val command = requireNotNull(dao.getById(id))
             require(command.serverId == authority.scope.serverId && command.profileId == authority.scope.profileId.orEmpty())
             val present = command.payloadJson.toBooleanStrict()
             val response = when (command.opKind) {
@@ -69,7 +69,9 @@ class MembershipOutbox(
             }
             return Result(Resolution.NEEDS_RECONCILIATION)
         } finally {
-            // Cancellation, exceptions, rejection and ambiguous status never return to auto-send.
+            // Claim commit can precede cancellation of its suspended return. Always attempt
+            // exact-token cleanup, even when admission never returned to this coroutine.
+            // A lost claim is a harmless CAS miss; it cannot affect the winning sender.
             if (!resolved) withContext(NonCancellable) {
                 dao.transitionMembership(id, claim, authority.key, SENDING, RECONCILE)
             }

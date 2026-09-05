@@ -8,10 +8,13 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.siloserver.silo.common.data.db.SiloDatabase
+import org.siloserver.silo.common.data.db.dao.DirtyOperationDao
+import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.MembershipV2Api
 import kotlin.test.*
@@ -129,5 +132,54 @@ class MembershipOutboxTest {
         assertEquals(MembershipOutbox.RECONCILE, dao.getById(id)?.state)
         assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, box.send(id, authority).resolution)
         assertEquals(2, calls)
+    }
+
+    @Test fun cancellationAfterClaimCommitBeforeReturnReconcilesExactCommand() = runTest {
+        val committed = CompletableDeferred<Unit>()
+        val realDao = dao
+        var reads = 0
+        val controlledDao = object : DirtyOperationDao by realDao {
+            override suspend fun claimMembership(id: Long, authority: String, claim: String, owner: String): Int {
+                assertEquals(1, realDao.claimMembership(id, authority, claim, owner))
+                committed.complete(Unit)
+                awaitCancellation()
+            }
+            override suspend fun getById(id: Long): DirtyOperationEntity? {
+                reads++
+                return realDao.getById(id)
+            }
+        }
+        var sends = 0
+        val client = HttpClient(MockEngine { sends++; respond("", HttpStatusCode.NoContent) }).also { clients += it }
+        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, tokenManager = tokens), tokens, "process-one")
+        val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        val pending = async { box.send(id, authority) }; committed.await()
+        assertEquals(MembershipOutbox.SENDING, realDao.getById(id)?.state)
+        val newer = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        pending.cancel(); pending.join()
+        assertEquals(0, reads); assertEquals(0, sends)
+        assertEquals(MembershipOutbox.RECONCILE, realDao.getById(id)?.state)
+        assertEquals(MembershipOutbox.READY, realDao.getById(newer)?.state)
+        assertEquals(listOf(id, newer), realDao.membershipCommands(authority.key, 10).map { it.id })
+        assertEquals(0, box.recover())
+    }
+
+    @Test fun cancellationDuringClaimedRowReadAlsoReconcilesWithoutRestart() = runTest {
+        val reading = CompletableDeferred<Unit>()
+        val realDao = dao
+        val controlledDao = object : DirtyOperationDao by realDao {
+            override suspend fun getById(id: Long): DirtyOperationEntity? {
+                assertEquals(MembershipOutbox.SENDING, realDao.getById(id)?.state)
+                reading.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        val client = HttpClient(MockEngine { error("No mutation may start") }).also { clients += it }
+        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, tokenManager = tokens), tokens, "process-one")
+        val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        val pending = async { box.send(id, authority) }; reading.await()
+        pending.cancel(); pending.join()
+        assertEquals(MembershipOutbox.RECONCILE, realDao.getById(id)?.state)
+        assertEquals(listOf(id), realDao.membershipCommands(authority.key, 10).map { it.id })
     }
 }
