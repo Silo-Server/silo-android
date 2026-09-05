@@ -26,7 +26,7 @@ val networkModule = module {
     single { ProfileApi(get(), get()) }
     single { SectionApi(get()) }
     single { RecommendationApi(get()) }
-    single<RequestsApi> { DefaultRequestsApi(get()) }
+    single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<org.siloserver.silo.network.api.MetadataAiApi> { org.siloserver.silo.network.api.DefaultMetadataAiApi(get()) }
     single<org.siloserver.silo.network.HomeRealtimeClient> { org.siloserver.silo.network.DefaultHomeRealtimeClient(get(), get()) }
     single<CalendarApi> { DefaultCalendarApi(get()) }

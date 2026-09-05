@@ -105,7 +105,7 @@ class RequestPresentationTest {
         quality: String,
         status: String,
     ): RequestTarget = RequestTarget(
-        id = id,
+        id = id.toString(),
         requestId = "request-1",
         instanceName = instanceName,
         quality = quality,
