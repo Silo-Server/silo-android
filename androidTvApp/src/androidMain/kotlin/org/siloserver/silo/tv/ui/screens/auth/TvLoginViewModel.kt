@@ -104,6 +104,7 @@ class TvLoginViewModel(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: AccountSessionChangedException) {
+                        handleIdentityChanged()
                         return@launch
                     } catch (_: Throwable) {
                         handleSessionPersistenceFailure(
@@ -115,7 +116,10 @@ class TvLoginViewModel(
                     // Tokens are committed outside persistSession here, so refresh the
                     // server's v2 contract verdict the same way every other sign-in does.
                     authRepository.onSessionCommitted()
-                    if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) return@launch
+                    if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) {
+                        handleIdentityChanged()
+                        return@launch
+                    }
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
@@ -206,6 +210,7 @@ class TvLoginViewModel(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: AccountSessionChangedException) {
+            handleIdentityChanged()
             return
         } catch (_: Throwable) {
             handleSessionPersistenceFailure(accessToken, refreshToken)
@@ -214,8 +219,20 @@ class TvLoginViewModel(
         // Tokens are committed outside persistSession here, so refresh the
         // server's v2 contract verdict the same way every other sign-in does.
         authRepository.onSessionCommitted()
-        if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) return
+        if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) {
+            handleIdentityChanged()
+            return
+        }
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+    }
+
+    private fun handleIdentityChanged() {
+        // Only release this screen's attempt. Credentials now belong to the new identity.
+        authCompleted = false
+        _uiState.update {
+            it.copy(isLoading = false, loginSuccess = false,
+                error = "The account or server changed. Start sign-in again.")
+        }
     }
 
     private suspend fun handleSessionPersistenceFailure(

@@ -11,6 +11,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -36,6 +37,10 @@ import org.siloserver.silo.repository.DeviceLoginRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.AccountSessionExpectation
 import kotlin.test.assertEquals
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -104,6 +109,70 @@ class TvLoginViewModelRaceTest {
 
         assertEquals("qr-access", tokenManager.accessToken)
         assertEquals(listOf("qr-access"), tokenManager.savedAccessTokens)
+    }
+
+    @Test
+    fun identityChangeAtCredentialInstallReleasesAttemptAndAllowsRetry() = installRace(false)
+
+    @Test
+    fun identityChangeAtQrInstallReleasesAttemptAndAllowsCredentialRetry() = installRace(true)
+
+    private fun installRace(qr: Boolean) = runTest(dispatcher) {
+        val actualTokens = TokenManagerImpl()
+        actualTokens.setServerUrl("https://silo.test")
+        val installing = CompletableDeferred<Unit>()
+        val releaseInstall = CompletableDeferred<Unit>()
+        var pauseInstall = true
+        // Stop at the ViewModel's install call, after loginForTokens accepted its scope.
+        // The real store's atomic identity barrier decides whether installation is allowed.
+        val tokens = object : TokenManager by actualTokens {
+            override suspend fun replaceAccountSession(
+                serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+                expiresIn: Long, profileId: String?, profileToken: String?,
+                expectedIdentity: AccountSessionExpectation?,
+            ) {
+                if (pauseInstall) {
+                    pauseInstall = false
+                    installing.complete(Unit)
+                    releaseInstall.await()
+                }
+                actualTokens.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
+                    expiresIn, profileId, profileToken, expectedIdentity)
+            }
+        }
+        val deviceApi = ControlledDeviceLoginApi()
+        val client = loginClient(tokens, CompletableDeferred(Unit), CompletableDeferred())
+        val viewModel = track(TvLoginViewModel(
+            AuthRepository(AuthApi(client), tokens), tokens, DeviceLoginRepository(deviceApi),
+        ))
+        viewModel.onUsernameChanged("jim")
+        viewModel.onPasswordChanged("password")
+        advanceUntilIdle()
+        if (qr) {
+            deviceApi.completePoll(DeviceLoginPollResponse(status = "approved",
+                accessToken = "qr-access", refreshToken = "qr-refresh", expiresIn = 3600))
+        } else {
+            viewModel.onLoginClick()
+        }
+        advanceUntilIdle()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { installing.await() } }
+        actualTokens.replaceAccountSession(accessToken = "newer-access",
+            refreshToken = "newer-refresh", expiresIn = 3600)
+        releaseInstall.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("newer-access", actualTokens.getAccessToken())
+        assertEquals("newer-refresh", actualTokens.getRefreshToken())
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertFalse(viewModel.uiState.value.loginSuccess)
+        assertEquals("The account or server changed. Start sign-in again.", viewModel.uiState.value.error)
+
+        viewModel.onLoginClick()
+        advanceUntilIdle()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { viewModel.uiState.first { it.loginSuccess } } }
+        assertTrue(viewModel.uiState.value.loginSuccess)
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals("credential-access", actualTokens.getAccessToken())
+        client.close()
     }
 
     private fun loginClient(
