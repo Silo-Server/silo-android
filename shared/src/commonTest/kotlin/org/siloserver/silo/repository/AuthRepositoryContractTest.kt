@@ -76,6 +76,21 @@ class AuthRepositoryContractTest {
     }
 
     @Test
+    fun `switchToServer on the already-active id still probes`() = runTest {
+        // Removing the active server promotes the next-MRU entry inside the
+        // registry; the view model then switches to the id that is already
+        // active, which must still move the token scope and probe.
+        val registry = ContractRegistry()
+        val tokens = SwitchRecordingTokenManager()
+        repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"), tokens)
+            .switchToServer("a")
+
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(listOf<String?>("a"), tokens.switchedTo)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
     fun `awaitContractRefreshIfUpdateRequired replaces a stale UPDATE_REQUIRED verdict`() = runTest {
         val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
         // Real clock: under the test scheduler the probe's suspension on the

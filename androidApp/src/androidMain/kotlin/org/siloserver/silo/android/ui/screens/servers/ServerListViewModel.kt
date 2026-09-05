@@ -103,7 +103,17 @@ class ServerListViewModel(
 
     fun onRemove(serverId: String) {
         viewModelScope.launch {
+            val wasActive = serverRegistry.activeServerId.value == serverId
             serverRegistry.remove(serverId)
+
+            // Removing the ACTIVE server promotes the next-MRU entry inside
+            // the registry, which never probes: without this the promoted
+            // server keeps whatever contract verdict an older build stored
+            // (or UNKNOWN). Re-establish its identity and verdict like every
+            // other switch path.
+            if (wasActive && serverRegistry.activeServerId.value != null) {
+                authRepository.refreshActiveServerName()
+            }
         }
     }
 }

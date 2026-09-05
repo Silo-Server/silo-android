@@ -114,7 +114,11 @@ class TvServerListViewModel(
                 return@launch
             }
 
-            tokenManager.switchActiveServer(promotedId)
+            // The registry already points at the promoted server, but only the
+            // full switch path also moves the token scope and probes the
+            // promoted server's identity and v2 contract verdict (it is
+            // idempotent when the registry is already there).
+            authRepository.switchToServer(promotedId)
 
             // Land on the deepest screen the promoted server's stored
             // credentials can reach — preserves that server's session if tokens
