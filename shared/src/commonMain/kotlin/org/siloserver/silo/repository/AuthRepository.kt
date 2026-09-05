@@ -28,7 +28,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * How long [AuthRepository.switchToServer] waits for the contract probe before
  * returning with the stored verdict untouched. Matches the launch-path bound
- * in [AuthRepository.awaitContractRefreshIfUpdateRequired].
+ * in [AuthRepository.awaitContractRefreshIfUnsettled].
  */
 private const val SWITCH_PROBE_TIMEOUT_MS = 3_000L
 
@@ -345,20 +345,24 @@ class AuthRepository(
             ?: flowOf(ServerContract.UNKNOWN)
 
     /**
-     * Launch-time guard for the stored verdict. Only a stale
-     * [ServerContract.UPDATE_REQUIRED] is harmful: UNKNOWN and V2 both pass
-     * [org.siloserver.silo.network.apiv2.ApiV2Gate], so those refresh in the
-     * background. When the stored state is UPDATE_REQUIRED (the server may
-     * have been upgraded since), probe now and wait at most [timeoutMs] so
-     * gated startup consumers see the refreshed verdict instead of the
-     * stale one. Returns the recorded verdict, or null when nothing was
-     * recorded (not UPDATE_REQUIRED, no probe wired in, timed out, or the
-     * probe failed) — pass it to [refreshActiveServerName] as
-     * `knownContract`: a verdict avoids a second probe, while null makes
-     * that call probe again so a briefly unreachable server is retried.
+     * Launch-time guard for the stored verdict. Only a settled
+     * [ServerContract.V2] is safe to route on immediately. A stored
+     * [ServerContract.UPDATE_REQUIRED] may be stale (server upgraded since)
+     * and would gate the whole session; a stored [ServerContract.UNKNOWN]
+     * (every entry saved by a build before the v2 pilot) passes
+     * [org.siloserver.silo.network.apiv2.ApiV2Gate], so authenticated startup
+     * consumers would race the background probe and could receive raw v2
+     * 404s from a v1-only server before UPDATE_REQUIRED is recorded — and
+     * those one-shot loads do not retry. Both unsettled states probe now and
+     * wait at most [timeoutMs] so startup consumers see a real verdict.
+     * Returns the recorded verdict, or null when nothing was recorded
+     * (stored V2, no probe wired in, timed out, or the probe failed) — pass
+     * it to [refreshActiveServerName] as `knownContract`: a verdict avoids a
+     * second probe, while null makes that call probe again so a briefly
+     * unreachable server is retried.
      */
-    suspend fun awaitContractRefreshIfUpdateRequired(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? {
-        if (activeServerContract() != ServerContract.UPDATE_REQUIRED) return null
+    suspend fun awaitContractRefreshIfUnsettled(timeoutMs: Long = SWITCH_PROBE_TIMEOUT_MS): ServerContract? {
+        if (activeServerContract() == ServerContract.V2) return null
         return refreshServerContractBounded(timeoutMs)
     }
 

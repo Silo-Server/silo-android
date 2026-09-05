@@ -295,13 +295,13 @@ class AuthRepositoryContractTest {
     }
 
     @Test
-    fun `awaitContractRefreshIfUpdateRequired replaces a stale UPDATE_REQUIRED verdict`() = runTest {
+    fun `awaitContractRefreshIfUnsettled replaces a stale UPDATE_REQUIRED verdict`() = runTest {
         val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
         // Real clock: under the test scheduler the probe's suspension on the
         // engine dispatcher lets virtual time skip straight past the timeout.
         val verdict = withContext(Dispatchers.Default) {
             repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
-                .awaitContractRefreshIfUpdateRequired()
+                .awaitContractRefreshIfUnsettled()
         }
 
         assertEquals(ServerContract.V2, verdict)
@@ -309,27 +309,14 @@ class AuthRepositoryContractTest {
     }
 
     @Test
-    fun `awaitContractRefreshIfUpdateRequired returns null when the probe cannot connect`() = runTest {
-        // The launch path passes the result to refreshActiveServerName as
-        // knownContract; null makes that call probe again instead of
-        // treating the stale UPDATE_REQUIRED as confirmed for the session.
-        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
-        // ApiV2Probe maps any thrown transport error to Failure(CONNECTION).
-        val client = client { throw RuntimeException("connection refused") }
-        val verdict = withContext(Dispatchers.Default) {
-            repository(registry, client).awaitContractRefreshIfUpdateRequired()
-        }
-
-        assertEquals(null, verdict)
-        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
-    }
-
-    @Test
-    fun `awaitContractRefreshIfUpdateRequired returns a confirmed UPDATE_REQUIRED verdict`() = runTest {
-        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+    fun `awaitContractRefreshIfUnsettled awaits UNKNOWN and records UPDATE_REQUIRED from a v1-only server`() = runTest {
+        // First launch after upgrading the app: the restored entry carries
+        // UNKNOWN, which passes the gate, so startup consumers must not be
+        // routed until the v1-only server's verdict is on record.
+        val registry = ContractRegistry(initialContract = ServerContract.UNKNOWN)
         val verdict = withContext(Dispatchers.Default) {
             repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
-                .awaitContractRefreshIfUpdateRequired()
+                .awaitContractRefreshIfUnsettled()
         }
 
         assertEquals(ServerContract.UPDATE_REQUIRED, verdict)
@@ -337,13 +324,54 @@ class AuthRepositoryContractTest {
     }
 
     @Test
-    fun `awaitContractRefreshIfUpdateRequired does not probe when the gate would pass`() = runTest {
+    fun `awaitContractRefreshIfUnsettled awaits UNKNOWN and records V2`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UNKNOWN)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.OK, infoBody, "application/json"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.V2, verdict)
+        assertEquals(mapOf("a" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled returns null when the probe cannot connect`() = runTest {
+        // The launch path passes the result to refreshActiveServerName as
+        // knownContract; null makes that call probe again instead of
+        // treating the stale UPDATE_REQUIRED as confirmed for the session.
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        // ApiV2Probe maps any thrown transport error to Failure(CONNECTION).
+        val client = client { throw RuntimeException("connection refused") }
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, client).awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(null, verdict)
+        assertEquals(emptyMap<String, ServerContract>(), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled returns a confirmed UPDATE_REQUIRED verdict`() = runTest {
+        val registry = ContractRegistry(initialContract = ServerContract.UPDATE_REQUIRED)
+        val verdict = withContext(Dispatchers.Default) {
+            repository(registry, respondWith(HttpStatusCode.NotFound, "404 page not found\n", "text/plain"))
+                .awaitContractRefreshIfUnsettled()
+        }
+
+        assertEquals(ServerContract.UPDATE_REQUIRED, verdict)
+        assertEquals(mapOf("a" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+    }
+
+    @Test
+    fun `awaitContractRefreshIfUnsettled does not probe when the stored verdict is V2`() = runTest {
         var requests = 0
         val client = client {
             requests += 1
             respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }
-        val verdict = repository(ContractRegistry(), client).awaitContractRefreshIfUpdateRequired()
+        val verdict = repository(ContractRegistry(initialContract = ServerContract.V2), client)
+            .awaitContractRefreshIfUnsettled()
 
         assertEquals(null, verdict)
         assertEquals(0, requests)
