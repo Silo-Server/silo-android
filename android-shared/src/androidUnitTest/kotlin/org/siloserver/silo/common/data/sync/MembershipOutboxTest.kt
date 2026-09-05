@@ -182,4 +182,81 @@ class MembershipOutboxTest {
         assertEquals(MembershipOutbox.RECONCILE, realDao.getById(id)?.state)
         assertEquals(listOf(id), realDao.membershipCommands(authority.key, 10).map { it.id })
     }
+
+    @Test fun singletonRuntimeRecoversReopenedDatabaseBeforeConcurrentEntries() = runTest {
+        val old = outbox(MockEngine { error("No send") })
+        val id = old.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        dao.claimMembership(id, authority.key, "old-claim", "dead-process")
+        db.close()
+        db = Room.databaseBuilder(context, SiloDatabase::class.java, name).allowMainThreadQueries().build()
+        val realDao = dao
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var recoveries = 0
+        val controlled = object : DirtyOperationDao by realDao {
+            override suspend fun recoverMembership(owner: String): Int {
+                recoveries++; entered.complete(Unit); release.await()
+                return realDao.recoverMembership(owner)
+            }
+        }
+        val login = DurableLoginAuthority("login", scope)
+        val provider = object : DurableLoginAuthorityProvider {
+            override suspend fun snapshotDurableLoginAuthority() = login
+        }
+        val client = HttpClient(MockEngine { error("Recovery must never send") }).also { clients += it }
+        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        val first = async { runtime.captureAuthority() }; entered.await()
+        val second = async { runtime.send(id, login) }
+        assertEquals(MembershipOutbox.SENDING, realDao.getById(id)?.state)
+        assertFalse(first.isCompleted); assertFalse(second.isCompleted)
+        release.complete(Unit)
+        assertEquals(login, first.await())
+        assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, second.await().resolution)
+        assertEquals(1, recoveries)
+        assertEquals(MembershipOutbox.RECONCILE, realDao.getById(id)?.state)
+    }
+
+    @Test fun cancelledOrFailedRuntimeRecoveryCanRetryBeforeAdmission() = runTest {
+        val realDao = dao
+        val committed = CompletableDeferred<Unit>()
+        var recoveries = 0
+        val controlled = object : DirtyOperationDao by realDao {
+            override suspend fun recoverMembership(owner: String): Int {
+                recoveries++
+                if (recoveries == 1) error("Storage unavailable")
+                val result = realDao.recoverMembership(owner)
+                if (recoveries == 2) { committed.complete(Unit); awaitCancellation() }
+                return result
+            }
+        }
+        val provider = object : DurableLoginAuthorityProvider {
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login", scope)
+        }
+        val client = HttpClient(MockEngine { error("No mutation") }).also { clients += it }
+        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        assertFailsWith<IllegalStateException> { runtime.captureAuthority() }
+        val cancelled = async { runtime.captureAuthority() }; committed.await(); cancelled.cancel(); cancelled.join()
+        assertNotNull(runtime.captureAuthority())
+        assertNotNull(runtime.captureAuthority())
+        assertEquals(3, recoveries)
+    }
+
+    @Test fun runtimeSeparatesProfilesAndRejectsStaleLoginCallbacks() = runTest {
+        var loginId = "login-one"
+        val provider = object : DurableLoginAuthorityProvider {
+            override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(loginId, scope)
+        }
+        val client = HttpClient(MockEngine { error("Stale callbacks cannot send") }).also { clients += it }
+        val runtime = MembershipRuntime(dao, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        val first = assertNotNull(runtime.captureAuthority())
+        val a = runtime.enqueue(first, "item", MembershipOutbox.ListKind.FAVORITE, true)
+        scope = scope.copy(profileId = "p2", identityGeneration = 2)
+        val b = runtime.enqueue(assertNotNull(runtime.captureAuthority()), "item", MembershipOutbox.ListKind.FAVORITE, true)
+        assertNotEquals(dao.getById(a)?.membershipAuthority, dao.getById(b)?.membershipAuthority)
+        assertNotNull(dao.getById(a))
+        scope = first.scope // Even matching runtime counters cannot bless a different persisted login.
+        loginId = "login-two"
+        assertEquals(MembershipOutbox.Resolution.NOT_CLAIMED, runtime.send(a, first).resolution)
+        assertFailsWith<IllegalStateException> { runtime.enqueue(first, "item", MembershipOutbox.ListKind.FAVORITE, false) }
+        assertEquals(2, dao.count())
+    }
 }

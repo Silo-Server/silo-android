@@ -16,6 +16,7 @@ val networkModule = module {
     single<TokenManager> { TokenManagerImpl(get()) }
     single { createSiloClient(get(), getOrNull(), getOrNull(), getOrNull()) }
     single { ApiV2Gate(getOrNull()) }
+    single { org.siloserver.silo.network.apiv2.MembershipV2Api(get(), get(), get()) }
     single { ApiV2Probe(get()) }
     single { AuthApi(get(), get()) }
     single { OnboardingApi(get()) }

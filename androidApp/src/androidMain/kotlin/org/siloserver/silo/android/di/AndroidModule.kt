@@ -118,7 +118,15 @@ val androidModule = module {
     // commonMain in-memory TokenManager. Koin 3.1+ replaces same-key bindings
     // when the redefining module is loaded after the original — sharedModules()
     // is registered first in SiloApplication, so this wins.
-    single<TokenManager> { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single<TokenManager> { get<EncryptedTokenManagerImpl>() }
+    single<org.siloserver.silo.network.DurableLoginAuthorityProvider> { get<EncryptedTokenManagerImpl>() }
+    single {
+        org.siloserver.silo.common.data.sync.MembershipRuntime(
+            get<org.siloserver.silo.common.data.db.SiloDatabase>(),
+            get(), get(), get(),
+        )
+    }
     single { org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache(androidContext()) }
 
     // Offline-first Room store (Track B). Bound after sharedModules() so the

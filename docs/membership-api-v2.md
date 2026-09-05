@@ -36,8 +36,8 @@ Room schema 9 adds nullable membership authority, claim and process-owner fields
 commands opt into separate ready, sending, reconcile and paused states; legacy
 SyncEngine pending/in-flight queries do not select or recover them.
 
-`MembershipOutbox` is a foundation for subsequent consumer activation. It is not
-registered in production DI yet. Both inline and background senders must call the
+`MembershipOutbox` is a foundation for subsequent consumer activation. Its guarded runtime is registered lazily in production DI, with no active
+producers or dispatch calls. Both inline and background senders must call the
 same `send` method; neither may send first and claim afterwards. Each enqueue gets
 a new database row and UUID even when its payload equals an older command. Pending
 intent coalesces; a sending command remains immutable and blocks another send for
@@ -59,11 +59,41 @@ process become reconciliation work, including claims abandoned before transport
 started. There is no lease timeout that could steal an active request. This owner
 protocol requires the application's existing single-process execution model.
 
-Activation must supply a durable, verified login authority key. Server/profile
+Activation uses the durable login authority binding described below. Server/profile
 identifiers and AuthScopeSnapshot generation counters are insufficient: counters
 reset across process restarts. The storage interface therefore requires this key
 explicitly and does not persist credentials or infer authority from those counters.
-A future production binding must persist login identity alongside credential
-lifecycle handling and validate it before constructing an authority. Existing
+The production binding persists login identity alongside credential lifecycle
+handling and validates it before constructing an authority. Existing
 legacy favorite rows, UI producers, watchlist producers and SyncEngine dispatch
 remain unchanged until that binding and consumer adoption are reviewed.
+
+
+## Durable authority and runtime admission
+
+`EncryptedTokenManagerImpl` implements `DurableLoginAuthorityProvider`. Explicit
+account replacement commits a fresh login UUID with the credentials and profile
+in the existing encrypted-preferences transaction. Sign-out removes it; server
+removal sweeps the server namespace. Refresh and profile/server switching preserve
+it. Temporary credentials cannot supply durable membership authority.
+
+An existing authenticated installation bootstraps its missing UUID under the token
+write and scope locks with a checked synchronous commit. A failed commit can
+change SharedPreferences memory, so the provider tracks an unconfirmed bootstrap
+and retries persistence before exposing authority. Failed credential replacement
+or sign-out blocks authority until a successful credential transaction resolves
+that failure. No old Room command is assigned the bootstrapped identity.
+
+The provider returns the persisted UUID with the exact runtime request snapshot.
+`MembershipRuntime` derives an unambiguous JSON tuple of server, login and profile
+for the command authority, and validates both persisted and runtime identity
+before admission. This prevents an old callback from adopting a later login even
+when its server/profile identifiers or process-local counters happen to match.
+
+Phone and TV bind one lazy `MembershipRuntime` singleton. Every entry waits behind
+its recovery mutex; readiness is published only after successful, non-cancelled
+Room recovery. Failed or cancelled initialization can retry. Its process UUID is
+created once per singleton, never per worker/drain. Application startup ordering
+is therefore not relied upon to exclude workers racing recovery. Producers,
+legacy command conversion and SyncEngine dispatch remain inactive pending their
+own review; existing legacy queue rows retain their original authority metadata.
