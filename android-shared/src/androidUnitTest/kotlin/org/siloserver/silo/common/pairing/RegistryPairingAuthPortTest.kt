@@ -273,7 +273,7 @@ class RegistryPairingAuthPortTest {
             MockEngine { request ->
                 check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
                 probes += 1
-                respond("not found", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+                respond("404 page not found\n", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
             },
         )
         val authRepository = AuthRepository(
@@ -316,7 +316,7 @@ class RegistryPairingAuthPortTest {
             MockEngine { request ->
                 check(request.url.encodedPath == ApiV2Probe.PATH) { "unexpected request ${request.url}" }
                 probes += 1
-                respond("not found", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
+                respond("404 page not found\n", HttpStatusCode.NotFound, headersOf(HttpHeaders.ContentType, "text/plain"))
             },
         )
         val authRepository = AuthRepository(
