@@ -109,10 +109,15 @@ class ServerListViewModel(
             // Removing the ACTIVE server promotes the next-MRU entry inside
             // the registry, which never probes: without this the promoted
             // server keeps whatever contract verdict an older build stored
-            // (or UNKNOWN). Re-establish its identity and verdict like every
-            // other switch path.
-            if (wasActive && serverRegistry.activeServerId.value != null) {
-                authRepository.refreshActiveServerName()
+            // (or UNKNOWN). Route it through the same durable switch path as
+            // every other promotion: the registry already points at it, so
+            // switchToServer is idempotent there, and its bounded probe hands
+            // a replacement to the repository's process-lifetime background
+            // scope — popping this screen cancels viewModelScope, which must
+            // not strand the promoted server on a stale verdict.
+            val promotedId = serverRegistry.activeServerId.value
+            if (wasActive && promotedId != null) {
+                authRepository.switchToServer(promotedId)
             }
         }
     }

@@ -12,7 +12,9 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -156,6 +158,39 @@ class AuthRepositoryContractTest {
         answerGate.complete(Unit)
         background.joinChildren()
         assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
+    fun `promoted server re-probe survives cancellation of the calling scope`() = runTest {
+        // ServerListViewModel.onRemove: the registry has already promoted "b"
+        // (so the id is already active) and the call runs in viewModelScope,
+        // which dies when the server list is popped. The replacement probe
+        // must live on the repository's background scope, not the caller's.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        registry.switchTo("b")
+        val answerGate = CompletableDeferred<Unit>()
+        val client = client {
+            answerGate.await()
+            respond(infoBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        val background = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val tokens = SwitchRecordingTokenManager()
+        val repository = repository(registry, client, tokenManager = tokens, backgroundScope = background)
+
+        val caller = CoroutineScope(StandardTestDispatcher(testScheduler))
+        // Virtual clock: the bound elapses without the engine answering.
+        caller.launch { repository.switchToServer("b") }.join()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+        caller.cancel()
+
+        answerGate.complete(Unit)
+        background.joinChildren()
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+        // The same-id switch still records the scope change; the Android
+        // token manager itself short-circuits when the id is unchanged.
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
     }
 
     @Test
