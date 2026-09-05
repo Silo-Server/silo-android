@@ -232,6 +232,46 @@ class AuthRepositoryContractTest {
     }
 
     @Test
+    fun `activation survives the caller being cancelled during the registry switch`() = runTest {
+        // The user presses Back while the server list's viewModelScope is
+        // still inside the registry switch itself. The activation must not
+        // die with the caller: the token switch, the probe, and its V2
+        // record all still land, so the entry never stays UNKNOWN or stale
+        // UPDATE_REQUIRED with the server already persisted as active.
+        val registry = ContractRegistry()
+        registry.setContract("b", ServerContract.UPDATE_REQUIRED)
+        val switchGate = CompletableDeferred<Unit>()
+        registry.switchGate = switchGate
+        val tokens = SwitchRecordingTokenManager()
+        // Real clock on both sides: the activation runs on the background
+        // scope, and a virtual-clock background would let runTest skip the
+        // bound while the caller waits out the real one.
+        val background = CoroutineScope(Dispatchers.Default)
+        val repository = repository(
+            registry,
+            respondWith(HttpStatusCode.OK, infoBody, "application/json"),
+            tokenManager = tokens,
+            backgroundScope = background,
+        )
+
+        val caller = CoroutineScope(Dispatchers.Default)
+        val call = caller.launch { repository.switchToServer("b") }
+        registry.switchEntered.await()
+        caller.cancel()
+        call.join()
+        // Nothing has been activated yet; the switch is still gated.
+        assertEquals("a", registry.activeServerId.value)
+        assertEquals(emptyList<String?>(), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.UPDATE_REQUIRED), registry.contracts)
+
+        switchGate.complete(Unit)
+        background.joinChildren()
+        assertEquals("b", registry.activeServerId.value)
+        assertEquals(listOf<String?>("b"), tokens.switchedTo)
+        assertEquals(mapOf("b" to ServerContract.V2), registry.contracts)
+    }
+
+    @Test
     fun `fallback probe records nothing when the caller is cancelled and the server switched`() = runTest {
         val registry = ContractRegistry()
         registry.setContract("b", ServerContract.UPDATE_REQUIRED)
@@ -581,7 +621,15 @@ private class ContractRegistry(initialContract: ServerContract = ServerContract.
     }
     override suspend fun remove(serverId: String) = Unit
     override suspend fun signOut(serverId: String) = Unit
+    /** When set, [switchTo] signals [switchEntered] and suspends on this until released. */
+    var switchGate: CompletableDeferred<Unit>? = null
+    val switchEntered = CompletableDeferred<Unit>()
+
     override suspend fun switchTo(serverId: String) {
+        switchGate?.let {
+            switchEntered.complete(Unit)
+            it.await()
+        }
         activeId.value = serverId
     }
     override suspend fun touchActive() = Unit

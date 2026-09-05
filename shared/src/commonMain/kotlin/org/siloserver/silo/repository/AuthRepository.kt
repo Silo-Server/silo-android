@@ -225,34 +225,61 @@ class AuthRepository(
      * through here so a server saved by an older build gets probed. No-op
      * without a registry.
      *
-     * Callers await this behind a spinner, so only the probe is awaited and
-     * only for [SWITCH_PROBE_TIMEOUT_MS]: a server that accepts the socket
-     * but never answers leaves the stored verdict alone (the gate still
-     * passes UNKNOWN and V2). When the bounded probe yields no verdict —
-     * the bound cancelled it or it failed (connection error, 5xx) — and a
-     * [backgroundScope] is wired in, a replacement unbounded probe (the
-     * client's own timeouts still apply) is launched there for [serverId],
-     * so a stale UPDATE_REQUIRED on a since-upgraded or briefly unreachable
-     * server is corrected once it answers instead of gating v2 calls until
-     * the next launch; the
-     * active-id guard in [recordServerContract] drops the result if the user
-     * switched again meanwhile. Without a scope the verdict stays as stored
-     * until the next switch or launch re-probes. The display-name refresh
-     * (branding, then health) is likewise launched on [backgroundScope]
-     * without being awaited; without a scope it runs inline after the probe.
+     * Callers await this behind a spinner, so they are released once the
+     * registry and token scope have switched and the probe has its bounded
+     * verdict: the probe waits at most [SWITCH_PROBE_TIMEOUT_MS], so a server
+     * that accepts the socket but never answers leaves the stored verdict
+     * alone (the gate still passes UNKNOWN and V2). When the bounded probe
+     * yields no verdict — the bound cancelled it or it failed (connection
+     * error, 5xx) — and a [backgroundScope] is wired in, a replacement
+     * unbounded probe (the client's own timeouts still apply) follows for
+     * [serverId], so a stale UPDATE_REQUIRED on a since-upgraded or briefly
+     * unreachable server is corrected once it answers instead of gating v2
+     * calls until the next launch; the active-id guard in
+     * [recordServerContract] drops the result if the user switched again
+     * meanwhile. Without a scope the verdict stays as stored until the next
+     * switch or launch re-probes. The display-name refresh (branding, then
+     * health) is never awaited.
+     *
+     * With [backgroundScope] wired in, the whole activation — registry
+     * switch, token switch, bounded probe, replacement probe, display-name
+     * refresh — runs as one job there, started before the caller begins
+     * waiting. Callers usually run in a UI scope (a server-list
+     * `viewModelScope`) that dies when the user presses Back; that cancels
+     * only this call's wait, never the activation, so the registry and token
+     * scope cannot land on the new server without its probe handoff. A
+     * background scope torn down mid-activation releases the caller too.
+     * Without a scope everything runs inline in the caller and is cancelled
+     * with it.
      */
     suspend fun switchToServer(serverId: String) {
         val registry = serverRegistry ?: return
-        registry.switchTo(serverId)
-        tokenManager.switchActiveServer(serverId)
-        refreshServerContractWithFallback(serverId)
-        if (registry.activeServerId.value != serverId) return
         val scope = backgroundScope
         if (scope == null) {
+            registry.switchTo(serverId)
+            tokenManager.switchActiveServer(serverId)
+            refreshServerContractWithFallback(serverId)
+            if (registry.activeServerId.value != serverId) return
             refreshActiveServerDisplayName(serverId)
-        } else {
-            scope.launch { refreshActiveServerDisplayName(serverId) }
+            return
         }
+        val ready = CompletableDeferred<Unit>()
+        val job = scope.launch {
+            registry.switchTo(serverId)
+            tokenManager.switchActiveServer(serverId)
+            probeContractWithFallback(serverId) {
+                // Launch before releasing the caller so a test joining the
+                // scope's children after the switch returns sees this job.
+                if (registry.activeServerId.value == serverId) {
+                    scope.launch { refreshActiveServerDisplayName(serverId) }
+                }
+                ready.complete(Unit)
+            }
+        }
+        // A scope torn down mid-activation must not leave the caller waiting;
+        // completing after the verdict is a no-op.
+        job.invokeOnCompletion { ready.complete(Unit) }
+        ready.await()
     }
 
     /**
@@ -279,15 +306,27 @@ class AuthRepository(
         val scope = backgroundScope
         if (scope == null || apiV2Probe == null) return refreshServerContractBounded()
         val bounded = CompletableDeferred<ServerContract?>()
-        val job = scope.launch {
-            val verdict = refreshServerContractBounded()
-            bounded.complete(verdict)
-            if (verdict == null) refreshServerContractFor(serverId)
-        }
+        val job = scope.launch { probeContractWithFallback(serverId) { bounded.complete(it) } }
         // A scope torn down mid-probe must not leave the caller waiting out
         // the bound on its own; completing after a verdict is a no-op.
         job.invokeOnCompletion { bounded.complete(null) }
         return withTimeoutOrNull(SWITCH_PROBE_TIMEOUT_MS) { bounded.await() }
+    }
+
+    /**
+     * The probe sequence shared by [switchToServer] and
+     * [refreshServerContractWithFallback], run in the calling coroutine:
+     * the bounded probe, then [onBoundedVerdict] with its result (null when
+     * the stored verdict was left alone), then — only for null — the
+     * replacement unbounded probe pinned to [serverId].
+     */
+    private suspend fun probeContractWithFallback(
+        serverId: String,
+        onBoundedVerdict: (ServerContract?) -> Unit,
+    ) {
+        val verdict = refreshServerContractBounded()
+        onBoundedVerdict(verdict)
+        if (verdict == null) refreshServerContractFor(serverId)
     }
 
     /**
