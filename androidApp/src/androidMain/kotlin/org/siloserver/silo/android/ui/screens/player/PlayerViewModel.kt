@@ -3170,12 +3170,21 @@ class PlayerViewModel(
         mobileSubtitleTransactions.select(identity)
     }
 
-    fun onPendingSubtitleMountResult(
+    internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean = isCurrentMobileSubtitleMount(
+        applied = mount,
+        expected = MobileSubtitleMount(_uiState.value.mediaMountGeneration, _uiState.value.subtitleRefreshNonce),
+        awaitingGeneration = awaitingMediaMountGeneration,
+        loading = positionReportsBlockedForPendingLoad,
+    )
+
+    internal fun onPendingSubtitleMountResult(
+        mount: MobileSubtitleMount?,
         identity: SubtitleIdentity,
         selected: Boolean,
         snapshotKey: String?,
         settled: Boolean,
     ) {
+        if (!isCurrentSubtitleMount(mount)) return
         mobileSubtitleTransactions.reportMountedSelection(
             identity = identity,
             selected = selected,

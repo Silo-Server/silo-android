@@ -22,6 +22,19 @@ import kotlin.test.assertTrue
 class SubtitleManagerTrackSelectionTest {
 
     @Test
+    fun nativeConfirmationRequiresTheExactPublishedTrackToBeSelected() {
+        val identity = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "en"), "19")
+        fun group(id: String, selected: Boolean) = Tracks.Group(
+            TrackGroup(subtitle(label = "English", language = "en", sampleMimeType = MimeTypes.APPLICATION_TX3G, id = id)),
+            false, intArrayOf(C.FORMAT_HANDLED), booleanArrayOf(selected),
+        )
+        assertFalse(isSubtitleSelected(Tracks(listOf(group("19", false), group("20", true))), identity))
+        assertTrue(isSubtitleSelected(Tracks(listOf(group("19", true), group("20", false))), identity))
+        assertFalse(isSubtitleSelected(Tracks(listOf(group("20", true))), identity))
+        assertFalse(isSubtitleSelected(Tracks(listOf(group("19", true), group("0:19", true))), identity))
+    }
+
+    @Test
     fun typedLocalSelectionUsesExactMedia3IdAcrossDuplicateMetadata() {
         val first = TrackGroup(
             subtitle(

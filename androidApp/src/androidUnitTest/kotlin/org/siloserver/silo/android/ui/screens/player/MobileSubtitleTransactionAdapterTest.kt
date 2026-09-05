@@ -1508,6 +1508,31 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `replacement native mount ignores predecessor evidence and waits for selected publication`() = runTest {
+        val harness = harness(backgroundScope)
+        val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+        harness.adapter.resetContent(context(), committedIdentity = native)
+        harness.adapter.restoreCommittedLocalMount()
+        val replacement = MobileSubtitleMount(2, 0)
+        fun report(applied: MobileSubtitleMount?, awaiting: Long?, loading: Boolean, selected: Boolean, settled: Boolean) {
+            if (isCurrentMobileSubtitleMount(applied, replacement, awaiting, loading)) {
+                harness.adapter.reportMountedSelection(native, selected, "exact-native-19", settled)
+            }
+        }
+
+        report(MobileSubtitleMount(1, 0), 2, false, true, true)
+        report(MobileSubtitleMount(1, 0), null, false, true, true)
+        report(replacement, 2, false, true, true)
+        report(replacement, null, true, true, true)
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity)
+        repeat(2) { report(replacement, null, false, false, false) }
+        assertEquals(native, harness.adapter.snapshot.localMountIdentity, "Accepted commands are not selected-track evidence")
+        report(replacement, null, false, true, true)
+        assertNull(harness.adapter.snapshot.localMountIdentity)
+        assertEquals(native, harness.adapter.snapshot.committedIdentity)
+    }
+
+    @Test
     fun `native decision only persists after exact mounted selection succeeds`() = runTest {
         val harness = harness(backgroundScope)
         val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
