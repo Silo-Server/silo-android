@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.mobileMediaModeForLibraryType
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import kotlinx.coroutines.FlowPreview
@@ -89,6 +90,8 @@ data class SearchUiState(
     val results: List<BrowseItem> = emptyList(),
     val hasMore: Boolean = false,
     val total: Int = 0,
+    val totalExact: Boolean = false,
+    val searchDiagnostics: org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2? = null,
     val error: String? = null,
     val hasSearched: Boolean = false,
     val nextOffset: Int = 0,
@@ -110,6 +113,7 @@ class SearchViewModel(
 
     private val _queryFlow = MutableStateFlow("")
 
+    private var continuation: CatalogContinuationV2? = null
     private val pageSize = 60
 
     /**
@@ -246,7 +250,7 @@ class SearchViewModel(
      */
     fun loadMore() {
         val current = _uiState.value
-        if (current.isSearching || !current.hasMore || current.query.isBlank()) return
+        if (current.error != null || current.isSearching || !current.hasMore || current.query.isBlank()) return
         viewModelScope.launch {
             performSearch(current.query, reset = false)
         }
@@ -256,6 +260,7 @@ class SearchViewModel(
         val currentState = _uiState.value
         val requestedMediaType = currentState.mediaType
         var offset = if (reset) 0 else currentState.nextOffset
+        var cursor = if (reset) null else continuation
         var pagesFetched = 0
         val visibleItems = mutableListOf<BrowseItem>()
         var hasMore = false
@@ -268,7 +273,7 @@ class SearchViewModel(
                 source = "query",
                 query = query,
                 mediaType = requestedMediaType.wire,
-                offset = offset,
+                continuation = cursor,
                 limit = pageSize,
             )
             val latest = _uiState.value
@@ -277,6 +282,7 @@ class SearchViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    cursor = response.continuation
                     val rawCount = response.items.size
                     val pageVisibleItems = requestedMediaType.filterResults(response.items)
 
@@ -294,6 +300,7 @@ class SearchViewModel(
                     )
                     if (shouldAdvanceFilteredPage) continue
 
+                    continuation = cursor
                     _uiState.update {
                         val nextResults = if (reset) visibleItems else it.results + visibleItems
                         it.copy(
@@ -301,6 +308,8 @@ class SearchViewModel(
                             results = nextResults,
                             hasMore = hasMore,
                             total = if (requestedMediaType.isClientFiltered) nextResults.size else total,
+                            totalExact = if (requestedMediaType.isClientFiltered) !hasMore else response.totalExact == true,
+                            searchDiagnostics = response.searchDiagnostics,
                             error = null,
                             hasSearched = true,
                             nextOffset = offset,

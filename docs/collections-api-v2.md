@@ -35,8 +35,8 @@ collection, page size, and viewer scope; a changed viewer fails before sending.
 Invalid continuation requires explicit reload and never silently starts over or
 appends a first page. Phone and TV cancel superseded page loads and retain existing
 items on failure while showing the reload action. TV filtering does not affect
-cursor advancement. Library-collection browsing remains in the separate catalog
-migration. The v2 membership GET returns join records rather than catalog cards.
+cursor advancement. Regular library-collection browsing now uses the shared catalog v2 adapter
+described in `catalog-api-v2.md`. The v2 membership GET returns join records rather than catalog cards.
 
 No mutation adds automatic replay or fallback to v1. The existing authentication
 refresh behavior is unchanged. Successful empty 204 responses are accepted by the

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,6 +77,7 @@ class TvBrowseViewModel(
 
     private val pageSize = 100
     private var generation = 0
+    private var continuation: CatalogContinuationV2? = null
     private var snapshot: String? = null
 
     // Raw (pre-visibleOnTv-filter) loaded count = the server offset for the next
@@ -111,7 +113,7 @@ class TvBrowseViewModel(
 
     fun loadMore() {
         val state = _uiState.value
-        if (state.loading || state.loadingMore || !state.hasMore) return
+        if (state.error != null || state.loading || state.loadingMore || !state.hasMore) return
         load(reset = false)
     }
 
@@ -151,6 +153,7 @@ class TvBrowseViewModel(
 
         if (reset) {
             snapshot = null
+            continuation = null
             rawLoaded = 0
         }
 
@@ -180,9 +183,8 @@ class TvBrowseViewModel(
                 contentRating = filter.contentRating,
                 sort = filter.sort,
                 order = filter.order,
-                offset = offset,
+                continuation = if (reset) null else continuation,
                 limit = pageSize,
-                snapshotAt = snapshot,
             )
 
             if (gen != generation) return@launch
@@ -190,6 +192,7 @@ class TvBrowseViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    continuation = response.continuation
                     if (snapshot == null) {
                         snapshot = response.snapshot
                     }

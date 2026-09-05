@@ -301,7 +301,7 @@ private fun PersonalMediaGridContent(
                 )
             }
         }
-        state.error != null && state.items.isEmpty() -> {
+        state.error != null -> {
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(

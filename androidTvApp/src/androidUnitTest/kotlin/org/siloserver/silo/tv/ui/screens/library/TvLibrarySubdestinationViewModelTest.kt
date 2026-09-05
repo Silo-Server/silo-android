@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.library
 
 import io.ktor.client.HttpClient
+import io.ktor.http.content.TextContent
+import kotlinx.serialization.json.*
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
@@ -12,7 +14,8 @@ import io.ktor.serialization.kotlinx.json.json
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
@@ -42,9 +45,9 @@ class TvLibrarySubdestinationViewModelTest {
 
         val request = requests.lastCatalogRequest()
         assertEquals("title", request.query["sort"])
-        assertEquals("asc", request.query["order"])
+        assertEquals(null, request.query["order"])
         assertEquals("K", request.query["name_prefix"])
-        assertEquals("0", request.query["offset"])
+        assertEquals(null, request.query["cursor"])
     }
 
     @Test
@@ -59,15 +62,15 @@ class TvLibrarySubdestinationViewModelTest {
 
         viewModel.onTabSelected(TvLibraryTab.RecentlyAdded)
         awaitState {
-            requests.lastCatalogRequestOrNull()?.query?.get("sort") == "added_at" &&
+            requests.lastCatalogRequestOrNull()?.query?.get("sort") == "-added_at" &&
                 requests.lastCatalogRequestOrNull()?.query?.get("name_prefix") == null
         }
 
         val request = requests.lastCatalogRequest()
-        assertEquals("added_at", request.query["sort"])
-        assertEquals("desc", request.query["order"])
+        assertEquals("-added_at", request.query["sort"])
+        assertEquals(null, request.query["order"])
         assertEquals(null, request.query["name_prefix"])
-        assertEquals("0", request.query["offset"])
+        assertEquals(null, request.query["cursor"])
     }
 
     @Test
@@ -85,9 +88,10 @@ class TvLibrarySubdestinationViewModelTest {
 
         viewModel.onAudiobookGroupSelected(viewModel.uiState.value.audiobookGroups.single())
         awaitState { requests.catalogRequestCount() == 1 }
-        assertEquals("author", requests.lastCatalogRequest().query["groups[0][rules][0][field]"])
-        assertEquals("is", requests.lastCatalogRequest().query["groups[0][rules][0][op]"])
-        assertEquals("Andy Weir", requests.lastCatalogRequest().query["groups[0][rules][0][value]"])
+        val rule = requests.lastCatalogRequest().body!!.getValue("groups").jsonArray.first().jsonObject.getValue("rules").jsonArray.first().jsonObject
+        assertEquals("author", rule["field"]?.jsonPrimitive?.content)
+        assertEquals("is", rule["op"]?.jsonPrimitive?.content)
+        assertEquals("Andy Weir", rule["value"]?.jsonPrimitive?.content)
 
         viewModel.onTabSelected(TvLibraryTab.Series)
         awaitState { requests.lastAudiobookGroupsRequestOrNull()?.query?.get("group_by") == "series" }
@@ -102,7 +106,7 @@ class TvLibrarySubdestinationViewModelTest {
         viewModel.onTabSelected(TvLibraryTab.Browse)
         awaitState { requests.catalogRequestCount() >= 1 }
         viewModel.onSortKeySelected(TvLibrarySortOption.ReleaseDate)
-        awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "year" }
+        awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "-year" }
         val requestsBeforeReentry = requests.catalogRequestCount()
 
         // Re-entering the screen (back out of item detail) re-issues the
@@ -127,7 +131,7 @@ class TvLibrarySubdestinationViewModelTest {
             // dispatch on Dispatchers.Main, and one still alive when a later
             // test calls setMain throws IllegalStateException from
             // TestMainDispatcher — the CI-only flake on this class.
-            createdViewModels.forEach { it.viewModelScope.cancel() }
+            createdViewModels.forEach { it.viewModelScope.coroutineContext[Job]?.cancelAndJoin() }
             createdViewModels.clear()
             Dispatchers.resetMain()
         }
@@ -151,31 +155,32 @@ class TvLibrarySubdestinationViewModelTest {
     private data class RequestRecord(
         val path: String,
         val query: Map<String, String?>,
+        val body: JsonObject? = null,
     )
 
     private fun MutableList<RequestRecord>.catalogRequestCount(): Int =
-        synchronized(this) { count { it.path == "/api/v1/catalog" } }
+        synchronized(this) { count { it.path in setOf("/api/v2/catalog", "/api/v2/catalog/query") } }
 
     private fun MutableList<RequestRecord>.lastCatalogRequest(): RequestRecord =
         synchronized(this) {
-            lastOrNull { it.path == "/api/v1/catalog" }
+            lastOrNull { it.path in setOf("/api/v2/catalog", "/api/v2/catalog/query") }
                 ?: error("Expected a catalog request, got ${toList()}")
         }
 
     private fun MutableList<RequestRecord>.lastCatalogRequestOrNull(): RequestRecord? =
         synchronized(this) {
-            lastOrNull { it.path == "/api/v1/catalog" }
+            lastOrNull { it.path in setOf("/api/v2/catalog", "/api/v2/catalog/query") }
         }
 
     private fun MutableList<RequestRecord>.lastAudiobookGroupsRequest(): RequestRecord =
         synchronized(this) {
-            lastOrNull { it.path == "/api/v1/catalog/audiobook-groups" }
+            lastOrNull { it.path == "/api/v2/catalog/audiobook-groups" }
                 ?: error("Expected an audiobook groups request, got ${toList()}")
         }
 
     private fun MutableList<RequestRecord>.lastAudiobookGroupsRequestOrNull(): RequestRecord? =
         synchronized(this) {
-            lastOrNull { it.path == "/api/v1/catalog/audiobook-groups" }
+            lastOrNull { it.path == "/api/v2/catalog/audiobook-groups" }
         }
 
     private fun viewModelFor(
@@ -187,23 +192,24 @@ class TvLibrarySubdestinationViewModelTest {
                 val record = RequestRecord(
                     path = request.url.encodedPath,
                     query = request.url.parameters.names().associateWith { request.url.parameters[it] },
+                    body = (request.body as? TextContent)?.text?.let { SiloJson.parseToJsonElement(it).jsonObject },
                 )
                 synchronized(requests) {
                     requests += record
                 }
                 when (request.url.encodedPath) {
                     "/api/v1/library/7/sections" -> respondJson("""{"sections":[]}""")
-                    "/api/v1/library/7/collections" -> respondJson("""{"collections":[]}""")
-                    "/api/v1/catalog/filters" -> respondJson(
-                        """{"genres":["Drama"],"studios":[],"networks":[],"countries":[],"content_ratings":[]}""",
+                    "/api/v2/library/7/collections" -> respondJson("""{"library_id":"7","collections":[],"groups":[]}""")
+                    "/api/v2/catalog/filters" -> respondJson(
+                        """{"genres":["Drama"],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
                     )
-                    "/api/v1/catalog/audiobook-groups" -> respondJson(
+                    "/api/v2/catalog/audiobook-groups" -> respondJson(
                         """
                             {
                               "total": 1,
                               "total_exact": true,
-                              "has_more": false,
-                              "groups": [
+                              "page":{"has_more":false},
+                              "items": [
                                 {
                                   "name": "Andy Weir",
                                   "item_count": 2,
@@ -216,11 +222,13 @@ class TvLibrarySubdestinationViewModelTest {
                             }
                         """.trimIndent(),
                     )
-                    "/api/v1/catalog" -> respondJson(
+                    "/api/v2/catalog", "/api/v2/catalog/query" -> respondJson(
                         """
                             {
                               "total": 1,
-                              "has_more": false,
+                              "total_exact":true,
+                              "window_cursor":"window",
+                              "page":{"has_more":false},
                               "title": "Library",
                               "items": [
                                 {"content_id":"item-1","title":"Item One","type":"movie"}

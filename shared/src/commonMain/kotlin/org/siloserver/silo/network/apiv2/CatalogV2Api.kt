@@ -117,6 +117,18 @@ class CatalogV2Api(
         }
     }
 
+    suspend fun searchFacet(scope: CatalogFacetScopeV2, facet: String, prefix: String): ApiResult<CatalogFacetMatchesV2> = read { viewer ->
+        client.get("/api/v2/catalog/filters/search") {
+            viewer?.let { authScope(it) }
+            parameter("library_id", scope.libraryId)
+            parameter("source", scope.source)
+            parameter("collection_id", scope.collectionId)
+            parameter("facet", facet)
+            parameter("q", prefix)
+            parameter("limit", 100)
+        }
+    }
+
     suspend fun searchCapabilities(): ApiResult<CatalogSearchCapabilitiesV2> = read { scope ->
         client.get("/api/v2/catalog/search/capabilities") { scope?.let { authScope(it) } }
     }

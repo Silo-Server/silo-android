@@ -404,7 +404,7 @@ private fun PersonalGrid(
                 // a screen either has a controls holder for its whole life or not.
                 val controlsState = controls?.uiState?.collectAsState()?.value
                 TvCatalogGrid(
-                    items = state.items,
+                    items = if (state.error != null) emptyList() else state.items,
                     // A restored deep scroll position sits at the paging threshold,
                     // so the grid would ask for the next page the moment it lands.
                     // During a refresh that page is fetched at an offset the
@@ -511,7 +511,7 @@ private fun PersonalInlineGrid(
         // until a card exists — which is what it did before the header did.
         val listIsEmpty = state.items.isEmpty() && !state.isLoading && !state.isRefreshing
         TvCatalogGrid(
-            items = state.items,
+            items = if (state.error != null) emptyList() else state.items,
             // A restored deep scroll position sits at the paging threshold,
             // so the grid would ask for the next page the moment it lands.
             // During a refresh that page is fetched at an offset the

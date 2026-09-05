@@ -11,6 +11,7 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.CatalogApi
@@ -65,12 +66,11 @@ class CatalogRepository(
         contentRating: String? = null,
         sort: String? = null,
         order: String? = null,
-        offset: Int? = null,
+        continuation: CatalogContinuationV2? = null,
         limit: Int? = null,
         namePrefix: String? = null,
         yearMin: Int? = null,
         yearMax: Int? = null,
-        snapshotAt: String? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
     ): ApiResult<CatalogResponse> {
@@ -84,12 +84,11 @@ class CatalogRepository(
             contentRating = contentRating,
             sort = sort,
             order = order,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             namePrefix = namePrefix,
             yearMin = yearMin,
             yearMax = yearMax,
-            snapshotAt = snapshotAt,
             queryGroups = queryGroups,
             match = match,
         )
@@ -97,10 +96,10 @@ class CatalogRepository(
         // Only the unfiltered, first-page default browse of a single library is
         // cached for offline (every request-shaping param must be at its default).
         val cacheableLibraryId = libraryId?.takeIf {
-            (offset == null || offset == 0) &&
+            continuation == null &&
                 query == null && genre == null && contentRating == null &&
                 namePrefix == null && yearMin == null && yearMax == null &&
-                source == null && mediaType == null && snapshotAt == null &&
+                source == null && mediaType == null &&
                 queryGroups.isEmpty() && match == null &&
                 (sort == null || sort == "added_at") && (order == null || order == "desc")
         } ?: return result
@@ -112,10 +111,15 @@ class CatalogRepository(
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId)?.let { return ApiResult.Success(it) }
+            catalogCache.getCachedDefaultLibraryPage(cacheableLibraryId)?.let { return ApiResult.Success(it.copy(hasMore = false, continuation = null)) }
         }
         return result
     }
+
+    suspend fun searchFacet(scope: org.siloserver.silo.network.apiv2.CatalogFacetScopeV2, facet: String, prefix: String) =
+        catalogApi.searchFacet(scope, facet, prefix)
+
+    suspend fun searchCapabilities() = catalogApi.searchCapabilities()
 
     /** Returns available filter options (genres, studios, etc.) for the catalog. */
     suspend fun getFilters(
@@ -136,7 +140,7 @@ class CatalogRepository(
         libraryId: Int,
         groupBy: String,
         sort: String = "name",
-        offset: Int? = null,
+        continuation: CatalogContinuationV2? = null,
         limit: Int? = null,
         query: String? = null,
         includeTotal: Boolean? = null,
@@ -145,7 +149,7 @@ class CatalogRepository(
             libraryId = libraryId,
             groupBy = groupBy,
             sort = sort,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             query = query,
             includeTotal = includeTotal,
@@ -283,16 +287,14 @@ class CatalogRepository(
     suspend fun getPersonItems(
         personId: Long,
         mediaType: String? = null,
-        offset: Int? = null,
+        continuation: CatalogContinuationV2? = null,
         limit: Int? = null,
-        snapshotAt: String? = null,
     ): ApiResult<CatalogResponse> =
         catalogApi.getPersonItems(
             personId = personId,
             mediaType = mediaType,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
-            snapshotAt = snapshotAt,
         )
 
     private suspend fun fetchItemDetail(

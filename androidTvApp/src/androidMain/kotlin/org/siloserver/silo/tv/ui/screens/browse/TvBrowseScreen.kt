@@ -122,7 +122,7 @@ fun TvBrowseScreen(
             .background(MaterialTheme.colorScheme.background),
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            if (state.error != null && state.items.isEmpty()) {
+            if (state.error != null) {
                 BrowseHeader(
                     subtitle = browseSubtitle(state),
                     sortLabel = sortLabel,

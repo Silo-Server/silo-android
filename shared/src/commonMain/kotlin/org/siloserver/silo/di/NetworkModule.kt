@@ -6,6 +6,7 @@ import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.createSiloClient
 import org.siloserver.silo.network.api.*
+import org.siloserver.silo.network.apiv2.CatalogV2Api
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.ApiV2Probe
 import org.koin.dsl.module
@@ -19,12 +20,13 @@ val networkModule = module {
     single { AuthApi(get(), get()) }
     single { OnboardingApi(get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
-    single { CatalogApi(get()) }
+    single { CatalogV2Api(get(), get(), get()) }
+    single { CatalogApi(get(), get()) }
     single { PlaybackApi(get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }
     single { ProfileApi(get(), get()) }
-    single { SectionApi(get()) }
+    single { SectionApi(get(), get()) }
     single { RecommendationApi(get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<org.siloserver.silo.network.api.MetadataAiApi> { org.siloserver.silo.network.api.DefaultMetadataAiApi(get()) }

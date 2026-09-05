@@ -8,6 +8,7 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.isReadingMediaType
 import org.siloserver.silo.model.catalog.personWorksFiltersForMobile
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -126,18 +127,18 @@ class PersonDetailViewModel(
     }
 
     private var itemsGeneration = 0
-    private var nextOffset = 0
-    private var snapshotAt: String? = null
+    private var continuation: CatalogContinuationV2? = null
+
+    fun retryItems() = loadItems(_uiState.value.selectedFilter, reset = true)
 
     fun loadMoreIfNeeded() {
         val state = _uiState.value
-        if (!state.hasMore || state.isLoadingItems) return
+        if (state.pagingError != null || !state.hasMore || state.isLoadingItems) return
         loadItems(state.selectedFilter, reset = false)
     }
 
     private fun resetPaging() {
-        nextOffset = 0
-        snapshotAt = null
+        continuation = null
     }
 
     private fun loadItems(filter: PersonMediaFilter, reset: Boolean) {
@@ -156,17 +157,15 @@ class PersonDetailViewModel(
             val result = catalogRepository.getPersonItems(
                 personId = personId,
                 mediaType = filter.mediaType,
-                offset = nextOffset,
+                continuation = continuation,
                 limit = PersonWorksPageSize,
-                snapshotAt = snapshotAt,
             )
             // Drop a stale response from a superseded filter selection so a
             // slower earlier load can't overwrite the newer one's results.
             if (gen != itemsGeneration) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    if (snapshotAt == null) snapshotAt = result.data.snapshot
-                    nextOffset += result.data.items.size
+                    continuation = result.data.continuation
                     val visibleItems = result.data.items.filter(filter.clientPredicate)
                     _uiState.update {
                         it.copy(

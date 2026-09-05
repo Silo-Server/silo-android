@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.tvMediaModeCapabilities
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -45,6 +46,8 @@ class TvSearchViewModel(
             TvSearchMediaType.entries.filterNot { it == TvSearchMediaType.Audiobooks },
         val items: List<BrowseItem> = emptyList(),
         val total: Int = 0,
+        val totalExact: Boolean = false,
+        val searchDiagnostics: org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2? = null,
         val hasMore: Boolean = false,
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
@@ -109,6 +112,7 @@ class TvSearchViewModel(
 
     private var searchJob: Job? = null
     private var loadMoreJob: Job? = null
+    private var continuation: CatalogContinuationV2? = null
     private val pageSize = 40
     private val debounceMs = 300L
 
@@ -184,7 +188,7 @@ class TvSearchViewModel(
 
     fun loadMore() {
         val state = _uiState.value
-        if (state.isLoading || state.isLoadingMore || !state.hasMore || state.query.isBlank()) return
+        if (state.error != null || state.isLoading || state.isLoadingMore || !state.hasMore || state.query.isBlank()) return
         if (loadMoreJob?.isActive == true) return
         loadMoreJob = viewModelScope.launch {
             try {
@@ -215,6 +219,7 @@ class TvSearchViewModel(
         }
 
         var offset = if (reset) 0 else state.rawResultCount
+        var cursor = if (reset) null else continuation
         var fetchedRawCount = 0
         _uiState.update {
             if (reset) it.copy(isLoading = true, isLoadingMore = false, error = null)
@@ -226,7 +231,7 @@ class TvSearchViewModel(
                 source = "query",
                 query = requestedQuery,
                 mediaType = requestedMediaType.wire,
-                offset = offset,
+                continuation = cursor,
                 limit = pageSize,
             )
 
@@ -248,6 +253,7 @@ class TvSearchViewModel(
                     // The results now belong to this generation; load-more may page.
                     if (reset) resultsGeneration = generation
                     val response = result.data
+                    cursor = response.continuation
                     fetchedRawCount += response.items.size
                     val visibleItems = response.items
                         .visibleOnTv()
@@ -262,6 +268,7 @@ class TvSearchViewModel(
                         continue
                     }
 
+                    continuation = cursor
                     _uiState.update {
                         val accumulatedItems = if (reset) visibleItems else it.items + visibleItems
                         it.copy(
@@ -273,6 +280,8 @@ class TvSearchViewModel(
                             } else {
                                 response.total
                             },
+                            totalExact = if (requestedMediaType == TvSearchMediaType.All) !response.hasMore else response.totalExact == true,
+                            searchDiagnostics = response.searchDiagnostics,
                             hasMore = response.hasMore && response.items.isNotEmpty(),
                             error = null,
                             rawResultCount = if (reset) fetchedRawCount else it.rawResultCount + fetchedRawCount,

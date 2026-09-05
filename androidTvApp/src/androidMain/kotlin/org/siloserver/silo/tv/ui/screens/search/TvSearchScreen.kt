@@ -583,6 +583,7 @@ fun TvSearchScreen(
                         isSearching = state.isLoading,
                         error = state.error,
                         isPartialCount = state.mediaType == TvSearchMediaType.All && state.hasMore,
+                        isEstimatedCount = !state.totalExact,
                     ),
                     hasContentFocusTarget = hasContentFocusTarget,
                     searchFieldFocusRequester = activeSearchFieldFocusRequester,
@@ -1130,11 +1131,13 @@ private fun searchStatusText(
     isSearching: Boolean,
     error: String?,
     isPartialCount: Boolean,
+    isEstimatedCount: Boolean = false,
 ): String? = when {
     query.isBlank() -> null
     isSearching -> "Searching…"
     error != null -> "Couldn't update results"
     total == 0 -> "No results"
+    isEstimatedCount && !isPartialCount -> "About $total results"
     total == 1 -> "1 result"
     isPartialCount -> "$total+ results"
     else -> "$total results"

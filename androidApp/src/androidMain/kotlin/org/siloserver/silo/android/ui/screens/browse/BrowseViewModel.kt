@@ -10,6 +10,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.port.LocalContentState
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ensureActive
 
 /**
  * UI state for the browse / catalog screen.
@@ -56,6 +58,8 @@ class BrowseViewModel(
     private val _uiState = MutableStateFlow(BrowseUiState())
     val uiState: StateFlow<BrowseUiState> = _uiState.asStateFlow()
 
+    private var continuation: CatalogContinuationV2? = null
+    private var pagingJob: kotlinx.coroutines.Job? = null
     private val pageSize = 40
 
     init {
@@ -133,7 +137,7 @@ class BrowseViewModel(
      */
     fun loadMore() {
         val current = _uiState.value
-        if (current.isLoadingMore || !current.hasMore) return
+        if (current.error != null || current.isLoading || current.isLoadingMore || !current.hasMore) return
         loadItems(reset = false)
     }
 
@@ -187,9 +191,10 @@ class BrowseViewModel(
     }
 
     private fun loadItems(reset: Boolean) {
-        viewModelScope.launch {
+        pagingJob?.cancel()
+        pagingJob = viewModelScope.launch {
             val currentState = _uiState.value
-            val offset = if (reset) 0 else currentState.items.size
+            val cursor = if (reset) null else continuation
             _uiState.update {
                 if (reset) it.copy(isLoading = true, error = null)
                 else it.copy(isLoadingMore = true, error = null)
@@ -200,7 +205,7 @@ class BrowseViewModel(
                 libraryId = currentState.libraryId,
                 sort = filters.sort,
                 order = filters.order,
-                offset = offset,
+                continuation = cursor,
                 limit = pageSize,
                 namePrefix = currentState.selectedNamePrefix,
                 queryGroups = CatalogFilterQueryBuilder.buildGroups(filters),
@@ -214,6 +219,8 @@ class BrowseViewModel(
                     // Overlay local optimistic watched/favorite so an offline mutation
                     // shows immediately on the cached grid (mirrors Home).
                     val overlaid = overlayLocalState(response.items)
+                    kotlin.coroutines.coroutineContext.ensureActive()
+                    continuation = response.continuation
                     // Audiobook libraries surface book-native facets
                     // (author/narrator/series) — detected from the first item
                     // like iOS BrowseMediaType.from.

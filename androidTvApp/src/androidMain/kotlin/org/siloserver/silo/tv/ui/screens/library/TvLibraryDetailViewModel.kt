@@ -10,6 +10,7 @@ import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.tvCatalogMediaTypeFor
@@ -202,6 +203,8 @@ class TvLibraryDetailViewModel(
     private var loadedCollections = false
     private var loadedFilters = false
     private var browseGeneration = 0
+    private var browseContinuation: CatalogContinuationV2? = null
+    private var audiobookContinuation: CatalogContinuationV2? = null
     private var browseSnapshot: String? = null
 
     // Raw (pre-visibleOnTv-filter) loaded count = the server offset for the next
@@ -315,14 +318,14 @@ class TvLibraryDetailViewModel(
 
     fun loadMoreBrowse() {
         val state = _uiState.value
-        if (state.browseLoading || state.browseLoadingMore || !state.browseHasMore) return
+        if (state.browseError != null || state.browseLoading || state.browseLoadingMore || !state.browseHasMore) return
         loadBrowse(reset = false)
     }
 
     fun loadMoreAudiobookGroups() {
         val state = _uiState.value
         val groupBy = state.selectedTab.audiobookGroupBy ?: return
-        if (state.audiobookGroupsLoading || state.audiobookGroupsLoadingMore || !state.audiobookGroupsHasMore) return
+        if (state.audiobookGroupsError != null || state.audiobookGroupsLoading || state.audiobookGroupsLoadingMore || !state.audiobookGroupsHasMore) return
         loadAudiobookGroups(groupBy = groupBy, reset = false)
     }
 
@@ -526,12 +529,11 @@ class TvLibraryDetailViewModel(
                 genre = filter.genre,
                 sort = filter.sort,
                 order = filter.order,
-                offset = offset,
+                continuation = if (reset) null else browseContinuation,
                 limit = pageSize,
                 namePrefix = filter.namePrefix,
                 yearMin = filter.yearMin,
                 yearMax = filter.yearMax,
-                snapshotAt = browseSnapshot,
                 queryGroups = filter.queryGroups + facetGroups,
                 match = if (facetGroups.isNotEmpty()) {
                     if (filter.facetSelection.matchAll) "all" else "any"
@@ -545,6 +547,7 @@ class TvLibraryDetailViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    browseContinuation = response.continuation
                     if (browseSnapshot == null) {
                         browseSnapshot = response.snapshot
                     }
@@ -629,11 +632,12 @@ class TvLibraryDetailViewModel(
                     libraryId = libraryId,
                     groupBy = groupBy,
                     sort = "name",
-                    offset = offset,
+                    continuation = if (reset) null else audiobookContinuation,
                     limit = pageSize,
                 )
             ) {
                 is ApiResult.Success -> {
+                        audiobookContinuation = result.data.continuation
                     if (generation != audiobookGroupsGeneration) return@launch
                     val response = result.data
                     _uiState.update {

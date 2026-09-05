@@ -32,6 +32,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import org.koin.compose.koinInject
+import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.apiv2.CatalogFacetScopeV2
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -103,6 +110,7 @@ fun FilterSheet(
                 FacetValuePicker(
                     facet = facet,
                     options = facetOptionPairs(facet, availableFilters),
+                    scope = availableFilters?.facetScope,
                     selected = draft.valuesFor(facet),
                     onToggle = { value -> draft = draft.toggle(facet, value) },
                     onClear = { draft = draft.clear(facet) },
@@ -284,12 +292,31 @@ fun FilterSheet(
 private fun FacetValuePicker(
     facet: CatalogFacet,
     options: List<Pair<String, String>>,
+    scope: CatalogFacetScopeV2?,
     selected: Set<String>,
     onToggle: (String) -> Unit,
     onClear: () -> Unit,
     onBack: () -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember(facet, scope) { mutableStateOf("") }
+    val remoteField = when (facet) { CatalogFacet.Author -> "author"; CatalogFacet.Narrator -> "narrator"; CatalogFacet.SeriesName -> "series"; else -> null }
+    val repository: CatalogRepository = koinInject()
+    var remoteValues by remember(facet, scope) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var remoteNote by remember(facet, scope) { mutableStateOf<String?>(null) }
+    LaunchedEffect(query, facet, scope) {
+        if (remoteField != null && scope != null) {
+            remoteValues = emptyList()
+            remoteNote = "Searching…"
+            delay(250)
+            when (val result = repository.searchFacet(scope, remoteField, query.trim())) {
+                is ApiResult.Success -> {
+                    remoteValues = result.data.matches.map { it to it }
+                    remoteNote = if (result.data.hasMore) "More matches are available. Refine your search." else null
+                }
+                else -> remoteNote = result.errorMessage("Could not search filter values")
+            }
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -310,7 +337,7 @@ private fun FacetValuePicker(
             TextButton(onClick = onClear) { Text("Clear") }
         }
     }
-    if (options.size > 12) {
+    if (remoteField != null || options.size > 12) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -321,7 +348,12 @@ private fun FacetValuePicker(
                 .padding(vertical = 4.dp),
         )
     }
-    val shown = if (query.isBlank()) {
+    if (remoteField != null) {
+        Text(remoteNote ?: if (scope == null) "Showing a limited list. Reload filters to search all values." else "Search by the beginning of a name.", style = MaterialTheme.typography.bodySmall)
+    }
+    val shown = if (remoteField != null && scope != null) {
+        remoteValues
+    } else if (query.isBlank()) {
         options
     } else {
         options.filter { it.second.contains(query.trim(), ignoreCase = true) }

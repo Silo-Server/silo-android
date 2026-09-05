@@ -84,4 +84,50 @@ class CatalogV2Test {
         assertEquals(listOf("4K"), assertIs<ApiResult.Success<CatalogFiltersV2>>(CatalogV2Api(client).filters()).data.technical?.resolutions)
         client.close()
     }
+    @Test fun viewerChangeRejectsContinuationBeforeSending() = runTest {
+        var identity = org.siloserver.silo.network.AuthScopeSnapshot("server", "p1", "https://example.invalid", null, identityGeneration = 1)
+        val tokens = object : org.siloserver.silo.network.TokenManager by org.siloserver.silo.network.TokenManagerImpl() {
+            override suspend fun snapshotCurrentScope() = identity
+        }
+        var calls = 0
+        val client = HttpClient(MockEngine {
+            calls++
+            respond(body("next"), headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val api = CatalogV2Api(client, tokenManager = tokens)
+        val first = assertIs<ApiResult.Success<CatalogPageV2<*>>>(api.browse(CatalogQueryV2())).data
+        identity = identity.copy(profileId = "p2", identityGeneration = 2)
+        assertEquals("identity_changed", assertIs<ApiResult.Error>(api.browse(CatalogQueryV2(), first.continuation)).error)
+        assertEquals(1, calls)
+        client.close()
+    }
+
+    @Test fun facetSearchUsesBoundedPrefixAndSameScope() = runTest {
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v2/catalog/filters/search", request.url.encodedPath)
+            assertEquals("library_collection", request.url.parameters["source"])
+            assertEquals("c1", request.url.parameters["collection_id"])
+            assertEquals("author", request.url.parameters["facet"])
+            assertEquals("And", request.url.parameters["q"])
+            assertEquals("100", request.url.parameters["limit"])
+            respond("""{"matches":["Andy Weir"],"has_more":true}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val result = assertIs<ApiResult.Success<CatalogFacetMatchesV2>>(CatalogV2Api(client).searchFacet(CatalogFacetScopeV2(source = "library_collection", collectionId = "c1"), "author", "And"))
+        assertTrue(result.data.hasMore)
+        assertEquals(listOf("Andy Weir"), result.data.matches)
+        client.close()
+    }
+
+    @Test fun libraryTabKeepsRegularAndPersonalRoutingKinds() = runTest {
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v2/library/7/collections", request.url.encodedPath)
+            respond("""{"library_id":"7","collections":[],"groups":[{"id":"g1","name":"Curated","kind":"admin","sort_mode":"manual","sort_order":1,"collections":[{"id":"c1","title":"Films","poster_url":"","item_count":2}]},{"id":"g2","name":"Personal","kind":"user_collections","sort_mode":"manual","sort_order":2,"collections":[{"id":"c2","title":"Saved","poster_url":"","item_count":1,"creator_profile_id":"p1"}]}]}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val result = assertIs<ApiResult.Success<org.siloserver.silo.model.section.LibraryCollectionsResponse>>(org.siloserver.silo.network.api.SectionApi(client).getLibraryCollections(7)).data
+        assertEquals(listOf("regular", "user_collections"), result.groups.map { it.kind })
+        assertEquals("p1", result.collections.last().creatorProfileId)
+        assertEquals(listOf("c1", "c2"), result.collections.map { it.id })
+        client.close()
+    }
+
 }

@@ -121,6 +121,7 @@ fun PersonDetailScreen(
                     pagingError = state.pagingError,
                     onFilterSelected = { viewModel.applyFilter(it) },
                     onLoadMore = viewModel::loadMoreIfNeeded,
+                    onRetryItems = viewModel::retryItems,
                     onItemClick = onItemClick,
                 )
                 }
@@ -160,6 +161,7 @@ private fun PersonDetailContent(
     pagingError: String?,
     onFilterSelected: (PersonMediaFilter) -> Unit,
     onLoadMore: () -> Unit,
+    onRetryItems: () -> Unit,
     onItemClick: (String) -> Unit,
 ) {
     val gridState = rememberLazyGridState()
@@ -254,7 +256,7 @@ private fun PersonDetailContent(
                     PagingFooter(
                         isLoading = isLoadingItems,
                         error = pagingError,
-                        onRetry = onLoadMore,
+                        onRetry = onRetryItems,
                     )
                 }
             }

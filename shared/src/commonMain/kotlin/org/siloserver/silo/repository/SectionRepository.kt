@@ -8,6 +8,7 @@ import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.SectionApi
@@ -132,7 +133,7 @@ class SectionRepository(
     /** Pages a library collection's items via the catalog resolver. */
     suspend fun getLibraryCollectionItems(
         collectionId: String,
-        offset: Int = 0,
+        continuation: CatalogContinuationV2? = null,
         limit: Int = 60,
         sort: String? = null,
         order: String? = null,
@@ -141,7 +142,7 @@ class SectionRepository(
     ): ApiResult<CatalogResponse> =
         sectionApi.getLibraryCollectionItems(
             collectionId = collectionId,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             sort = sort,
             order = order,

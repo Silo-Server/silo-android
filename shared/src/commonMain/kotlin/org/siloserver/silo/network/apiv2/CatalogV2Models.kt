@@ -153,3 +153,8 @@ data class LibraryCollectionTabV2(
     val groups: List<LibraryCollectionGroupV2>,
     val ungrouped: LibraryCollectionUngroupedV2? = null,
 )
+
+/** Scope retained by a facet picker; absent scopes are never guessed. */
+data class CatalogFacetScopeV2(val libraryId: String? = null, val source: String? = null, val collectionId: String? = null)
+@Serializable
+data class CatalogFacetMatchesV2(val matches: List<String>, @SerialName("has_more") val hasMore: Boolean)

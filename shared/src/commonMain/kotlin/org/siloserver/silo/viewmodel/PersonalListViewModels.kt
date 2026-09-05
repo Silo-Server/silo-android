@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.CatalogEffectiveSort
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -80,10 +81,13 @@ abstract class PersonalListViewModel(
     protected var query: PersonalListQuery = PersonalListQuery()
         private set
 
+    private var continuation: CatalogContinuationV2? = null
+
     protected abstract suspend fun fetchPage(
         offset: Int,
         limit: Int,
         query: PersonalListQuery,
+        continuation: CatalogContinuationV2?,
     ): ApiResult<CatalogResponse>
 
     protected fun loadInitial() {
@@ -109,7 +113,7 @@ abstract class PersonalListViewModel(
         val state = _uiState.value
         // isRefreshing too: refresh reloads from offset zero, so a page fetched
         // alongside it uses an offset the replacement invalidates.
-        if (state.isLoading || state.isLoadingMore || state.isRefreshing || !state.hasMore) return
+        if (state.error != null || state.isLoading || state.isLoadingMore || state.isRefreshing || !state.hasMore) return
         load(reset = false)
     }
 
@@ -153,7 +157,7 @@ abstract class PersonalListViewModel(
         _uiState.update { it.copy(isRefreshing = true, error = null) }
         viewModelScope.launch {
             val offset = 0
-            val result = fetchPage(offset, pageSize, query)
+            val result = fetchPage(offset, pageSize, query, null)
             // A newer replacement started while this refresh was in flight.
             // Release isRefreshing unless a newer REFRESH has re-claimed it —
             // a superseding reset owns isLoading instead and would not clear
@@ -166,6 +170,7 @@ abstract class PersonalListViewModel(
             }
             when (val r = result) {
                 is ApiResult.Success -> {
+                    continuation = r.data.continuation
                     // A refresh that publishes content has loaded once, whatever
                     // the initial load did. Screens gate their resume re-fetch
                     // on this flag, so leaving it false when a refresh overtakes
@@ -210,8 +215,9 @@ abstract class PersonalListViewModel(
         // Captured with the offset: a query swap mid-flight must not make this
         // page's items describe a different list from the one it asked for.
         val requestQuery = query
+        val cursor = if (reset) null else continuation
         viewModelScope.launch {
-            val result = fetchPage(offset, pageSize, requestQuery)
+            val result = fetchPage(offset, pageSize, requestQuery, cursor)
             // Superseded WHILE IN FLIGHT: something replaced the list, so this
             // page's offset no longer describes anything. Checked here rather
             // than before the fetch — before it, there is nothing to be stale
@@ -234,6 +240,7 @@ abstract class PersonalListViewModel(
             }
             when (val r = result) {
                 is ApiResult.Success -> {
+                    continuation = r.data.continuation
                     hasLoadedOnce = true
                     _uiState.update {
                         it.copy(
@@ -284,13 +291,13 @@ class FavoritesViewModel(
     // Always the catalog resolver, even for the default query: it returns the
     // same stored list order as the legacy `/favorites` route but also reports
     // `total`, so an item count is available before any sort is applied.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
         catalogRepository.browse(
             source = "favorites",
             mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             queryGroups = query.queryGroups,
             match = query.match,
@@ -322,13 +329,13 @@ class WatchlistViewModel(
     // Always the catalog resolver, even for the default query: it returns the
     // same stored list order as the legacy `/watchlist` route but also reports
     // `total`, so an item count is available before any sort is applied.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
         catalogRepository.browse(
             source = "watchlist",
             mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             queryGroups = query.queryGroups,
             match = query.match,
@@ -356,6 +363,6 @@ class HistoryViewModel(
     }
 
     // History has no sort/filter surface, so the query is always the default.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
         personalDataRepository.listHistory(offset = offset, limit = limit)
 }

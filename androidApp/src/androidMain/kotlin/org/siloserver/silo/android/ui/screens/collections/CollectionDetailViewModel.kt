@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.api.CollectionContinuation
@@ -44,6 +45,7 @@ class CollectionDetailViewModel(
     val uiState: StateFlow<CollectionDetailUiState> = _uiState.asStateFlow()
 
     private var pagingJob: kotlinx.coroutines.Job? = null
+    private var libraryContinuation: CatalogContinuationV2? = null
     private var continuation: CollectionContinuation? = null
     private var deleteEditor: CollectionEditor<Collection>? = null
     private var collectionId: String = ""
@@ -137,9 +139,8 @@ class CollectionDetailViewModel(
             when (
                 val result = sectionRepository.getLibraryCollectionItems(
                     collectionId,
-                    offset = 0,
                     limit = pageSize,
-                )
+                ).map { libraryContinuation = it.continuation; it }
             ) {
                 is ApiResult.Success -> {
                     _uiState.update {
@@ -183,9 +184,9 @@ class CollectionDetailViewModel(
             val result = if (libraryId != null) {
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
-                    offset = current.items.size,
+                    continuation = libraryContinuation,
                     limit = pageSize,
-                )
+                ).map { libraryContinuation = it.continuation; it }
             } else {
                 collectionRepository.getItems(
                     collectionId,

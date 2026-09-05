@@ -117,6 +117,7 @@ import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
@@ -207,6 +208,7 @@ class LibrariesViewModel(
     private var browseLoadedLibraryId: Int? = null
     private var collectionsLoadedLibraryId: Int? = null
     private var recommendedRequestGeneration = 0L
+    private var catalogContinuation: CatalogContinuationV2? = null
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
@@ -419,7 +421,7 @@ class LibrariesViewModel(
     fun loadMoreCatalog() {
         val state = _uiState.value
         val libraryId = state.selectedLibraryId ?: return
-        if (state.isLoadingCatalog || state.isLoadingMoreCatalog || !state.catalogHasMore) return
+        if (state.catalogError != null || state.isLoadingCatalog || state.isLoadingMoreCatalog || !state.catalogHasMore) return
         loadCatalog(libraryId, reset = false, force = true)
     }
 
@@ -562,7 +564,7 @@ class LibrariesViewModel(
                     libraryId = libraryId,
                     sort = requestState.browseSort.sortField,
                     order = requestState.browseSort.sortOrder,
-                    offset = offset,
+                    continuation = if (reset) null else catalogContinuation,
                     limit = pageSize,
                     namePrefix = requestState.selectedNamePrefix,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
@@ -576,6 +578,7 @@ class LibrariesViewModel(
                     // Overlay local optimistic watched/favorite (mirrors Home/Browse).
                     val overlaid = overlayLocalState(result.data.items)
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
+                    catalogContinuation = result.data.continuation
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
@@ -1071,7 +1074,7 @@ private fun BrowseTabContent(
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             }
-            state.catalogError != null && state.catalogItems.isEmpty() -> {
+            state.catalogError != null -> {
                 // Controls stay mounted so a rejected sort/filter/letter can be
                 // changed from here rather than only retried.
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {

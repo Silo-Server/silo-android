@@ -55,7 +55,7 @@ class CatalogLetterIndexViewModelTest {
 
         val lastCatalogRequest = requests.lastCatalogRequest()
         assertEquals("M", lastCatalogRequest.query["name_prefix"])
-        assertEquals("0", lastCatalogRequest.query["offset"])
+        assertEquals(null, lastCatalogRequest.query["cursor"])
         assertEquals("M", viewModel.uiState.value.selectedNamePrefix)
     }
 
@@ -172,11 +172,11 @@ class CatalogLetterIndexViewModelTest {
     )
 
     private fun MutableList<RequestRecord>.lastCatalogRequest(): RequestRecord =
-        lastOrNull { it.path == "/api/v1/catalog" }
+        lastOrNull { it.path == "/api/v2/catalog" }
             ?: error("Expected a catalog request, got $this")
 
     private fun List<RequestRecord>.catalogRequestCount(): Int =
-        count { it.path == "/api/v1/catalog" }
+        count { it.path == "/api/v2/catalog" }
 
     /**
      * [homeRequestDispatcher] is the seam that makes this deterministic.
@@ -199,10 +199,10 @@ class CatalogLetterIndexViewModelTest {
                         """[{"id":1,"name":"Books","type":"ebooks","sort_order":0}]""",
                     )
                     "/api/v1/library/1/sections" -> respondJson("""{"sections":[]}""")
-                    "/api/v1/catalog/filters" -> respondJson(
-                        """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[]}""",
+                    "/api/v2/catalog/filters" -> respondJson(
+                        """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
                     )
-                    "/api/v1/catalog" -> respondJson(catalogBody(request.url.parameters["name_prefix"], request.url.parameters["offset"]))
+                    "/api/v2/catalog" -> respondJson(catalogBody(request.url.parameters["name_prefix"], request.url.parameters["cursor"]))
                     else -> error("Unexpected path ${request.url.encodedPath}")
                 }
             },
@@ -222,13 +222,15 @@ class CatalogLetterIndexViewModelTest {
         headers = headersOf(HttpHeaders.ContentType, "application/json"),
     )
 
-    private fun catalogBody(prefix: String?, offset: String?): String {
+    private fun catalogBody(prefix: String?, cursor: String?): String {
         val normalizedPrefix = prefix?.lowercase()?.takeIf { it.isNotBlank() } ?: "all"
-        val page = (offset?.toIntOrNull() ?: 0) + 1
+        val page = if (cursor == null) 1 else 2
         return """
             {
               "total": 2,
-              "has_more": ${offset == null || offset == "0"},
+              "total_exact":true,
+              "window_cursor":"window",
+              "page":{"has_more":${cursor == null}${if (cursor == null) ",\"next_cursor\":\"next\"" else ""}},
               "title": "Catalog",
               "items": [
                 {"content_id":"$normalizedPrefix-$page","title":"${normalizedPrefix.uppercase()} $page","type":"movie"}
