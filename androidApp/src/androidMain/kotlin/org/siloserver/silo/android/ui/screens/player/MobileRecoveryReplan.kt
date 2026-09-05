@@ -16,5 +16,5 @@ internal data class MobileRecoveryReplan(
 
     fun isNonfatalFailure(result: ApiResult<VideoSessionStartV3>): Boolean =
         classification == "subtitle_embedded_failed" &&
-            !(result is ApiResult.Success && result.data is VideoSessionStartV3.Ready)
+            result !is ApiResult.Success
 }

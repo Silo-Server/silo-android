@@ -2165,6 +2165,13 @@ internal class TvSubtitleTransactionAdapter(
                     }
                 }
             } else {
+                // A failed restore has no mounted subtitle to keep selected,
+                // even if its sidecar retry is rejected. Do not persist Off.
+                if (ownedRestore && transition.committed.identity == failedIdentity) {
+                    transition = transition.copy(
+                        committed = transition.committed.copy(identity = SubtitleIdentity.Off),
+                    )
+                }
                 invalidateLocalMount()
                 failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
                 publish()

@@ -154,6 +154,15 @@ internal class SubtitleRemountReselection(
         resolvedOwner = null
     }
 
+    /** Release an ended adapter mount without cancelling a newer transport mount. */
+    fun cancelOwned(generation: Long): Boolean {
+        val pending = pendingOwner?.generation == generation
+        val resolved = resolvedOwner?.generation == generation
+        if (pending) clear()
+        if (resolved) releaseResolved()
+        return pending || resolved
+    }
+
     fun arm(
         identity: SubtitleIdentity,
         generation: Long,

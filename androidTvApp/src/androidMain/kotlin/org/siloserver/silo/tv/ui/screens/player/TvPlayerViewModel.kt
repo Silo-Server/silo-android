@@ -1126,6 +1126,7 @@ class TvPlayerViewModel(
         )
     private var subtitleMountGeneration = 0L
     private var lastAdapterMountIdentity: SubtitleIdentity? = null
+    private var lastAdapterMountGeneration: Long? = null
 
     /**
      * Authority for the NEXT mount the adapter arms, consumed by the snapshot
@@ -1188,6 +1189,7 @@ class TvPlayerViewModel(
             val localMountIdentity = snapshot.localMountIdentity
             if (localMountIdentity != null && localMountIdentity != lastAdapterMountIdentity) {
                 subtitleMountGeneration += 1
+                lastAdapterMountGeneration = subtitleMountGeneration
                 subtitleRemountReselection.arm(
                     identity = localMountIdentity,
                     generation = subtitleMountGeneration,
@@ -1202,6 +1204,12 @@ class TvPlayerViewModel(
                     .takeIf(List<PlayerTrackEntry>::isNotEmpty)
                     ?.let(::resolveSubtitleRemountReselection)
             } else if (localMountIdentity == null) {
+                lastAdapterMountGeneration?.let { generation ->
+                    if (subtitleRemountReselection.cancelOwned(generation)) {
+                        subtitleSnapshotSettlement.reset()
+                    }
+                }
+                lastAdapterMountGeneration = null
                 lastAdapterMountIdentity = null
             }
             if (autoSubtitleSelectionInFlight &&

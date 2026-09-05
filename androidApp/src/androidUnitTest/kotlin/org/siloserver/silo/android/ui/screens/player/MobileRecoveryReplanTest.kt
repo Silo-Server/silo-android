@@ -23,13 +23,18 @@ class MobileRecoveryReplanTest {
         val failures: List<ApiResult<VideoSessionStartV3>> = listOf(
             ApiResult.Error(code = 503, error = "unavailable", message = "Unavailable"),
             ApiResult.NetworkError(IllegalStateException("Offline")),
-            ApiResult.Success(VideoSessionStartV3.Terminal("unsupported", "No subtitles", false)),
-            ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired),
         )
         failures.forEach { failure ->
             assertTrue(native.isNonfatalFailure(failure), "$failure")
             assertFalse(transport.isNonfatalFailure(failure), "$failure")
         }
+    }
+
+    @Test
+    fun terminalAndUpgradeOutcomesAreNeverMistakenForAStillActiveSession() {
+        val native = MobileRecoveryReplan("subtitle_embedded_failed", "Retrying", 4)
+        assertFalse(native.isNonfatalFailure(ApiResult.Success(VideoSessionStartV3.Terminal("unsupported", "No subtitles", false))))
+        assertFalse(native.isNonfatalFailure(ApiResult.Success(VideoSessionStartV3.ServerUpgradeRequired)))
     }
 
     @Test

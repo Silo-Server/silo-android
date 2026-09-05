@@ -727,7 +727,9 @@ open class PlaybackSessionManager(
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
                 operation = replanOperationForClassification(classification),
-                preserveImmediateOutcomes = true,
+                // A rejected subtitle retry must not tear down healthy video.
+                // Reuse staged rejection cleanup while successful retries still commit.
+                preserveImmediateOutcomes = classification != "subtitle_embedded_failed",
             )
         ) {
             is ApiResult.Success -> when (val value = prepared.data) {

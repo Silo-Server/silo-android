@@ -15,6 +15,43 @@ import kotlin.test.assertTrue
 
 class SubtitleRemountReselectionTest {
     @Test
+    fun `ended adapter mount releases unconfirmed selection for automatic restore`() {
+        val latch = SubtitleRemountReselection()
+        val identity = SubtitleIdentity.ServerSidecar(4)
+        val mounted = listOf(track(0, subtitleArtifactTrackId(4)))
+        latch.arm(identity, generation = 1)
+        assertIs<TvSubtitleRemountEvent.Select>(latch.consume(mounted, snapshotKey = "ready", settled = true))
+        assertTrue(latch.hasPendingOwner)
+
+        assertTrue(latch.cancelOwned(1))
+        assertFalse(latch.hasPendingOwner)
+        assertFalse(latch.ownsResolved(1), "A queued command from the timed-out mount must be rejected")
+        latch.arm(identity, generation = 2, priority = TvSubtitleMountPriority.Auto)
+        val retry = assertIs<TvSubtitleRemountEvent.Select>(
+            latch.consume(mounted, snapshotKey = "retry", settled = true),
+        )
+        assertEquals(2, retry.owner.generation)
+    }
+
+    @Test
+    fun `ending an old adapter mount preserves a newer transport owner`() {
+        for (resolved in listOf(false, true)) {
+            val latch = SubtitleRemountReselection()
+            val identity = SubtitleIdentity.ServerSidecar(4)
+            val mounted = listOf(track(0, subtitleArtifactTrackId(4)))
+            latch.arm(identity, generation = 1)
+            latch.arm(identity, generation = 2)
+            if (resolved) {
+                assertIs<TvSubtitleRemountEvent.Select>(latch.consume(mounted, snapshotKey = "ready", settled = true))
+            }
+            assertFalse(latch.cancelOwned(1))
+            assertTrue(latch.hasPendingOwner)
+            assertTrue(latch.cancelOwned(2))
+            assertFalse(latch.hasPendingOwner)
+        }
+    }
+
+    @Test
     fun `native inventory identity remounts only its unique container track`() {
         val row = PlayerSubtitleInfo(
             index = 0, language = "en", codec = "mov_text", label = "English",

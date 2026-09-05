@@ -1366,6 +1366,45 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
+    fun `native subtitle recovery rejection keeps the active session usable for another retry`() = runTest {
+        val rejectedResponses = listOf(
+            terminalResponse("s2", "adaptation_unavailable", "No subtitle route."),
+            response(sidecarPlan(sessionId = "s2")).copy(protocolVersion = 2),
+            response(sidecarPlan(sessionId = "s2").copy(runtimeCorrections = listOf("future_runtime_fix"))),
+        )
+        for (rejectedResponse in rejectedResponses) {
+            val harness = Harness(
+                replanResponse = { index, _ ->
+                    if (index == 0) rejectedResponse else response(sidecarPlan(sessionId = "s3"))
+                },
+            )
+            harness.start()
+
+            val rejected = harness.manager.replanActiveVideoSession(
+                classification = "subtitle_embedded_failed",
+                positionSeconds = 42.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            )
+
+            assertIs<ApiResult.Error>(rejected)
+            assertEquals("s1", harness.manager.activeSessionIdForTest())
+            assertEquals(listOf("s2"), harness.stoppedSessions)
+
+            val retried = harness.manager.replanActiveVideoSession(
+                classification = "subtitle_embedded_failed",
+                positionSeconds = 43.0,
+                audioTrackIndex = 0,
+                subtitleTrackIndex = 4,
+            )
+            assertIs<VideoSessionStartV3.Ready>(assertIs<ApiResult.Success<VideoSessionStartV3>>(retried).data)
+            harness.awaitStopped("s1")
+            assertEquals("s3", harness.manager.activeSessionIdForTest())
+            assertEquals(mapOf("s1" to 1, "s2" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+        }
+    }
+
+    @Test
     fun `immediate terminal response preserves typed outcome and teardown`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->

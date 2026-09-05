@@ -2219,6 +2219,33 @@ class TvSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `failed native restore clears only the unmounted committed subtitle`() = runTest {
+        for (timeout in listOf(false, true)) {
+            val failures = mutableListOf<Int>()
+            val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
+            val native = SubtitleIdentity.Embedded(4, SubtitleMediaIdentity(language = "eng", codecFamily = "mov_text"), "19")
+            harness.adapter.resetContent(context(), committedIdentity = native)
+            val prior = harness.adapter.snapshot.transition.committed
+            harness.adapter.restoreCommittedLocalMount()
+            if (timeout) {
+                advanceTimeBy(5_000)
+            } else {
+                repeat(2) {
+                    harness.adapter.reportMountedSelection(native, selected = false, snapshotKey = "missing-native", settled = true)
+                }
+            }
+            runCurrent()
+
+            assertEquals(listOf(4), failures)
+            assertEquals(prior.copy(identity = SubtitleIdentity.Off), harness.adapter.snapshot.transition.committed)
+            assertNull(harness.adapter.snapshot.localMountIdentity)
+            assertFalse(harness.adapter.hasActiveTransaction)
+            assertTrue(harness.persistence.persisted.isEmpty())
+            assertTrue(harness.committedPlaybacks.isEmpty())
+        }
+    }
+
+    @Test
     fun `native fallback waits for rollback before replanning the failed track`() = runTest {
         val failures = mutableListOf<Int>()
         val harness = harness(backgroundScope, onEmbeddedFailure = failures::add)
