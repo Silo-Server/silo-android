@@ -9,7 +9,7 @@ import org.siloserver.silo.model.download.*
 import org.siloserver.silo.network.*
 
 @Serializable
-private data class DownloadEntryV2(
+internal data class DownloadEntryV2(
     val id: String,
     @SerialName("content_id") val contentId: String,
     @SerialName("episode_id") val episodeId: String? = null,

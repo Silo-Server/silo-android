@@ -24,7 +24,7 @@ import io.ktor.http.contentType
 // classes (SectionApi, CatalogApi) are final because their repos aren't
 // unit-tested at the API boundary; downloads gets real fake-based tests
 // because the upsert / refresh / delete state transitions are non-trivial.
-open class DownloadsApi(protected val client: HttpClient, private val registry: org.siloserver.silo.network.apiv2.DownloadRegistryV2Api? = null, private val tokens: org.siloserver.silo.network.TokenManager? = null) {
+open class DownloadsApi(protected val client: HttpClient, private val registry: org.siloserver.silo.network.apiv2.DownloadRegistryV2Api? = null, private val tokens: org.siloserver.silo.network.TokenManager? = null, private val creation: org.siloserver.silo.network.apiv2.DownloadCreationV2Api? = null) {
 
     private fun changed() = ApiResult.Error(0, "identity_changed", "Downloads need the original saved account and profile.")
     open suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
@@ -57,10 +57,19 @@ open class DownloadsApi(protected val client: HttpClient, private val registry: 
         }
     }
 
-    open suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> = safeApiCall {
+    open suspend fun create(request: DownloadRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadRecord> =
+        if (creation == null) create(request) else if (scope == null) changed() else creation.create(request, scope)
+
+    open suspend fun createBatch(request: DownloadRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
+        if (creation == null) createBatch(request) else if (scope == null) changed() else creation.createBatch(request, scope)
+
+    open suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> {
+        if (creation != null) return create(request, tokens?.snapshotCurrentScope())
+        return safeApiCall {
         client.post("/api/v1/downloads/") {
             contentType(ContentType.Application.Json)
             setBody(request)
+        }
         }
     }
 
@@ -70,10 +79,13 @@ open class DownloadsApi(protected val client: HttpClient, private val registry: 
      * a `batch_id`) instead of a single record. Wired separately from
      * [create] so the return shape is type-safe at the call site.
      */
-    open suspend fun createBatch(request: DownloadRequest): ApiResult<DownloadsListResponse> = safeApiCall {
+    open suspend fun createBatch(request: DownloadRequest): ApiResult<DownloadsListResponse> {
+        if (creation != null) return createBatch(request, tokens?.snapshotCurrentScope())
+        return safeApiCall {
         client.post("/api/v1/downloads/") {
             contentType(ContentType.Application.Json)
             setBody(request)
+        }
         }
     }
 

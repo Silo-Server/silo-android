@@ -46,6 +46,13 @@ data class DownloadRecord(
 @Serializable
 data class DownloadsListResponse(
     val downloads: List<DownloadRecord> = emptyList(),
+    val skipped: List<SkippedDownload> = emptyList(),
+)
+
+@Serializable
+data class SkippedDownload(
+    @SerialName("episode_id") val episodeId: String,
+    val reason: String,
 )
 
 /**

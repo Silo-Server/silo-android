@@ -73,6 +73,7 @@ class DownloadEnqueuer(
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),
+            expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data.also { Log.i(TAG, "start: server record id=${it.id} status=${it.status}") }
             is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
@@ -115,6 +116,7 @@ class DownloadEnqueuer(
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),
+            expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
             is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
@@ -158,7 +160,7 @@ class DownloadEnqueuer(
         val authority = authorities?.snapshotDurableLoginAuthority()
         if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
         Log.i(TAG, "startSeries: contentId=$seriesContentId")
-        val records = when (val r = repository.createBatch(
+        val created = when (val r = repository.createBatch(
             downloadRequest(
                 contentId = seriesContentId,
                 series = true,
@@ -168,12 +170,14 @@ class DownloadEnqueuer(
                 // override the caller passed (issue #20 GAP 3).
                 downloadQualityOverride = DownloadQuality.Original,
             ),
+            expectedAuthority = authority,
         )) {
-            is ApiResult.Success -> r.data.also { Log.i(TAG, "startSeries: server returned ${it.size} records") }
+            is ApiResult.Success -> r.data
             is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
             is ApiResult.NetworkError -> { Log.w(TAG, "startSeries: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
-        if (records.isEmpty()) return ApiResult.Success(Unit)
+        val records = created.downloads
+        if (records.isEmpty()) return batchOutcome(created.skipped)
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
         val episodeByFileId = buildEpisodeIndexByFileId(seriesContentId)
@@ -183,7 +187,7 @@ class DownloadEnqueuer(
         for (record in records) {
             // Same duplicate guard as start/startEpisode: a second worker for
             // an already-active fileId would wipe the first one's partial.
-            if (activeDownloadExists(record.mediaFileId)) {
+            if (activeDownloadExists(record.mediaFileId) || completedLocalExists(record, authority)) {
                 Log.i(TAG, "startSeries: fileId=${record.mediaFileId} already queued/downloading — skipping duplicate")
                 continue
             }
@@ -211,7 +215,7 @@ class DownloadEnqueuer(
             val displayTitle = "$seriesTitle ${ep?.let { "S${it.seasonNumber}E${it.episodeNumber}" } ?: ""}".trim()
             finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         }
-        return ApiResult.Success(Unit)
+        return batchOutcome(created.skipped)
     }
 
     /**
@@ -273,6 +277,22 @@ class DownloadEnqueuer(
         }
         Log.i(TAG, "startSeason: queued $queued of ${episodes.size}")
         return if (queued > 0) ApiResult.Success(Unit) else (firstError ?: ApiResult.Success(Unit))
+    }
+
+    private fun batchOutcome(skipped: List<org.siloserver.silo.model.download.SkippedDownload>): ApiResult<Unit> =
+        if (skipped.isEmpty()) ApiResult.Success(Unit) else ApiResult.Error(0, "downloads_partially_skipped",
+            "${skipped.size} episodes could not be downloaded. Available episodes were queued.")
+
+    private suspend fun completedLocalExists(
+        record: org.siloserver.silo.model.download.DownloadRecord,
+        authority: org.siloserver.silo.network.DurableLoginAuthority?,
+    ): Boolean {
+        val owner = authority ?: return false
+        if (owner != authorities?.snapshotDurableLoginAuthority()) return false
+        val profile = owner.scope.profileId ?: return false
+        val local = metadataStore.readSidecar(owner.scope.serverId, profile, record.mediaFileId) ?: return false
+        return local.record.id == record.id && local.record.statusEnum() == DownloadStatus.Completed &&
+            storage.exists(owner.scope.serverId, profile, record.mediaFileId)
     }
 
     /** Builds a fileId → EpisodeListItem map across every season of [seriesContentId].

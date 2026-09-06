@@ -160,10 +160,10 @@ class DownloadsRepository(
 
     /** Server creates a record; we upsert into the cache so the UI updates
      *  immediately without waiting for the next refresh. */
-    suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> {
-        val authority = authorities?.snapshotDurableLoginAuthority()
+    suspend fun create(request: DownloadRequest, expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null): ApiResult<DownloadRecord> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
         if (!current(authority)) return changed()
-        return when (val r = api.create(request)) {
+        return when (val r = api.create(request, authority?.scope)) {
             is ApiResult.Success -> {
                 if (!localWrite(authority) { upsertLocal(r.data) }) return changed()
                 ApiResult.Success(r.data)
@@ -180,13 +180,13 @@ class DownloadsRepository(
      * update immediately. Caller is responsible for enqueueing one worker
      * per record on the Android side.
      */
-    suspend fun createBatch(request: DownloadRequest): ApiResult<List<DownloadRecord>> {
-        val authority = authorities?.snapshotDurableLoginAuthority()
+    suspend fun createBatch(request: DownloadRequest, expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null): ApiResult<org.siloserver.silo.model.download.DownloadsListResponse> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
         if (!current(authority)) return changed()
-        return when (val r = api.createBatch(request)) {
+        return when (val r = api.createBatch(request, authority?.scope)) {
             is ApiResult.Success -> {
                 if (!localWrite(authority) { r.data.downloads.forEach { upsertLocal(it) } }) return changed()
-                ApiResult.Success(r.data.downloads)
+                ApiResult.Success(r.data)
             }
             is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
             is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
