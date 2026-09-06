@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,27 +51,23 @@ fun rememberBrowseItemCardActions(
                 }
             },
             onToggleFavorite = { favorite ->
-                val previous = state
-                state = state.copy(isFavorite = favorite)
-                scope.launch {
-                    if (coordinator.toggleFavorite(item.contentId, favorite).isFailure()) {
-                        state = previous
-                    }
-                }
+                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
+                scope.launch { coordinator.memberships.perform(intent) }
             },
             onToggleWatchlist = { inWatchlist ->
-                val previous = state
-                state = state.copy(inWatchlist = inWatchlist)
-                scope.launch {
-                    if (coordinator.toggleWatchlist(item.contentId, inWatchlist).isFailure()) {
-                        state = previous
-                    }
-                }
+                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, inWatchlist)
+                scope.launch { coordinator.memberships.perform(intent) }
             },
         )
     }
 
-    return actions to state
+    val membershipActions by coordinator.memberships.actions.collectAsState()
+    var displayed = state
+    membershipActions.values.filter { it.intent.key.itemId == item.contentId && it.confirmed && coordinator.memberships.current(it.intent) }.forEach {
+        displayed = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
+            displayed.copy(isFavorite = it.intent.present) else displayed.copy(inWatchlist = it.intent.present)
+    }
+    return actions to displayed
 }
 
 private fun org.siloserver.silo.network.ApiResult<Unit>.isFailure(): Boolean =

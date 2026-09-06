@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -144,7 +146,14 @@ class ItemDetailViewModel(
     private var pendingInitialEpisodeContentId: String? = initialEpisodeContentId
 
     private val _uiState = MutableStateFlow(ItemDetailUiState())
-    val uiState: StateFlow<ItemDetailUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<ItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
+        var projected = state
+        actions.values.filter { it.confirmed && it.intent.key.itemId == contentId && personalDataRepository.memberships.current(it.intent) }.forEach {
+            projected = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
+                projected.copy(isFavorite = it.intent.present) else projected.copy(isInWatchlist = it.intent.present)
+        }
+        projected
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ItemDetailUiState())
     private var episodeLoadJob: Job? = null
     private var selectedEpisodeLoadJob: Job? = null
     private var allEpisodeFileIdsJob: Job? = null
@@ -182,6 +191,17 @@ class ItemDetailViewModel(
     val translationPhase: StateFlow<DescriptionTranslationPhase> = descriptionTranslation.phase
 
     init {
+        viewModelScope.launch {
+            var previous = personalDataRepository.memberships.generation.value
+            personalDataRepository.memberships.generation.collect { generation ->
+                if (generation != previous) {
+                    previous = generation
+                    _uiState.update { it.copy(isFavorite = false, isInWatchlist = false) }
+                    loadUserState()
+                }
+            }
+        }
+
         // Refresh once so server-side records are visible when the user
         // lands on the detail screen (e.g., to show 'Downloaded' on a file
         // that was downloaded in a previous app session).
@@ -439,19 +459,9 @@ class ItemDetailViewModel(
 
     private fun loadUserState() {
         viewModelScope.launch {
-            // Local optimistic favorite wins and is applied IMMEDIATELY (isFavorite
-            // is a network-only read — stale/unavailable offline or right after an
-            // offline toggle; don't let a slow/failed network call delay or clobber it).
-            val localFavorite = runCatching {
-                userItemState.localContentStates(listOf(contentId))[contentId]?.favorite
-            }.getOrNull()
-            if (localFavorite != null) {
-                _uiState.update { it.copy(isFavorite = localFavorite) }
-            } else {
-                val favResult = personalDataRepository.isFavorite(contentId)
-                if (favResult is ApiResult.Success) {
-                    _uiState.update { it.copy(isFavorite = favResult.data) }
-                }
+            val favResult = personalDataRepository.isFavorite(contentId)
+            if (favResult is ApiResult.Success) {
+                _uiState.update { it.copy(isFavorite = favResult.data) }
             }
         }
         viewModelScope.launch {
@@ -843,19 +853,8 @@ class ItemDetailViewModel(
      * Toggles the favorite state for this item.
      */
     fun toggleFavorite() {
-        viewModelScope.launch {
-            val current = _uiState.value.isFavorite
-            val newState = !current
-            // Optimistic update
-            _uiState.update { it.copy(isFavorite = newState) }
-            when (personalDataRepository.toggleFavorite(contentId, newState)) {
-                is ApiResult.Success -> { /* already updated */ }
-                else -> {
-                    // Revert on failure
-                    _uiState.update { it.copy(isFavorite = current) }
-                }
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, !uiState.value.isFavorite)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
     /**
@@ -1079,19 +1078,8 @@ class ItemDetailViewModel(
      * Toggles the watchlist state for this item.
      */
     fun toggleWatchlist() {
-        viewModelScope.launch {
-            val current = _uiState.value.isInWatchlist
-            val newState = !current
-            // Optimistic update
-            _uiState.update { it.copy(isInWatchlist = newState) }
-            when (personalDataRepository.toggleWatchlist(contentId, newState)) {
-                is ApiResult.Success -> { /* already updated */ }
-                else -> {
-                    // Revert on failure
-                    _uiState.update { it.copy(isInWatchlist = current) }
-                }
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, !uiState.value.isInWatchlist)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
     fun toggleWatched() {

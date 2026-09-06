@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.navigation
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -323,7 +324,8 @@ fun AppNavigation(
         enterTransition = {
             if (targetState.destination.route == Route.ItemDetail.ROUTE) {
                 EnterTransition.None
-            } else {
+            }
+ else {
                 fadeIn(tween(PageFadeDurationMs))
             }
         },
@@ -1273,6 +1275,11 @@ fun AppNavigation(
         }
 
     }
+    val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
+    org.siloserver.silo.common.ui.MembershipStatusBanner(
+        membershipRepository.memberships,
+        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    )
         diagnosticsState.prompt
             ?.takeIf {
                 currentEntry?.destination?.route != Route.Diagnostics.route &&

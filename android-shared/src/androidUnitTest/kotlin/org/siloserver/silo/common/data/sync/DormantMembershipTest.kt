@@ -22,9 +22,13 @@ import kotlin.test.*
 
 @RunWith(RobolectricTestRunner::class)
 class DormantMembershipTest {
+    @get:org.junit.Rule
+    val migrationHelper = androidx.room.testing.MigrationTestHelper(
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation(), SiloDatabase::class.java)
+
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
     private val name = "dormant-${java.util.UUID.randomUUID()}"
-    private var db: DormantMembershipDatabase? = null
+    private var db: SiloDatabase? = null
     private val clients = mutableListOf<HttpClient>()
     private var authority = DurableLoginAuthority("login-one", AuthScopeSnapshot("s", "p", "https://example.invalid", null, identityGeneration = 0))
     private val original = authority
@@ -35,26 +39,30 @@ class DormantMembershipTest {
     private val authorities = object : DurableLoginAuthorityProvider {
         override suspend fun snapshotDurableLoginAuthority() = authority
     }
-    private fun open(): DormantMembershipDatabase = Room.databaseBuilder(context,
-        DormantMembershipDatabase::class.java, name)
-        .addMigrations(DormantMembershipDatabase.MIGRATION_9_10)
-        .addCallback(DormantMembershipDatabase.CALLBACK).allowMainThreadQueries().build().also { db = it }
-    private fun port(engine: MockEngine): DormantMembershipPort {
+    private fun open(): SiloDatabase = Room.databaseBuilder(context,
+        SiloDatabase::class.java, name)
+        .addMigrations(SiloDatabase.MIGRATION_9_10)
+        .addCallback(SiloDatabase.CALLBACK).allowMainThreadQueries().build().also { db = it }
+    private fun port(engine: MockEngine): RoomMembershipPort {
         val client = HttpClient(engine).also { clients += it }
-        return DormantMembershipPort(requireNotNull(db), MembershipV2Api(client, tokenManager = tokens), tokens, authorities, barrier)
+        return RoomMembershipPort(requireNotNull(db), MembershipV2Api(client, tokenManager = tokens), tokens, authorities, barrier)
     }
     @AfterTest fun close() { clients.forEach { it.close() }; db?.close(); context.deleteDatabase(name) }
 
     @Test fun migrationRetainsEveryLegacyFieldAndExcludesEveryGenericCleanupPath() = runTest {
-        val legacy = Room.databaseBuilder(context, SiloDatabase::class.java, name).allowMainThreadQueries().build()
+        val legacy = migrationHelper.createDatabase(name, 9)
         val rows = listOf("pending", "in_flight", "custom_old_state").mapIndexed { index, state ->
             DirtyOperationEntity(opKind = "SET_FAVORITE", serverId = "s", profileId = "p",
                 targetContentId = "item", targetFileId = null, coalesceKey = "legacy-$index",
                 idempotencyKey = "key-$index", payloadJson = "true", state = state,
                 createdAtMs = 12, attemptCount = 4, lastAttemptAtMs = 13, nextAttemptAtMs = 500,
                 lastError = "old-error", opVersion = 2)
-        }.map { it.copy(id = legacy.dirtyOperationDao().insert(it)) }
-        legacy.contentItemStateDao().upsert(ContentItemStateEntity("s", "p", "item", null, null, true, 12, null))
+        }.mapIndexed { index, row -> row.copy(id = index.toLong() + 1) }
+        rows.forEach { row ->
+            legacy.execSQL("INSERT INTO dirty_operations (id,opKind,serverId,profileId,targetContentId,targetFileId,coalesceKey,idempotencyKey,opVersion,payloadJson,state,createdAtMs,attemptCount,lastAttemptAtMs,nextAttemptAtMs,lastError,membershipAuthority,membershipClaim,membershipOwner) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                arrayOf<Any?>(row.id,row.opKind,row.serverId,row.profileId,row.targetContentId,row.targetFileId,row.coalesceKey,row.idempotencyKey,row.opVersion,row.payloadJson,row.state,row.createdAtMs,row.attemptCount,row.lastAttemptAtMs,row.nextAttemptAtMs,row.lastError,row.membershipAuthority,row.membershipClaim,row.membershipOwner))
+        }
+        legacy.execSQL("INSERT INTO content_item_state (serverId,profileId,contentId,watched,ratingValue,favorite,clientUpdatedAtMs,serverUpdatedAtMs) VALUES ('s','p','item',NULL,NULL,1,12,NULL)")
         legacy.close()
         val future = open()
         val dao = future.dirtyOperationDao()
@@ -87,7 +95,13 @@ class DormantMembershipTest {
             coalesceKey = "rating", idempotencyKey = "rating", nextAttemptAtMs = 0))
         assertEquals(listOf(unrelated), dao.dueTargetHeads("s", "p", Long.MAX_VALUE, 10).map { it.id })
         // Old producer must abort its whole projection+enqueue transaction after eventual cutover.
-        assertFailsWith<android.database.sqlite.SQLiteConstraintException> { repository.recordFavorite("item", false) }
+        assertFailsWith<IllegalStateException> { repository.recordFavorite("item", false) }
+        assertFailsWith<android.database.sqlite.SQLiteConstraintException> {
+            future.withTransaction {
+                future.contentItemStateDao().upsert(requireNotNull(future.contentItemStateDao().get("s", "p", "item")).copy(favorite = false))
+                dao.insert(rows.first().copy(id = 0, idempotencyKey = "obsolete-producer"))
+            }
+        }
         assertEquals(true, future.contentItemStateDao().get("s", "p", "item")?.favorite)
         rows.forEach { assertEquals(it.copy(state = "legacy_membership_quarantined"), dao.getById(it.id)) }
     }
@@ -107,7 +121,7 @@ class DormantMembershipTest {
                 }
         }
         val client = HttpClient(MockEngine { error("No writes") }).also { clients += it }
-        val guarded = DormantMembershipPort(future, MembershipV2Api(client, tokenManager = tokens), tokens, authorities, observer)
+        val guarded = RoomMembershipPort(future, MembershipV2Api(client, tokenManager = tokens), tokens, authorities, observer)
         guarded.captureAuthority()
         val blocker = async { future.withTransaction { locked.complete(Unit); release.await() } }
         locked.await()

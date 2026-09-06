@@ -71,7 +71,7 @@ class PersonalDataRepositoryPortTest {
     @Test
     fun networkUnauthorizedIsRetriableNotTerminal() = runTest {
         val port = RecordingPort()
-        repo(HttpStatusCode.Unauthorized, port).toggleFavorite("c1", isFavorite = true)
+        repo(HttpStatusCode.Unauthorized, port).setWatched("c1", watched = true)
         assertEquals(WriteOutcome.RETRIABLE, port.resolvedWith)
     }
 

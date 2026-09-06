@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
@@ -364,7 +366,22 @@ class TvItemDetailViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvItemDetailUiState())
-    val uiState: StateFlow<TvItemDetailUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<TvItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
+        var projected = state
+        actions.values.filter { personalDataRepository.memberships.current(it.intent) }.forEach { action ->
+            val itemId = action.intent.key.itemId
+            val favorite = action.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE
+            if (itemId == contentId) {
+                projected = if (favorite) projected.copy(isTogglingFavorite = action.busy,
+                    isFavorite = if (action.confirmed) action.intent.present else projected.isFavorite)
+                else projected.copy(isTogglingWatchlist = action.busy,
+                    inWatchlist = if (action.confirmed) action.intent.present else projected.inWatchlist)
+            }
+            if (favorite && action.confirmed) projected = projected.copy(
+                episodeFavoriteStates = projected.episodeFavoriteStates + (itemId to action.intent.present))
+        }
+        projected
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, TvItemDetailUiState())
 
     private val descriptionTranslation =
         org.siloserver.silo.metadata.DescriptionTranslationController(
@@ -379,6 +396,11 @@ class TvItemDetailViewModel(
             identityTransitions.transitions.collect { transition ->
                 if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
                     pendingNextUpSelectionHandoff = null
+                    episodeListGeneration++
+                    _uiState.update { it.copy(isFavorite = false, inWatchlist = false, episodeFavoriteStates = emptyMap()) }
+                } else {
+                    loadUserState()
+                    refreshEpisodeFavoriteStates(_uiState.value.episodes, revalidate = null)
                 }
             }
         }
@@ -747,42 +769,16 @@ class TvItemDetailViewModel(
     }
 
     fun onToggleFavorite() {
-        val current = _uiState.value
-        if (current.isTogglingFavorite) return
-        val target = !current.isFavorite
-        _uiState.update { it.copy(isTogglingFavorite = true, isFavorite = target) }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, !uiState.value.isFavorite)
         viewModelScope.launch {
-            val result = personalDataRepository.toggleFavorite(contentId, target)
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingFavorite = false, isFavorite = !target)
-                }
-            } else {
-                _uiState.update { it.copy(isTogglingFavorite = false) }
-                // A series rail one screen up may be holding a stale answer for
-                // this item. Tell it exactly which one changed rather than
-                // making it re-ask about the whole season.
-                TvFavoriteRevalidationSession.markChanged(contentId)
-            }
+            personalDataRepository.memberships.perform(intent)
+            if (personalDataRepository.memberships.confirmed(intent)) TvFavoriteRevalidationSession.markChanged(contentId)
         }
     }
 
     fun onToggleWatchlist() {
-        val current = _uiState.value
-        if (current.isTogglingWatchlist) return
-        val target = !current.inWatchlist
-        _uiState.update { it.copy(isTogglingWatchlist = true, inWatchlist = target) }
-        viewModelScope.launch {
-            val result = personalDataRepository.toggleWatchlist(contentId, target)
-            if (result !is ApiResult.Success) {
-                _uiState.update {
-                    it.copy(isTogglingWatchlist = false, inWatchlist = !target)
-                }
-            } else {
-                _uiState.update { it.copy(isTogglingWatchlist = false) }
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, !uiState.value.inWatchlist)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
     fun onToggleWatched() {
@@ -1113,8 +1109,6 @@ class TvItemDetailViewModel(
     private var episodeListGeneration: Long = 0
     private var nextEpisodeWatchMutationGeneration: Long = 0
     private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
-    private var nextEpisodeFavoriteMutationGeneration: Long = 0
-    private val episodeFavoriteMutationGenerations = mutableMapOf<String, Long>()
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0
     private var pendingNextUpSelectionHandoff: PendingNextUpSelectionHandoff? = null
@@ -1272,6 +1266,7 @@ class TvItemDetailViewModel(
         // nothing is treated as already known.
         val knownIds =
             if (revalidate == null) emptySet() else _uiState.value.episodeFavoriteStates.keys - revalidate
+        val membershipGeneration = personalDataRepository.memberships.generation.value
         val resolved = probeEpisodeFavorites(
             episodeIds = episodeIds,
             knownIds = knownIds,
@@ -1279,7 +1274,7 @@ class TvItemDetailViewModel(
                 // Publish per answer rather than per batch. Guarded by the
                 // generation the probes were started for, so a season the
                 // viewer has already left cannot write into the one on screen.
-                if (episodeListGeneration == generation) {
+                if (episodeListGeneration == generation && personalDataRepository.memberships.generation.value == membershipGeneration) {
                     _uiState.update {
                         it.copy(episodeFavoriteStates = it.episodeFavoriteStates + (id to favorite))
                     }
@@ -1347,35 +1342,8 @@ class TvItemDetailViewModel(
     }
 
     fun onSetEpisodeFavorite(episodeContentId: String, favorite: Boolean) {
-        val current = _uiState.value
-        val previousFavorite = current.episodeFavoriteStates[episodeContentId] ?: false
-        val isCurrentDetail = episodeContentId == current.detail?.contentId
-        val mutationGeneration = ++nextEpisodeFavoriteMutationGeneration
-        episodeFavoriteMutationGenerations[episodeContentId] = mutationGeneration
-        _uiState.update {
-            it.copy(
-                episodeFavoriteStates = it.episodeFavoriteStates + (episodeContentId to favorite),
-                isFavorite = if (isCurrentDetail) favorite else it.isFavorite,
-            )
-        }
-        viewModelScope.launch {
-            val result = personalDataRepository.toggleFavorite(episodeContentId, favorite)
-            val isCurrentMutation = episodeFavoriteMutationGenerations[episodeContentId] == mutationGeneration
-            if (result !is ApiResult.Success && isCurrentMutation) {
-                _uiState.update {
-                    it.copy(
-                        episodeFavoriteStates = it.episodeFavoriteStates +
-                            (episodeContentId to previousFavorite),
-                        isFavorite = if (isCurrentDetail && it.detail?.contentId == episodeContentId) {
-                            previousFavorite
-                        } else {
-                            it.isFavorite
-                        },
-                    )
-                }
-            }
-            if (isCurrentMutation) episodeFavoriteMutationGenerations.remove(episodeContentId)
-        }
+        val intent = personalDataRepository.memberships.begin(episodeContentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
     private suspend fun withLocalProgress(detail: ItemDetail): ItemDetail =

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.navigation
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import android.util.Log
 import androidx.compose.animation.core.tween
@@ -1336,6 +1337,12 @@ fun TvAppNavigation(
             )
         }
     }
+    val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
+    org.siloserver.silo.common.ui.MembershipStatusBanner(
+        membershipRepository.memberships,
+        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    )
+
     siloCastStandby?.let { state ->
         TvSiloCastStandbyView(
             state = state,

@@ -33,7 +33,10 @@ open class PersonalDataRepository(
     /** Offline read cache for the library list (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+    membershipPort: org.siloserver.silo.repository.port.MembershipPort? = null,
 ) {
+    val memberships = MembershipActions(membershipPort, identityTransitions)
+
     // -- Libraries --
 
     /** Lists the libraries visible to the current user (offline: last cached list). */
@@ -58,45 +61,14 @@ open class PersonalDataRepository(
     suspend fun listFavorites(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
         personalDataApi.listFavorites(offset, limit)
 
-    /** Checks whether a specific item is in the user's favorites. */
     suspend fun isFavorite(itemId: String): ApiResult<Boolean> =
-        personalDataApi.checkFavorite(itemId)
+        memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
 
-    /**
-     * Adds or removes an item from the user's favorites.
-     * @param isFavorite true to add, false to remove.
-     */
-    suspend fun toggleFavorite(itemId: String, isFavorite: Boolean): ApiResult<Unit> {
-        val handle = userItemStatePort.recordFavorite(itemId, isFavorite)
-        val result = if (isFavorite) {
-            personalDataApi.addFavorite(itemId, handle.scope)
-        } else {
-            personalDataApi.removeFavorite(itemId, handle.scope)
-        }
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
-    }
-
-    // -- Watchlist --
-
-    /** Lists the user's watchlist items with pagination. */
     suspend fun listWatchlist(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
         personalDataApi.listWatchlist(offset, limit)
 
-    /** Checks whether a specific item is on the user's watchlist. */
     suspend fun isInWatchlist(itemId: String): ApiResult<Boolean> =
-        personalDataApi.checkWatchlist(itemId)
-
-    /**
-     * Adds or removes an item from the user's watchlist.
-     * @param isInWatchlist true to add, false to remove.
-     */
-    suspend fun toggleWatchlist(itemId: String, isInWatchlist: Boolean): ApiResult<Unit> =
-        if (isInWatchlist) {
-            personalDataApi.addToWatchlist(itemId)
-        } else {
-            personalDataApi.removeFromWatchlist(itemId)
-        }
+        memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST)
 
     // -- History --
 

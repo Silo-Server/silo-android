@@ -43,6 +43,7 @@ class SyncEngine(
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val batchLimit: Int = 50,
+    private val memberships: org.siloserver.silo.repository.port.MembershipPort? = null,
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
@@ -68,6 +69,7 @@ class SyncEngine(
      * fully drains in one run.
      */
     suspend fun drainOnce(): DrainResult {
+        memberships?.dispatch(batchLimit.coerceAtMost(100))
         val scope = snapshotProvider() ?: return DrainResult()
         val serverId = scope.serverId
         // Ops are always enqueued with a profile; no profile → nothing to drain.
@@ -149,15 +151,16 @@ class SyncEngine(
         // land between the drain and the count. Including the end scope covers an
         // activation enqueue dropped by ExistingWorkPolicy.KEEP while this worker
         // was running.
-        var remaining = dao.countForScope(serverId, profileId)
+        var remaining = dao.runnableLegacyCountForScope(serverId, profileId)
         val endScope = snapshotProvider()
         val endProfileId = endScope?.profileId
         if (endScope != null && endProfileId != null &&
             (endScope.serverId != serverId || endProfileId != profileId)
         ) {
-            remaining += dao.countForScope(endScope.serverId, endProfileId)
+            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endProfileId)
         }
 
+        remaining += memberships?.readyCount() ?: 0
         return DrainResult(
             synced = synced,
             dropped = dropped,
@@ -172,11 +175,6 @@ class SyncEngine(
             OutboxOperation.SET_WATCHED -> {
                 val watched = OutboxOperation.decodeBooleanPayload(op.payloadJson)
                 if (watched) personalDataApi.markWatched(contentId, scope) else personalDataApi.markUnwatched(contentId, scope)
-            }
-
-            OutboxOperation.SET_FAVORITE -> {
-                val favorite = OutboxOperation.decodeBooleanPayload(op.payloadJson)
-                if (favorite) personalDataApi.addFavorite(contentId, scope) else personalDataApi.removeFavorite(contentId, scope)
             }
 
             OutboxOperation.SET_RATING -> {

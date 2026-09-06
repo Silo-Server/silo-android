@@ -97,10 +97,10 @@ val androidTvModule = module {
     single { EncryptedTokenManagerImpl(get(), get(), get()) }
     single<TokenManager> { get<EncryptedTokenManagerImpl>() }
     single<org.siloserver.silo.network.DurableLoginAuthorityProvider> { get<EncryptedTokenManagerImpl>() }
-    single {
-        org.siloserver.silo.common.data.sync.MembershipRuntime(
+    single<org.siloserver.silo.repository.port.MembershipPort> {
+        org.siloserver.silo.common.data.sync.RoomMembershipPort(
             get<org.siloserver.silo.common.data.db.SiloDatabase>(),
-            get(), get(), get(),
+            get(), get(), get(), get(), get(),
         )
     }
 
@@ -146,6 +146,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.data.sync.SyncEngine(
             db = get(),
             personalDataApi = get(),
+            memberships = get(),
             ebookReaderApi = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
         )

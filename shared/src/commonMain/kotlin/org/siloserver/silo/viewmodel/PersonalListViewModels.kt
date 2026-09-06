@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -61,10 +63,18 @@ data class PersonalListUiState(
  */
 abstract class PersonalListViewModel(
     private val pageSize: Int = 40,
+    private val memberships: org.siloserver.silo.repository.MembershipActions? = null,
+    private val membershipKind: org.siloserver.silo.repository.port.MembershipPort.Kind? = null,
 ) : ViewModel() {
 
     protected val _uiState = MutableStateFlow(PersonalListUiState())
-    val uiState: StateFlow<PersonalListUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<PersonalListUiState> = if (memberships == null) _uiState.asStateFlow() else
+        kotlinx.coroutines.flow.combine(_uiState, memberships.actions) { state, actions ->
+            val removed = actions.values.filter { it.confirmed && memberships.current(it.intent) &&
+                it.intent.key.kind == membershipKind && !it.intent.present }.map { it.intent.key.itemId }.toSet()
+            val items = state.items.filterNot { it.contentId in removed }
+            state.copy(items = items, total = state.total?.let { (it - (state.items.size - items.size)).coerceAtLeast(0) })
+        }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, PersonalListUiState())
 
     /**
      * True once the `init` load has settled with content on screen (a successful
@@ -284,7 +294,7 @@ abstract class PersonalListViewModel(
 class FavoritesViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val catalogRepository: CatalogRepository,
-) : PersonalListViewModel() {
+) : PersonalListViewModel(memberships = personalDataRepository.memberships, membershipKind = org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE) {
 
     init {
         loadInitial()
@@ -306,23 +316,16 @@ class FavoritesViewModel(
         )
 
     fun toggleFavorite(itemId: String) {
-        viewModelScope.launch {
-            personalDataRepository.toggleFavorite(itemId, false)
-            // Optimistically remove from list
-            _uiState.update { state ->
-                state.copy(
-                    items = state.items.filter { it.contentId != itemId },
-                    total = state.total?.let { (it - 1).coerceAtLeast(0) },
-                )
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, false)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
+
 }
 
 class WatchlistViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val catalogRepository: CatalogRepository,
-) : PersonalListViewModel() {
+) : PersonalListViewModel(memberships = personalDataRepository.memberships, membershipKind = org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST) {
 
     init {
         loadInitial()
@@ -344,14 +347,8 @@ class WatchlistViewModel(
         )
 
     fun removeFromWatchlist(itemId: String) {
-        viewModelScope.launch {
-            personalDataRepository.toggleWatchlist(itemId, false)
-            _uiState.update { state ->
-                state.copy(
-                    items = state.items.filter { it.contentId != itemId },
-                    total = state.total?.let { (it - 1).coerceAtLeast(0) },
-                )
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, false)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
+
 }

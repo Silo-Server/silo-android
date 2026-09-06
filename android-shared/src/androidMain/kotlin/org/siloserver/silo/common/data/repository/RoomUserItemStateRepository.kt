@@ -65,9 +65,7 @@ class RoomUserItemStateRepository(
         }
 
     override suspend fun recordFavorite(contentId: String, favorite: Boolean): OutboxHandle =
-        record(contentId, OutboxOperation.SET_FAVORITE, JsonPrimitive(favorite).toString()) {
-            it.copy(favorite = favorite)
-        }
+        error("Favorite writes require the durable MembershipPort")
 
     override suspend fun recordRating(contentId: String, rating: Int?): OutboxHandle =
         record(
@@ -429,7 +427,7 @@ class RoomUserItemStateRepository(
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
         return contentDao.getForContentIds(snapshot.serverId, profileId, contentIds.distinct())
-            .associate { it.contentId to LocalContentState(watched = it.watched, favorite = it.favorite) }
+            .associate { it.contentId to LocalContentState(watched = it.watched, favorite = null) }
     }
 
     private suspend fun record(

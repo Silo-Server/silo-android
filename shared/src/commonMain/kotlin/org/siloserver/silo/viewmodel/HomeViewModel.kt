@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.domain.MediaActionsCoordinator
@@ -54,7 +56,7 @@ class HomeViewModel(
     // network-only; the Android platform module binds a Room-backed cache.
     private val homeCache: HomeCachePort = NoOpHomeCachePort,
     // Track B: local optimistic user-state, overlaid onto cards so an offline
-    // mark-watched/favorite shows immediately instead of a stale cached badge.
+    // mark-watched shows immediately instead of a stale cached badge.
     private val userItemState: UserItemStatePort = NoOpUserItemStatePort,
     // Live-home accelerator (Apple realtime-updates spec). Null keeps
     // commonMain/tests network-only; the apps inject the shared coordinator.
@@ -64,7 +66,16 @@ class HomeViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
-    val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<HomeUiState> = kotlinx.coroutines.flow.combine(_uiState, mediaActions.memberships.actions) { state, actions ->
+        var sections = state.sections
+        actions.values.filter { it.confirmed && mediaActions.memberships.current(it.intent) }.forEach { action ->
+            sections = sections.mapItem(action.intent.key.itemId) {
+                if (action.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
+                    it.withFavorite(action.intent.present) else it.withWatchlist(action.intent.present)
+            }
+        }
+        state.copy(sections = sections)
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, HomeUiState())
 
     init {
         loadSections()
@@ -347,23 +358,13 @@ class HomeViewModel(
     }
 
     fun toggleFavorite(itemId: String, favorite: Boolean) {
-        val previous = _uiState.value.sections
-        _uiState.update { state -> state.copy(sections = state.sections.mapItem(itemId) { it.withFavorite(favorite) }) }
-        viewModelScope.launch {
-            if (mediaActions.toggleFavorite(itemId, favorite) !is ApiResult.Success) {
-                _uiState.update { it.copy(sections = previous) }
-            }
-        }
+        val intent = mediaActions.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
+        viewModelScope.launch { mediaActions.memberships.perform(intent) }
     }
 
     fun toggleWatchlist(itemId: String, inWatchlist: Boolean) {
-        val previous = _uiState.value.sections
-        _uiState.update { state -> state.copy(sections = state.sections.mapItem(itemId) { it.withWatchlist(inWatchlist) }) }
-        viewModelScope.launch {
-            if (mediaActions.toggleWatchlist(itemId, inWatchlist) !is ApiResult.Success) {
-                _uiState.update { it.copy(sections = previous) }
-            }
-        }
+        val intent = mediaActions.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, inWatchlist)
+        viewModelScope.launch { mediaActions.memberships.perform(intent) }
     }
 
     /**

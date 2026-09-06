@@ -10,7 +10,7 @@ import org.siloserver.silo.common.data.db.dao.DirtyOperationDao
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.MembershipV2Api
 
-/** One Koin singleton for both future inline and worker entry points. No producers are activated yet. */
+/** Owned by the single Room membership port used by inline and worker entry points. */
 class MembershipRuntime(
     private val dao: DirtyOperationDao,
     api: MembershipV2Api,

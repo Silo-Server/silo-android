@@ -240,6 +240,12 @@ interface DirtyOperationDao {
     @Query("SELECT COUNT(*) FROM dirty_operations WHERE state != 'legacy_membership_quarantined'")
     suspend fun count(): Int
 
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE state = 'legacy_membership_quarantined'")
+    suspend fun quarantinedMembershipCount(): Int
+
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE membershipAuthority = :authority AND state = 'membership_ready'")
+    suspend fun readyMembershipCount(authority: String): Int
+
     /** Future worker cutover must use this count, not all unresolved membership states. */
     @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
         "AND state IN ('pending', 'in_flight')")

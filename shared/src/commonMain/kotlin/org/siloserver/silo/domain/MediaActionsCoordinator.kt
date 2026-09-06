@@ -21,11 +21,7 @@ class MediaActionsCoordinator(
     suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> =
         personalDataRepository.setWatched(itemId, watched)
 
-    suspend fun toggleFavorite(itemId: String, favorite: Boolean): ApiResult<Unit> =
-        personalDataRepository.toggleFavorite(itemId, favorite)
-
-    suspend fun toggleWatchlist(itemId: String, inWatchlist: Boolean): ApiResult<Unit> =
-        personalDataRepository.toggleWatchlist(itemId, inWatchlist)
+    val memberships get() = personalDataRepository.memberships
 
     suspend fun dismissContinueWatching(
         itemId: String,
