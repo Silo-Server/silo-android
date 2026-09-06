@@ -24,6 +24,9 @@ data class HomeCacheWriteLease(val identityGeneration: Long)
  * good cached home.
  */
 interface HomeCachePort {
+    suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot, stillCurrent: () -> Boolean = { true }) {}
+    suspend fun getCachedHomeV2(owner: org.siloserver.silo.network.AuthScopeSnapshot): HomeCacheSnapshot? = null
+
     suspend fun cacheHome(sections: List<ResolvedSection>) {}
     suspend fun cacheHome(sections: List<ResolvedSection>, lease: HomeCacheWriteLease) {
         cacheHome(sections)

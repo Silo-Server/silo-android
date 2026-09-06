@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.data.repository
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.section.ResolvedSection
@@ -34,6 +35,41 @@ class RoomHomeCacheRepositoryTest {
         snapshotProvider = { scope },
         now = { 1000L },
     )
+
+    @Test
+    fun scopedHomeRejectsLegacyAndReplacementAuthority() = runTest {
+        val owner = scope!!
+        val rows = listOf(section("row", "item"))
+        repo.cacheHome(rows)
+        assertNull(repo.getCachedHomeV2(owner))
+        repo.cacheHomeV2(rows, owner)
+        assertEquals(rows, repo.getCachedHomeV2(owner)?.sections)
+        assertEquals(1000L, repo.getCachedHomeV2(owner)?.cachedAtMs)
+        scope = owner.copy(profileToken = "new")
+        assertNull(repo.getCachedHomeV2(scope!!)); assertNull(repo.getCachedHomeV2(owner))
+        repo.cacheHomeV2(rows, owner)
+        assertNull(repo.getCachedHomeV2(scope!!))
+        scope = owner.copy(credentialEpoch = 2)
+        assertNull(repo.getCachedHomeV2(scope!!))
+    }
+
+    @Test
+    fun supersededHomeWriterChecksRunAfterWaitingForTransaction() = runTest {
+        val owner = scope!!
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val captured = CompletableDeferred<Unit>()
+        val blocker = async {
+            db.withTransaction { entered.complete(Unit); release.await() }
+        }
+        entered.await()
+        val delayed = RoomHomeCacheRepository(db, snapshotProvider = { captured.complete(Unit); scope })
+        var current = true
+        val writer = async { delayed.cacheHomeV2(listOf(section("old", "old")), owner) { current } }
+        captured.await(); current = false; release.complete(Unit)
+        blocker.await(); writer.await()
+        assertNull(repo.getCachedHomeV2(owner))
+    }
 
     @AfterTest
     fun tearDown() = db.close()
