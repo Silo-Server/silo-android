@@ -1,13 +1,16 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.model.ebook.SaveEbookAnnotationRequest
+import org.siloserver.silo.model.ebook.EbookAnnotation
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.apiv2.EbookAnnotationsV2Api
+import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.EbookReaderApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class EbookReaderRepository(private val api: EbookReaderApi) {
+class EbookReaderRepository(private val api: EbookReaderApi, private val annotations: EbookAnnotationsV2Api? = null) {
     // Session-cached Kindle->EPUB capability. This repo is a DI singleton, so the
     // result is shared across the detail and reader screens and fetched at most
     // once per session. Defaults to false on any error (old server / offline).
@@ -40,18 +43,17 @@ class EbookReaderRepository(private val api: EbookReaderApi) {
     suspend fun saveProgress(contentId: String, request: SaveEbookProgressRequest) =
         api.saveProgress(contentId, request)
 
-    suspend fun listAnnotations(contentId: String) =
-        api.listAnnotations(contentId)
+    private fun unavailable() = ApiResult.Error(0, "annotations_unavailable", "Annotations need an active saved account.")
 
-    suspend fun createBookmark(contentId: String, location: String) =
-        api.createAnnotation(
-            contentId = contentId,
-            request = SaveEbookAnnotationRequest(kind = "bookmark", location = location),
-        )
+    suspend fun listAnnotations(contentId: String, scope: AuthScopeSnapshot) =
+        annotations?.list(contentId, scope) ?: unavailable()
 
-    suspend fun updateAnnotation(contentId: String, annotationId: String, request: SaveEbookAnnotationRequest) =
-        api.updateAnnotation(contentId, annotationId, request)
+    suspend fun createBookmark(contentId: String, id: String, location: String, scope: AuthScopeSnapshot) =
+        annotations?.createBookmark(contentId, id, location, scope) ?: unavailable()
 
-    suspend fun deleteAnnotation(contentId: String, annotationId: String) =
-        api.deleteAnnotation(contentId, annotationId)
+    suspend fun updateAnnotation(contentId: String, annotation: EbookAnnotation, patch: JsonObject, scope: AuthScopeSnapshot) =
+        annotations?.patch(contentId, annotation, patch, scope) ?: unavailable()
+
+    suspend fun deleteAnnotation(contentId: String, annotation: EbookAnnotation, scope: AuthScopeSnapshot) =
+        annotations?.delete(contentId, annotation, scope) ?: unavailable()
 }

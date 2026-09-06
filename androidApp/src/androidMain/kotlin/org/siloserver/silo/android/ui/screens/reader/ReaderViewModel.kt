@@ -108,6 +108,7 @@ class ReaderViewModel(
     private var displayRevision = 0L
     private var progressSaveJob: Job? = null
     private val progressPersistMutex = Mutex()
+    private val annotationMutex = Mutex()
 
     private val _uiState = MutableStateFlow(ReaderUiState())
     val uiState: StateFlow<ReaderUiState> = _uiState.asStateFlow()
@@ -280,30 +281,38 @@ class ReaderViewModel(
             else -> Unit
         }
 
-        when (val annotations = ebookReaderRepository.listAnnotations(contentId)) {
-            is ApiResult.Success -> {
-                val serverBookmarks = annotations.data.items.filter { annotation -> annotation.kind == "bookmark" }
-                val serverLocations = serverBookmarks.mapNotNull { annotation -> annotation.location }.toSet()
-                val staleLocalBookmarks = bookmarks.orEmpty().filter { annotation ->
-                    annotation.id.startsWith("local-") &&
-                        annotation.location != null &&
-                        annotation.location in serverLocations
+        val authority = readerAuthority
+        if (authority != null) annotationMutex.withLock {
+            val receipts = mutableListOf<EbookAnnotation>()
+            val (serverId, profileId) = resolveScope()
+            val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+            for (bookmark in pending.filter { it.loginId == authority.loginId && it.origin == authority.scope.serverUrl }) {
+                if (bookmark.deleteETag != null) {
+                    val deletion = ebookReaderRepository.deleteAnnotation(contentId,
+                        bookmark.toAnnotation().copy(etag = bookmark.deleteETag), authority.scope)
+                    if (deletion is ApiResult.Success || (deletion is ApiResult.Error && deletion.code == 404))
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                    else _uiState.update { it.copy(syncError = "Bookmark deletion needs a reload before retrying.") }
+                    continue
                 }
-                if (staleLocalBookmarks.isNotEmpty()) {
-                    val (serverId, profileId) = resolveScope()
-                    withContext(Dispatchers.IO) {
-                        staleLocalBookmarks.forEach { annotation ->
-                            localStateStore.removeBookmark(serverId, profileId, contentId, annotation.id)
-                        }
+                when (val result = ebookReaderRepository.createBookmark(contentId, bookmark.id, bookmark.location, authority.scope)) {
+                    is ApiResult.Success -> {
+                        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                        receipts += result.data
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
                     }
+                    else -> _uiState.update { it.copy(syncError = "Some bookmarks are local. Reopen the reader to retry sync.") }
                 }
-                val currentLocalBookmarks = bookmarks.orEmpty()
-                    .filterNot { annotation -> staleLocalBookmarks.any { stale -> stale.id == annotation.id } }
-                bookmarks = (currentLocalBookmarks + serverBookmarks)
-                    .distinctBy { annotation -> annotation.id }
-                    .takeIf { merged -> merged.isNotEmpty() }
             }
-            else -> Unit
+            val annotations = ebookReaderRepository.listAnnotations(contentId, authority.scope)
+            if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+            val remaining = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+                .filter { it.loginId == null || (it.loginId == authority.loginId && it.origin == authority.scope.serverUrl) }
+                .map { it.toAnnotation() }
+            val remote = if (annotations is ApiResult.Success) annotations.data.items else receipts
+            if (annotations !is ApiResult.Success)
+                _uiState.update { it.copy(syncError = "Bookmarks could not load completely. Reopen the reader to retry.") }
+            bookmarks = (remaining + remote.filter { it.kind == "bookmark" }).associateBy { it.id }.values.toList()
         }
 
         return InitialReaderState(
@@ -321,7 +330,8 @@ class ReaderViewModel(
         val progress = userItemStatePort.localEbookProgress(contentId, fileId)
         val bookmarks = withContext(Dispatchers.IO) {
             localStateStore.listBookmarks(serverId, profileId, contentId)
-        }.map { it.toAnnotation() }
+        }.filter { it.loginId == null || (it.loginId == readerAuthority?.loginId && it.origin == readerAuthority?.scope?.serverUrl) }
+            .map { it.toAnnotation() }
         return InitialReaderState(
             currentPage = ebookPageNumberFromProgressLocation(progress?.location),
             progressLocation = progress?.location,
@@ -524,45 +534,88 @@ class ReaderViewModel(
         _uiState.update { it.copy(sections = sections) }
     }
 
+    private suspend fun <T : Any> bookmarkWrite(
+        authority: org.siloserver.silo.network.DurableLoginAuthority, block: () -> T,
+    ): T? {
+        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return null
+        return identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+            withContext(Dispatchers.IO) { block() }
+        }
+    }
+
     fun addBookmark() {
         val location = _uiState.value.progressLocation ?: "page:${_uiState.value.currentPage}"
+        val authority = readerAuthority
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
-            val local = withContext(Dispatchers.IO) {
-                localStateStore.addBookmark(serverId, profileId, contentId, location)
-            }
-            _uiState.update { it.copy(bookmarks = it.bookmarks + local.toAnnotation(), syncError = null) }
-            when (val result = ebookReaderRepository.createBookmark(contentId, location)) {
-                is ApiResult.Success -> {
-                    withContext(Dispatchers.IO) {
-                        localStateStore.removeBookmark(serverId, profileId, contentId, local.id)
-                    }
-                    _uiState.update {
-                        it.copy(
-                            bookmarks = (it.bookmarks.filterNot { bookmark -> bookmark.id == local.id } + result.data),
-                            syncError = null,
-                        )
-                    }
+            annotationMutex.withLock {
+                if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
+                    _uiState.update { it.copy(syncError = "Bookmarks need a saved account and profile.") }
+                    return@withLock
                 }
-                else -> _uiState.update { it.copy(syncError = "Bookmark could not sync.") }
+                val (serverId, profileId) = resolveScope()
+                val local = try {
+                    bookmarkWrite(authority) { localStateStore.addBookmark(serverId, profileId, contentId, location,
+                        loginId = authority.loginId, origin = authority.scope.serverUrl) }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    _uiState.update { it.copy(syncError = "Bookmark could not be saved locally.") }
+                    null
+                } ?: return@withLock
+                _uiState.update { it.copy(bookmarks = it.bookmarks + local.toAnnotation(), syncError = null) }
+                val result = ebookReaderRepository.createBookmark(contentId, local.id, location, authority.scope)
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                if (result is ApiResult.Success) {
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, local.id) }
+                    _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == local.id } + result.data) }
+                } else _uiState.update { it.copy(syncError = "Bookmark is local. Reopen the reader to retry sync.") }
             }
         }
     }
 
     fun deleteBookmark(bookmark: EbookAnnotation) {
+        val authority = readerAuthority
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
-            withContext(Dispatchers.IO) {
-                localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id)
-            }
-            _uiState.update { state ->
-                state.copy(bookmarks = state.bookmarks.filterNot { it.id == bookmark.id }, syncError = null)
-            }
-            if (!bookmark.id.startsWith("local-")) {
-                when (ebookReaderRepository.deleteAnnotation(contentId, bookmark.id)) {
-                    is ApiResult.Success -> Unit
-                    else -> _uiState.update { it.copy(syncError = "Bookmark delete could not sync.") }
+            annotationMutex.withLock {
+                if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
+                    _uiState.update { it.copy(syncError = "Bookmark deletion needs the original account and profile.") }
+                    return@withLock
                 }
+                val (serverId, profileId) = resolveScope()
+                val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+                    .find { it.id == bookmark.id }
+                // An uncertain create may already exist remotely. Resolve the same ID before deleting it.
+                val remote = if (pending?.loginId == authority.loginId && pending.origin == authority.scope.serverUrl && pending.deleteETag == null) {
+                    val replay = ebookReaderRepository.createBookmark(contentId, pending.id, pending.location, authority.scope)
+                    if (replay !is ApiResult.Success) {
+                        _uiState.update { it.copy(syncError = "Bookmark could not be resolved for deletion. Reopen the reader to retry.") }
+                        return@withLock
+                    }
+                    replay.data
+                } else if (bookmark.etag == null && pending?.deleteETag != null) bookmark.copy(etag = pending.deleteETag)
+                    else bookmark
+                val localOnly = pending != null && pending.loginId == null && bookmark.etag == null
+                if (!localOnly) {
+                    val tag = remote.etag
+                    if (tag.isNullOrBlank()) {
+                        _uiState.update { it.copy(syncError = "Reopen the reader to load this bookmark before deleting it.") }
+                        return@withLock
+                    }
+                    val saved = try {
+                        bookmarkWrite(authority) { localStateStore.markBookmarkDelete(serverId, profileId, contentId,
+                            remote.id, remote.location ?: bookmark.location.orEmpty(), authority.loginId, authority.scope.serverUrl, tag) }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        _uiState.update { it.copy(syncError = "Bookmark deletion could not be saved locally.") }
+                        null
+                    } ?: return@withLock
+                }
+                val result = if (localOnly) ApiResult.Success(Unit)
+                    else ebookReaderRepository.deleteAnnotation(contentId, remote, authority.scope)
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                if (result is ApiResult.Success || (result is ApiResult.Error && result.code == 404)) {
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                    _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == bookmark.id }, syncError = null) }
+                } else _uiState.update { it.copy(syncError = "Bookmark was kept. Reopen the reader to reload before deleting again.") }
             }
         }
     }

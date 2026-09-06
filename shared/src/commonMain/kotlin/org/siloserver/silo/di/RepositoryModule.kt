@@ -107,7 +107,7 @@ val repositoryModule = module {
     single { org.siloserver.silo.domain.settings.ProfileSettingsController(get()) }
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort) }
-    single { EbookReaderRepository(get()) }
+    single { EbookReaderRepository(get(), get()) }
     single { SubtitlesRepository(get()) }
     single { PushRegistrationRepository(get()) }
 

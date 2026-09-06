@@ -2,8 +2,7 @@
 
 The phone reader uses v2 ordered progress and guarded reader configuration.
 Ebooks remain excluded from Android TV navigation; its shared data bindings
-compile with the same transport. Binary reads use the v2 file route. Annotations retain their existing routes
-pending their separate migration.
+compile with the same transport. Binary reads and annotations use their v2 routes.
 
 Page and locator changes capture the event time before asynchronous work starts.
 The existing Room transaction stores that time with the saved login incarnation,
@@ -47,3 +46,19 @@ conversion-failure handling. A partial response cannot be cached as a full book.
 Local files and content URIs keep their existing paths. This consumer does not
 issue HEAD, conditional or range requests; server support for those operations
 is not native test evidence.
+
+Annotations drain bounded 50-row pages before publishing a complete server list.
+Repeated or malformed continuations and foreign content identities fail the load;
+partial server lists are not published as complete. The existing bookmark UI uses
+client-selected IDs persisted with login/origin ownership before creating remotely.
+Reopening retries pending creates with the same ID and location, accepting the
+server's current winner. Legacy local bookmarks and another login's pending work
+are never uploaded automatically.
+
+Deletes retain the fetched ETag and persist a deletion record before dispatch.
+Recovery sends that guarded delete, never a create for a pending deletion. A 404
+confirms absence; conflicts retain the bookmark and ask for a reload. Local cleanup
+occurs after acknowledgement. The shared PATCH adapter preserves omitted fields
+and explicit nulls and requires an annotation validator; no new annotation-edit UI
+is exposed. Reader operations serialize locally and check captured identity before
+publishing results or changing local state.
