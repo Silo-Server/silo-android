@@ -50,6 +50,7 @@ class AndroidPlayerSettingsStore(
     private val settingsRepository: SettingsRepository? = null,
     private val getDeviceId: suspend () -> String? = { null },
     private val serverChangeSignal: Flow<Unit> = flowOf(Unit),
+    private val getAuthScope: suspend () -> org.siloserver.silo.network.AuthScopeSnapshot? = { null },
     private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
         PreferenceDataStoreFactory.create(
             produceFile = { context.preferencesDataStoreFile(fileNameFor(profileId)) },
@@ -71,6 +72,7 @@ class AndroidPlayerSettingsStore(
         val profileId: String,
         val serverUrl: String,
         val deviceId: String,
+        val authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ) {
         val keyPrefix: String =
             if (serverUrl.isBlank() || deviceId.isBlank()) {
@@ -100,11 +102,13 @@ class AndroidPlayerSettingsStore(
     }.distinctUntilChanged()
 
     private suspend fun currentScope(): Scope? {
+        val authority = getAuthScope()
         val profileId = getActiveProfileId() ?: return null
         return Scope(
             profileId = profileId,
             serverUrl = getServerUrl().orEmpty(),
             deviceId = getDeviceId().orEmpty(),
+            authority = authority,
         )
     }
 
@@ -453,6 +457,7 @@ class AndroidPlayerSettingsStore(
                 PlaybackSettingsKeys.PlaybackSpeed,
                 clamped.toString(),
                 scope.serverUrl,
+                scope.authority,
             )
         }
     }
@@ -493,12 +498,14 @@ class AndroidPlayerSettingsStore(
                 PlaybackSettingsKeys.PreferredQuality,
                 normalized,
                 scope.serverUrl,
+                scope.authority,
             )
             serverSettingsFlusher.enqueue(
                 scope.profileId,
                 PlaybackSettingsKeys.MaxBitrateKbps,
                 capped.toString(),
                 scope.serverUrl,
+                scope.authority,
             )
         }
     }
@@ -529,7 +536,7 @@ class AndroidPlayerSettingsStore(
                 // device override (matches iOS `setSubtitleAppearance`).
                 prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
         }
     }
 
@@ -552,7 +559,7 @@ class AndroidPlayerSettingsStore(
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
+            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
         }
     }
 
@@ -622,7 +629,7 @@ class AndroidPlayerSettingsStore(
                     // override was off win right back over it.
                     writeGranularAppearance(it, scope, sanitized)
                 }
-                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl)
+                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
                 serverSettingsFlusher.flushNow()
             } else {
                 store.edit {
@@ -634,7 +641,7 @@ class AndroidPlayerSettingsStore(
                     }
                     it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
                 }
-                serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, scope.serverUrl)
+                serverSettingsFlusher.enqueueDelete(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, scope.serverUrl, scope.authority)
                 serverSettingsFlusher.flushNow()
                 refreshFromServer()
             }
@@ -643,7 +650,7 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun resetDeviceSetting(key: String) {
         withScope { scope, _ ->
-            serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl)
+            serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl, scope.authority)
             serverSettingsFlusher.flushNow()
             refreshFromServer()
         }
@@ -654,7 +661,7 @@ class AndroidPlayerSettingsStore(
             // Only the server-stored keys have rows to delete; the granular
             // subtitle.* fields live inside playback.subtitle_appearance.
             for (key in RemoteDeviceSettings) {
-                serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl)
+                serverSettingsFlusher.enqueueDelete(scope.profileId, key, scope.serverUrl, scope.authority)
             }
             store.edit {
                 it[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = false
@@ -786,14 +793,14 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeBool(key: String, value: Boolean) {
         withScope { scope, store ->
             store.edit { it[booleanPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl)
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl, scope.authority)
         }
     }
 
     private suspend fun writeInt(key: String, value: Int) {
         withScope { scope, store ->
             store.edit { it[intPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl)
+            serverSettingsFlusher.enqueue(scope.profileId, key, value.toString(), scope.serverUrl, scope.authority)
         }
     }
 
@@ -824,7 +831,7 @@ class AndroidPlayerSettingsStore(
     private suspend fun writeString(key: String, value: String) {
         withScope { scope, store ->
             store.edit { it[stringPreferencesKey(scope.keyPrefix + key)] = value }
-            serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl)
+            serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority)
         }
     }
 

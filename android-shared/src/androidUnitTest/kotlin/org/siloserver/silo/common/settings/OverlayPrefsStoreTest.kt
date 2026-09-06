@@ -379,6 +379,7 @@ private class RecordingOverlaySettingsApi(
         value: JsonElement,
         mutationId: String,
         profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         puts += Put(key, scope, value)
         nextPutGate?.also { gate ->
@@ -402,6 +403,7 @@ private class RecordingOverlaySettingsApi(
         key: String,
         scope: SettingScopeIdentity,
         profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<Unit> {
         deleteCount += 1
         assertEquals(SettingKeys.UI_CARD_OVERLAYS, key)

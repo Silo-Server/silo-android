@@ -22,6 +22,7 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -38,6 +39,54 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AndroidPlayerSettingsStoreTest {
+    @Test
+    fun `card presentation remains usable without mutation receipt support`() = runTest {
+        val client = io.ktor.client.HttpClient()
+        var writes = 0
+        val api = object : org.siloserver.silo.network.api.SettingsApi(client) {
+            override suspend fun getContractCapabilities() =
+                org.siloserver.silo.network.api.SettingsCapabilitiesResult.Available(
+                    org.siloserver.silo.model.settings.SettingsContractCapabilities(
+                        apiVersion = 1, revision = 12, supportsBatchedEffective = true,
+                        supportsIdempotentWrites = false,
+                    ),
+                )
+            override suspend fun getEffectiveValues(keys: List<String>, libraryIds: List<Int>, seriesIds: List<String>) =
+                org.siloserver.silo.network.ApiResult.Success(
+                    org.siloserver.silo.model.settings.EffectiveSettingValuesResponse(
+                        settings = listOf(org.siloserver.silo.model.settings.EffectiveSettingValue(
+                            key = "ui.card_presentation",
+                            value = org.siloserver.silo.model.settings.CardPresentation.DEFAULT.toJsonElement(),
+                            source = "default",
+                        )),
+                    ),
+                )
+            override suspend fun putValue(
+                key: String, scope: org.siloserver.silo.model.settings.SettingScopeIdentity,
+                value: kotlinx.serialization.json.JsonElement, mutationId: String, profileId: String?,
+                authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+            ): org.siloserver.silo.network.ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
+                writes++
+                assertEquals("profile_client", scope.scope.wire)
+                return org.siloserver.silo.network.ApiResult.Success(
+                    org.siloserver.silo.model.settings.StoredSettingValue(key, scope.scope.wire, value = value),
+                )
+            }
+        }
+        try {
+            val store = DefaultCardPresentationStore(
+                FakeLegacyCache.stubContext(), org.siloserver.silo.repository.SettingsRepository(api), this,
+                { "profile" }, { "https://example.invalid" }, { null },
+            )
+            store.refresh()
+            assertEquals(CardPresentationSupport.Supported, store.state.value.support)
+            store.set(org.siloserver.silo.model.settings.CardPresentation.DEFAULT, deviceOnly = false)
+            advanceUntilIdle()
+            assertEquals(1, writes)
+            assertEquals(CardPresentationSource.ClientFamily, store.state.value.source)
+        } finally { client.close() }
+    }
+
 
     @get:Rule
     val tempFolder = TemporaryFolder()
@@ -737,11 +786,11 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
     )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
-    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String) {
+    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
         calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl))
     }
 
-    override fun enqueueDelete(profileId: String, key: String, serverUrl: String) {
+    override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
         calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl))
     }
 

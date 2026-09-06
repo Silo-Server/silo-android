@@ -37,7 +37,8 @@ val networkModule = module {
     single { HealthApi(get()) }
     single { BrandingApi(get()) }
     single { org.siloserver.silo.network.apiv2.SettingsReadsV2Api(get(), get(), get()) }
-    single { SettingsApi(get(), get()) }
+    single { org.siloserver.silo.network.apiv2.SettingsWritesV2Api(get(), get(), get()) }
+    single { SettingsApi(get(), get(), get()) }
     single { LibraryPlaybackPrefsApi(get(), get()) }
     single { org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(get(), get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.DownloadCreationV2Api(get(), get(), get(), get(), get()) }

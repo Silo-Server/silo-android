@@ -186,8 +186,7 @@ class DefaultCardPresentationStore(
                     if (
                         caps.capabilities.apiVersion == 1 &&
                         caps.capabilities.revision >= MIN_CONTRACT_REVISION &&
-                        caps.capabilities.supportsBatchedEffective &&
-                        caps.capabilities.supportsIdempotentWrites
+                        caps.capabilities.supportsBatchedEffective
                     ) {
                         CardPresentationSupport.Supported
                     } else {

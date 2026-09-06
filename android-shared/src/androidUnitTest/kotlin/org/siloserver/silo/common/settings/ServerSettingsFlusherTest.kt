@@ -25,6 +25,34 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class ServerSettingsFlusherTest {
 
+    @Test
+    fun `queued retry cannot cross same-profile relogin or missing authority`() = runTest {
+        val original = org.siloserver.silo.network.AuthScopeSnapshot(
+            "server", "p1", "https://one.example", "proof", identityGeneration = 1, credentialEpoch = 1,
+        )
+        var active = original
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200,
+            getServerUrl = { active.serverUrl }, getAuthScope = { active })
+        flusher.enqueue("p1", stringKey, "720p", original.serverUrl, original)
+        active = original.copy(credentialEpoch = 2)
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+        flusher.enqueue("p1", stringKey, "720p", original.serverUrl)
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+        flusher.enqueue("p1", stringKey, "1080p", active.serverUrl, active)
+        flusher.flushNow()
+        assertEquals(1, api.calls.size)
+        api.failNextPuts(1, ApiResult.NetworkError(IllegalStateException("lost response")))
+        api.onPut = { active = active.copy(credentialEpoch = 3) }
+        flusher.enqueue("p1", stringKey, "480p", active.serverUrl, active)
+        flusher.flushNow()
+        advanceUntilIdle()
+        assertEquals(2, api.calls.size, "uncertain old-login write must not retry as replacement login")
+
+    }
+
     // Real contract keys so the flusher's remote-key gate and type tables
     // classify them the way production traffic is classified.
     private val boolKey = SettingKeys.PLAYBACK_AUTO_SKIP_INTRO
@@ -532,6 +560,7 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         value: JsonElement,
         mutationId: String,
         profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         val call = Call(Call.Kind.PUT, key, value, profileId, mutationId, scope)
         calls.add(call)
@@ -549,6 +578,7 @@ private class RecordingSettingsApi : SettingsApi(HttpClient()) {
         key: String,
         scope: SettingScopeIdentity,
         profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<Unit> {
         val call = Call(Call.Kind.DELETE, key, null, profileId, null, scope)
         calls.add(call)

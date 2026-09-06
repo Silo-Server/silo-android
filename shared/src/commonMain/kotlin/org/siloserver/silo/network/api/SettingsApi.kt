@@ -74,12 +74,8 @@ sealed class SettingsCapabilitiesResult {
 }
 
 /**
- * A fresh idempotency key for one settings write.
- *
- * Generate one per logical write and hold it across retries: the server
- * replays the recorded receipt for a repeated id with identical content, and
- * rejects the id with 409 `mutation_id_conflict` when it was used for
- * different content. Generating a new id per retry would defeat both.
+ * A local logical-write identifier, retained for legacy transport compatibility.
+ * API v2 omits this header and converges desired state without receipt replay.
  */
 @OptIn(ExperimentalUuidApi::class)
 fun newSettingMutationId(): String = Uuid.random().toString()
@@ -87,6 +83,7 @@ fun newSettingMutationId(): String = Uuid.random().toString()
 open class SettingsApi(
     private val client: HttpClient,
     private val readsV2: org.siloserver.silo.network.apiv2.SettingsReadsV2Api? = null,
+    private val writesV2: org.siloserver.silo.network.apiv2.SettingsWritesV2Api? = null,
 ) {
 
     open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = readsV2?.overlayConfig() ?: safeApiCall {
@@ -176,7 +173,7 @@ open class SettingsApi(
      * leaves the parsed error code empty.
      */
     open suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
-        when (val result = safeApiCall<SettingsContractCapabilities> {
+        when (val result = writesV2?.capabilities() ?: safeApiCall<SettingsContractCapabilities> {
             client.get("/api/v1/settings/contract/capabilities")
         }) {
             is ApiResult.Success -> SettingsCapabilitiesResult.Available(result.data)
@@ -221,11 +218,10 @@ open class SettingsApi(
     /**
      * Write one typed value at one scope.
      *
-     * [mutationId] (sent as `X-Silo-Mutation-Id`) makes retries safe: create
-     * it once per logical write with [newSettingMutationId] and reuse it for
-     * every retry of that write. A retry the server already applied replays
-     * the recorded receipt instead of re-applying; reusing an id for
-     * *different* content fails with 409 `mutation_id_conflict`.
+     * API v2 ignores [mutationId]: repeated desired-state writes may advance the
+     * revision again. There is no stored mutation receipt or concurrency guard.
+     * [authority] pins queued work to its original acting account/profile/PIN;
+     * [profileId] is the separately authorized target profile query parameter.
      *
      * A value that exceeds a policy restriction is stored, not rejected — the
      * restriction caps it at resolution time — so a 200 receipt does not mean
@@ -238,7 +234,8 @@ open class SettingsApi(
         value: JsonElement,
         mutationId: String,
         profileId: String? = null,
-    ): ApiResult<StoredSettingValue> = safeApiCall {
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> = writesV2?.put(key, scope, value, profileId, authority) ?: safeApiCall {
         client.put("/api/v1/settings/values/$key") {
             applyScopeIdentity(scope, profileId)
             if (mutationId.isNotBlank()) {
@@ -259,7 +256,8 @@ open class SettingsApi(
         key: String,
         scope: SettingScopeIdentity,
         profileId: String? = null,
-    ): ApiResult<Unit> = safeApiCall {
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = writesV2?.delete(key, scope, profileId, authority) ?: safeApiCall {
         client.delete("/api/v1/settings/values/$key") {
             applyScopeIdentity(scope, profileId)
         }

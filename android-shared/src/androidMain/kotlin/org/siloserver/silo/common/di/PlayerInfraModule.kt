@@ -89,6 +89,7 @@ val playerInfraModule = module {
             // retained retry can tell whether the server it was authored
             // against is still the one requests would reach.
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
         )
     }
 
@@ -112,6 +113,7 @@ val playerInfraModule = module {
             legacyCache = get(),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
             serverSettingsFlusher = get(),
             profileChangeSignal = profileChangeSignal,
             serverChangeSignal = serverChangeSignal,

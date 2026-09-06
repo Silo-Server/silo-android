@@ -57,6 +57,7 @@ class ProfileSettingsControllerTest {
             value: JsonElement,
             mutationId: String,
             profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<StoredSettingValue> {
             calls += Call.Put(key, scope.scope, value)
             mutationIds += mutationId
@@ -67,6 +68,7 @@ class ProfileSettingsControllerTest {
             key: String,
             scope: SettingScopeIdentity,
             profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<Unit> {
             calls += Call.Delete(key, scope.scope)
             return deleteResult

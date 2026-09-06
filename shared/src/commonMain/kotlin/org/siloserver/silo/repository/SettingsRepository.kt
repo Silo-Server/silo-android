@@ -70,11 +70,8 @@ class SettingsRepository(
      * Write one profile-scoped value (`scope=profile`) — the household
      * preference that applies on every device until a device overrides it.
      *
-     * A fresh mutation id per call is correct here because one call is one
-     * logical write: these callers are settings pickers that roll their UI
-     * back on failure, so a user re-picking is genuinely new content and must
-     * not replay an id (that is exactly the 409 `mutation_id_conflict` case).
-     * A caller that retries the *same* write must pass the id it already used.
+     * API v2 converges desired state without mutation-ID receipt replay.
+     * Picker callers surface failure and let the user make a new decision.
      */
     suspend fun setProfileValue(
         key: String,

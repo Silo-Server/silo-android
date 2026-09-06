@@ -32,12 +32,9 @@ enum class SettingScope(val wire: String) {
 /**
  * The scope identity a write or delete addresses.
  *
- * Only the content ids travel with the request: `scope` plus `library_id` /
- * `series_id` go in the query string. The profile and device parts of the
- * identity come from the session headers (`X-Profile-Id`, `X-Silo-Device-Id`)
- * that the auth interceptor already attaches — the server reads them from
- * there deliberately, so one profile cannot write another's settings by
- * naming it in the query.
+ * Content IDs and an optional target profile travel in query parameters.
+ * Acting profile/PIN, device and client-family authority stay in the captured
+ * session headers; the server authorizes any distinct target profile.
  *
  * The init block enforces the fields each scope requires — the same check the
  * server's identity validation makes — so an invalid identity fails at
@@ -113,14 +110,14 @@ data class SettingValueWriteRequest(
 
 /**
  * One explicit stored value: the receipt returned by a PUT, and the shape a
- * GET at one scope returns. An idempotent replay of a PUT returns the
- * recorded receipt, which omits [revision] and [updatedAt] — treat them as
- * informational, not as fields every response carries.
+ * GET at one scope returns. API v2 advances revision on each write; no
+ * mutation-ID receipt replay or If-Match guard is declared.
  */
 @Serializable
 data class StoredSettingValue(
     val key: String,
     val scope: String,
+    @SerialName("client_family") val clientFamily: String? = null,
     @SerialName("profile_id") val profileId: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("library_id") val libraryId: Int? = null,
