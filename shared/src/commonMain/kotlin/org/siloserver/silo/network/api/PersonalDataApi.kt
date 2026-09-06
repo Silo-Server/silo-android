@@ -10,6 +10,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.requireSiloAuth
 import org.siloserver.silo.network.apiv2.HistoryV2Api
 import org.siloserver.silo.network.apiv2.HistoryContinuationV2
 import org.siloserver.silo.network.apiv2.HistoryPageV2
@@ -45,8 +46,25 @@ class PersonalDataApi(
 
     // --- User Libraries ---
 
-    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> = safeApiCall {
-        client.get("/api/v1/user/libraries")
+    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
+        val scope = tokenManager?.snapshotCurrentScope()
+        if (tokenManager != null && scope == null)
+            return ApiResult.Error(0, "identity_changed", "Library discovery needs an active account.")
+        val result = safeApiV2Call<org.siloserver.silo.network.apiv2.UserLibrariesV2>(apiV2Gate) {
+            client.get("/api/v2/user/libraries") {
+                // A captured account with no profile is valid for preselection discovery.
+                scope?.let { authScope(it) }
+                requireSiloAuth()
+            }
+        }
+        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
+            return ApiResult.Error(0, "identity_changed", "The library viewer changed.")
+        return when (result) {
+            is ApiResult.Success -> try { ApiResult.Success(result.data.project()) }
+                catch (_: IllegalArgumentException) { ApiResult.Error(0, "invalid_libraries", "The server returned an incomplete or unsupported library collection.") }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
     }
 
     // --- Favorites ---
