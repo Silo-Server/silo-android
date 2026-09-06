@@ -3,7 +3,6 @@ package org.siloserver.silo.tv.watchnext
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SectionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,35 +24,14 @@ class WatchNextSyncWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val sections = when (val r = sectionRepository.getHomeSections()) {
-            is ApiResult.Success -> r.data.sections
-            is ApiResult.Error -> return@withContext Result.retry()
-            is ApiResult.NetworkError -> return@withContext Result.retry()
+        val completed = syncWatchNextHome(sectionRepository, repository.writeGate, { isStopped }) { fields, run, authority ->
+            repository.diffAndApply(fields, run, authority)
         }
-
-        // Cooperative cancellation: a profile switch / sign-out cancels this
-        // unique work (see WatchNextSeeder.clear). Bail out AFTER the network
-        // fetch and BEFORE writing to the shared launcher provider so a
-        // cancelled sync can't repopulate the previous profile's tiles.
-        if (isStopped) return@withContext Result.success()
-
-        val fields = sections.asSequence()
-            .filter { it.sectionType in WATCH_NEXT_SECTION_TYPES }
-            .flatMap { section ->
-                section.items.asSequence().mapNotNull { item ->
-                    WatchNextProgramMapper.map(item, section.sectionType)
-                }
-            }
-            .toList()
-
-        if (isStopped) return@withContext Result.success()
-        repository.diffAndApply(fields)
-        Result.success()
+        if (completed) Result.success() else Result.retry()
     }
 
     companion object {
         const val UNIQUE_NAME_PERIODIC = "watch_next_sync_periodic"
         const val UNIQUE_NAME_ONESHOT = "watch_next_sync_oneshot"
-        private val WATCH_NEXT_SECTION_TYPES = setOf("continue_watching", "next_up")
     }
 }
