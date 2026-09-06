@@ -424,6 +424,27 @@ class RoomUserItemStateRepository(
         }
     }
 
+    override suspend fun clearPlaybackProgress(contentIds: List<String>) {
+        if (contentIds.isEmpty()) return
+        val snapshot = snapshotProvider() ?: return
+        val serverId = snapshot.serverId
+        val profileId = snapshot.profileId ?: return
+        val nowMs = now()
+        db.withTransaction {
+            contentIds.distinct().forEach { contentId ->
+                // A queued position write for a child would otherwise drain
+                // after the confirmed watched mutation and reopen the episode.
+                outboxDao.deletePendingForTargetKind(
+                    serverId = serverId,
+                    profileId = profileId,
+                    contentId = contentId,
+                    opKind = OutboxOperation.SET_POSITION,
+                )
+                userStateDao.clearPlaybackProgress(serverId, profileId, contentId, nowMs)
+            }
+        }
+    }
+
     override suspend fun localContentStates(contentIds: List<String>): Map<String, LocalContentState> {
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()

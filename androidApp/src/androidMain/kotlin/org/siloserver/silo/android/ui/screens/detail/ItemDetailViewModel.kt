@@ -176,6 +176,13 @@ class ItemDetailViewModel(
     private var watchedMutationGeneration = 0
     private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
     private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
+    private val seasonWatchedWrites = mutableMapOf<Int, Job>()
+
+    /**
+     * Bumped by every watched mutation (season or episode). A refresh captured
+     * before the bump must not publish its result afterwards.
+     */
+    private var watchedStateRevision = 0L
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -739,6 +746,8 @@ class ItemDetailViewModel(
         seasonsForDownloadRollup: List<Season>? = null,
         forceRefresh: Boolean = false,
         preferPrefetched: Boolean = false,
+        /** Post-mutation reloads must not be satisfied by a stale cache fallback. */
+        freshOnly: Boolean = false,
     ) {
         episodeLoadJob?.cancel()
         val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
@@ -773,10 +782,10 @@ class ItemDetailViewModel(
                     },
                 )
             }
-            val result = if (!forceRefresh && preferPrefetched) {
-                catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber)
-            } else {
-                catalogRepository.getEpisodes(seriesId, seasonNumber)
+            val result = when {
+                freshOnly -> catalogRepository.refreshEpisodes(seriesId, seasonNumber)
+                !forceRefresh && preferPrefetched -> catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber)
+                else -> catalogRepository.getEpisodes(seriesId, seasonNumber)
             }
             when (result) {
                 is ApiResult.Success -> {
@@ -1115,6 +1124,11 @@ class ItemDetailViewModel(
      * the mutation out to the season's episodes; the local season flag and any
      * loaded episode page for that season flip immediately and roll back if
      * the server refuses. Success re-reads the season list so counts agree.
+     *
+     * Writes for one season run strictly in order so the latest intent is the
+     * last write the server sees. Post-write refreshes are guarded by
+     * [watchedStateRevision] and use fresh-only reads, so neither a newer
+     * mutation nor a stale cache fallback can undo the optimistic state.
      */
     fun setSeasonWatched(season: Season, watched: Boolean) {
         val state = _uiState.value
@@ -1122,22 +1136,36 @@ class ItemDetailViewModel(
         val previousSeason = state.seasons.firstOrNull { it.seasonNumber == season.seasonNumber } ?: season
         val previousEpisodes = state.episodesBySeason[season.seasonNumber]
 
+        val revision = ++watchedStateRevision
         val generation = (seasonWatchedMutationGenerations[season.seasonNumber] ?: 0) + 1
         seasonWatchedMutationGenerations[season.seasonNumber] = generation
         updateSeasonPlayedState(season.seasonNumber, watched)
-        viewModelScope.launch {
+        val previousWrite = seasonWatchedWrites[season.seasonNumber]
+        seasonWatchedWrites[season.seasonNumber] = viewModelScope.launch {
+            // Serialize with the previous write for this season so a quick
+            // reversal cannot reach the server before the request it reverses.
+            previousWrite?.join()
             when (personalDataRepository.setWatched(season.contentId, watched)) {
                 is ApiResult.Success -> {
                     if (seasonWatchedMutationGenerations[season.seasonNumber] != generation) return@launch
-                    refreshSeasonUserData(seriesId)
+                    // The server resolved the season to its episodes; drop
+                    // their local resume positions so the overlay cannot offer
+                    // Resume on an episode the server now reports as played.
+                    val knownEpisodes = previousEpisodes.orEmpty().map { it.contentId }
+                    if (knownEpisodes.isNotEmpty()) userItemState.clearPlaybackProgress(knownEpisodes)
+
+                    refreshSeasonUserData(seriesId, revision)
+                    if (revision != watchedStateRevision) return@launch
                     if (_uiState.value.selectedSeasonNumber == season.seasonNumber) {
-                        loadEpisodes(seriesId, season.seasonNumber, forceRefresh = true)
+                        loadEpisodes(seriesId, season.seasonNumber, forceRefresh = true, freshOnly = true)
                     } else if (previousEpisodes != null) {
                         // Refresh the cached pager page in place so a later
                         // swipe shows server-resolved progress, not a skeleton.
-                        val page = catalogRepository.getEpisodes(seriesId, season.seasonNumber)
+                        val page = catalogRepository.refreshEpisodes(seriesId, season.seasonNumber)
+                        if (revision != watchedStateRevision) return@launch
                         if (page is ApiResult.Success) {
-                            val episodes = page.data.episodes.sortedBy { it.episodeNumber }
+                            val episodes = withLocalProgress(page.data.episodes.sortedBy { it.episodeNumber })
+                            if (revision != watchedStateRevision) return@launch
                             _uiState.update {
                                 if (it.detail?.contentId != seriesId) it else it.copy(
                                     episodesBySeason = it.episodesBySeason + (season.seasonNumber to episodes),
@@ -1202,9 +1230,14 @@ class ItemDetailViewModel(
         }
     }
 
-    /** Reload only the season list, preserving order and the current selection. */
-    private suspend fun refreshSeasonUserData(seriesId: String) {
-        val result = catalogRepository.getSeasons(seriesId)
+    /**
+     * Reload only the season list, preserving order and the current selection.
+     * Fresh-only: a cached pre-mutation list would undo the optimistic state.
+     * Published only while [revision] is still the latest watched mutation.
+     */
+    private suspend fun refreshSeasonUserData(seriesId: String, revision: Long) {
+        val result = catalogRepository.refreshSeasons(seriesId)
+        if (revision != watchedStateRevision) return
         if (result !is ApiResult.Success) return
         val byNumber = result.data.seasons.associateBy { it.seasonNumber }
         _uiState.update { state ->
@@ -1225,6 +1258,7 @@ class ItemDetailViewModel(
             ?: false
         if (previous == watched) return
 
+        val revision = ++watchedStateRevision
         val generation = (episodeWatchedMutationGenerations[episodeContentId] ?: 0) + 1
         episodeWatchedMutationGenerations[episodeContentId] = generation
         updateEpisodePlayedState(episodeContentId, watched)
@@ -1236,7 +1270,7 @@ class ItemDetailViewModel(
                     val seriesId = _uiState.value.detail?.let { detail ->
                         if (detail.type == "series") detail.contentId else detail.seriesId
                     }
-                    if (!seriesId.isNullOrBlank()) refreshSeasonUserData(seriesId)
+                    if (!seriesId.isNullOrBlank()) refreshSeasonUserData(seriesId, revision)
                 }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     updateEpisodePlayedState(episodeContentId, previous)

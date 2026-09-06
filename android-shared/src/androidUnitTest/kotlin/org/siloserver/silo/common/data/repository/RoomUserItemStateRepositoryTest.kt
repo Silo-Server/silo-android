@@ -46,6 +46,29 @@ class RoomUserItemStateRepositoryTest {
     @AfterTest
     fun tearDown() = db.close()
 
+    /**
+     * A season-level watched mutation is recorded against the season id only.
+     * The episodes it fans out to keep their local resume rows unless the
+     * caller clears them, which would resurrect Resume on a played episode.
+     */
+    @Test
+    fun clearPlaybackProgressDropsChildResumeRowsAndQueuedPositions() = runTest {
+        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        repo.recordPosition("e2", fileId = 8, positionSeconds = 120.0, durationSeconds = 3600.0)
+        assertNotNull(repo.localPlaybackProgress("e1"))
+        assertNotNull(repo.localPlaybackProgress("e2"))
+
+        repo.clearPlaybackProgress(listOf("e1", "e2"))
+
+        assertNull(repo.localPlaybackProgress("e1"))
+        assertNull(repo.localPlaybackProgress("e2"))
+        assertTrue(repo.localPlaybackProgressForContent(listOf("e1", "e2")).isEmpty())
+        val pendingPositions = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_POSITION }
+        assertTrue(pendingPositions.isEmpty())
+    }
+
     @Test
     fun recordWatchedWritesProjectionAndContentScopedOutboxOp() = runTest {
         val handle = repo.recordWatched("c1", watched = true)
