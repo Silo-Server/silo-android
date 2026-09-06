@@ -23,6 +23,7 @@ internal enum class DolbyVisionTransformMode {
 
 internal data class SiloMediaTransformTag(
     val dolbyVisionMode: DolbyVisionTransformMode,
+    val mountToken: Long? = null,
     val expectedDynamicRange: String? = null,
     val expectedColorRange: String? = null,
     /**

@@ -14,6 +14,7 @@ fun mountVideoMedia(
 ) {
     val mediaItem = playerFactory.buildMediaItem(
         contentId = spec.contentId,
+        mountToken = spec.mountToken,
         streamUrl = spec.streamUrl,
         playMethod = spec.playMethod,
         delivery = spec.delivery,
@@ -47,6 +48,7 @@ fun refreshMountedVideoMedia(
     val wasPlaying = player.playWhenReady
     val mediaItem = playerFactory.buildMediaItem(
         contentId = spec.contentId,
+        mountToken = spec.mountToken,
         streamUrl = spec.streamUrl,
         playMethod = spec.playMethod,
         delivery = spec.delivery,
