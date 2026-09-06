@@ -29,7 +29,7 @@ interface SubtitlesApi {
     /** POST /api/v1/subtitles/search — errors with server text when no providers are configured. */
     suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse>
 
-    /** POST /api/v1/subtitles/download — echoes the chosen search result back. */
+    /** POST /api/v2/subtitles/download — send the selected provider identity once. */
     suspend fun download(request: SubtitleDownloadRequest): ApiResult<SubtitleDownloadResponse>
 
     /** GET /api/v1/subtitles/{media_file_id} — subtitles already stored server-side. */
@@ -55,7 +55,7 @@ interface SubtitlesApi {
     suspend fun cancelJob(jobId: Long): ApiResult<Unit>
 }
 
-class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null) : SubtitlesApi {
+class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null) : SubtitlesApi {
 
     override suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
         safeApiCall {
@@ -66,7 +66,7 @@ class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: o
         }
 
     override suspend fun download(request: SubtitleDownloadRequest): ApiResult<SubtitleDownloadResponse> =
-        safeApiCall {
+        downloads?.download(request) ?: safeApiCall {
             client.post("/api/v1/subtitles/download") {
                 contentType(ContentType.Application.Json)
                 setBody(request)

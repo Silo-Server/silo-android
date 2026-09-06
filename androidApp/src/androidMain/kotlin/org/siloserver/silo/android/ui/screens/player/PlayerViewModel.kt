@@ -3478,10 +3478,15 @@ class PlayerViewModel(
     }
 
     /** Download a search result; on success merge + auto-select the new track. */
+    private var subtitleDownloadGeneration = 0L
+
     fun downloadSubtitle(result: SubtitleResult) {
         val mediaFileId = _uiState.value.mediaFileId ?: return
+        val sessionId = _uiState.value.sessionId
+        if (_subtitleTools.value.downloadingKey != null) return
         val key = "${result.provider}:${result.id}"
         _subtitleTools.update { it.copy(downloadingKey = key, searchError = null) }
+        val generation = ++subtitleDownloadGeneration
         viewModelScope.launch {
             val request = SubtitleDownloadRequest(
                 mediaFileId = mediaFileId,
@@ -3493,9 +3498,12 @@ class PlayerViewModel(
                 score = result.score,
                 hearingImpaired = result.hearingImpaired,
             )
-            when (val r = subtitlesRepository.download(request)) {
+            val r = subtitlesRepository.download(request)
+            if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
+            when (r) {
                 is ApiResult.Success -> {
                     doRefreshSubtitles(autoSelectSubtitleId = r.data.subtitle.id)
+                    if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleTools.update { it.copy(downloadingKey = null, downloadCompleted = true) }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleTools.update {
@@ -3685,6 +3693,7 @@ class PlayerViewModel(
 
     /** Search sheet dismissed — clear transient search state (results survive reopen). */
     fun onSearchSheetClosed() {
+        subtitleDownloadGeneration++
         searchJob?.cancel()
         _subtitleTools.update {
             it.copy(searchLoading = false, downloadingKey = null, downloadCompleted = false, searchError = null)

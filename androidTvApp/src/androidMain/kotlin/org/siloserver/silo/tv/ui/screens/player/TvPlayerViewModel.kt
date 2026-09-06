@@ -4643,6 +4643,8 @@ class TvPlayerViewModel(
     }
 
     fun closeSubtitleSearchDialog() {
+        subtitleDownloadGeneration++
+        _subtitleSearch.update { it.copy(downloadingResultId = null) }
         _uiState.update { it.copy(showSubtitleSearchDialog = false) }
     }
 
@@ -4685,10 +4687,14 @@ class TvPlayerViewModel(
         }
     }
 
+    private var subtitleDownloadGeneration = 0L
+
     fun downloadSubtitle(result: SubtitleResult) {
         val mediaFileId = _uiState.value.mediaFileId ?: return
+        val sessionId = _uiState.value.sessionId
         if (_subtitleSearch.value.downloadingResultId != null) return
         _subtitleSearch.update { it.copy(downloadingResultId = result.id, error = null) }
+        val generation = ++subtitleDownloadGeneration
         viewModelScope.launch {
             val request = SubtitleDownloadRequest(
                 mediaFileId = mediaFileId,
@@ -4700,12 +4706,15 @@ class TvPlayerViewModel(
                 score = result.score,
                 hearingImpaired = result.hearingImpaired,
             )
-            when (val r = subtitlesRepository.download(request)) {
+            val r = subtitlesRepository.download(request)
+            if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
+            when (r) {
                 is ApiResult.Success -> {
                     val merged = refreshSubtitles(
                         autoSelectSubtitleId = r.data.subtitle.id,
                         source = TvSubtitleRefreshSource.Download,
                     )
+                    if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleSearch.update {
                         if (merged) {
                             it.copy(downloadingResultId = null, completedNonce = it.completedNonce + 1)
