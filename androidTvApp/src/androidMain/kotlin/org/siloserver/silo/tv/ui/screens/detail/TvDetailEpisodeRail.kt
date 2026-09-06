@@ -57,7 +57,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -158,6 +160,7 @@ internal fun TvDetailEpisodeRail(
 ) {
     if (episodes.isEmpty()) return
 
+    val layoutDirection = LocalLayoutDirection.current
     val listState = rememberLazyListState()
     val currentIndex = remember(currentContentId, episodes) {
         episodes.indexOfFirst { it.contentId == currentContentId }.takeIf { it >= 0 }
@@ -277,11 +280,7 @@ internal fun TvDetailEpisodeRail(
                         TvDetailHorizontalInset,
                     )
                     .onPreviewKeyEvent { event ->
-                        val direction = when (event.key) {
-                            Key.DirectionLeft -> -1
-                            Key.DirectionRight -> 1
-                            else -> 0
-                        }
+                        val direction = episodeCarouselDirection(event.key, layoutDirection)
                         if (direction == 0 || event.type != KeyEventType.KeyDown) {
                             false
                         } else if (usesSeriesGeometry && (
@@ -632,4 +631,14 @@ private fun EpisodeListItem.progressFraction(): Float? {
     val dur = user.durationSeconds ?: return null
     if (dur <= 0 || pos <= 0 || pos >= dur) return null
     return (pos / dur).toFloat().coerceIn(0f, 1f)
+}
+
+
+internal fun episodeCarouselDirection(key: Key, layoutDirection: LayoutDirection): Int {
+    val physicalDirection = when (key) {
+        Key.DirectionLeft -> -1
+        Key.DirectionRight -> 1
+        else -> 0
+    }
+    return if (layoutDirection == LayoutDirection.Rtl) -physicalDirection else physicalDirection
 }

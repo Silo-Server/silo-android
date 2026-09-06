@@ -71,6 +71,29 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvNextUpSelectionHandoffTest {
     @Test
+    fun routedEpisodeReplacesAnEarlierSeasonJump() = runDetailTest {
+        val scenario = Scenario(suffix = "-routed-season-jump")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        fixture.viewModel.onSeasonSelected(2)
+        awaitEpisode(fixture.viewModel, scenario.seasonTwoEpisodeId)
+        fixture.viewModel.onSeasonSelected(1)
+        awaitCondition { fixture.viewModel.uiState.value.carouselJump?.contentId == scenario.episodeOneId }
+        fixture.viewModel.onEntrySeriesEpisodeRequested(scenario.episodeTwoId)
+        awaitEpisode(fixture.viewModel, scenario.episodeTwoId)
+        assertEquals(scenario.episodeTwoId, fixture.viewModel.uiState.value.carouselJump?.contentId)
+    }
+
+    @Test
+    fun mixedCaseSeriesPublishesAndPrefetchesTheCarousel() = runDetailTest {
+        val scenario = Scenario(suffix = "-mixed-case", seriesType = "Series")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        awaitCondition { fixture.viewModel.uiState.value.carouselEpisodes.size == 3 }
+        assertEquals(1, fixture.viewModel.uiState.value.selectedSeason)
+    }
+
+    @Test
     fun returningToLoadedEpisodeCancelsPendingSeasonJump() = runDetailTest {
         val scenario = Scenario(suffix = "-continuous-cancel-jump")
         scenario.seasonTwoEpisodesGate = CompletableDeferred()
@@ -759,6 +782,7 @@ class TvNextUpSelectionHandoffTest {
 
     private class Scenario(
         val suffix: String = "",
+        val seriesType: String = "series",
         val oldVersions: List<VersionFixture> = listOf(version(101, "1080p")),
         val newVersions: List<VersionFixture> = listOf(version(201, "1080p")),
         val oldLastFileId: Int? = null,
@@ -791,7 +815,7 @@ class TvNextUpSelectionHandoffTest {
                 )
                 when (request.url.encodedPath) {
                     "/api/v1/catalog/items/$seriesId" -> json(
-                        """{"content_id":"$seriesId","type":"series","title":"Series"}""",
+                        """{"content_id":"$seriesId","type":"$seriesType","title":"Series"}""",
                     )
                     "/api/v1/catalog/series/$seriesId/seasons" -> {
                         seasonsRequests.incrementAndGet()

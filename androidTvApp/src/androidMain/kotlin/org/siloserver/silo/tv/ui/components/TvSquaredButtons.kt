@@ -403,15 +403,16 @@ fun TvSquareToggleButton(
         val textWidth = textMeasurer.measure(titleOnFocus.orEmpty(), titleStyle).size.width
         with(density) { textWidth.toDp() } + 54.dp
     }
-    val capsuleWidth by animateDpAsState(
-        targetValue = if (isFocused && titleOnFocus != null) expandedWidth else 38.dp,
-        animationSpec = tween(durationMillis = 280),
-        label = "toggleWidth",
-    )
     val titleAlpha by animateFloatAsState(
         targetValue = if (isFocused) 1f else 0f,
         animationSpec = tween(durationMillis = 180, delayMillis = if (isFocused) 60 else 0),
         label = "toggleTitleAlpha",
+    )
+    val showTitle = isFocused || titleAlpha > 0f
+    val capsuleWidth by animateDpAsState(
+        targetValue = if (showTitle && titleOnFocus != null) expandedWidth else 38.dp,
+        animationSpec = tween(durationMillis = 280),
+        label = "toggleWidth",
     )
 
     val shape = CircleShape
@@ -503,8 +504,8 @@ fun TvSquareToggleButton(
     ) {
         Row(
             modifier = Modifier
-                .then(if (titleOnFocus != null) Modifier.requiredWidth(if (isFocused) expandedWidth else 38.dp) else Modifier)
-                .padding(horizontal = if (isFocused && titleOnFocus != null) 14.dp else 0.dp),
+                .then(if (titleOnFocus != null) Modifier.requiredWidth(if (showTitle) expandedWidth else 38.dp) else Modifier)
+                .padding(horizontal = if (showTitle && titleOnFocus != null) 14.dp else 0.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
         ) {
@@ -514,7 +515,7 @@ fun TvSquareToggleButton(
                 tint = foreground,
                 modifier = Modifier.size(if (titleOnFocus != null) 19.dp else 16.dp),
             )
-            if (isFocused && titleOnFocus != null) {
+            if (showTitle && titleOnFocus != null) {
                 Text(
                     text = titleOnFocus,
                     color = foreground,

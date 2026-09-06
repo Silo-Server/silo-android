@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.unit.LayoutDirection
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -10,6 +12,15 @@ class TvEpisodeWindowTest {
     private fun seasons(count: Int) = (1..count).map { Season("season-$it", it) }
     private fun episodes(season: Int, count: Int = 2) =
         (1..count).map { EpisodeListItem("$season-$it", season, it) }
+
+    @Test
+    fun episodeBoundaryDirectionFollowsLayoutDirection() {
+        assertEquals(-1, episodeCarouselDirection(Key.DirectionLeft, LayoutDirection.Ltr))
+        assertEquals(1, episodeCarouselDirection(Key.DirectionRight, LayoutDirection.Ltr))
+        assertEquals(1, episodeCarouselDirection(Key.DirectionLeft, LayoutDirection.Rtl))
+        assertEquals(-1, episodeCarouselDirection(Key.DirectionRight, LayoutDirection.Rtl))
+        assertEquals(0, episodeCarouselDirection(Key.DirectionUp, LayoutDirection.Rtl))
+    }
 
     @Test
     fun adjacentPagesPrependWithoutChangingEpisodeIdentities() {

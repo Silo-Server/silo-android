@@ -379,30 +379,6 @@ class TvItemDetailViewModel(
     val translationPhase: StateFlow<org.siloserver.silo.metadata.DescriptionTranslationPhase> =
         descriptionTranslation.phase
 
-    init {
-        viewModelScope.launch {
-            identityTransitions.transitions.collect { transition ->
-                if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
-                    pendingNextUpSelectionHandoff = null
-                }
-            }
-        }
-        observePreferredQuality()
-        capabilityDetector?.let(::observeAutomaticAudioPolicy)
-        if (contentId.isNotBlank()) {
-            // Restore this title's pre-play track choices (QA 2026-07-08: a
-            // manual subtitle selection reset on every return to the page —
-            // season switches and detail re-entry build a fresh ViewModel).
-            TvDetailTrackSelectionSession.recall(contentId)?.let { saved ->
-                _uiState.update {
-                    it.copy(
-                        selectedFileId = saved.fileId,
-                    )
-                }
-            }
-            loadAll()
-        }
-    }
 
     /**
      * Loads the cascaded subtitle preferences that annotate the selector row's
@@ -1082,8 +1058,13 @@ class TvItemDetailViewModel(
         val active = state.episodes.firstOrNull { it.contentId == contentId }
         _uiState.update { it.copy(entryEpisodeSelectionApplied = true) }
         if (active != null) {
+            pendingCarouselSeasonJump = null
+            pendingCarouselEdge = null
             activeSeriesEpisodeContentId = active.contentId
             updateNextUp(active)
+            _uiState.update {
+                it.copy(carouselJump = TvEpisodeCarouselJump(active.contentId, ++carouselJumpRevision))
+            }
         }
     }
 
@@ -1094,7 +1075,7 @@ class TvItemDetailViewModel(
     private var pendingCarouselEdge: Pair<String, Int>? = null
 
     private fun recordCarouselSeason(season: Int, episodes: List<EpisodeListItem>) {
-        if (_uiState.value.detail?.type != "series") return
+        if (_uiState.value.detail?.type?.lowercase() != "series") return
         episodeWindow.put(season, episodes)
         publishCarousel()
         if (pendingCarouselSeasonJump == season) {
@@ -1112,7 +1093,7 @@ class TvItemDetailViewModel(
 
     private fun publishCarousel() {
         val state = _uiState.value
-        if (state.detail?.type != "series") return
+        if (state.detail?.type?.lowercase() != "series") return
         val selected = state.selectedSeason ?: return
         // Preserve optimistic watched-state edits on the active page.
         if (state.episodes.firstOrNull()?.seasonNumber == selected) {
@@ -1144,7 +1125,7 @@ class TvItemDetailViewModel(
 
     private fun prefetchCarouselNeighbors() {
         val state = _uiState.value
-        if (state.detail?.type != "series") return
+        if (state.detail?.type?.lowercase() != "series") return
         val order = episodeWindow.orderedSeasons(state.seasons)
         val selectedIndex = order.indexOf(state.selectedSeason)
         if (selectedIndex < 0) return
@@ -1163,7 +1144,7 @@ class TvItemDetailViewModel(
 
     private fun loadCarouselNeighbor(season: Int) {
         val state = _uiState.value
-        val series = state.detail?.takeIf { it.type == "series" } ?: return
+        val series = state.detail?.takeIf { it.type.lowercase() == "series" } ?: return
         if (episodeWindow.get(season) != null || carouselLoads[season]?.isActive == true) return
         carouselLoads[season] = viewModelScope.launch {
             _uiState.update { it.copy(carouselLoadError = false) }
@@ -2058,6 +2039,32 @@ class TvItemDetailViewModel(
             }
         }
     }
+    // Start observers only after every cache and request field is initialized.
+    init {
+        viewModelScope.launch {
+            identityTransitions.transitions.collect { transition ->
+                if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
+                    pendingNextUpSelectionHandoff = null
+                }
+            }
+        }
+        observePreferredQuality()
+        capabilityDetector?.let(::observeAutomaticAudioPolicy)
+        if (contentId.isNotBlank()) {
+            // Restore this title's pre-play track choices (QA 2026-07-08: a
+            // manual subtitle selection reset on every return to the page —
+            // season switches and detail re-entry build a fresh ViewModel).
+            TvDetailTrackSelectionSession.recall(contentId)?.let { saved ->
+                _uiState.update {
+                    it.copy(
+                        selectedFileId = saved.fileId,
+                    )
+                }
+            }
+            loadAll()
+        }
+    }
+
 }
 
 private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {

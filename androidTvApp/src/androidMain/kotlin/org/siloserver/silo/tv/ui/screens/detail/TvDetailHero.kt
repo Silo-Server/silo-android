@@ -175,7 +175,7 @@ internal fun TvDetailHero(
                 verticalSpacing = EDITORIAL_SPACING,
                 collapsedSynopsisLines = 3,
                 compactSeries = compactSeries,
-                translation = translation,
+                translation = translation.takeUnless { compactSeries },
                 playbackSummary = playbackSummary,
             )
 
@@ -186,7 +186,14 @@ internal fun TvDetailHero(
                     .focusGroup(),
                 contentAlignment = Alignment.CenterStart,
             ) {
-                actions()
+                if (compactSeries && translation != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { actions() }
+                        translation()
+                    }
+                } else {
+                    actions()
+                }
             }
         }
     }
@@ -474,6 +481,7 @@ private fun MetadataRow(
                     text = token.value,
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp,
+                    lineHeight = 16.sp,
                     color = Color.White.copy(alpha = 0.88f),
                     maxLines = 1,
                 )
@@ -491,6 +499,7 @@ private fun MetadataRow(
                         text = token.value,
                         fontWeight = FontWeight.Medium,
                         fontSize = 14.sp,
+                        lineHeight = 16.sp,
                         color = Color.White.copy(alpha = 0.88f),
                         maxLines = 1,
                     )
@@ -499,6 +508,7 @@ private fun MetadataRow(
                     text = homeStyleFormatLabel(token.value),
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp,
+                    lineHeight = 16.sp,
                     fontFamily = FontFamily.Monospace,
                     letterSpacing = 0.52.sp,
                     color = Color.White.copy(alpha = 0.55f),
@@ -512,6 +522,7 @@ private fun MetadataRow(
                 text = token,
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp,
+                lineHeight = 16.sp,
                 color = Color.White.copy(alpha = 0.90f),
                 maxLines = 1,
             )
@@ -526,6 +537,7 @@ private fun MetadataDivider() {
         text = "·",
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
+        lineHeight = 16.sp,
         color = Color.White.copy(alpha = 0.45f),
     )
 }
@@ -550,6 +562,7 @@ private fun RatingChip(text: String, compact: Boolean) {
             text = text,
             fontWeight = FontWeight.Black,
             fontSize = if (compact) 10.5.sp else 14.sp,
+            lineHeight = if (compact) 12.sp else 16.sp,
             letterSpacing = if (compact) 0.35.sp else 0.5.sp,
             color = Color.White,
             maxLines = 1,

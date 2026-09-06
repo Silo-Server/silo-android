@@ -13,6 +13,7 @@ class TvTypographyReadabilityTest {
     private val source = File(
         "src/androidMain/kotlin/org/siloserver/silo/tv/ui/theme/Type.kt",
     ).readText()
+    // One expected entry per matching source line, including duplicates.
     private val tvOsMappedCompactTextLines = listOf(
         "org/siloserver/silo/tv/ui/screens/detail/TvExpandableSynopsis.kt|fontSize = 13.sp,",
         "org/siloserver/silo/tv/ui/screens/detail/TvDetailHero.kt|fontSize = 12.sp,",
