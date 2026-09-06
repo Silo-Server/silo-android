@@ -315,8 +315,6 @@ class PlayerViewModel(
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
-        private val ON_DECK_SECTION_TYPES = setOf("continue_watching", "in_progress", "next_up")
-        private const val ON_DECK_MAX_ITEMS = 12
         // Stored orientation-mode values — raw-value parity with iOS
         // `PlayerOrientationMode` so the device-scoped setting round-trips.
         private const val ORIENTATION_MODE_LANDSCAPE_LOCKED = "landscapeLocked"
@@ -3765,46 +3763,23 @@ class PlayerViewModel(
      * the current item and anything from the same series, deduped, capped at
      * 12, and dropped when no 16:9 art exists.
      */
+    private var onDeckGeneration = 0L
+
     private fun loadOnDeckItems() {
+        val run = ++onDeckGeneration
         val repository = sectionRepository ?: return
         val forContentId = _uiState.value.contentId
         val currentSeriesId = _uiState.value.seriesId
+        val sessionId = _uiState.value.sessionId
+        _uiState.update { it.copy(onDeckItems = emptyList()) }
+        fun stillCurrent() = run == onDeckGeneration && _uiState.value.contentId == forContentId && _uiState.value.sessionId == sessionId
         viewModelScope.launch {
-            val sections = (repository.getHomeSections() as? ApiResult.Success)
-                ?.data?.sections ?: return@launch
-            val pool = sections
-                .filter { it.sectionType in ON_DECK_SECTION_TYPES }
-                .flatMap { it.items }
-                .filter { item ->
-                    item.contentId != forContentId &&
-                        (currentSeriesId == null || item.seriesId != currentSeriesId)
+            val owner = repository.captureHomeAuthority() ?: return@launch
+            repository.loadScopedHomeSections(owner, ::stillCurrent) { sections ->
+                val pool = sections.toOnDeckItems(forContentId, currentSeriesId)
+                _uiState.update {
+                    if (!stillCurrent()) it else it.copy(onDeckItems = pool)
                 }
-                .filter { !it.backdropUrl.isNullOrBlank() }
-                .distinctBy { it.contentId }
-                .take(ON_DECK_MAX_ITEMS)
-                .map { item ->
-                    val progress = item.positionSeconds?.let { pos ->
-                        item.durationSeconds?.takeIf { it > 0 }?.let { dur ->
-                            (pos / dur).toFloat().coerceIn(0f, 1f)
-                        }
-                    }
-                    OnDeckItem(
-                        contentId = item.contentId,
-                        title = item.seriesTitle ?: item.title,
-                        subtitle = when {
-                            item.seasonNumber != null && item.episodeNumber != null ->
-                                "S${item.seasonNumber}·E${item.episodeNumber}" +
-                                    (item.title.takeIf { it.isNotBlank() }?.let { " — $it" } ?: "")
-                            item.year > 0 -> item.year.toString()
-                            else -> null
-                        },
-                        artUrl = item.backdropUrl,
-                        artThumbhash = item.backdropThumbhash,
-                        progressFraction = progress,
-                    )
-                }
-            _uiState.update {
-                if (it.contentId != forContentId) it else it.copy(onDeckItems = pool)
             }
         }
     }

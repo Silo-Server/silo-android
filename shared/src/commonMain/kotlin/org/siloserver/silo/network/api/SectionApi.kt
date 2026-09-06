@@ -11,9 +11,15 @@ import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 
 class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val sectionItems: LibrarySectionItemsV2Api? = null) {
+    private val sectionItems: LibrarySectionItemsV2Api? = null,
+    private val home: HomeSectionsV2Api? = null) {
 
     // --- Home ---
+
+    suspend fun captureHomeAuthority() = home?.capture()
+    suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = home?.current(owner) == true
+    suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> =
+        home?.list(owner) ?: ApiResult.Error(0, "unavailable", "The scoped home reader is unavailable.")
 
     suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> = safeApiCall {
         client.get("/api/v1/home/layout")

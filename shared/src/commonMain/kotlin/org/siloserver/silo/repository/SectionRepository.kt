@@ -24,6 +24,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -40,6 +42,18 @@ class SectionRepository(
         mutableMapOf<Long, Deferred<ApiResult<SectionsResponse>>>()
     private val homeSectionItemsInFlight =
         mutableMapOf<Pair<Long, String>, Deferred<ApiResult<HomeSectionItemsResponse>>>()
+
+    suspend fun captureHomeAuthority() = sectionApi.captureHomeAuthority()
+    suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isHomeAuthorityCurrent(owner)
+
+    /** Scoped consumers never share the legacy Home request or its cache. */
+    suspend fun loadScopedHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.section.ResolvedSection>) -> Unit) {
+        if (!isHomeAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        val result = sectionApi.getHomeSections(owner)
+        if (!isHomeAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        if (result is ApiResult.Success) publish(result.data.sections)
+    }
 
     /** Fetches the home screen layout configuration. */
     suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> =
