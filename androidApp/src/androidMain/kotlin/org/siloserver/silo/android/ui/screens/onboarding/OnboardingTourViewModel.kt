@@ -15,6 +15,7 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.onboarding.OnboardingFlow
 import org.siloserver.silo.model.onboarding.OnboardingStep
 import org.siloserver.silo.model.profile.UpdateProfileRequest
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.OnboardingRepository
@@ -39,7 +40,7 @@ data class OnboardingTourUiState(
 )
 
 /**
- * Drives the server-driven first-run tour. Progress and completion post to
+ * Drives the server-driven first-run tour. Progress and completion are saved to
  * the server per profile, so finishing here silences the web and TV too.
  * setting_choice steps write through the existing profile-update path.
  */
@@ -55,6 +56,10 @@ class OnboardingTourViewModel(
     val uiState: StateFlow<OnboardingTourUiState> = _uiState.asStateFlow()
 
     private var loadStarted = false
+    private var tourScope: AuthScopeSnapshot? = null
+
+    private suspend fun scopeCurrent(scope: AuthScopeSnapshot): Boolean =
+        scope.isSameIdentityAs(tokenManager.snapshotCurrentScope())
 
     fun load() {
         // The screen calls this from a LaunchedEffect that re-runs on every
@@ -63,24 +68,30 @@ class OnboardingTourViewModel(
         if (loadStarted) return
         loadStarted = true
         viewModelScope.launch {
+            val scope = tokenManager.snapshotCurrentScope()
+            if (scope == null || scope.profileId.isNullOrBlank()) {
+                _uiState.update { it.copy(isLoading = false, finished = true) }
+                return@launch
+            }
+            tourScope = scope
             // Known-done locally: skip the network entirely. The flag is only
             // ever set from a server-confirmed done state or our own
             // complete/skip, so trusting it can't hide a pending tour.
-            if (localCache.isDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())) {
+            if (localCache.isDone(scope.serverId, scope.profileId)) {
                 _uiState.update { it.copy(isLoading = false, finished = true) }
                 return@launch
             }
             // Fetch state and manifest together — the manifest is discarded
             // when state says done, but that waste is cheaper than serializing
             // two round trips in front of first render.
-            val stateDeferred = async { onboardingRepository.getState() }
-            val flowDeferred = async { onboardingRepository.getFlow(surface = "phone") }
+            val stateDeferred = async { onboardingRepository.getState(scope) }
+            val flowDeferred = async { onboardingRepository.getFlow(surface = "phone", scope = scope) }
             val resumeStep: String?
             when (val state = stateDeferred.await()) {
                 is ApiResult.Success -> {
                     if (state.data.done) {
                         // Server-confirmed done — safe to cache locally.
-                        markDoneLocally()
+                        markDoneLocally(scope)
                         flowDeferred.cancel()
                         _uiState.update { it.copy(isLoading = false, finished = true) }
                         return@launch
@@ -96,7 +107,7 @@ class OnboardingTourViewModel(
                 }
             }
             when (val flow = flowDeferred.await()) {
-                is ApiResult.Success -> applyFlow(flow.data, resumeStep)
+                is ApiResult.Success -> if (scopeCurrent(scope)) applyFlow(flow.data, resumeStep)
                 is ApiResult.Error, is ApiResult.NetworkError -> {
                     _uiState.update { it.copy(isLoading = false, finished = true) }
                 }
@@ -105,18 +116,20 @@ class OnboardingTourViewModel(
     }
 
     private suspend fun applyFlow(flow: OnboardingFlow, resumeStep: String?) {
+        val scope = tourScope ?: return
+        if (!scopeCurrent(scope)) return
         val steps = flow.steps.filter { it.kind in KNOWN_KINDS }
         if (steps.isEmpty()) {
             // Nothing renderable: mark complete so we never loop — locally
             // only once the server acknowledged, so an offline auto-complete
             // is retried next launch instead of silently diverging.
             _uiState.update { it.copy(isLoading = false, finished = true) }
-            // Snapshot before the POST: finished=true navigates to Home, where
+            // Snapshot before the PUT: finished=true navigates to Home, where
             // the active profile can change while this is still in flight.
-            val serverId = tokenManager.getCurrentServerId()
-            val profileId = tokenManager.getProfileId()
+            val serverId = scope.serverId
+            val profileId = scope.profileId
             withContext(NonCancellable) {
-                if (onboardingRepository.complete(flow.tourId, null) is ApiResult.Success) {
+                if (onboardingRepository.complete(flow.tourId, null, scope) is ApiResult.Success) {
                     localCache.markDone(serverId, profileId)
                 }
             }
@@ -175,6 +188,7 @@ class OnboardingTourViewModel(
      * by swiping records and persists exactly like one reached by tapping.
      */
     private fun moveTo(target: Int) {
+        val scope = tourScope ?: return
         val current = _uiState.value
         val index = target.coerceIn(0, current.steps.lastIndex.coerceAtLeast(0))
         if (index == current.currentIndex) return
@@ -184,7 +198,7 @@ class OnboardingTourViewModel(
             persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
             viewModelScope.launch {
                 current.steps.getOrNull(index)?.let {
-                    onboardingRepository.recordStep(current.tourId, it.id)
+                    onboardingRepository.recordStep(current.tourId, it.id, scope)
                 }
             }
         }
@@ -196,6 +210,7 @@ class OnboardingTourViewModel(
     fun onFinish() = finish(skipped = false, persistCurrentChoice = true)
 
     private fun finish(skipped: Boolean, persistCurrentChoice: Boolean) {
+        val scope = tourScope ?: return
         val current = _uiState.value
         if (persistCurrentChoice) {
             persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
@@ -211,23 +226,23 @@ class OnboardingTourViewModel(
             val lastStep = current.steps.getOrNull(current.currentIndex)?.id
             // Snapshot the identity that is finishing the tour. finished=true
             // navigates to Home, where the user can switch profile or server
-            // while this POST is still in flight — reading the token manager on
+            // while this PUT is still in flight — reading the token manager on
             // acknowledgement would then mark whichever profile is active by
             // then, letting it skip a tour it never saw.
-            val serverId = tokenManager.getCurrentServerId()
-            val profileId = tokenManager.getProfileId()
+            val serverId = scope.serverId
+            val profileId = scope.profileId
             // finished=true (below) navigates away with popUpTo, which clears
-            // this ViewModel and cancels its scope — the POST must survive
+            // this ViewModel and cancels its scope — the PUT must survive
             // that or the server never learns the tour ended and re-shows it.
             // The local done-cache is written only on the server's ack: if
-            // the POST is lost, the next launch re-consults the server and
+            // the PUT is lost, the next launch re-consults the server and
             // retries the tour rather than silently diverging from every
             // other client.
             withContext(NonCancellable) {
                 val result = if (skipped) {
-                    onboardingRepository.skip(current.tourId, lastStep)
+                    onboardingRepository.skip(current.tourId, lastStep, scope)
                 } else {
-                    onboardingRepository.complete(current.tourId, lastStep)
+                    onboardingRepository.complete(current.tourId, lastStep, scope)
                 }
                 if (result is ApiResult.Success) {
                     localCache.markDone(serverId, profileId)
@@ -237,12 +252,9 @@ class OnboardingTourViewModel(
         _uiState.update { it.copy(finished = true) }
     }
 
-    private fun markDoneLocally() {
-        viewModelScope.launch {
-            withContext(NonCancellable) {
-                localCache.markDone(tokenManager.getCurrentServerId(), tokenManager.getProfileId())
-            }
-        }
+    private fun markDoneLocally(scope: AuthScopeSnapshot) {
+        // Never derive a persistence key from the identity active after a reply.
+        localCache.markDone(scope.serverId, scope.profileId)
     }
 
     /** Records a tapped option locally; nothing is written until advance. */
@@ -257,6 +269,7 @@ class OnboardingTourViewModel(
      * tour. Only profile_field targets exist for phones today.
      */
     private fun persistChoiceIfAny(step: OnboardingStep?) {
+        val scope = tourScope ?: return
         val spec = step?.setting ?: return
         if (spec.target != "profile_field") return
         val value = _uiState.value.pendingChoices[step.id] ?: return
@@ -270,6 +283,7 @@ class OnboardingTourViewModel(
         }
         viewModelScope.launch {
             withContext(NonCancellable) {
+                if (!scopeCurrent(scope)) return@withContext
                 // Android playback and the Settings screen read quality and
                 // auto-skip from the local player settings store, not the
                 // profile fields — mirror those there too or the choice the
@@ -289,7 +303,7 @@ class OnboardingTourViewModel(
                 // what this device plays back with, and Settings re-syncs
                 // from the server later. A rejected PUT here shouldn't trap
                 // the user in a tour they can't leave.
-                profileRepository.updateActiveProfile(request)
+                if (scopeCurrent(scope)) profileRepository.updateProfile(requireNotNull(scope.profileId), request)
             }
         }
     }

@@ -3,6 +3,7 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.onboarding.OnboardingFlow
 import org.siloserver.silo.model.onboarding.OnboardingProgressRequest
 import org.siloserver.silo.model.onboarding.OnboardingState
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.OnboardingApi
 
@@ -12,20 +13,20 @@ import org.siloserver.silo.network.api.OnboardingApi
  */
 class OnboardingRepository(private val api: OnboardingApi) {
 
-    suspend fun getFlow(surface: String): ApiResult<OnboardingFlow> = api.getFlow(surface)
+    suspend fun getFlow(surface: String, scope: AuthScopeSnapshot): ApiResult<OnboardingFlow> = api.getFlow(surface, scope)
 
-    suspend fun getState(): ApiResult<OnboardingState> = api.getState()
+    suspend fun getState(scope: AuthScopeSnapshot): ApiResult<OnboardingState> = api.getState(scope)
 
-    suspend fun recordStep(tourId: String, stepId: String): ApiResult<Unit> =
-        api.postProgress(OnboardingProgressRequest(tourId = tourId, lastStep = stepId))
+    suspend fun recordStep(tourId: String, stepId: String, scope: AuthScopeSnapshot): ApiResult<Unit> =
+        api.putProgress(OnboardingProgressRequest(tourId = tourId, lastStep = stepId), scope)
 
-    suspend fun complete(tourId: String, lastStep: String?): ApiResult<Unit> =
-        api.postProgress(
-            OnboardingProgressRequest(tourId = tourId, lastStep = lastStep, completed = true),
+    suspend fun complete(tourId: String, lastStep: String?, scope: AuthScopeSnapshot): ApiResult<Unit> =
+        api.putProgress(
+            OnboardingProgressRequest(tourId = tourId, lastStep = lastStep, completed = true), scope,
         )
 
-    suspend fun skip(tourId: String, lastStep: String?): ApiResult<Unit> =
-        api.postProgress(
-            OnboardingProgressRequest(tourId = tourId, lastStep = lastStep, skipped = true),
+    suspend fun skip(tourId: String, lastStep: String?, scope: AuthScopeSnapshot): ApiResult<Unit> =
+        api.putProgress(
+            OnboardingProgressRequest(tourId = tourId, lastStep = lastStep, skipped = true), scope,
         )
 }

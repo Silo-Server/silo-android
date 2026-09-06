@@ -19,7 +19,7 @@ val networkModule = module {
     single { org.siloserver.silo.network.apiv2.MembershipV2Api(get(), get(), get()) }
     single { ApiV2Probe(get()) }
     single { AuthApi(get(), get()) }
-    single { OnboardingApi(get()) }
+    single { OnboardingApi(get(), get(), get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single { CatalogV2Api(get(), get(), get()) }
     single { CatalogApi(get(), get()) }
