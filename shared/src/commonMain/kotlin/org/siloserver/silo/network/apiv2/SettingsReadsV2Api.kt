@@ -16,15 +16,19 @@ class SettingsReadsV2Api(
 ) {
     private suspend fun <T> read(
         path: String,
+        expected: AuthScopeSnapshot? = null,
         configure: HttpRequestBuilder.() -> Unit = {},
         project: (JsonObject, AuthScopeSnapshot) -> T,
     ): ApiResult<T> {
-        val scope = tokens.snapshotCurrentScope() ?: return changed()
+        val scope = expected ?: tokens.snapshotCurrentScope() ?: return changed()
+        val now = tokens.snapshotCurrentScope()
+        if (!scope.isSameIdentityAs(now) || scope.profileId != now?.profileId || scope.profileToken != now?.profileToken) return changed()
         val result = safeApiV2Call<JsonObject>(gate) {
             client.get(path) { authScope(scope); requireSiloAuth(); configure() }
                 .also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
         }
-        if (!scope.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
+        val current = tokens.snapshotCurrentScope()
+        if (!scope.isSameIdentityAs(current) || scope.profileId != current?.profileId || scope.profileToken != current?.profileToken) return changed()
         return when (result) {
             is ApiResult.Success -> try { ApiResult.Success(project(result.data, scope)) }
                 catch (_: Exception) {
@@ -41,8 +45,8 @@ class SettingsReadsV2Api(
         SiloJson.decodeFromJsonElement(OverlayConfigResponse.serializer(), body)
     }
 
-    suspend fun effectiveValues(keys: List<String>, libraries: List<Int>, series: List<String>): ApiResult<EffectiveSettingValuesResponse> =
-        read("/api/v2/settings/values/effective", {
+    suspend fun effectiveValues(keys: List<String>, libraries: List<Int>, series: List<String>, expected: AuthScopeSnapshot? = null): ApiResult<EffectiveSettingValuesResponse> =
+        read("/api/v2/settings/values/effective", expected, {
             url {
                 keys.forEach { parameters.append("keys", it) }
                 libraries.forEach { parameters.append("library_ids", it.toString()) }

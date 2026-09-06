@@ -53,6 +53,23 @@ class SettingsReadsV2Test {
         } finally { c.close() }
     }
 
+    @Test fun migrationReadUsesOriginalAuthorityAndNeverRetargetsAfterPinReplacement() = runTest {
+        val original = scope
+        var sends = 0
+        val c = HttpClient(MockEngine {
+            sends++
+            assertEquals(original, it.attributes[AuthScopeAttributeKey])
+            scope = scope.copy(profileToken = "replacement")
+            respond("""{"items":[{"key":"one","value":false,"source":"default"}],"revision":12}""",HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
+        })
+        try {
+            val api = SettingsApi(c,SettingsReadsV2Api(c,tokens))
+            assertIs<ApiResult.Error>(api.getMigrationEffectiveValues(listOf("one"),original))
+            assertIs<ApiResult.Error>(api.getMigrationEffectiveValues(listOf("one"),original))
+            assertEquals(1,sends)
+        } finally { c.close() }
+    }
+
     @Test fun overlayPreservesDisabledAndStaleRepliesNeverFallBack() = runTest {
         var replace = false
         var sends = 0

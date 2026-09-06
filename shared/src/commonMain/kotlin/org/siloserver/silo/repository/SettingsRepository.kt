@@ -138,6 +138,12 @@ class SettingsRepository(
             mutationId = mutationId,
         )
 
+    suspend fun setMigrationDeviceValue(key: String, value: JsonElement, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, newSettingMutationId(), authority.profileId, authority)
+
+    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Map<String, EffectiveSettingValue>> =
+        settingsApi.getMigrationEffectiveValues(keys, authority).map { result -> result.settings.associateBy { it.key } }
+
     suspend fun clearProfileDeviceValue(key: String): ApiResult<Unit> =
         treatMissingAsCleared(
             settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()),

@@ -13,6 +13,7 @@ import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
+import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.network.ApiResult
@@ -87,6 +88,93 @@ class AndroidPlayerSettingsStoreTest {
         } finally { client.close() }
     }
 
+
+    @Test
+    fun `legacy import carries original authority and stops after uncertain write`() = runTest {
+        var owner = org.siloserver.silo.network.AuthScopeSnapshot("server", activeProfileId, serverUrl, "proof", credentialEpoch = 1)
+        val original = owner
+        val client = HttpClient()
+        val seen = mutableListOf<org.siloserver.silo.network.AuthScopeSnapshot?>()
+        val api = object : SettingsApi(client) {
+            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
+                profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
+                seen += authority
+                assertEquals(original.profileId, profileId)
+                owner = owner.copy(credentialEpoch = 2)
+                return ApiResult.NetworkError(IllegalStateException("uncertain"))
+            }
+        }
+        try {
+            val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
+                { owner.profileId }, { owner.serverUrl }, fakeFlusher,
+                settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
+                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_import.preferences_pb") }) })
+            assertFalse(store.importLegacyDeviceSettings(original, linkedMapOf(
+                PlaybackSettingsKeys.AutoPlayNext to "false", PlaybackSettingsKeys.AutoSkipCredits to "true")))
+            assertEquals(listOf<org.siloserver.silo.network.AuthScopeSnapshot?>(original), seen)
+            assertTrue(fakeFlusher.calls.isEmpty(), "migration must not enqueue a separate replay")
+            assertFalse(store.importLegacyDeviceSettings(original, mapOf(PlaybackSettingsKeys.AutoPlayNext to "false")))
+            assertEquals(1, seen.size)
+        } finally { client.close() }
+    }
+
+    @Test
+    fun `acknowledged legacy import updates original local values without queued replay`() = runTest {
+        val owner = org.siloserver.silo.network.AuthScopeSnapshot("server", activeProfileId, serverUrl, "proof", credentialEpoch = 1)
+        val client = HttpClient()
+        var writes = 0
+        val api = object : SettingsApi(client) {
+            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
+                profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
+                assertEquals(owner,authority)
+                writes++
+                return ApiResult.Success(org.siloserver.silo.model.settings.StoredSettingValue(key,scope.scope.wire,value=value))
+            }
+        }
+        try {
+            val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
+                { owner.profileId }, { owner.serverUrl }, fakeFlusher,
+                settingsRepository = SettingsRepository(api), getDeviceId = { "device" }, getAuthScope = { owner },
+                dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root,"legacy_ack.preferences_pb") }) })
+            assertTrue(store.importLegacyDeviceSettings(owner, linkedMapOf(
+                PlaybackSettingsKeys.PreferredQuality to "720p", PlaybackSettingsKeys.MaxBitrateKbps to "2000",
+                PlaybackSettingsKeys.AutoPlayNext to "false")))
+            assertEquals(3,writes)
+            assertEquals("720p",store.preferredQualityFlow.first())
+            assertEquals(2000,store.maxBitrateKbpsFlow.first())
+            assertFalse(store.autoPlayNextFlow.first())
+            assertTrue(fakeFlusher.calls.isEmpty())
+        } finally { client.close() }
+    }
+
+    @Test
+    fun `legacy import rejects authority replaced during DataStore read before writes`() = runTest {
+        var owner = org.siloserver.silo.network.AuthScopeSnapshot("server", activeProfileId, serverUrl, "proof", credentialEpoch = 1)
+        val original = owner
+        val base = PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "legacy_barrier.preferences_pb") })
+        var localWrites = 0
+        val barrier = object : DataStore<Preferences> {
+            override val data = kotlinx.coroutines.flow.flow {
+                val prefs = base.data.first()
+                owner = owner.copy(credentialEpoch = 2)
+                emit(prefs)
+            }
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+                localWrites++
+                return base.updateData(transform)
+            }
+        }
+        val client = HttpClient()
+        try {
+            val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
+                { owner.profileId }, { owner.serverUrl }, fakeFlusher,
+                settingsRepository = SettingsRepository(SettingsApi(client)), getDeviceId = { "device" },
+                getAuthScope = { owner }, dataStoreFactory = { barrier })
+            assertFalse(store.importLegacyDeviceSettings(original, mapOf(PlaybackSettingsKeys.AutoPlayNext to "false")))
+            assertEquals(0,localWrites)
+            assertTrue(fakeFlusher.calls.isEmpty())
+        } finally { client.close() }
+    }
 
     @get:Rule
     val tempFolder = TemporaryFolder()

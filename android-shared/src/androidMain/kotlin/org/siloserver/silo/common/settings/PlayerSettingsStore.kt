@@ -230,6 +230,12 @@ interface PlayerSettingsStore {
      * sure settings the user just toggled survive a backgrounding /
      * process death window.
      */
+    /** Import only under original authority; true means all writes were acknowledged. */
+    suspend fun importLegacyDeviceSettings(
+        authority: org.siloserver.silo.network.AuthScopeSnapshot,
+        values: Map<String, String>,
+    ): Boolean = false
+
     suspend fun flushPendingDeviceSettings()
 }
 

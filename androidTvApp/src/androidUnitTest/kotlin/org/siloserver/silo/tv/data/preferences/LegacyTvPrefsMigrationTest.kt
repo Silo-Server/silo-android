@@ -10,7 +10,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
-import org.siloserver.silo.model.settings.EffectiveSetting
+import org.siloserver.silo.model.settings.EffectiveSettingValue
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -20,6 +21,7 @@ import org.siloserver.silo.tv.testing.FakePlayerSettingsStore
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
 import org.junit.Rule
@@ -81,15 +83,14 @@ class LegacyTvPrefsMigrationTest {
 
     private fun newMigration(
         legacy: DataStore<Preferences>?,
-        effective: Map<String, EffectiveSetting> = emptyMap(),
+        effective: Map<String, EffectiveSettingValue> = emptyMap(),
     ): LegacyTvPrefsMigration = LegacyTvPrefsMigration(
         context = mockContextStub(),
         settingsCache = fakeCache,
         playerSettingsStore = fakePlayerStore,
         librarySelectionStore = selectionStore,
-        getServerUrl = { tokenManager.getServerUrl() },
-        getProfileId = { tokenManager.getProfileId() },
-        getEffectiveSettings = { effective },
+        getAuthority = { tokenManager.snapshotCurrentScope() },
+        getEffectiveSettings = { keys, _ -> ApiResult.Success(keys.associateWith { effective[it] ?: EffectiveSettingValue(it, source = "default") }) },
         legacyStoreProvider = { legacy },
     )
 
@@ -135,11 +136,11 @@ class LegacyTvPrefsMigrationTest {
             prefs[legacyAutoSkipIntroKey] = true
         }
         val effective = mapOf(
-            PlaybackSettingsKeys.PreferredQuality to EffectiveSetting(
+            PlaybackSettingsKeys.PreferredQuality to EffectiveSettingValue(
                 key = PlaybackSettingsKeys.PreferredQuality,
-                effectiveValue = "1080p",
-                source = "device",
-                hasDeviceOverride = true,
+                value = kotlinx.serialization.json.JsonPrimitive("1080p"),
+                source = "profile_device",
+                scope = "profile_device",
             ),
         )
         newMigration(legacy, effective).migrateIfNeeded()
@@ -163,11 +164,11 @@ class LegacyTvPrefsMigrationTest {
             prefs[legacyAutoSkipIntroKey] = true
         }
         val effective = mapOf(
-            PlaybackSettingsKeys.MaxBitrateKbps to EffectiveSetting(
+            PlaybackSettingsKeys.MaxBitrateKbps to EffectiveSettingValue(
                 key = PlaybackSettingsKeys.MaxBitrateKbps,
-                effectiveValue = "3000",
-                source = "device",
-                hasDeviceOverride = true,
+                value = kotlinx.serialization.json.JsonPrimitive("3000"),
+                source = "profile_device",
+                scope = "profile_device",
             ),
         )
         newMigration(legacy, effective).migrateIfNeeded()
@@ -192,9 +193,8 @@ class LegacyTvPrefsMigrationTest {
             settingsCache = fakeCache,
             playerSettingsStore = fakePlayerStore,
             librarySelectionStore = selectionStore,
-            getServerUrl = { tokenManager.getServerUrl() },
-            getProfileId = { tokenManager.getProfileId() },
-            getEffectiveSettings = { keys -> requested.addAll(keys); emptyMap() },
+            getAuthority = { tokenManager.snapshotCurrentScope() },
+            getEffectiveSettings = { keys, _ -> requested.addAll(keys); ApiResult.Success(emptyMap()) },
             legacyStoreProvider = { legacy },
         ).migrateIfNeeded()
 
@@ -304,7 +304,7 @@ class LegacyTvPrefsMigrationTest {
         val migration = newMigration(legacy)
         migration.migrateIfNeeded()
 
-        assertTrue(fakeCache.isMigrationComplete(serverUrl, playbackScope))
+        assertFalse(fakeCache.isMigrationComplete(serverUrl, playbackScope))
         assertFalse(fakeCache.isMigrationComplete(serverUrl, libraryScope))
 
         // A profile becomes active — the next call seeds and completes.
@@ -333,6 +333,95 @@ class LegacyTvPrefsMigrationTest {
         assertTrue(fakePlayerStore.setterCalls.isEmpty())
         assertFalse(fakeCache.isMigrationComplete(serverUrl, playbackScope))
         assertFalse(fakeCache.isMigrationComplete(serverUrl, libraryScope))
+    }
+
+    @Test
+    fun `false device override is present and never replaced by legacy true`() = runTest {
+        val legacy = legacyStore()
+        legacy.edit { it[legacyAutoPlayNextKey] = true }
+        fakePlayerStore.autoPlayNextFlow.value = false
+        newMigration(legacy,mapOf(PlaybackSettingsKeys.AutoPlayNext to EffectiveSettingValue(
+            PlaybackSettingsKeys.AutoPlayNext, value = kotlinx.serialization.json.JsonPrimitive(false),
+            source = "profile_device", scope = "profile_device",
+        ))).migrateIfNeeded()
+        assertFalse(fakePlayerStore.autoPlayNextFlow.value)
+        assertFalse("setAutoPlayNext" in fakePlayerStore.setterCalls)
+        assertTrue(fakeCache.isMigrationComplete(serverUrl,playbackScope))
+    }
+
+    @Test
+    fun `replacement authority during legacy DataStore read leaves both sentinels unset`() = runTest {
+        val base = legacyStore()
+        base.edit { it[legacyQualityKey] = "720p" }
+        val delayed = object : DataStore<Preferences> by base {
+            override val data = kotlinx.coroutines.flow.flow {
+                val prefs = base.data.first()
+                tokenManager.epoch++
+                emit(prefs)
+            }
+        }
+        newMigration(delayed).migrateIfNeeded()
+        assertTrue(fakePlayerStore.setterCalls.isEmpty())
+        assertFalse(fakeCache.isMigrationComplete(serverUrl,playbackScope))
+        assertFalse(fakeCache.isMigrationComplete(serverUrl,libraryScope))
+    }
+
+    @Test
+    fun `failed or incomplete reads never import playback or mark its sentinel`() = runTest {
+        val legacy = legacyStore()
+        legacy.edit { it[legacyQualityKey] = "720p" }
+        for (result in listOf<ApiResult<Map<String, EffectiveSettingValue>>>(
+            ApiResult.NetworkError(IllegalStateException("offline")),
+            ApiResult.Error(503, "unavailable", "offline"),
+            ApiResult.Success(emptyMap()),
+        )) {
+            LegacyTvPrefsMigration(mockContextStub(), fakeCache, fakePlayerStore, selectionStore,
+                { tokenManager.snapshotCurrentScope() }, { _, _ -> result }, { legacy }).migrateIfNeeded()
+            assertTrue(fakePlayerStore.setterCalls.isEmpty())
+            assertFalse(fakeCache.isMigrationComplete(serverUrl, playbackScope))
+        }
+        newMigration(legacy).migrateIfNeeded()
+        assertEquals("720p", fakePlayerStore.preferredQualityFlow.value)
+        assertTrue(fakeCache.isMigrationComplete(serverUrl, playbackScope))
+    }
+
+    @Test
+    fun `replacement login during network read stops all migration and sentinels`() = runTest {
+        val legacy = legacyStore()
+        legacy.edit { it[legacySelectedLibraryIdKey] = 42 }
+        LegacyTvPrefsMigration(mockContextStub(), fakeCache, fakePlayerStore, selectionStore,
+            { tokenManager.snapshotCurrentScope() }, { keys, _ ->
+                tokenManager.epoch++
+                ApiResult.Success(keys.associateWith { EffectiveSettingValue(it, source = "default") })
+            }, { legacy }).migrateIfNeeded()
+        assertTrue(fakePlayerStore.setterCalls.isEmpty())
+        assertNull(selectionStore.getSelectedLibraryId())
+        assertFalse(fakeCache.isMigrationComplete(serverUrl, playbackScope))
+        assertFalse(fakeCache.isMigrationComplete(serverUrl, libraryScope))
+    }
+
+    @Test
+    fun `library seed refuses replacement authority inside DataStore transform`() = runTest {
+        val original = tokenManager.snapshotCurrentScope()
+        val base = PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "library_barrier.preferences_pb") })
+        val blocked = object : DataStore<Preferences> {
+            override val data = base.data
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences {
+                tokenManager.epoch++
+                return base.updateData(transform)
+            }
+        }
+        val selection = TvLibrarySelectionStore(mockContextStub(), tokenManager, dataStoreFactory = { blocked })
+        assertFalse(selection.seedLegacySelection(original,42))
+        assertTrue(base.data.first().asMap().isEmpty())
+    }
+
+    @Test
+    fun `unacknowledged import does not mark playback complete`() = runTest {
+        val legacy = legacyStore()
+        fakePlayerStore.importSucceeds = false
+        newMigration(legacy).migrateIfNeeded()
+        assertFalse(fakeCache.isMigrationComplete(serverUrl, playbackScope))
     }
 
     /**
@@ -407,6 +496,10 @@ private class FakeTokenManager(
     var profileId: String?,
 ) : TokenManager {
     override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
+    var epoch: Long = 1
+    override suspend fun snapshotCurrentScope() = org.siloserver.silo.network.AuthScopeSnapshot(
+        "default", profileId, serverUrl, null, credentialEpoch = epoch,
+    )
     override suspend fun getAccessToken(): String? = null
     override suspend fun getRefreshToken(): String? = null
     override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {}

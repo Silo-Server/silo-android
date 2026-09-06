@@ -104,6 +104,23 @@ class TvLibrarySelectionStore(
         return storeFor(profileId).data.first()[selectedLibraryKey(serverId)]
     }
 
+    /** Local legacy seed is bound before DataStore suspension; existing selection wins. */
+    suspend fun seedLegacySelection(authority: org.siloserver.silo.network.AuthScopeSnapshot, id: Int?): Boolean {
+        suspend fun current(): Boolean {
+            val now = tokenManager.snapshotCurrentScope()
+            return authority.isSameIdentityAs(now) && authority.profileId == now?.profileId && authority.profileToken == now?.profileToken
+        }
+        if (!current()) return false
+        val profile = authority.profileId ?: return false
+        if (id != null) {
+            val key = selectedLibraryKey(authority.serverId)
+            storeFor(profile).edit { prefs ->
+                if (current() && prefs[key] == null) prefs[key] = id
+            }
+        }
+        return current()
+    }
+
     companion object {
         private const val DEFAULT_SERVER_ID = "default"
 

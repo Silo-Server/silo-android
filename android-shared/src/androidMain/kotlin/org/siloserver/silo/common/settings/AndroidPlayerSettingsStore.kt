@@ -117,21 +117,23 @@ class AndroidPlayerSettingsStore(
             storeCache.getOrPut(profileId) { dataStoreFactory(profileId) }
         }
 
-    private suspend fun ensureMigrated(scope: Scope, store: DataStore<Preferences>) {
-        migrateLegacyCache(scope, store)
-        migrateRenamedKeys(scope, store)
+    private suspend fun ensureMigrated(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean = { true }) {
+        migrateLegacyCache(scope, store, isCurrent)
+        if (isCurrent()) migrateRenamedKeys(scope, store, isCurrent)
     }
 
-    private suspend fun migrateLegacyCache(scope: Scope, store: DataStore<Preferences>) {
+    private suspend fun migrateLegacyCache(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean) {
         val token = scope.profileId + "/" + scope.migrationSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.migrationSentinel)
         val current = store.data.first()
+        if (!isCurrent()) return
         if (current[sentinelKey] == true) {
-            synchronized(migrationDone) { migrationDone.add(token) }
+            if (isCurrent()) synchronized(migrationDone) { migrationDone.add(token) }
             return
         }
         store.edit { prefs ->
+            if (!isCurrent()) return@edit
             for (key in PlaybackSettingsKeys.DeviceSettings) {
                 val legacy = legacyCache.getString(scope.serverUrl, key, MISSING_SENTINEL)
                 if (legacy == MISSING_SENTINEL) continue
@@ -139,7 +141,7 @@ class AndroidPlayerSettingsStore(
             }
             prefs[sentinelKey] = true
         }
-        synchronized(migrationDone) { migrationDone.add(token) }
+        if (isCurrent()) synchronized(migrationDone) { migrationDone.add(token) }
     }
 
     /**
@@ -154,20 +156,22 @@ class AndroidPlayerSettingsStore(
      * server in the loop — so skipping the copy silently reverts a preference
      * the user set until a canonical refresh happens to land.
      */
-    private suspend fun migrateRenamedKeys(scope: Scope, store: DataStore<Preferences>) {
+    private suspend fun migrateRenamedKeys(scope: Scope, store: DataStore<Preferences>, isCurrent: suspend () -> Boolean) {
         val token = scope.profileId + "/" + scope.renameSentinel
         if (synchronized(migrationDone) { token in migrationDone }) return
         val sentinelKey = booleanPreferencesKey(scope.renameSentinel)
         val current = store.data.first()
+        if (!isCurrent()) return
         if (current[sentinelKey] != true) {
             store.edit { prefs ->
+                if (!isCurrent()) return@edit
                 for ((oldKey, newKey) in PlaybackSettingsKeys.RenamedLocalKeys) {
                     copyRenamedSlot(prefs, scope, oldKey = oldKey, newKey = newKey)
                 }
                 prefs[sentinelKey] = true
             }
         }
-        synchronized(migrationDone) { migrationDone.add(token) }
+        if (isCurrent()) synchronized(migrationDone) { migrationDone.add(token) }
     }
 
     /**
@@ -833,6 +837,41 @@ class AndroidPlayerSettingsStore(
             store.edit { it[stringPreferencesKey(scope.keyPrefix + key)] = value }
             serverSettingsFlusher.enqueue(scope.profileId, key, value, scope.serverUrl, scope.authority)
         }
+    }
+
+    override suspend fun importLegacyDeviceSettings(
+        authority: org.siloserver.silo.network.AuthScopeSnapshot,
+        values: Map<String, String>,
+    ): Boolean {
+        val repository = settingsRepository ?: return false
+        suspend fun current(): Boolean {
+            val now = getAuthScope()
+            return authority.isSameIdentityAs(now) && authority.profileId == now?.profileId && authority.profileToken == now?.profileToken
+        }
+        if (!current()) return false
+        val profileId = authority.profileId ?: return false
+        val deviceId = getDeviceId()?.takeIf { it.isNotBlank() } ?: return false
+        val scope = Scope(profileId, authority.serverUrl, deviceId, authority)
+        val store = storeFor(profileId)
+        if (!current()) return false
+        ensureMigrated(scope, store, ::current)
+        for ((key, raw) in values) {
+            if (!current()) return false
+            val encoded = encodeSettingWireValue(key, raw) ?: return false
+            if (repository.setMigrationDeviceValue(key, encoded, authority) !is ApiResult.Success) return false
+            if (!current()) return false
+            store.edit { prefs ->
+                if (!current()) return@edit
+                writeRawString(prefs, scope, key, raw)
+                if (key == PlaybackSettingsKeys.SubtitleAppearance) {
+                    val appearance = SubtitleAppearance.decode(raw).sanitized()
+                    prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = raw
+                    writeGranularAppearance(prefs, scope, appearance)
+                    prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
+                }
+            }
+        }
+        return current()
     }
 
     private suspend inline fun withScope(

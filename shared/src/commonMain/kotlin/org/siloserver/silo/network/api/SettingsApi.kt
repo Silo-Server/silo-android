@@ -215,6 +215,11 @@ open class SettingsApi(
         }
     }
 
+    /** Migration decision read pinned to the original author; failures never mean absence. */
+    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<EffectiveSettingValuesResponse> =
+        readsV2?.effectiveValues(keys, emptyList(), emptyList(), authority)
+            ?: ApiResult.Error(0, "unavailable", "The v2 settings reader is unavailable.")
+
     /**
      * Write one typed value at one scope.
      *

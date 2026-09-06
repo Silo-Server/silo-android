@@ -288,13 +288,9 @@ val androidTvModule = module {
             settingsCache = get(),
             playerSettingsStore = get(),
             librarySelectionStore = get(),
-            getServerUrl = { get<TokenManager>().getServerUrl() },
-            getProfileId = { get<TokenManager>().getProfileId() },
-            getEffectiveSettings = { keys ->
-                when (val result = get<SettingsRepository>().getEffectiveSettings(keys)) {
-                    is ApiResult.Success -> result.data
-                    is ApiResult.Error, is ApiResult.NetworkError -> emptyMap()
-                }
+            getAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            getEffectiveSettings = { keys, owner ->
+                get<SettingsRepository>().getMigrationEffectiveValues(keys, owner)
             },
         )
     }
