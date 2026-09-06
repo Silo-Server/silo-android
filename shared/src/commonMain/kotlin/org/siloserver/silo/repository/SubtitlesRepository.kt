@@ -30,7 +30,7 @@ import kotlinx.coroutines.delay
  *  - rethrows [CancellationException] so callers can cancel via structured
  *    concurrency (player exit cancels the viewModelScope job)
  */
-class SubtitlesRepository(private val api: SubtitlesApi) {
+class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org.siloserver.silo.network.TokenManager? = null) {
 
     /** Terminal result of [pollJob]. */
     sealed class SubtitleJobOutcome {
@@ -75,11 +75,14 @@ class SubtitlesRepository(private val api: SubtitlesApi) {
         intervalMs: Long = 1_000L,
         onUpdate: (SubtitleAiJob) -> Unit = {},
     ): SubtitleJobOutcome {
+        val scope = tokens?.snapshotCurrentScope()
+        if (tokens != null && scope == null) return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
         while (true) {
             try {
-                val job = when (val r = api.getJob(jobId)) {
+                val job = when (val r = api.getJob(jobId, scope)) {
                     is ApiResult.Success -> r.data.job
                     is ApiResult.Error -> {
+                        if (r.code == 0) return SubtitleJobOutcome.Failed(r.message)
                         if (r.code == 404) {
                             return SubtitleJobOutcome.Failed(
                                 "This job no longer exists on the server.",

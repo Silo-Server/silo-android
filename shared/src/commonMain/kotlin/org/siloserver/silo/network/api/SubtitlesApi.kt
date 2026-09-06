@@ -38,23 +38,24 @@ interface SubtitlesApi {
     /** GET /api/v1/subtitles/ai/status — both flags false when AI is unconfigured. */
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus>
 
-    /** GET /api/v1/subtitles/ai/quota — transcribe-kind budget; admins are exempt. */
+    /** GET /api/v2/subtitles/ai/quota — transcribe-kind budget; admins are exempt. */
     suspend fun aiQuota(): ApiResult<SubtitleAiQuota>
 
     /** POST /api/v1/subtitles/ai/translate — 202 with the queued job; 429 quota; 503 unconfigured. */
     suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse>
 
-    /** GET /api/v1/subtitles/ai/jobs?media_file_id=N */
+    /** GET /api/v2/subtitles/ai/jobs?media_file_id=N */
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse>
 
-    /** GET /api/v1/subtitles/ai/jobs/{id} — 404 once the job row is gone. */
+    /** GET /api/v2/subtitles/ai/jobs/{id} — 404 once the job row is gone. */
     suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse>
+    suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> = getJob(jobId)
 
     /** POST /api/v1/subtitles/ai/jobs/{id}/cancel — 204 on success. */
     suspend fun cancelJob(jobId: Long): ApiResult<Unit>
 }
 
-class DefaultSubtitlesApi(private val client: HttpClient) : SubtitlesApi {
+class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null) : SubtitlesApi {
 
     override suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
         safeApiCall {
@@ -81,7 +82,7 @@ class DefaultSubtitlesApi(private val client: HttpClient) : SubtitlesApi {
         client.get("/api/v1/subtitles/ai/status")
     }
 
-    override suspend fun aiQuota(): ApiResult<SubtitleAiQuota> = safeApiCall {
+    override suspend fun aiQuota(): ApiResult<SubtitleAiQuota> = aiReads?.quota() ?: safeApiCall {
         client.get("/api/v1/subtitles/ai/quota")
     }
 
@@ -94,15 +95,18 @@ class DefaultSubtitlesApi(private val client: HttpClient) : SubtitlesApi {
         }
 
     override suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
-        safeApiCall {
+        aiReads?.jobs(mediaFileId) ?: safeApiCall {
             client.get("/api/v1/subtitles/ai/jobs") {
                 parameter("media_file_id", mediaFileId)
             }
         }
 
-    override suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse> = safeApiCall {
+    override suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse> = aiReads?.job(jobId) ?: safeApiCall {
         client.get("/api/v1/subtitles/ai/jobs/$jobId")
     }
+
+    override suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> =
+        aiReads?.job(jobId, scope) ?: getJob(jobId)
 
     override suspend fun cancelJob(jobId: Long): ApiResult<Unit> = safeApiCall {
         client.post("/api/v1/subtitles/ai/jobs/$jobId/cancel")
