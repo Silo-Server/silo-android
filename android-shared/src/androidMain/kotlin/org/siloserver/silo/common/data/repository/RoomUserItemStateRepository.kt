@@ -434,16 +434,22 @@ class RoomUserItemStateRepository(
         // idempotent replay. Resolving as synced immediately means no network
         // request is sent unless that replay is required.
         contentIds.distinct().forEach { contentId ->
-            // A child the user toggled on its own while the container write
-            // was pending carries a newer intent. Leave its projection and its
-            // queued write alone; the server-resolved page refresh shows the
-            // final answer either way.
-            val ownIntent = outboxDao.getLatestByCoalesceKey(
-                "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
-            )
-            if (ownIntent != null) return@forEach
-            val handle = recordWatched(contentId, watched)
-            resolve(handle, WriteOutcome.SYNCED)
+            // One transaction per child: the intent check, the record, and the
+            // synced resolve must not interleave with a child-level write that
+            // lands between them, or that newer intent would be coalesced away.
+            db.withTransaction {
+                // A child the user toggled on its own while the container
+                // write was pending carries a newer intent. Leave its
+                // projection and its queued write alone; the server-resolved
+                // page refresh shows the final answer either way.
+                val ownIntent = outboxDao.getLatestByCoalesceKey(
+                    "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
+                )
+                if (ownIntent == null) {
+                    val handle = recordWatched(contentId, watched)
+                    resolve(handle, WriteOutcome.SYNCED)
+                }
+            }
         }
     }
 

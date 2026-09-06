@@ -10,6 +10,7 @@ import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.repository.port.WriteOutcome
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -84,6 +85,43 @@ class RoomUserItemStateRepositoryTest {
         assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
         assertNotNull(db.dirtyOperationDao().getById(own.opId))
+    }
+
+    /**
+     * The per-child confirmation must be atomic. Simulate a child-level write
+     * landing between the intent check and the record by issuing it from a
+     * second repository on the same database while the first is mid-loop.
+     * With per-child transactions the second write either waits and is then
+     * seen as the newer intent, or lands after and coalesces normally; in
+     * both cases the child's own pending op survives.
+     */
+    @Test
+    fun recordConfirmedWatchedDoesNotDropAChildWriteThatLandsDuringConfirmation() = runTest {
+        val other = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 1000L },
+            idGenerator = { "other-${nextId++}" },
+        )
+        // Confirm a first child, then race a user toggle on the second child
+        // against its confirmation.
+        val own = kotlinx.coroutines.coroutineScope {
+            val confirmation = async(kotlinx.coroutines.Dispatchers.IO) {
+                repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
+            }
+            val handle = other.recordWatched("e2", watched = false)
+            confirmation.await()
+            handle
+        }
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        // Whichever order the two writes serialized in, the user's own intent
+        // for e2 is what remains queued.
+        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e2" }
+        assertEquals(1, queued.size)
+        assertEquals(own.opId, queued.single().id)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
     }
 
     /**
