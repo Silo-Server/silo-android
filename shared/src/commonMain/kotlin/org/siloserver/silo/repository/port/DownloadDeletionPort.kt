@@ -39,6 +39,9 @@ data class PendingDownloadDeletion(
     val profileId: String,
     val recordId: String,
     val mediaFileId: Int?,
+    val loginId: String? = null,
+    val origin: String? = null,
+    val deviceId: String? = null,
 )
 
 /** Network-only default: no durable tombstones (delete stays server-first). */

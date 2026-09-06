@@ -139,7 +139,7 @@ val androidTvModule = module {
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
-        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get())
+        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get(), authorities = get(), devices = get(), identityTransitions = get())
     }
     single {
         val tokenManager: TokenManager = get()

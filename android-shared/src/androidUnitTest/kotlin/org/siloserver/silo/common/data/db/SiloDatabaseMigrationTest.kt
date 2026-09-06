@@ -83,6 +83,23 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration10To11PreservesUnownedDeletionIntent() {
+        val name = "migration-10-to-11"
+        migrationHelper.createDatabase(name, 10).use { database ->
+            database.execSQL("INSERT INTO download_deletions (serverId, profileId, recordId, mediaFileId, enqueuedAtMs) VALUES ('s', 'p', 'row', 42, 123)")
+        }
+        migrationHelper.runMigrationsAndValidate(name, 11, true).use { database ->
+            database.query("SELECT recordId, mediaFileId, enqueuedAtMs, loginId, origin, deviceId FROM download_deletions").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("row", cursor.getString(0)); assertEquals(42, cursor.getInt(1))
+                assertEquals(123L, cursor.getLong(2))
+                assertNull(cursor.getString(3)); assertNull(cursor.getString(4)); assertNull(cursor.getString(5))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }

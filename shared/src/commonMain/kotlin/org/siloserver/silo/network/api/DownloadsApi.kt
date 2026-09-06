@@ -24,15 +24,24 @@ import io.ktor.http.contentType
 // classes (SectionApi, CatalogApi) are final because their repos aren't
 // unit-tested at the API boundary; downloads gets real fake-based tests
 // because the upsert / refresh / delete state transitions are non-trivial.
-open class DownloadsApi(protected val client: HttpClient) {
+open class DownloadsApi(protected val client: HttpClient, private val registry: org.siloserver.silo.network.apiv2.DownloadRegistryV2Api? = null, private val tokens: org.siloserver.silo.network.TokenManager? = null) {
 
-    open suspend fun list(): ApiResult<DownloadsListResponse> = safeApiCall {
+    private fun changed() = ApiResult.Error(0, "identity_changed", "Downloads need the original saved account and profile.")
+    open suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
+        if (registry == null) list() else if (scope == null) changed() else registry.list(scope)
+    open suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> =
+        if (registry == null) delete(id) else if (scope == null) changed() else registry.delete(id, scope)
+
+    open suspend fun list(): ApiResult<DownloadsListResponse> {
+        if (registry != null) return list(tokens?.snapshotCurrentScope())
+        return safeApiCall {
         // Trailing slash required — chi router registers the handlers under
         // `r.Route("/downloads", { r.Get("/", ...); r.Post("/", ...) })`
         // (silo-server/internal/api/router.go:1543-1548), and chi 302-redirects
         // the bare `/api/v1/downloads` to `/api/v1/downloads/`. Ktor's POST
         // doesn't follow redirects, which surfaced as ApiResult.Error(302).
         client.get("/api/v1/downloads/")
+        }
     }
 
     /**
@@ -41,8 +50,11 @@ open class DownloadsApi(protected val client: HttpClient) {
      * transcode is disabled. No trailing slash — this is a named subpath, not
      * the collection root that chi 302-redirects.
      */
-    open suspend fun capability(): ApiResult<DownloadCapability> = safeApiCall {
+    open suspend fun capability(): ApiResult<DownloadCapability> {
+        if (registry != null) return registry.capability(tokens?.snapshotCurrentScope() ?: return changed())
+        return safeApiCall {
         client.get("/api/v1/downloads/capability")
+        }
     }
 
     open suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> = safeApiCall {
@@ -65,7 +77,10 @@ open class DownloadsApi(protected val client: HttpClient) {
         }
     }
 
-    open suspend fun delete(id: String): ApiResult<Unit> = safeApiCall {
+    open suspend fun delete(id: String): ApiResult<Unit> {
+        if (registry != null) return delete(id, tokens?.snapshotCurrentScope())
+        return safeApiCall {
         client.delete("/api/v1/downloads/$id")
+        }
     }
 }

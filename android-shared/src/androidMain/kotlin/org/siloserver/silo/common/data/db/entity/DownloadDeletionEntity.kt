@@ -16,4 +16,7 @@ data class DownloadDeletionEntity(
     val recordId: String,
     val mediaFileId: Int?,
     val enqueuedAtMs: Long,
+    val loginId: String? = null,
+    val origin: String? = null,
+    val deviceId: String? = null,
 )

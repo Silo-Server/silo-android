@@ -34,6 +34,9 @@ data class DownloadRecord(
     @SerialName("effective_quality") val effectiveQuality: String? = null,
     @SerialName("delivery_format") val deliveryFormat: String? = null,
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    val revision: Int? = null,
+    @SerialName("status_event_at") val statusEventAt: String? = null,
 )
 
 /**
@@ -83,6 +86,9 @@ data class DownloadRequest(
     val series: Boolean = false,
     val quality: String? = null,
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    val revision: Int? = null,
+    @SerialName("status_event_at") val statusEventAt: String? = null,
 )
 
 /**
@@ -138,6 +144,10 @@ enum class DownloadKind(val wire: String) {
  */
 @Serializable
 data class DownloadCapability(
+    val revision: String? = null,
+    val state: String? = null,
+    @SerialName("proxy_delivery") val proxyDelivery: Boolean = false,
+    @SerialName("ordered_status") val orderedStatus: Boolean = false,
     val enabled: Boolean = false,
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     @SerialName("quality_presets") val qualityPresets: List<String> = emptyList(),
@@ -148,7 +158,7 @@ data class DownloadCapability(
     @SerialName("monitoring_modes") val monitoringModes: List<String> = emptyList(),
 ) {
     /** Downloads are usable only when the feature is on AND this user may download. */
-    val isUsable: Boolean get() = enabled && downloadAllowed
+    val isUsable: Boolean get() = enabled && downloadAllowed && (revision == null || (revision.isNotBlank() && state == "available"))
 
     /**
      * The [DownloadQuality] presets to offer this user, in ladder order.
