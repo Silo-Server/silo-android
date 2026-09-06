@@ -18,6 +18,10 @@ import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.canServeCache
 import org.siloserver.silo.repository.port.toWriteOutcome
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 open class PersonalDataRepository(
     private val personalDataApi: PersonalDataApi,
@@ -31,6 +35,11 @@ open class PersonalDataRepository(
     /** Offline read cache for the library list (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+    /**
+     * Process-owned scope for work that must outlive the screen that started
+     * it. Child confirmation after a container write is the only user so far.
+     */
+    private val reconciliationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     // -- Libraries --
 
@@ -153,6 +162,39 @@ open class PersonalDataRepository(
             personalDataApi.markUnwatched(itemId, handle.scope)
         }
         userItemStatePort.resolve(handle, result.toWriteOutcome())
+        return result
+    }
+
+    /**
+     * [setWatched] for a container (season or series) whose children the
+     * server resolves. On success the children are confirmed locally through
+     * [UserItemStatePort.recordConfirmedWatched] so their resume rows cannot
+     * resurrect Resume. [knownChildIds] are confirmed immediately;
+     * [resolveChildIds] is then invoked to discover the rest. Both run on a
+     * repository-owned scope so leaving the screen cannot cancel them, and
+     * both are skipped if the active identity changed in the meantime.
+     */
+    open suspend fun setContainerWatched(
+        itemId: String,
+        watched: Boolean,
+        knownChildIds: List<String>,
+        resolveChildIds: suspend () -> List<String>?,
+    ): ApiResult<Unit> {
+        val identityGeneration = identityTransitions.generation.value
+        val result = setWatched(itemId, watched)
+        if (result !is ApiResult.Success) return result
+        reconciliationScope.launch {
+            if (identityTransitions.generation.value != identityGeneration) return@launch
+            if (knownChildIds.isNotEmpty()) {
+                userItemStatePort.recordConfirmedWatched(knownChildIds, watched)
+            }
+            val all = resolveChildIds() ?: return@launch
+            if (identityTransitions.generation.value != identityGeneration) return@launch
+            val remaining = all.filterNot { it in knownChildIds }
+            if (remaining.isNotEmpty()) {
+                userItemStatePort.recordConfirmedWatched(remaining, watched)
+            }
+        }
         return result
     }
 

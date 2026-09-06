@@ -13,9 +13,16 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Locks the Track B dual-path contract on [PersonalDataRepository]: each
@@ -49,15 +56,74 @@ class PersonalDataRepositoryPortTest {
         override suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome) {
             resolvedWith = outcome
         }
+
+        val confirmed = mutableListOf<Pair<List<String>, Boolean>>()
+        override suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
+            confirmed += contentIds to watched
+        }
     }
 
-    private fun repo(status: HttpStatusCode, port: UserItemStatePort): PersonalDataRepository {
+    private fun repo(
+        status: HttpStatusCode,
+        port: UserItemStatePort,
+        reconciliationScope: CoroutineScope? = null,
+    ): PersonalDataRepository {
         val client = HttpClient(
             MockEngine { respond("{}", status, headersOf(HttpHeaders.ContentType, "application/json")) },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return PersonalDataRepository(PersonalDataApi(client), port)
+        return if (reconciliationScope == null) {
+            PersonalDataRepository(PersonalDataApi(client), port)
+        } else {
+            PersonalDataRepository(PersonalDataApi(client), port, reconciliationScope = reconciliationScope)
+        }
+    }
+
+    /**
+     * A season write fans out on the server. The children must be confirmed
+     * locally even after the screen that started the write is gone, so the
+     * confirmation runs on the repository's scope, not the caller's.
+     */
+    @Test
+    fun setContainerWatchedConfirmsKnownAndResolvedChildrenOnItsOwnScope() = runTest {
+        val port = RecordingPort()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repoScope = CoroutineScope(Job() + dispatcher)
+        val callerScope = CoroutineScope(Job() + dispatcher)
+        val repository = repo(HttpStatusCode.OK, port, reconciliationScope = repoScope)
+
+        var result: Any? = null
+        val call = callerScope.launch {
+            result = repository.setContainerWatched(
+                itemId = "season-1",
+                watched = true,
+                knownChildIds = listOf("e1"),
+                resolveChildIds = { listOf("e1", "e2", "e3") },
+            )
+        }
+        call.join()
+        // The caller leaves before reconciliation runs.
+        callerScope.cancel()
+        advanceUntilIdle()
+
+        assertTrue(result is org.siloserver.silo.network.ApiResult.Success<*>)
+        assertEquals(listOf("watched=true"), port.recorded)
+        assertEquals(listOf(listOf("e1") to true, listOf("e2", "e3") to true), port.confirmed)
+    }
+
+    @Test
+    fun setContainerWatchedDoesNotConfirmChildrenOnFailure() = runTest {
+        val port = RecordingPort()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val repository = repo(
+            HttpStatusCode.Forbidden,
+            port,
+            reconciliationScope = CoroutineScope(Job() + dispatcher),
+        )
+        repository.setContainerWatched("season-1", true, listOf("e1")) { listOf("e1", "e2") }
+        advanceUntilIdle()
+        assertTrue(port.confirmed.isEmpty())
     }
 
     @Test

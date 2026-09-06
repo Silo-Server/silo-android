@@ -70,6 +70,23 @@ class RoomUserItemStateRepositoryTest {
     }
 
     /**
+     * A child the user toggled on its own while the season write was pending
+     * carries a newer intent; the container confirmation must not overwrite
+     * its projection or coalesce away its queued write.
+     */
+    @Test
+    fun recordConfirmedWatchedLeavesChildrenWithTheirOwnPendingIntentAlone() = runTest {
+        val own = repo.recordWatched("e1", watched = false)
+        assertTrue(own.opId >= 0)
+
+        repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
+
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
+        assertNotNull(db.dirtyOperationDao().getById(own.opId))
+    }
+
+    /**
      * A child whose position write is already in flight cannot have that
      * write deleted. Its watched op must stay queued for one replay so the
      * position cannot land last and reopen the episode on the server.

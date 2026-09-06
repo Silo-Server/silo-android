@@ -425,12 +425,23 @@ class RoomUserItemStateRepository(
     }
 
     override suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
+        val snapshot = snapshotProvider() ?: return
+        val serverId = snapshot.serverId
+        val profileId = snapshot.profileId ?: return
         // Reuse the single-item path so each child gets the same care: the
         // projection flips, resume rows and pending position writes clear,
         // and an in-flight position leaves the watched op queued for one
         // idempotent replay. Resolving as synced immediately means no network
         // request is sent unless that replay is required.
         contentIds.distinct().forEach { contentId ->
+            // A child the user toggled on its own while the container write
+            // was pending carries a newer intent. Leave its projection and its
+            // queued write alone; the server-resolved page refresh shows the
+            // final answer either way.
+            val ownIntent = outboxDao.getLatestByCoalesceKey(
+                "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
+            )
+            if (ownIntent != null) return@forEach
             val handle = recordWatched(contentId, watched)
             resolve(handle, WriteOutcome.SYNCED)
         }

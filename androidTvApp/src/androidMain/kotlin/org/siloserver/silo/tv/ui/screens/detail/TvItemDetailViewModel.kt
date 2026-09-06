@@ -858,9 +858,22 @@ class TvItemDetailViewModel(
             // Serialize with the previous write for this season so a quick
             // reversal cannot reach the server before the request it reverses.
             previousWrite?.join()
-            val result = personalDataRepository.setWatched(season.contentId, watched)
-            val isCurrentMutation = seasonWatchMutationGenerations[seasonNumber] == mutationGeneration
             val knownEpisodes = (baseline.windowPage ?: baseline.episodes).map { it.contentId }
+            // The repository confirms the children on its own scope, so
+            // leaving this screen cannot strand their durable resume rows.
+            val result = personalDataRepository.setContainerWatched(
+                itemId = season.contentId,
+                watched = watched,
+                knownChildIds = knownEpisodes,
+                resolveChildIds = {
+                    val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
+                    (page as? ApiResult.Success)?.data?.episodes?.map { it.contentId }
+                },
+            )
+            val isCurrentMutation = seasonWatchMutationGenerations[seasonNumber] == mutationGeneration
+            // Read the live baseline: an earlier serialized write for this
+            // season may have advanced it after this write captured its own.
+            val confirmed = seasonWatchBaselines[seasonNumber] ?: baseline
 
             if (result !is ApiResult.Success) {
                 // A superseded failure changes nothing: the newer write will
@@ -871,51 +884,44 @@ class TvItemDetailViewModel(
                 _uiState.update {
                     it.copy(
                         seasons = it.seasons.map { entry ->
-                            if (entry.seasonNumber == seasonNumber) baseline.season else entry
+                            if (entry.seasonNumber == seasonNumber) confirmed.season else entry
                         },
                         episodes = it.episodes.map { episode ->
-                            baseline.episodes.firstOrNull { it.contentId == episode.contentId } ?: episode
+                            confirmed.episodes.firstOrNull { it.contentId == episode.contentId } ?: episode
                         },
                     )
                 }
-                baseline.windowPage?.let { episodeWindow.put(seasonNumber, it) }
+                confirmed.windowPage?.let { episodeWindow.put(seasonNumber, it) }
                 publishCarousel()
                 if (_uiState.value.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
                 return@launch
             }
 
-            // The server resolved the season to its episodes. Confirm the ones
-            // this screen knows about right away so their local resume rows
-            // cannot offer Resume on an episode the server now reports played.
-            if (knownEpisodes.isNotEmpty()) userItemState.recordConfirmedWatched(knownEpisodes, watched)
             if (!isCurrentMutation) {
                 // Superseded but confirmed: the newer pending write must roll
                 // back to this state, not to the one before it.
-                seasonWatchBaselines[seasonNumber] = baseline.applied(watched)
+                seasonWatchBaselines[seasonNumber] = confirmed.applied(watched)
                 return@launch
             }
             seasonWatchMutationGenerations.remove(seasonNumber)
             seasonWatchBaselines.remove(seasonNumber)
 
             // Fresh-only reads: a cached pre-mutation list would undo the
-            // optimistic state. The episode page is always fetched so children
-            // this screen never loaded are confirmed too.
+            // optimistic state.
             val seasonsResult = catalogRepository.refreshSeasons(seriesContentId)
-            val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
-            if (page is ApiResult.Success) {
-                val unconfirmed = page.data.episodes.map { it.contentId }.filterNot { it in knownEpisodes }
-                if (unconfirmed.isNotEmpty()) userItemState.recordConfirmedWatched(unconfirmed, watched)
-            }
             if (revision != watchedStateRevision) return@launch
             if (seasonsResult is ApiResult.Success) applySeasonUserData(seriesContentId, seasonsResult.data.seasons)
             if (_uiState.value.selectedSeason == seasonNumber) {
                 loadEpisodes(seriesContentId, seasonNumber, quiet = true, freshOnly = true)
-            } else if (page is ApiResult.Success && episodeWindow.get(seasonNumber) != null) {
-                if (_uiState.value.detail?.contentId != seriesContentId) return@launch
-                val refreshed = withLocalProgress(page.data.episodes)
+            } else if (episodeWindow.get(seasonNumber) != null) {
+                val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
                 if (revision != watchedStateRevision) return@launch
-                episodeWindow.put(seasonNumber, refreshed)
-                publishCarousel()
+                if (page is ApiResult.Success && _uiState.value.detail?.contentId == seriesContentId) {
+                    val refreshed = withLocalProgress(page.data.episodes)
+                    if (revision != watchedStateRevision) return@launch
+                    episodeWindow.put(seasonNumber, refreshed)
+                    publishCarousel()
+                }
             }
         }
     }
