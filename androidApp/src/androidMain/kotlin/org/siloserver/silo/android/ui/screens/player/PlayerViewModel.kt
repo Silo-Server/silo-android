@@ -932,6 +932,7 @@ class PlayerViewModel(
         // Exact capability/context snapshot used only for a 404 renewal.
         recoveryStartParams: StartParams? = null,
     ) {
+        aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
         routeIntentState.beginLoad(
             contentId = contentId,
@@ -3619,11 +3620,14 @@ class PlayerViewModel(
     /** Refresh the transcription quota; non-limited / failed lookups hide the counter (web parity). */
     fun refreshAiQuota() {
         viewModelScope.launch {
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
             val quota = when (val r = subtitlesRepository.aiQuota()) {
                 is ApiResult.Success -> r.data.takeIf { it.limited }
                 else -> null
             }
-            _subtitleTools.update { it.copy(quota = quota) }
+            val now = subtitlesRepository.captureJobAuthority()
+            if (owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken)
+                _subtitleTools.update { it.copy(quota = quota) }
         }
     }
 
@@ -3633,16 +3637,29 @@ class PlayerViewModel(
      * poll for completion instead of streaming live cues
      * (SubtitleTranslateRequest doc).
      */
+    private var aiPlaybackGeneration = 0L
+    private var aiCreationInFlight = false
     private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
 
     fun startAiJob(kind: String, sourceIndex: Int, sourceLanguage: String, targetLanguage: String) {
+        val generation = aiPlaybackGeneration
         val state = _uiState.value
         val mediaFileId = state.mediaFileId ?: return
-        if (_subtitleTools.value.activeJob != null || _subtitleTools.value.translateSubmitting) return
+        if (aiCreationInFlight || _subtitleTools.value.activeJob != null || _subtitleTools.value.translateSubmitting) return
+        aiCreationInFlight = true
         _subtitleTools.update { it.copy(translateSubmitting = true, translateError = null, jobJustCompleted = false) }
         aiJobHandle?.cancel()
-        aiJobHandle = viewModelScope.launch {
-            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
+        aiJobHandle = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val owner = subtitlesRepository.captureJobAuthority() ?: run {
+                _subtitleTools.update { it.copy(translateSubmitting = false, translateError = "Sign in before starting subtitle processing.") }
+                return@launch
+            }
+            fun samePlayback() = generation == aiPlaybackGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
+            suspend fun ownsRequest(): Boolean {
+                val now = subtitlesRepository.captureJobAuthority()
+                return samePlayback() && owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
+            }
+            if (!ownsRequest()) return@launch
             val result = subtitlesRepository.translate(
                 SubtitleTranslateRequest(
                     mediaFileId = mediaFileId,
@@ -3652,20 +3669,24 @@ class PlayerViewModel(
                     targetLanguage = targetLanguage.ifBlank { null },
                     startPosition = state.position,
                 ),
+                owner,
             )
+            if (!ownsRequest()) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    val job = result.data.job
-                    if (!owner.isSameIdentityAs(subtitlesRepository.captureJobAuthority()) || job.mediaFileId != mediaFileId) return@launch
+                    val job = result.data.job.let { job ->
+                        if (!result.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
+                    }
                     aiCancelOwner = job.id to owner
                     _subtitleTools.update { it.copy(translateSubmitting = false, activeJob = job) }
-                    val outcome = subtitlesRepository.pollJob(job.id) { update ->
-                        _subtitleTools.update { it.copy(activeJob = update) }
+                    val outcome = subtitlesRepository.pollJob(job.id, expectedScope = owner) { update ->
+                        if (samePlayback()) _subtitleTools.update { it.copy(activeJob = update) }
                     }
+                    if (!ownsRequest()) return@launch
                     when (outcome) {
                         is SubtitlesRepository.SubtitleJobOutcome.Completed -> {
                             doRefreshSubtitles(autoSelectSubtitleId = outcome.resultSubtitleId)
-                            _subtitleTools.update { it.copy(activeJob = null, jobJustCompleted = true) }
+                            if (ownsRequest()) _subtitleTools.update { it.copy(activeJob = null, jobJustCompleted = true) }
                         }
                         is SubtitlesRepository.SubtitleJobOutcome.Failed -> _subtitleTools.update {
                             it.copy(activeJob = null, translateError = outcome.message ?: "Job failed")
@@ -3687,7 +3708,7 @@ class PlayerViewModel(
                     it.copy(translateSubmitting = false, translateError = result.errorMessage("Failed to start AI job"))
                 }
             }
-        }
+        }.also { job -> job.invokeOnCompletion { aiCreationInFlight = false } }
     }
 
     /** Cancel the in-flight AI job server-side; the poll loop then sees the terminal cancelled status. */

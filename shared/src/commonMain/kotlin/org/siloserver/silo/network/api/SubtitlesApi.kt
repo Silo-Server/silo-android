@@ -43,6 +43,7 @@ interface SubtitlesApi {
 
     /** POST /api/v1/subtitles/ai/translate — 202 with the queued job; 429 quota; 503 unconfigured. */
     suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse>
+    suspend fun translate(request: SubtitleTranslateRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> = translate(request)
 
     /** GET /api/v2/subtitles/ai/jobs?media_file_id=N */
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse>
@@ -56,7 +57,7 @@ interface SubtitlesApi {
     suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> = cancelJob(jobId)
 }
 
-class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null, private val reads: org.siloserver.silo.network.apiv2.SubtitleReadsV2Api? = null, private val cancellation: org.siloserver.silo.network.apiv2.SubtitleAiCancelV2Api? = null) : SubtitlesApi {
+class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null, private val reads: org.siloserver.silo.network.apiv2.SubtitleReadsV2Api? = null, private val cancellation: org.siloserver.silo.network.apiv2.SubtitleAiCancelV2Api? = null, private val creation: org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api? = null) : SubtitlesApi {
 
     override suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
         reads?.search(request) ?: safeApiCall {
@@ -88,12 +89,15 @@ class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: o
     }
 
     override suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse> =
-        safeApiCall {
+        creation?.create(request) ?: safeApiCall {
             client.post("/api/v1/subtitles/ai/translate") {
                 contentType(ContentType.Application.Json)
                 setBody(request)
             }
         }
+
+    override suspend fun translate(request: SubtitleTranslateRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> =
+        creation?.create(request, scope) ?: translate(request)
 
     override suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         aiReads?.jobs(mediaFileId) ?: safeApiCall {

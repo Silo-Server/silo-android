@@ -9,7 +9,7 @@ import org.siloserver.silo.model.subtitles.*
 import org.siloserver.silo.network.*
 
 @Serializable
-private data class AiJobV2(
+internal data class AiJobV2(
     @Serializable(with = DetailStringIdSerializer::class) val id: String,
     @Serializable(with = DetailStringIdSerializer::class) @SerialName("media_file_id") val mediaFileId: String,
     val kind: String,

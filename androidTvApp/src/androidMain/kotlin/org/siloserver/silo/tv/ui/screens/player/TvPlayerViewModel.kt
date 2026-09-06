@@ -4855,10 +4855,11 @@ class TvPlayerViewModel(
 
     fun refreshAiQuota() {
         viewModelScope.launch {
-            when (val r = subtitlesRepository.aiQuota()) {
-                is ApiResult.Success -> _aiTranslate.update { it.copy(quota = r.data) }
-                else -> Unit // quota line is simply absent on failure
-            }
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
+            val result = subtitlesRepository.aiQuota()
+            val now = subtitlesRepository.captureJobAuthority()
+            if (!owner.isSameIdentityAs(now) || owner.profileId != now?.profileId || owner.profileToken != now?.profileToken) return@launch
+            if (result is ApiResult.Success) _aiTranslate.update { it.copy(quota = result.data) }
         }
     }
 
@@ -4868,6 +4869,7 @@ class TvPlayerViewModel(
      * streaming live cues. Runs in viewModelScope so player exit cancels the
      * poll via structured concurrency (the server job itself keeps running).
      */
+    private var aiCreationInFlight = false
     private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
 
     fun submitAiTranslate(
@@ -4876,23 +4878,39 @@ class TvPlayerViewModel(
         sourceLanguage: String?,
         targetLanguage: String,
     ) {
-        val mediaFileId = _uiState.value.mediaFileId ?: return
+        val state = _uiState.value
+        val generation = contentLoadGeneration
+        val mediaFileId = state.mediaFileId ?: return
         val phase = _aiTranslate.value.phase
-        if (phase is AiJobPhase.Submitting || phase is AiJobPhase.Running) return
+        if (aiCreationInFlight || phase is AiJobPhase.Submitting || phase is AiJobPhase.Running) return
+        aiCreationInFlight = true
         _aiTranslate.update { it.copy(phase = AiJobPhase.Submitting) }
         aiJobPollJob?.cancel()
-        aiJobPollJob = viewModelScope.launch {
-            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
+        aiJobPollJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val owner = subtitlesRepository.captureJobAuthority() ?: run {
+                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed("Sign in before starting subtitle processing.")) }
+                return@launch
+            }
+            fun samePlayback() = generation == contentLoadGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
+            suspend fun ownsRequest(): Boolean {
+                val now = subtitlesRepository.captureJobAuthority()
+                return samePlayback() && owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
+            }
+            if (!ownsRequest()) return@launch
             val request = SubtitleTranslateRequest(
                 mediaFileId = mediaFileId,
                 kind = kind,
                 sourceIndex = sourceIndex,
                 sourceLanguage = sourceLanguage?.ifBlank { null },
                 targetLanguage = targetLanguage.ifBlank { null },
-                startPosition = _uiState.value.position,
+                startPosition = state.position,
             )
-            val job = when (val r = subtitlesRepository.translate(request)) {
-                is ApiResult.Success -> r.data.job
+            val r = subtitlesRepository.translate(request, owner)
+            if (!ownsRequest()) return@launch
+            val job = when (r) {
+                is ApiResult.Success -> r.data.job.let { job ->
+                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
+                }
                 is ApiResult.Error -> {
                     // 429 = quota exhausted → refresh quota so the dialog
                     // flips to the exhausted state; 503 = engine unconfigured.
@@ -4909,7 +4927,6 @@ class TvPlayerViewModel(
                     return@launch
                 }
             }
-            if (!owner.isSameIdentityAs(subtitlesRepository.captureJobAuthority()) || job.mediaFileId != mediaFileId) return@launch
             aiCancelOwner = job.id to owner
             activeAiJobId = job.id
             _aiTranslate.update {
@@ -4917,8 +4934,9 @@ class TvPlayerViewModel(
             }
             val outcome = subtitlesRepository.pollJob(
                 jobId = job.id,
+                expectedScope = owner,
                 onUpdate = { update ->
-                    _aiTranslate.update {
+                    if (samePlayback()) _aiTranslate.update {
                         it.copy(
                             phase = AiJobPhase.Running(
                                 update.progress,
@@ -4928,6 +4946,7 @@ class TvPlayerViewModel(
                     }
                 },
             )
+            if (!ownsRequest()) return@launch
             activeAiJobId = null
             when (outcome) {
                 is SubtitlesRepository.SubtitleJobOutcome.Completed -> {
@@ -4935,6 +4954,7 @@ class TvPlayerViewModel(
                         autoSelectSubtitleId = outcome.resultSubtitleId,
                         source = TvSubtitleRefreshSource.AiCompletion,
                     )
+                    if (!ownsRequest()) return@launch
                     _aiTranslate.update {
                         if (merged) {
                             it.copy(phase = AiJobPhase.Idle, completedNonce = it.completedNonce + 1)
@@ -4954,7 +4974,7 @@ class TvPlayerViewModel(
                     it.copy(phase = AiJobPhase.Idle)
                 }
             }
-        }
+        }.also { job -> job.invokeOnCompletion { aiCreationInFlight = false } }
     }
 
     /** Dialog Cancel row: stop polling, ask the server to cancel, return to the form. */

@@ -115,7 +115,7 @@ data class SubtitleAiQuota(
 )
 
 /**
- * Body for POST /api/v1/subtitles/ai/translate.
+ * Input for subtitle AI creation. The v2 adapter emits required strings and a string file ID.
  *
  * Deliberately has NO `session_id` field: the web sends one to receive live
  * cue streaming over the playback websocket; Android polls the job instead
@@ -162,7 +162,10 @@ data class SubtitleAiJob(
 
 /** Envelope for translate (202) and GET /ai/jobs/{id}. */
 @Serializable
-data class SubtitleAiJobResponse(val job: SubtitleAiJob)
+data class SubtitleAiJobResponse(
+    val job: SubtitleAiJob,
+    @SerialName("live_delivery_attached") val liveDeliveryAttached: Boolean = false,
+)
 
 /** Envelope for GET /ai/jobs?media_file_id=N. */
 @Serializable

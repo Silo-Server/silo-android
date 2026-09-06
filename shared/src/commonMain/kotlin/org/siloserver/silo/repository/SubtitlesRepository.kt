@@ -57,6 +57,9 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
     suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse> =
         api.translate(request)
 
+    suspend fun translate(request: SubtitleTranslateRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> =
+        api.translate(request, scope)
+
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         api.listJobs(mediaFileId)
 
@@ -76,11 +79,17 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
     suspend fun pollJob(
         jobId: Long,
         intervalMs: Long = 1_000L,
+        expectedScope: org.siloserver.silo.network.AuthScopeSnapshot? = null,
         onUpdate: (SubtitleAiJob) -> Unit = {},
     ): SubtitleJobOutcome {
-        val scope = tokens?.snapshotCurrentScope()
+        val scope = expectedScope ?: tokens?.snapshotCurrentScope()
         if (tokens != null && scope == null) return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
         while (true) {
+            if (tokens != null && scope != null) {
+                val now = tokens.snapshotCurrentScope()
+                if (!scope.isSameIdentityAs(now) || scope.profileId != now?.profileId || scope.profileToken != now?.profileToken)
+                    return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
+            }
             try {
                 val job = when (val r = api.getJob(jobId, scope)) {
                     is ApiResult.Success -> r.data.job
@@ -102,6 +111,11 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
                     }
                 }
 
+                if (tokens != null && scope != null) {
+                    val now = tokens.snapshotCurrentScope()
+                    if (!scope.isSameIdentityAs(now) || scope.profileId != now?.profileId || scope.profileToken != now?.profileToken)
+                        return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
+                }
                 onUpdate(job)
 
                 when (job.status) {
