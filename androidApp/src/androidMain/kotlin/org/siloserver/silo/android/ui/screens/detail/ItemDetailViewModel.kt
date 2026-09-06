@@ -132,7 +132,7 @@ class ItemDetailViewModel(
     private val downloadEnqueuer: DownloadEnqueuer,
     private val ebookReaderRepository: EbookReaderRepository,
     private val recommendationRepository: RecommendationRepository,
-    metadataAiRepository: MetadataAiRepository,
+    private val metadataAiRepository: MetadataAiRepository,
     savedStateHandle: SavedStateHandle,
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
@@ -1055,16 +1055,18 @@ class ItemDetailViewModel(
             descriptionTranslation.markAutoFired(detail.contentId, target)
         }
         descriptionTranslation.resetFailure()
-        viewModelScope.launch {
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             descriptionTranslation.translate(
                 contentId = detail.contentId,
                 targetLanguage = target,
-                refetchPendingLanguage = {
-                    when (val result = catalogRepository.getItemDetail(contentId)) {
+                refetchPendingLanguage = { owner ->
+                    when (val result = metadataAiRepository.refreshDetail(detail.contentId, owner)) {
                         is ApiResult.Success -> {
                             val refreshed = withLocalProgress(result.data)
-                            _uiState.update { it.copy(detail = refreshed) }
-                            refreshed.pendingTranslationLanguage
+                            if (metadataAiRepository.isCurrent(owner) && _uiState.value.detail?.contentId == detail.contentId) {
+                                _uiState.update { it.copy(detail = refreshed) }
+                                refreshed.pendingTranslationLanguage
+                            } else target
                         }
                         else -> target // transient refetch failure: keep polling
                     }

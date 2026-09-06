@@ -10,6 +10,10 @@ class MetadataAiRepository(
 ) {
     suspend fun status(): ApiResult<MetadataAiStatus> = api.status()
 
-    suspend fun translateDescription(contentId: String, targetLanguage: String): ApiResult<Unit> =
-        api.translateDescription(contentId, targetLanguage)
+    suspend fun translateDescription(contentId: String, targetLanguage: String, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> =
+        api.translateDescription(contentId, targetLanguage, scope)
+
+    suspend fun captureAuthority() = api.captureAuthority()
+    suspend fun isCurrent(scope: org.siloserver.silo.network.AuthScopeSnapshot?) = api.isCurrent(scope)
+    suspend fun refreshDetail(contentId: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?) = api.refreshDetail(contentId, scope)
 }

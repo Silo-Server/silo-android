@@ -356,7 +356,7 @@ class TvItemDetailViewModel(
     private val playerSettingsStore: PlayerSettingsStore,
     private val profileRepository: ProfileRepository,
     private val profileSettings: ProfileSettingsController,
-    metadataAiRepository: org.siloserver.silo.repository.MetadataAiRepository,
+    private val metadataAiRepository: org.siloserver.silo.repository.MetadataAiRepository,
     private val contentId: String,
     private val userItemState: UserItemStatePort = NoOpUserItemStatePort,
     private val recommendationRepository: org.siloserver.silo.repository.RecommendationRepository? = null,
@@ -1684,16 +1684,18 @@ class TvItemDetailViewModel(
             descriptionTranslation.markAutoFired(detail.contentId, target)
         }
         descriptionTranslation.resetFailure()
-        viewModelScope.launch {
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             descriptionTranslation.translate(
                 contentId = detail.contentId,
                 targetLanguage = target,
-                refetchPendingLanguage = {
-                    when (val result = catalogRepository.getItemDetail(contentId)) {
+                refetchPendingLanguage = { owner ->
+                    when (val result = metadataAiRepository.refreshDetail(detail.contentId, owner)) {
                         is ApiResult.Success -> {
                             val refreshed = withLocalProgress(result.data)
-                            _uiState.update { it.copy(detail = refreshed) }
-                            refreshed.pendingTranslationLanguage
+                            if (metadataAiRepository.isCurrent(owner) && _uiState.value.detail?.contentId == detail.contentId) {
+                                _uiState.update { it.copy(detail = refreshed) }
+                                refreshed.pendingTranslationLanguage
+                            } else target
                         }
                         else -> target // transient refetch failure: keep polling
                     }

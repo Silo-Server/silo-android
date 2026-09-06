@@ -106,5 +106,6 @@ private class FakeMetadataAiApi(
     override suspend fun translateDescription(
         contentId: String,
         targetLanguage: String,
-    ): ApiResult<Unit> = ApiResult.NetworkError(IllegalStateException("not used"))
+        scope: org.siloserver.silo.network.AuthScopeSnapshot?,
+    ): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> = ApiResult.NetworkError(IllegalStateException("not used"))
 }
