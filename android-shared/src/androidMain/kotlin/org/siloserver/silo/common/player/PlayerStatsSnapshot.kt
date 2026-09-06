@@ -183,6 +183,7 @@ private fun describeColorRange(format: Format): String? = when (format.colorInfo
     else -> null
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private fun describeHdrMode(format: Format, decoderMimeType: String?): String? {
     if (decoderMimeType == null) return null
     if (decoderMimeType.equals(MimeTypes.VIDEO_DOLBY_VISION, ignoreCase = true)) {
