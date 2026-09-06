@@ -10,7 +10,8 @@ import org.siloserver.silo.network.apiv2.*
 import kotlinx.serialization.json.*
 
 class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val personRefresh: PersonRefreshV2Api? = null) {
+    private val personRefresh: PersonRefreshV2Api? = null,
+    private val watchDetail: WatchDetailV2Api? = null) {
 
     suspend fun getCatalog(
         source: String? = null, query: String? = null, mediaType: String? = null,
@@ -73,6 +74,11 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
         seriesId: String,
         seasonNumber: Int
     ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber)
+
+    suspend fun captureWatchAuthority() = watchDetail?.capture()
+    suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = watchDetail?.current(owner) == true
+    suspend fun getWatchDetail(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
+        watchDetail?.detail(id, owner) ?: ApiResult.Error(0, "unavailable", "The scoped watch reader is unavailable.")
 
     suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
         client.get("/api/v1/watch/$id")

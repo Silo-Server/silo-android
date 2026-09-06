@@ -23,7 +23,8 @@ val networkModule = module {
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
     single { CatalogV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.PersonRefreshV2Api(get(), get(), get()) }
-    single { CatalogApi(get(), get(), get()) }
+    single { org.siloserver.silo.network.apiv2.WatchDetailV2Api(get(), get()) }
+    single { CatalogApi(get(), get(), get(), get()) }
     single { PlaybackApi(get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }

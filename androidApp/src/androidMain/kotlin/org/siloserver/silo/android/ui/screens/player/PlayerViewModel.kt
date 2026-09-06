@@ -4348,6 +4348,8 @@ class PlayerViewModel(
         resumePositionOverride: Double?,
         loadOwner: MobilePlayerLoadOwner,
     ): Boolean {
+        val watchOwner = catalogRepository.captureWatchAuthority()
+        if (!ownsLoad(loadOwner)) return false
         val media = withContext(Dispatchers.IO) {
             val (serverId, profileId) = resolveDownloadScope()
             offlineMediaResolver.findLocalMedia(
@@ -4365,10 +4367,11 @@ class PlayerViewModel(
         // Best-effort online metadata (richer fields: intro/credits/chapters).
         // Network failure is fine; the sidecar already has title + poster
         // so airplane-mode playback still has something to render.
-        val watchDetail = when (val r = catalogRepository.getWatchDetail(contentId)) {
-            is ApiResult.Success -> r.data
-            else -> null
-        }
+        val localPos = userItemStatePort.localPosition(contentId, fileId)
+        if (!ownsLoad(loadOwner)) return false
+        val watchDetail = loadLocalWatchMetadata(
+            catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
+        ) { ownsLoad(loadOwner) }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title
         val subtitle = watchDetail?.let { buildSubtitle(it) } ?: sidecar.subtitle.orEmpty()
@@ -4381,8 +4384,6 @@ class PlayerViewModel(
         // Offline-safe resume: the server's watchDetail may be stale or absent in
         // airplane mode, so fold in the locally-recorded position and take the
         // furthest of the two (matches the server's GREATEST semantics).
-        val localPos = userItemStatePort.localPosition(contentId, fileId)
-        if (!ownsLoad(loadOwner)) return false
         val detailPos = listOfNotNull(watchDetail?.userData?.positionSeconds, localPos).maxOrNull()
         val startPos = resolvePlaybackStartPosition(
             overridePosition = resumePositionOverride,
