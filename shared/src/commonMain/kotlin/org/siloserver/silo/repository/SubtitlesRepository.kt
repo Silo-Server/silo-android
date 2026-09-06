@@ -62,7 +62,10 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
 
     suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse> = api.getJob(jobId)
 
+    suspend fun captureJobAuthority(): org.siloserver.silo.network.AuthScopeSnapshot? = tokens?.snapshotCurrentScope()
+
     suspend fun cancelJob(jobId: Long): ApiResult<Unit> = api.cancelJob(jobId)
+    suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> = api.cancelJob(jobId, scope)
 
     /**
      * Polls GET /ai/jobs/{id} every [intervalMs] until the job reaches a

@@ -51,11 +51,12 @@ interface SubtitlesApi {
     suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse>
     suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> = getJob(jobId)
 
-    /** POST /api/v1/subtitles/ai/jobs/{id}/cancel — 204 on success. */
+    /** POST /api/v2/subtitles/ai/jobs/{id}/cancel — 204 acknowledges cancellation. */
     suspend fun cancelJob(jobId: Long): ApiResult<Unit>
+    suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> = cancelJob(jobId)
 }
 
-class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null, private val reads: org.siloserver.silo.network.apiv2.SubtitleReadsV2Api? = null) : SubtitlesApi {
+class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null, private val reads: org.siloserver.silo.network.apiv2.SubtitleReadsV2Api? = null, private val cancellation: org.siloserver.silo.network.apiv2.SubtitleAiCancelV2Api? = null) : SubtitlesApi {
 
     override suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
         reads?.search(request) ?: safeApiCall {
@@ -108,7 +109,11 @@ class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: o
     override suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> =
         aiReads?.job(jobId, scope) ?: getJob(jobId)
 
-    override suspend fun cancelJob(jobId: Long): ApiResult<Unit> = safeApiCall {
+    override suspend fun cancelJob(jobId: Long): ApiResult<Unit> = cancellation?.cancel(jobId) ?: safeApiCall {
         client.post("/api/v1/subtitles/ai/jobs/$jobId/cancel")
     }
+
+    override suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
+        cancellation?.cancel(jobId, scope) ?: cancelJob(jobId)
+
 }

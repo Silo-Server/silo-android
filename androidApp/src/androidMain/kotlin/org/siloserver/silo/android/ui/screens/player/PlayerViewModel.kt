@@ -3633,6 +3633,8 @@ class PlayerViewModel(
      * poll for completion instead of streaming live cues
      * (SubtitleTranslateRequest doc).
      */
+    private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
+
     fun startAiJob(kind: String, sourceIndex: Int, sourceLanguage: String, targetLanguage: String) {
         val state = _uiState.value
         val mediaFileId = state.mediaFileId ?: return
@@ -3640,6 +3642,7 @@ class PlayerViewModel(
         _subtitleTools.update { it.copy(translateSubmitting = true, translateError = null, jobJustCompleted = false) }
         aiJobHandle?.cancel()
         aiJobHandle = viewModelScope.launch {
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
             val result = subtitlesRepository.translate(
                 SubtitleTranslateRequest(
                     mediaFileId = mediaFileId,
@@ -3653,6 +3656,8 @@ class PlayerViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val job = result.data.job
+                    if (!owner.isSameIdentityAs(subtitlesRepository.captureJobAuthority()) || job.mediaFileId != mediaFileId) return@launch
+                    aiCancelOwner = job.id to owner
                     _subtitleTools.update { it.copy(translateSubmitting = false, activeJob = job) }
                     val outcome = subtitlesRepository.pollJob(job.id) { update ->
                         _subtitleTools.update { it.copy(activeJob = update) }
@@ -3688,7 +3693,8 @@ class PlayerViewModel(
     /** Cancel the in-flight AI job server-side; the poll loop then sees the terminal cancelled status. */
     fun cancelAiJob() {
         val job = _subtitleTools.value.activeJob ?: return
-        viewModelScope.launch { subtitlesRepository.cancelJob(job.id) }
+        val owner = aiCancelOwner?.takeIf { it.first == job.id }?.second ?: return
+        viewModelScope.launch { subtitlesRepository.cancelJob(job.id, owner) }
     }
 
     /** Search sheet dismissed — clear transient search state (results survive reopen). */

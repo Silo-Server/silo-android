@@ -48,7 +48,8 @@ val networkModule = module {
     single { org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.SubtitleReadsV2Api(get(), get(), get()) }
-    single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get()) }
+    single { org.siloserver.silo.network.apiv2.SubtitleAiCancelV2Api(get(), get(), get()) }
+    single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get(), get()) }
     single<NotificationsApi> { org.siloserver.silo.network.apiv2.NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get()) }
     single<WatchTogetherApi> { DefaultWatchTogetherApi(get()) }

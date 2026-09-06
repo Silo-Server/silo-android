@@ -4868,6 +4868,8 @@ class TvPlayerViewModel(
      * streaming live cues. Runs in viewModelScope so player exit cancels the
      * poll via structured concurrency (the server job itself keeps running).
      */
+    private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
+
     fun submitAiTranslate(
         kind: String,
         sourceIndex: Int,
@@ -4880,6 +4882,7 @@ class TvPlayerViewModel(
         _aiTranslate.update { it.copy(phase = AiJobPhase.Submitting) }
         aiJobPollJob?.cancel()
         aiJobPollJob = viewModelScope.launch {
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
             val request = SubtitleTranslateRequest(
                 mediaFileId = mediaFileId,
                 kind = kind,
@@ -4906,6 +4909,8 @@ class TvPlayerViewModel(
                     return@launch
                 }
             }
+            if (!owner.isSameIdentityAs(subtitlesRepository.captureJobAuthority()) || job.mediaFileId != mediaFileId) return@launch
+            aiCancelOwner = job.id to owner
             activeAiJobId = job.id
             _aiTranslate.update {
                 it.copy(phase = AiJobPhase.Running(job.progress, job.progressMessage.ifBlank { null }))
@@ -4955,12 +4960,13 @@ class TvPlayerViewModel(
     /** Dialog Cancel row: stop polling, ask the server to cancel, return to the form. */
     fun cancelAiTranslateJob() {
         val jobId = activeAiJobId
+        val owner = aiCancelOwner?.takeIf { it.first == jobId }?.second
         aiJobPollJob?.cancel()
         aiJobPollJob = null
         activeAiJobId = null
         _aiTranslate.update { it.copy(phase = AiJobPhase.Idle) }
-        if (jobId != null) {
-            viewModelScope.launch { subtitlesRepository.cancelJob(jobId) }
+        if (jobId != null && owner != null) {
+            viewModelScope.launch { subtitlesRepository.cancelJob(jobId, owner) }
         }
     }
 
