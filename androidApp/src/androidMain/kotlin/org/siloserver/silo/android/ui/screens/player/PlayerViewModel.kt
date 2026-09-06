@@ -1018,6 +1018,8 @@ class PlayerViewModel(
                     Log.w(TAG, "Could not refresh player settings before playback", e)
                 }
                 if (!ownsLoad(loadOwner)) return@launch
+                val readyWatchOwner = catalogRepository.captureWatchAuthority()
+                if (!ownsLoad(loadOwner)) return@launch
                 when (val playbackState = videoPlaybackCoordinator.start(
                     VideoPlaybackStartRequest(
                         contentId = contentId,
@@ -1054,6 +1056,7 @@ class PlayerViewModel(
                             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
                             isSessionRenewal = recoveryStartParams != null,
                             loadOwner = loadOwner,
+                            watchOwner = readyWatchOwner,
                         )
                         unpublishedReadySessionId = null
                     }
@@ -1151,12 +1154,13 @@ class PlayerViewModel(
         initialSubtitleTrackIndex: Int?,
         isSessionRenewal: Boolean,
         loadOwner: MobilePlayerLoadOwner,
+        watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
     ) {
-        val watchDetail = when (val r = catalogRepository.getWatchDetail(playbackState.contentId)) {
-            is ApiResult.Success -> r.data
-            else -> null
-        }
-        if (!ownsLoad(loadOwner)) {
+        val watchMetadata = ReadyWatchMetadata(
+            catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl,
+        ) { ownsLoad(loadOwner) }
+        val watchDetail = watchMetadata.read()
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1215,7 +1219,7 @@ class PlayerViewModel(
         val localTrackSelection = version?.fileId
             ?.takeIf { initialAudioTrackIndex == null || !explicitSubtitlePickResolved }
             ?.let { fileId -> userItemStatePort.localTrackSelection(playbackState.contentId, fileId) }
-        if (!ownsLoad(loadOwner)) {
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1235,7 +1239,7 @@ class PlayerViewModel(
             authoritativeInventory = playbackState.playbackPlan != null,
             loadDownloadedSubtitles = subtitlesRepository::list,
         )
-        if (!ownsLoad(loadOwner)) {
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1284,6 +1288,10 @@ class PlayerViewModel(
             null
         }
 
+        if (!watchMetadata.current()) {
+            stopStaleReadySession(playbackState.sessionId)
+            return
+        }
         val published = loadOwners.runIfOwned(loadOwner) {
             val mountGeneration = expectNextMediaMount()
             _uiState.update {
