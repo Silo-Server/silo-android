@@ -26,7 +26,7 @@ val networkModule = module {
     single { PlaybackApi(get()) }
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }
-    single { ProfileApi(get(), get()) }
+    single { ProfileApi(get(), get(), get()) }
     single { SectionApi(get(), get()) }
     single { RecommendationApi(get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
