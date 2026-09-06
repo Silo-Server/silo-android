@@ -124,6 +124,10 @@ Home and personal-list reads capture confirmed witnesses before requesting data;
 accepted response rows supersede only those captured witnesses. An earlier read
 cannot erase a later acknowledgement. Home requests with confirmed witnesses do
 not join a request already in flight before the acknowledgement.
+Successful membership GETs capture both intent and display-baseline witnesses.
+They update that field's shared display baseline only if neither witness changed
+while the read was in flight. Detail screens, card menus and episode rows thus
+observe newer server truth without replaying or rewriting the pending command.
 Confirmed fields overlay older cards independently. A failed favorite cannot
 roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.

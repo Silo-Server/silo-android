@@ -101,10 +101,20 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         val activePort = port ?: return ApiResult.Error(0, "unavailable", "Membership storage is unavailable")
         val key = Key(itemId, kind)
         val witness = mutableActions.value[key]?.intent
+        val baselineWitness = mutableActions.value[key]?.baseline
         val authority = activePort.captureAuthority() ?: return ApiResult.Error(0, "identity_changed", "Sign in to read membership")
         val result = activePort.read(authority, itemId, kind)
-        if (generation.value != authority.scope.identityGeneration || mutableActions.value[key]?.intent != witness) {
+        if (generation.value != authority.scope.identityGeneration || mutableActions.value[key]?.intent != witness ||
+            mutableActions.value[key]?.baseline != baselineWitness) {
             return ApiResult.Error(0, "state_changed", "Membership changed while loading")
+        }
+        if (result is ApiResult.Success && witness != null && baselineWitness != null) {
+            // Publish newer server truth to every observer of this field (including
+            // detail, card menus and episode rows), without changing pending intent.
+            update(witness) { action ->
+                if (action.baseline != baselineWitness) action else action.copy(baseline = baselineWitness.copy(
+                    present = result.data, revision = kotlin.random.Random.nextLong()))
+            }
         }
         return result
     }
@@ -159,7 +169,7 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             if (generation.value != intent.generation || action?.intent != intent) states
             else {
                 val changed = transform(action)
-                states + (intent.key to if (changed.confirmed) changed.copy(baseline = changed.intent) else changed)
+                states + (intent.key to if (changed.confirmed && !action.confirmed) changed.copy(baseline = changed.intent) else changed)
             }
         }
     }

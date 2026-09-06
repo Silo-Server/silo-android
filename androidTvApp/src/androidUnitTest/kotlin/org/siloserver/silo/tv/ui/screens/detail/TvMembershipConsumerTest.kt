@@ -57,6 +57,54 @@ class TvMembershipConsumerTest {
         } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
     }
 
+    @Test fun laterMembershipReadReplacesEpisodeBaselineButPreAckReadIsRejected() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val barrier = DefaultIdentityTransitionBarrier()
+        val port = TestPort()
+        val client = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })
+        val repository = PersonalDataRepository(PersonalDataApi(client), identityTransitions = barrier, membershipPort = port)
+        val vm = createVm(client, repository, barrier)
+        try {
+            vm.onSetEpisodeFavorite("episode", true); advanceUntilIdle()
+            val intent = repository.memberships.actions.value.values.single().intent
+            repository.memberships.checkStatus(intent); advanceUntilIdle()
+            assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
+            assertIs<ApiResult.Success<Boolean>>(repository.isFavorite("episode"))
+            advanceUntilIdle()
+            assertEquals(false, vm.uiState.value.episodeFavoriteStates["episode"])
+
+            val next = repository.memberships.begin("episode", MembershipPort.Kind.FAVORITE, true)
+            repository.memberships.perform(next)
+            port.readRelease = CompletableDeferred()
+            val read = async { repository.isFavorite("episode") }; runCurrent()
+            repository.memberships.checkStatus(next); advanceUntilIdle()
+            assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
+            port.readRelease!!.complete(Unit)
+            assertIs<ApiResult.Error>(read.await()); advanceUntilIdle()
+            assertEquals(true, vm.uiState.value.episodeFavoriteStates["episode"])
+        } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
+    @Test fun laterReadsReplaceBothDetailFieldBaselines() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val barrier = DefaultIdentityTransitionBarrier()
+        val port = TestPort()
+        val client = HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })
+        val repository = PersonalDataRepository(PersonalDataApi(client), identityTransitions = barrier, membershipPort = port)
+        val vm = createVm(client, repository, barrier)
+        try {
+            for (kind in MembershipPort.Kind.entries) {
+                val intent = repository.memberships.begin("", kind, true)
+                repository.memberships.perform(intent); repository.memberships.checkStatus(intent)
+                advanceUntilIdle()
+                assertTrue(if (kind == MembershipPort.Kind.FAVORITE) vm.uiState.value.isFavorite else vm.uiState.value.inWatchlist)
+                if (kind == MembershipPort.Kind.FAVORITE) repository.isFavorite("") else repository.isInWatchlist("")
+                advanceUntilIdle()
+                assertFalse(if (kind == MembershipPort.Kind.FAVORITE) vm.uiState.value.isFavorite else vm.uiState.value.inWatchlist)
+            }
+        } finally { vm.viewModelScope.cancel(); client.close(); Dispatchers.resetMain() }
+    }
+
     private fun createVm(client: HttpClient, repository: PersonalDataRepository, barrier: IdentityTransitionBarrier): TvItemDetailViewModel {
         val settings = java.lang.reflect.Proxy.newProxyInstance(PlayerSettingsStore::class.java.classLoader,
             arrayOf(PlayerSettingsStore::class.java)) { _, method, _ ->
@@ -73,6 +121,7 @@ class TvMembershipConsumerTest {
         val authority = DurableLoginAuthority("login", AuthScopeSnapshot("s", "p", "https://example.invalid", null))
         var command: MembershipPort.Command? = null
         var sends = 0; var reads = 0
+        var readRelease: CompletableDeferred<Unit>? = null
         override suspend fun captureAuthority() = authority
         override suspend fun record(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind, present: Boolean) =
             MembershipPort.Command(1, authority, itemId, kind, present).also { command = it }
@@ -83,7 +132,9 @@ class TvMembershipConsumerTest {
         override suspend fun reconcile(command: MembershipPort.Command): MembershipPort.Completion {
             reads++; return MembershipPort.Completion(MembershipPort.Disposition.RECONCILED, true)
         }
-        override suspend fun read(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind) = ApiResult.Success(false)
+        override suspend fun read(authority: DurableLoginAuthority, itemId: String, kind: MembershipPort.Kind): ApiResult<Boolean> {
+            readRelease?.await(); return ApiResult.Success(false)
+        }
         override suspend fun pending(authority: DurableLoginAuthority, limit: Int) = emptyList<MembershipPort.Command>()
         override suspend fun hasLegacyQuarantine() = false
         override suspend fun dispatch(limit: Int) = emptyList<MembershipPort.Completion>()

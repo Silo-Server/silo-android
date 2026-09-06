@@ -267,4 +267,26 @@ class MembershipActivationTest {
         assertFalse(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
     }
 
+    @Test fun authoritativeMembershipGetsReplaceSharedDisplayBaselineForBothFields() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val methods = mutableListOf<HttpMethod>()
+        val client = client(MockEngine { request ->
+            methods += request.method
+            respond("", if (request.method == HttpMethod.Get) HttpStatusCode.NotFound else HttpStatusCode.NoContent)
+        })
+        val (repository, _) = repository(client)
+        for (kind in MembershipPort.Kind.entries) {
+            val intent = repository.memberships.begin("item", kind, true)
+            repository.memberships.perform(intent)
+            assertEquals(true, repository.memberships.actions.value.getValue(intent.key).baseline?.present)
+            val result = if (kind == MembershipPort.Kind.FAVORITE) repository.isFavorite("item") else repository.isInWatchlist("item")
+            assertEquals(false, assertIs<ApiResult.Success<Boolean>>(result).data)
+            val action = repository.memberships.actions.value.getValue(intent.key)
+            assertEquals(false, action.baseline?.present)
+            assertEquals(intent, action.intent) // GET updates display truth, not the user's command.
+            assertEquals(MembershipPort.Disposition.ACKNOWLEDGED, action.completion?.disposition)
+        }
+        assertEquals(listOf(HttpMethod.Put, HttpMethod.Get, HttpMethod.Put, HttpMethod.Get), methods)
+    }
+
 }
