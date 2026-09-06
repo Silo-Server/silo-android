@@ -84,7 +84,8 @@ data class NotificationRow(
     val id: String,
     @SerialName("type") val rawType: String,
     @SerialName("profile_id") val profileId: String,
-    @SerialName("library_id") val libraryId: Int? = null,
+    @Serializable(with = NotificationLibraryIdSerializer::class)
+    @SerialName("library_id") val libraryId: String? = null,
     @SerialName("series_id") val seriesId: String? = null,
     @SerialName("episode_id") val episodeId: String? = null,
     @SerialName("series_title") val seriesTitle: String = "",
@@ -110,6 +111,7 @@ data class NotificationRow(
 data class NotificationListResponse(
     val notifications: List<NotificationRow> = emptyList(),
     @SerialName("next_cursor") val nextCursor: String? = null,
+    @SerialName("read_cutoff") val readCutoff: String? = null,
 )
 
 /** GET /api/v1/notifications/sync — ascending catch-up; adds unread_count. */
@@ -118,6 +120,9 @@ data class NotificationSyncResponse(
     val notifications: List<NotificationRow> = emptyList(),
     @SerialName("next_cursor") val nextCursor: String? = null,
     @SerialName("unread_count") val unreadCount: Int = 0,
+    @SerialName("sync_cursor") val syncCursor: String? = null,
+    @SerialName("initial_snapshot") val initialSnapshot: Boolean = false,
+    @SerialName("has_more") val hasMore: Boolean = false,
 )
 
 /** GET /api/v1/notifications/unread-count. */
@@ -257,3 +262,16 @@ data class NotificationReadPayload(
     val id: String? = null,
     val all: Boolean = false,
 )
+
+/** REST v2 uses strings; the retained realtime bridge can still send integer library IDs. */
+internal object NotificationLibraryIdSerializer : kotlinx.serialization.KSerializer<String> {
+    override val descriptor = kotlinx.serialization.descriptors.PrimitiveSerialDescriptor("NotificationLibraryId", kotlinx.serialization.descriptors.PrimitiveKind.STRING)
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): String {
+        val value = (decoder as kotlinx.serialization.json.JsonDecoder).decodeJsonElement() as? JsonPrimitive
+            ?: throw kotlinx.serialization.SerializationException("Invalid notification library ID")
+        if (!value.isString && value.content.toLongOrNull() == null)
+            throw kotlinx.serialization.SerializationException("Invalid notification library ID")
+        return value.content
+    }
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: String) = encoder.encodeString(value)
+}

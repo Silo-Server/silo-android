@@ -117,6 +117,7 @@ val repositoryModule = module {
     single {
         NotificationsRepository(
             api = get(),
+            tokens = get(), authorities = getOrNull(), checkpoints = getOrNull(), identityTransitions = get(),
             realtimeFactory = {
                 org.siloserver.silo.network.DefaultNotificationsRealtimeClient(
                     client = get(),

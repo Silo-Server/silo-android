@@ -53,6 +53,7 @@ interface NotificationsApi {
 
     /** POST /api/v1/notifications/read-all — 204. */
     suspend fun markAllRead(): ApiResult<Unit>
+    suspend fun markAllRead(through: String): ApiResult<Unit> = markAllRead()
 
     /** GET /api/v1/notifications/preferences. */
     suspend fun getPreferences(): ApiResult<NotificationPreferences>

@@ -44,6 +44,9 @@ import org.koin.dsl.module
  * lifecycle here is wired but unused until Phase 1+ migrations.
  */
 val playerInfraModule = module {
+    single<org.siloserver.silo.repository.NotificationSyncStore> {
+        org.siloserver.silo.common.data.sync.AndroidNotificationSyncStore(androidContext())
+    }
     single<org.siloserver.silo.repository.PlaybackJournalStore> {
         org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
     }

@@ -70,12 +70,8 @@ fun InboxScreen(
     val rows by repository.rows.collectAsState()
     val unreadCount by repository.unreadCount.collectAsState()
     val nextCursor by repository.nextCursor.collectAsState()
+    val error by repository.error.collectAsState()
 
-    // The repo has no loading/error flow (refresh() swallows API errors and the
-    // realtime client folds late results in behind `rows`), so the screen owns
-    // only a first-load spinner shown while the list is still empty. After a
-    // refresh, an empty list is the genuine empty state, not an error — there is
-    // no failure signal to surface, so no ErrorView path is wired here.
     var isRefreshing by remember { mutableStateOf(false) }
     var isLoadingMore by remember { mutableStateOf(false) }
 
@@ -134,6 +130,9 @@ fun InboxScreen(
         ) {
             when {
                 isRefreshing && cards.isEmpty() -> LoadingIndicator()
+                error != null && cards.isEmpty() -> TextButton(onClick = { scope.launch { doRefresh() } }) {
+                    Text("${error} Retry")
+                }
                 cards.isEmpty() -> EmptyStateView(
                     title = "You're all caught up",
                     subtitle = "New episode and request notifications will show up here.",
@@ -145,6 +144,9 @@ fun InboxScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
+                    if (error != null) item(key = "inbox-error") {
+                        TextButton(onClick = { scope.launch { doRefresh() } }) { Text("${error} Retry") }
+                    }
                     items(cards, key = { it.id }) { card ->
                         InboxCard(
                             card = card,

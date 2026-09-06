@@ -36,6 +36,9 @@ sealed class NotificationRealtimeEvent {
     /** `notification.read` with all=true. */
     object ReadAll : NotificationRealtimeEvent()
 
+    /** A signed read cutoff cannot be compared with rounded public timestamps. */
+    object Invalidate : NotificationRealtimeEvent()
+
     /** The socket closed (or failed to connect). The repository reconnects. */
     data class Closed(val reason: String? = null) : NotificationRealtimeEvent()
 }
@@ -148,6 +151,7 @@ fun decodeRealtimeFrame(json: Json, raw: String): NotificationRealtimeEvent? {
                 }
                 NotificationRealtime.EventRead -> {
                     val obj = envelope.data as? JsonObject ?: return null
+                    if ("through_created_at" in obj || "through_id" in obj) return NotificationRealtimeEvent.Invalidate
                     val payload = try {
                         json.decodeFromJsonElement(NotificationReadPayload.serializer(), obj)
                     } catch (_: Exception) {

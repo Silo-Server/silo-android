@@ -40,7 +40,7 @@ val networkModule = module {
     single { DownloadsApi(get()) }
     single { EbookReaderApi(get()) }
     single<SubtitlesApi> { DefaultSubtitlesApi(get()) }
-    single<NotificationsApi> { DefaultNotificationsApi(get()) }
+    single<NotificationsApi> { org.siloserver.silo.network.apiv2.NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get()) }
     single<WatchTogetherApi> { DefaultWatchTogetherApi(get()) }
     single<DiagnosticsApi> { DefaultDiagnosticsApi(get()) }
