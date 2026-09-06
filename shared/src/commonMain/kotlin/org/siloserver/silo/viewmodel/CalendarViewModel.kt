@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import org.siloserver.silo.network.AuthScopeSnapshot
 
 data class CalendarUiState(
     val isLoading: Boolean = true,
@@ -72,7 +75,7 @@ interface CalendarFilterStore {
  * platform supplies "today" and the IANA timezone so week math stays
  * deterministic in commonTest — no Clock.System defaults baked in.
  *
- * Responses are cached per (week, filter, library) for the ViewModel's
+ * Responses are cached per original authority and (week, filter, library) for the ViewModel's
  * lifetime and served stale-while-revalidate (iOS `CalendarViewModel`):
  * paging back to a week or flipping a filter you have already seen renders
  * instantly and quietly refreshes behind, instead of blanking the agenda.
@@ -86,6 +89,7 @@ class CalendarViewModel(
 
     private data class CacheKey(val weekStart: String, val filter: String, val libraryId: Int?)
 
+    private var cacheOwner: AuthScopeSnapshot? = null
     private val cache = HashMap<CacheKey, List<CalendarDay>>()
 
     private val CalendarUiState.cacheKey: CacheKey
@@ -116,45 +120,29 @@ class CalendarViewModel(
         load()
     }
 
-    fun load() {
-        val generation = ++loadGeneration
-        viewModelScope.launch {
-            // Recompute "today" on every fetch so a resident/always-on app self-
-            // corrects after midnight: the "Today" highlight + header and
-            // isCurrentWeek (which gates the Today button) stay accurate without
-            // requiring the user to press Today first. weekStart is untouched so
-            // the visible week — and thus the fetched range — doesn't shift.
-            _uiState.update {
-                // Stale-while-revalidate: a cached week renders immediately and
-                // is not "loading"; an unseen week clears the previous week's
-                // rows so they cannot show under the new strip while it loads.
-                val cached = cache[it.cacheKey]
-                it.copy(
-                    isLoading = cached == null,
-                    // A load that supersedes an in-flight refresh takes over
-                    // the refresh flag too; the refresh coroutine will refuse
-                    // to clear it once its generation is stale.
-                    isRefreshing = false,
-                    days = cached.orEmpty(),
-                    error = null,
-                    today = todayProvider(),
-                )
-            }
-            fetch(generation)
-        }
-    }
+    fun load() = startLoad(false)
+    fun refresh() = startLoad(true)
 
-    fun refresh() {
+    private fun startLoad(refresh: Boolean) {
         val generation = ++loadGeneration
+        val state = _uiState.value
         viewModelScope.launch {
-            // Pull-to-refresh is an explicit "get me fresh data": evict the
-            // cache entry so a failure cannot fall back to the stale copy.
-            cache.remove(_uiState.value.cacheKey)
-            _uiState.update { it.copy(isRefreshing = true, error = null, today = todayProvider()) }
-            fetch(generation)
-            if (generation == loadGeneration) {
-                _uiState.update { it.copy(isRefreshing = false) }
+            val owner = repository.capture()
+            if (generation != loadGeneration || !currentCoroutineContext().isActive) return@launch
+            val valid = owner != null && repository.current(owner)
+            if (generation != loadGeneration || !currentCoroutineContext().isActive) return@launch
+            if (!valid || owner == null) {
+                cache.clear(); cacheOwner = null
+                _uiState.update { it.copy(days = emptyList(), isLoading = false, isRefreshing = false, error = "Sign in to load calendar.") }
+                return@launch
             }
+            val sameOwner = cacheOwner == owner
+            if (!sameOwner) { cache.clear(); cacheOwner = owner }
+            if (refresh) cache.remove(state.cacheKey)
+            val cached = cache[state.cacheKey]
+            _uiState.update { it.copy(days = if (refresh && sameOwner) it.days else cached.orEmpty(), isLoading = !refresh && cached == null,
+                isRefreshing = refresh, error = null, today = todayProvider()) }
+            fetch(generation, state, owner)
         }
     }
 
@@ -203,22 +191,28 @@ class CalendarViewModel(
         load()
     }
 
-    private suspend fun fetch(generation: Int) {
-        val state = _uiState.value
+    private suspend fun fetch(generation: Int, state: CalendarUiState, owner: AuthScopeSnapshot) {
         val result = repository.getCalendar(
             start = state.weekStart,
             end = state.weekEnd,
             filter = state.filter,
             libraryId = state.libraryId,
             timezone = timezoneId,
+            owner = owner,
         )
         // Discard the result if a newer fetch has already started.
-        if (generation != loadGeneration) return
+        val valid = repository.current(owner)
+        if (generation != loadGeneration || !currentCoroutineContext().isActive) return
+        if (!valid) {
+            cache.clear(); cacheOwner = null
+            _uiState.update { it.copy(days = emptyList(), isLoading = false, isRefreshing = false) }
+            return
+        }
         when (result) {
             is ApiResult.Success -> {
                 cache[state.cacheKey] = result.data.events
                 _uiState.update {
-                    it.copy(isLoading = false, days = result.data.events, error = null)
+                    it.copy(isLoading = false, isRefreshing = false, days = result.data.events, error = null)
                 }
             }
             is ApiResult.Error, is ApiResult.NetworkError -> _uiState.update {
@@ -226,6 +220,7 @@ class CalendarViewModel(
                 // becomes an error screen (iOS: error set only if days.isEmpty).
                 it.copy(
                     isLoading = false,
+                    isRefreshing = false,
                     error = if (it.days.isEmpty()) result.errorMessage("Failed to load calendar") else null,
                 )
             }

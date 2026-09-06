@@ -5,6 +5,7 @@ import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarItem
 import org.siloserver.silo.model.calendar.CalendarItemType
 import org.siloserver.silo.model.calendar.CalendarResponse
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.CalendarApi
 import org.siloserver.silo.repository.CalendarRepository
@@ -48,6 +49,39 @@ class CalendarViewModelTest {
         todayProvider = { today },
         filterStore = filterStore,
     )
+
+    @Test
+    fun `replacement PIN never reuses cached days and late owner cannot publish`() = runTest(dispatcher) {
+        val day = CalendarDay("2026-06-09", listOf(stubItem("old")))
+        val api = FakeCalendarApi(ApiResult.Success(CalendarResponse(listOf(day))))
+        val vm = viewModel(api)
+        assertTrue(vm.uiState.value.days.isNotEmpty())
+        api.owner = api.owner.copy(profileToken = "replacement")
+        api.result = ApiResult.NetworkError(IllegalStateException("offline"))
+        vm.load()
+        assertTrue(vm.uiState.value.days.isEmpty())
+        api.result = ApiResult.Success(CalendarResponse(listOf(day)))
+        api.beforeAnswer = { api.owner = api.owner.copy(identityGeneration = 2) }
+        vm.refresh()
+        assertTrue(vm.uiState.value.days.isEmpty())
+        assertFalse(vm.uiState.value.isRefreshing)
+    }
+
+    @Test
+    fun `suspended old authority lookup cannot clear replacement rows`() = runTest(dispatcher) {
+        val api = FakeCalendarApi(ApiResult.Success(CalendarResponse()))
+        val vm = viewModel(api)
+        val gate = CompletableDeferred<Unit>()
+        var calls = 0
+        api.beforeCurrent = { if (++calls == 2) gate.await() }
+        vm.refresh()
+        api.beforeCurrent = {}
+        api.result = ApiResult.Success(CalendarResponse(listOf(CalendarDay("2026-06-09", listOf(stubItem("new"))))))
+        vm.refresh()
+        gate.complete(Unit)
+        assertEquals("new", vm.uiState.value.days.single().items.single().contentId)
+        assertFalse(vm.uiState.value.isRefreshing)
+    }
 
     @Test
     fun `loads the monday-anchored week containing today on init`() = runTest(dispatcher) {
@@ -302,6 +336,13 @@ private data class CalendarCall(
 private class FakeCalendarApi(
     var result: ApiResult<CalendarResponse>,
 ) : CalendarApi {
+    var owner = AuthScopeSnapshot("server", "profile", "https://example.invalid", "pin", identityGeneration = 1)
+    override suspend fun capture() = owner
+    var beforeCurrent: suspend () -> Unit = {}
+    override suspend fun current(owner: AuthScopeSnapshot): Boolean {
+        val value = this.owner; beforeCurrent(); return value == owner
+    }
+
 
     val calls = mutableListOf<CalendarCall>()
 
@@ -314,6 +355,7 @@ private class FakeCalendarApi(
         filter: String,
         libraryId: Int?,
         timezone: String?,
+        owner: AuthScopeSnapshot,
     ): ApiResult<CalendarResponse> {
         calls += CalendarCall(start, end, filter, libraryId, timezone)
         beforeAnswer()
@@ -339,6 +381,13 @@ private class GatedCalendarApi(
     private val gate: CompletableDeferred<Unit>,
     private val immediateResult: ApiResult<CalendarResponse>,
 ) : CalendarApi {
+    var owner = AuthScopeSnapshot("server", "profile", "https://example.invalid", "pin", identityGeneration = 1)
+    override suspend fun capture() = owner
+    var beforeCurrent: suspend () -> Unit = {}
+    override suspend fun current(owner: AuthScopeSnapshot): Boolean {
+        val value = this.owner; beforeCurrent(); return value == owner
+    }
+
 
     private var callCount = 0
 
@@ -348,6 +397,7 @@ private class GatedCalendarApi(
         filter: String,
         libraryId: Int?,
         timezone: String?,
+        owner: AuthScopeSnapshot,
     ): ApiResult<CalendarResponse> {
         val isFirst = callCount++ == 0
         return if (isFirst) {
