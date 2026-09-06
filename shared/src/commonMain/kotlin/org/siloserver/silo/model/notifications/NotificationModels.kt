@@ -129,11 +129,13 @@ data class NotificationSyncResponse(
 @Serializable
 data class UnreadCountResponse(val count: Int = 0)
 
-/** POST /api/v1/events/ws-ticket. */
+/** Ticket fields for a single realtime connection. */
 @Serializable
 data class WsTicketResponse(
     val ticket: String,
     @SerialName("expires_in") val expiresIn: Int = 0,
+    @SerialName("max_connection_seconds") val maxConnectionSeconds: Int = 0,
+    val protocol: String = "",
 )
 
 /** GET/PUT /api/v1/notifications/preferences (full row). */

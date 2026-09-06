@@ -1,19 +1,15 @@
 package org.siloserver.silo.network
 
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.catch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.notifications.WsFrameEnvelope
 import org.siloserver.silo.model.notifications.WsSubscribe
-import org.siloserver.silo.network.api.NotificationsApi
 
 /** `user_state.changed` payload (server: user_state_events.go). */
 @Serializable
@@ -44,69 +40,27 @@ sealed class HomeRealtimeEvent {
 }
 
 /**
- * Live-home accelerator over the events websocket (Apple realtime-updates
- * spec, Layer 2). One [connect] = one connection: mint a single-use ticket via
- * [NotificationsApi.wsTicket] and hand it to the upgrade as `?ticket=` — the
- * same handshake the notifications socket uses. The previous "plain
- * authenticated" upgrade (bearer only, no ticket) never connected in the
- * field: every attempt died as a 4xx handshake rejection, silently costing a
- * reconnect every backoff interval. Subscribe both channels, then map frames
- * through [decodeHomeRealtimeFrame]. REST stays the source of truth; events
- * only trigger refetches.
+ * One captured v2 ticket/socket attempt. The repository owns reconnect;
+ * the shared transport fences authority before delivering frames.
  */
 interface HomeRealtimeClient {
     fun connect(): Flow<HomeRealtimeEvent>
 }
 
 class DefaultHomeRealtimeClient(
-    private val client: HttpClient,
-    private val notificationsApi: NotificationsApi,
+    private val socket: org.siloserver.silo.network.apiv2.EventsSocketV2Api,
     private val json: Json = SiloJson,
 ) : HomeRealtimeClient {
 
-    override fun connect(): Flow<HomeRealtimeEvent> = callbackFlow {
-        val ticket = when (val r = notificationsApi.wsTicket()) {
-            is ApiResult.Success -> r.data.ticket
-            is ApiResult.Error -> {
-                trySend(HomeRealtimeEvent.Closed("ticket_error_${r.code}"))
-                close()
-                return@callbackFlow
-            }
-            is ApiResult.NetworkError -> {
-                trySend(HomeRealtimeEvent.Closed("ticket_network_error"))
-                close()
-                return@callbackFlow
-            }
+    override fun connect(): Flow<HomeRealtimeEvent> = socket.frames(listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG))
+        .mapNotNull { decodeHomeRealtimeFrame(json, it) }
+        .onCompletion { cause -> if (cause == null) emit(HomeRealtimeEvent.Closed()) }
+        .catch { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)
+                "ticket_error_${error.code}" else "socket_error"
+            emit(HomeRealtimeEvent.Closed(reason))
         }
-        try {
-            client.webSocket(urlString = "/api/v1/events/ws?ticket=$ticket") {
-                // Server sends `hello` first and closes if no subscribe lands
-                // within 5s; subscribing immediately satisfies that without
-                // parsing the hello.
-                send(
-                    Frame.Text(
-                        json.encodeToString(
-                            WsSubscribe.serializer(),
-                            WsSubscribe(channels = listOf(CHANNEL_USER_STATE, CHANNEL_CATALOG)),
-                        ),
-                    ),
-                )
-                for (frame in incoming) {
-                    if (frame !is Frame.Text) continue
-                    decodeHomeRealtimeFrame(json, frame.readText())?.let { trySend(it) }
-                }
-            }
-            trySend(HomeRealtimeEvent.Closed())
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            trySend(HomeRealtimeEvent.Closed(e.message))
-        } finally {
-            close()
-        }
-
-        awaitClose { /* socket closes when the flow collector is cancelled */ }
-    }
 
     companion object {
         const val CHANNEL_USER_STATE = "user_state"

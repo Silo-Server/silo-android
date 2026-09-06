@@ -7,7 +7,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.notifications.*
 import org.siloserver.silo.network.*
-import org.siloserver.silo.network.api.DefaultNotificationsApi
 import org.siloserver.silo.network.api.NotificationsApi
 
 @Serializable
@@ -88,8 +87,8 @@ class NotificationsV2Api(
         }
     override suspend fun capability(): ApiResult<NotificationCapability> =
         exchange(HttpMethod.Get, "/api/v2/notifications/capabilities")
-    // The event socket ticket retains its existing protocol and lifecycle.
-    override suspend fun wsTicket(): ApiResult<WsTicketResponse> = DefaultNotificationsApi(client).wsTicket()
+    // Compatibility facade; production socket clients retain scope through upgrade and frames.
+    override suspend fun wsTicket(): ApiResult<WsTicketResponse> = EventsSocketV2Api(client,tokens,gate).ticket(captured)
 }
 
 private fun <T, R> ApiResult<T>.validated(transform: (T) -> R): ApiResult<R> = when (this) {

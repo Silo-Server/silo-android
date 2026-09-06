@@ -120,8 +120,7 @@ val repositoryModule = module {
             tokens = get(), authorities = getOrNull(), checkpoints = getOrNull(), identityTransitions = get(),
             realtimeFactory = {
                 org.siloserver.silo.network.DefaultNotificationsRealtimeClient(
-                    client = get(),
-                    api = get(),
+                    socket = get(),
                 )
             },
         )
