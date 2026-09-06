@@ -236,10 +236,11 @@ fun TvSeriesModePicker(
                     Modifier
                 },
                 contextActions = onSetSeasonWatched?.let { setWatched ->
+                    val target = tvSeasonWatchedTargetLabel(season)
                     TvMediaCardActions(
                         onSetWatched = { watched -> setWatched(season, watched) },
-                        watchedLabel = "Mark ${tvSeasonWatchedTargetLabel(season)} as Watched",
-                        unwatchedLabel = "Mark ${tvSeasonWatchedTargetLabel(season)} as Unwatched",
+                        watchedLabel = "Mark $target as Watched",
+                        unwatchedLabel = "Mark $target as Unwatched",
                     )
                 },
                 isPlayed = season.userData?.played == true,
@@ -351,7 +352,7 @@ private fun TvSeriesModeTab(
  * a custom title such as "Series 2"; the action names the watched target.
  */
 internal fun tvSeasonWatchedTargetLabel(season: Season): String =
-    if (season.isSpecialsForDisplay() || season.seasonNumber == 0) "Specials" else "Season ${season.seasonNumber}"
+    if (season.isSpecialsForDisplay()) "Specials" else "Season ${season.seasonNumber}"
 
 private fun Modifier.seriesModeFocusRing(visible: Boolean): Modifier = drawWithContent {
     drawContent()

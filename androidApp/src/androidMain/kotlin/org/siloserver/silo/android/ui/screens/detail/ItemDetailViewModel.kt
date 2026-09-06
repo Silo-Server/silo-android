@@ -1149,7 +1149,13 @@ class ItemDetailViewModel(
         val revision = ++watchedStateRevision
         val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
         seasonWatchedMutationGenerations[seasonNumber] = generation
-        updateSeasonPlayedState(seasonNumber, watched)
+        // Optimistic: flip the chip and any loaded page for this season.
+        applySeasonWatchState(
+            SeasonWatchBaseline(
+                season = baseline.season,
+                episodes = state.episodesBySeason[seasonNumber],
+            ).applied(watched),
+        )
         val previousWrite = seasonWatchedWrites[seasonNumber]
         seasonWatchedWrites[seasonNumber] = viewModelScope.launch {
             // Serialize with the previous write for this season so a quick
@@ -1178,30 +1184,7 @@ class ItemDetailViewModel(
                 if (!isCurrentMutation) return@launch
                 seasonWatchedMutationGenerations.remove(seasonNumber)
                 seasonWatchedBaselines.remove(seasonNumber)
-                _uiState.update { live ->
-                    val restoredPage = confirmed.episodes
-                    live.copy(
-                        seasons = live.seasons.map {
-                            if (it.seasonNumber == seasonNumber) confirmed.season else it
-                        },
-                        episodesBySeason = if (restoredPage != null) {
-                            live.episodesBySeason + (seasonNumber to restoredPage)
-                        } else {
-                            live.episodesBySeason - seasonNumber
-                        },
-                        episodes = if (live.selectedSeasonNumber == seasonNumber) {
-                            restoredPage ?: live.episodes.map { episode ->
-                                if (episode.seasonNumber == seasonNumber) {
-                                    episode.copy(userData = (episode.userData ?: LeafItemUserData()).copy(played = !watched))
-                                } else {
-                                    episode
-                                }
-                            }
-                        } else {
-                            live.episodes
-                        },
-                    )
-                }
+                applySeasonWatchState(confirmed)
                 return@launch
             }
 
@@ -1249,19 +1232,24 @@ class ItemDetailViewModel(
         )
     }
 
-    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
+    /**
+     * Publish one season's state: the chip, its cached pager page, and any rail
+     * card that belongs to it. Used for both the optimistic edit and its
+     * rollback. The rail is matched by content id so a placeholder rail from
+     * another season is never touched.
+     */
+    private fun applySeasonWatchState(target: SeasonWatchBaseline) {
+        val seasonNumber = target.season.seasonNumber
+        val byId = target.episodes.orEmpty().associateBy { it.contentId }
         _uiState.update { state ->
-            val page = state.episodesBySeason[seasonNumber]?.map { it.withSeasonWatchedState(played) }
             state.copy(
                 seasons = state.seasons.map { season ->
-                    if (season.seasonNumber == seasonNumber) season.withSeasonWatchedState(played) else season
+                    if (season.seasonNumber == seasonNumber) target.season else season
                 },
-                episodesBySeason = if (page != null) state.episodesBySeason + (seasonNumber to page) else state.episodesBySeason,
-                // Flip only cards that belong to this season; the rail may still
-                // show another season while a switch is loading.
-                episodes = state.episodes.map { episode ->
-                    if (episode.seasonNumber == seasonNumber) episode.withSeasonWatchedState(played) else episode
-                },
+                episodesBySeason = target.episodes
+                    ?.let { state.episodesBySeason + (seasonNumber to it) }
+                    ?: (state.episodesBySeason - seasonNumber),
+                episodes = state.episodes.map { episode -> byId[episode.contentId] ?: episode },
             )
         }
     }

@@ -1374,7 +1374,7 @@ fun SeasonChips(
 }
 
 internal fun phoneSeasonWatchedTargetLabel(season: Season): String =
-    if (season.isSpecialsForDisplay() || season.seasonNumber == 0) "Specials" else "Season ${season.seasonNumber}"
+    if (season.isSpecialsForDisplay()) "Specials" else "Season ${season.seasonNumber}"
 
 // ── Hero metadata helpers (mirror PhoneHeroMetadata.swift) ────
 

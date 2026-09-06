@@ -837,21 +837,15 @@ class TvItemDetailViewModel(
 
         // Optimistic: flip the tab's season state, the rail cards that belong
         // to this season, and the cached carousel page so neighbours agree.
-        _uiState.update {
-            it.copy(
-                seasons = it.seasons.map { entry ->
-                    if (entry.seasonNumber == seasonNumber) entry.withWatchedState(watched) else entry
-                },
-                episodes = it.episodes.map { episode ->
-                    if (episode.seasonNumber == seasonNumber) episode.withWatchedPlaybackState(watched) else episode
-                },
-            )
-        }
-        episodeWindow.get(seasonNumber)?.let { page ->
-            episodeWindow.put(seasonNumber, page.map { it.withWatchedPlaybackState(watched) })
-        }
-        publishCarousel()
-        if (current.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
+        // Built from current state, not the baseline: a superseded write may
+        // already have flipped the rail, and this edit must start from that.
+        applySeasonWatchState(
+            TvSeasonWatchBaseline(
+                season = baseline.season,
+                episodes = current.episodes.filter { it.seasonNumber == seasonNumber },
+                windowPage = episodeWindow.get(seasonNumber),
+            ).applied(watched),
+        )
 
         val previousWrite = seasonWatchWrites[seasonNumber]
         seasonWatchWrites[seasonNumber] = viewModelScope.launch {
@@ -881,19 +875,7 @@ class TvItemDetailViewModel(
                 if (!isCurrentMutation) return@launch
                 seasonWatchMutationGenerations.remove(seasonNumber)
                 seasonWatchBaselines.remove(seasonNumber)
-                _uiState.update {
-                    it.copy(
-                        seasons = it.seasons.map { entry ->
-                            if (entry.seasonNumber == seasonNumber) confirmed.season else entry
-                        },
-                        episodes = it.episodes.map { episode ->
-                            confirmed.episodes.firstOrNull { it.contentId == episode.contentId } ?: episode
-                        },
-                    )
-                }
-                confirmed.windowPage?.let { episodeWindow.put(seasonNumber, it) }
-                publishCarousel()
-                if (_uiState.value.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
+                applySeasonWatchState(confirmed)
                 return@launch
             }
 
@@ -931,8 +913,29 @@ class TvItemDetailViewModel(
      * before the bump must not publish its result afterwards.
      */
     private var watchedStateRevision = 0L
-    private val seasonWatchWrites = mutableMapOf<Int, kotlinx.coroutines.Job>()
+    private val seasonWatchWrites = mutableMapOf<Int, Job>()
     private val seasonWatchBaselines = mutableMapOf<Int, TvSeasonWatchBaseline>()
+
+    /**
+     * Publish one season's state (tab, rail cards of that season, cached
+     * carousel page) and re-derive the carousel and next-up from it. Used for
+     * both the optimistic edit and its rollback.
+     */
+    private fun applySeasonWatchState(state: TvSeasonWatchBaseline) {
+        val seasonNumber = state.season.seasonNumber
+        val byId = state.episodes.associateBy { it.contentId }
+        _uiState.update {
+            it.copy(
+                seasons = it.seasons.map { entry ->
+                    if (entry.seasonNumber == seasonNumber) state.season else entry
+                },
+                episodes = it.episodes.map { episode -> byId[episode.contentId] ?: episode },
+            )
+        }
+        state.windowPage?.let { episodeWindow.put(seasonNumber, it) }
+        publishCarousel()
+        if (_uiState.value.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
+    }
 
     /** Last server-confirmed state of one season while a write for it is pending. */
     private data class TvSeasonWatchBaseline(
