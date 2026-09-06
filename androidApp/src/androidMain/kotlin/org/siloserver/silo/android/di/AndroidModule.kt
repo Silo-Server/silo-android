@@ -415,7 +415,7 @@ val androidModule = module {
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
         )
     }
-    viewModel { params -> PersonDetailViewModel(get(), params.get()) }
+    viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }

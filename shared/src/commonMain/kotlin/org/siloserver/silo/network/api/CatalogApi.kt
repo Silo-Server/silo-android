@@ -9,7 +9,8 @@ import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 import kotlinx.serialization.json.*
 
-class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client)) {
+class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
+    private val personRefresh: PersonRefreshV2Api? = null) {
 
     suspend fun getCatalog(
         source: String? = null, query: String? = null, mediaType: String? = null,
@@ -81,10 +82,11 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
 
     suspend fun getPerson(id: Long): ApiResult<Person> = v2.person(id)
 
-    /** Queues a server-side metadata refresh for a person (fire-and-forget). */
-    suspend fun refreshPerson(id: Long): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/people/$id/refresh")
-    }
+    suspend fun getPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Person> =
+        personRefresh?.detail(id, owner) ?: ApiResult.Error(0, "unavailable", "The authorized person reader is unavailable.")
+
+    suspend fun refreshPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
+        personRefresh?.refresh(id, owner) ?: ApiResult.Error(0, "unavailable", "The person refresh transport is unavailable.")
 
     suspend fun getPersonItems(personId: Long, mediaType: String? = null,
         continuation: CatalogContinuationV2? = null, limit: Int? = null): ApiResult<CatalogResponse> =

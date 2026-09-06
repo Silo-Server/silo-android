@@ -276,12 +276,15 @@ class CatalogRepository(
         catalogApi.searchPeople(query)
 
     /** Queues a server-side metadata refresh for a person. */
-    suspend fun refreshPerson(id: Long): ApiResult<Unit> =
-        catalogApi.refreshPerson(id)
+    suspend fun refreshPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
+        catalogApi.refreshPerson(id, owner)
 
     /** Fetches details for a specific person. */
     suspend fun getPerson(id: Long): ApiResult<Person> =
         catalogApi.getPerson(id)
+
+    suspend fun getPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Person> =
+        catalogApi.getPerson(id, owner)
 
     /** Filmography for a person — movies and series they appear in. */
     suspend fun getPersonItems(

@@ -47,8 +47,7 @@ class PersonDetailViewModelTest {
         assertEquals(61, ids.size)
         assertEquals(120, viewModel.uiState.value.totalItems)
         assertTrue(viewModel.uiState.value.hasMore)
-        assertEquals("snap-1", queries.last()["snapshot"])
-        assertEquals("60", queries.last()["offset"])
+        assertEquals("snap-1", queries.last()["cursor"])
     }
 
     @Test
@@ -73,7 +72,7 @@ class PersonDetailViewModelTest {
             "state=${viewModel.uiState.value}, queries=$queries",
         )
         assertEquals("audiobook", queries.last()["type"])
-        assertEquals("0", queries.last()["offset"])
+        assertFalse("cursor" in queries.last().keys)
         assertFalse("snapshot" in queries.last().keys)
     }
 
@@ -97,7 +96,7 @@ class PersonDetailViewModelTest {
             "state=${viewModel.uiState.value}, queries=$queries",
         )
         assertFalse("type" in queries.last().keys)
-        assertEquals("0", queries.last()["offset"])
+        assertFalse("cursor" in queries.last().keys)
     }
 
     @Test
@@ -148,11 +147,11 @@ class PersonDetailViewModelTest {
                     // arms the metadata auto-refresh poll, whose background
                     // GET /people/7 requests would race these tests' shared
                     // `queries` list under runTest's auto-advanced virtual time.
-                    "/api/v1/people/7" -> respondJson(
-                        """{"id":7,"name":"Person","birth_date":"1972-06-16",""" +
+                    "/api/v2/catalog/people/7" -> respondJson(
+                        """{"id":"7","name":"Person","birth_date":"1972-06-16",""" +
                             """"bio":"A person.","photo_url":"https://img/p7.jpg"}""",
                     )
-                    "/api/v1/catalog" -> {
+                    "/api/v2/catalog" -> {
                         val body = when (request.url.parameters["type"]) {
                             "audiobook" -> catalogBody(
                                 total = 1,
@@ -187,11 +186,11 @@ class PersonDetailViewModelTest {
                                         snapshot = "snap-1",
                                         items = (1..60).map { item("movie-$it", "Movie $it", "movie") },
                                     )
-                                } else if (request.url.parameters["snapshot"] == "snap-1") {
+                                } else if (request.url.parameters["cursor"] == "snap-1") {
                                     catalogBody(
                                         total = 120,
                                         hasMore = true,
-                                        snapshot = "snap-1",
+                                        snapshot = "snap-2",
                                         items = listOf(item("movie-61", "Movie 61", "movie")),
                                     )
                                 } else {
@@ -234,8 +233,9 @@ class PersonDetailViewModelTest {
     ): String = """
         {
           "total": $total,
-          "has_more": $hasMore,
-          "snapshot": "$snapshot",
+          "total_exact": true,
+          "window_cursor": "window",
+          "page": {"has_more": $hasMore, "next_cursor": ${if (hasMore) "\"$snapshot\"" else "null"}},
           "items": [${items.joinToString(",")}]
         }
     """.trimIndent()
