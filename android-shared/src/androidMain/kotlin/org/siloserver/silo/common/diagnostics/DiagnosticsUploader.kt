@@ -356,15 +356,18 @@ class DefaultDiagnosticsUploader(
                         // before this lease and prevent the POST, or wait for it.
                         // Persist before dispatch: process death or a lost receipt cannot
                         // authorize a second non-retryable POST.
-                        reports.markState(report.id, PendingReportStatus.PERMANENT_FAILURE, "delivery_uncertain")
-                        SelfHostedUploadAttempt.Sent(
-                            api.upload(
-                                bundle.manifestBytes,
-                                bundle.bytes,
-                                report.binding.profileId,
-                                authorization,
-                            ),
+                        val attempt = reports.beginServerUpload(report.id)
+                            ?: return@withTransport SelfHostedUploadAttempt.Uncertain
+                        val result = api.upload(
+                            bundle.manifestBytes,
+                            bundle.bytes,
+                            report.binding.profileId,
+                            authorization,
                         )
+                        if (result is DiagnosticsUploadResult.Failure && result.httpStatus in 400..499 && result.httpStatus != 408) {
+                            reports.rejectServerUpload(report.id, attempt)
+                        }
+                        SelfHostedUploadAttempt.Sent(result)
                     }
                 }
             }
