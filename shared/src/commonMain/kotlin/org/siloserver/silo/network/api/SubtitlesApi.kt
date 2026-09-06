@@ -26,16 +26,16 @@ import io.ktor.http.contentType
  */
 interface SubtitlesApi {
 
-    /** POST /api/v1/subtitles/search — errors with server text when no providers are configured. */
+    /** POST /api/v2/subtitles/search — errors with server text when no providers are configured. */
     suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse>
 
     /** POST /api/v2/subtitles/download — send the selected provider identity once. */
     suspend fun download(request: SubtitleDownloadRequest): ApiResult<SubtitleDownloadResponse>
 
-    /** GET /api/v1/subtitles/{media_file_id} — subtitles already stored server-side. */
+    /** GET /api/v2/subtitles/{media_file_id} — subtitles already stored server-side. */
     suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse>
 
-    /** GET /api/v1/subtitles/ai/status — both flags false when AI is unconfigured. */
+    /** GET /api/v2/subtitles/ai/status — both flags false when AI is unconfigured. */
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus>
 
     /** GET /api/v2/subtitles/ai/quota — transcribe-kind budget; admins are exempt. */
@@ -55,10 +55,10 @@ interface SubtitlesApi {
     suspend fun cancelJob(jobId: Long): ApiResult<Unit>
 }
 
-class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null) : SubtitlesApi {
+class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api? = null, private val downloads: org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api? = null, private val reads: org.siloserver.silo.network.apiv2.SubtitleReadsV2Api? = null) : SubtitlesApi {
 
     override suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
-        safeApiCall {
+        reads?.search(request) ?: safeApiCall {
             client.post("/api/v1/subtitles/search") {
                 contentType(ContentType.Application.Json)
                 setBody(request)
@@ -74,11 +74,11 @@ class DefaultSubtitlesApi(private val client: HttpClient, private val aiReads: o
         }
 
     override suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse> =
-        safeApiCall {
+        reads?.list(mediaFileId) ?: safeApiCall {
             client.get("/api/v1/subtitles/$mediaFileId")
         }
 
-    override suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = safeApiCall {
+    override suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = reads?.aiStatus() ?: safeApiCall {
         client.get("/api/v1/subtitles/ai/status")
     }
 

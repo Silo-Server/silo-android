@@ -19,7 +19,7 @@ private data class ProviderDownloadBody(
     @SerialName("hearing_impaired") val hearingImpaired: Boolean,
 )
 @Serializable
-private data class StoredSubtitleV2(
+internal data class StoredSubtitleV2(
     @Serializable(with = DetailStringIdSerializer::class) val id: String,
     @Serializable(with = DetailStringIdSerializer::class) @SerialName("media_file_id") val mediaFileId: String,
     val provider: String, val language: String, val format: String,
