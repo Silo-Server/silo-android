@@ -23,6 +23,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.SeasonUserData
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
@@ -800,6 +801,104 @@ class TvItemDetailViewModel(
         }
     }
 
+    /**
+     * Long-press action on a season tab. Targets that tab's season, which need
+     * not be the selected page. The server fans a season mutation out to its
+     * episodes; the season list and the affected episode page are re-read so
+     * every checkmark and the next-up target agree afterward.
+     */
+    fun onSetSeasonWatched(season: Season, watched: Boolean) {
+        val current = _uiState.value
+        if (current.detail?.type?.lowercase() != "series") return
+        val seriesContentId = current.detail.contentId
+        val previousSeason = current.seasons.firstOrNull { it.seasonNumber == season.seasonNumber } ?: season
+        val previousEpisodes = current.episodes.takeIf { current.selectedSeason == season.seasonNumber }
+        val previousWindowPage = episodeWindow.get(season.seasonNumber)
+        val mutationGeneration = ++nextSeasonWatchMutationGeneration
+        seasonWatchMutationGenerations[season.seasonNumber] = mutationGeneration
+
+        // Optimistic: flip the tab's season state, the rail when it shows this
+        // season, and the cached carousel page so neighbouring cards agree.
+        _uiState.update {
+            it.copy(
+                seasons = it.seasons.map { entry ->
+                    if (entry.seasonNumber == season.seasonNumber) entry.withWatchedState(watched) else entry
+                },
+                episodes = if (it.selectedSeason == season.seasonNumber) {
+                    it.episodes.map { episode -> episode.withWatchedPlaybackState(watched) }
+                } else {
+                    it.episodes
+                },
+            )
+        }
+        previousWindowPage?.let { page ->
+            episodeWindow.put(season.seasonNumber, page.map { it.withWatchedPlaybackState(watched) })
+        }
+        publishCarousel()
+        if (current.selectedSeason == season.seasonNumber) refreshNextUp(_uiState.value.episodes)
+
+        viewModelScope.launch {
+            val result = personalDataRepository.setWatched(season.contentId, watched)
+            val isCurrentMutation =
+                seasonWatchMutationGenerations[season.seasonNumber] == mutationGeneration
+            if (!isCurrentMutation) return@launch
+            seasonWatchMutationGenerations.remove(season.seasonNumber)
+            if (result !is ApiResult.Success) {
+                // Roll back only this season; restore the rail when it still
+                // shows the season we mutated.
+                _uiState.update {
+                    it.copy(
+                        seasons = it.seasons.map { entry ->
+                            if (entry.seasonNumber == season.seasonNumber) previousSeason else entry
+                        },
+                        episodes = if (previousEpisodes != null && it.selectedSeason == season.seasonNumber) {
+                            previousEpisodes
+                        } else {
+                            it.episodes
+                        },
+                    )
+                }
+                previousWindowPage?.let { episodeWindow.put(season.seasonNumber, it) }
+                publishCarousel()
+                if (_uiState.value.selectedSeason == season.seasonNumber) refreshNextUp(_uiState.value.episodes)
+                return@launch
+            }
+            // Re-read server-resolved state. The season list carries the
+            // authoritative per-season flag; the affected episode page is
+            // refreshed in place so the continuous carousel keeps its shape.
+            refreshSeasonUserData(seriesContentId)
+            val selected = _uiState.value.selectedSeason
+            if (selected == season.seasonNumber) {
+                loadEpisodes(seriesContentId, season.seasonNumber, quiet = true)
+            } else if (episodeWindow.get(season.seasonNumber) != null) {
+                val page = catalogRepository.getEpisodes(seriesContentId, season.seasonNumber)
+                if (page is ApiResult.Success && _uiState.value.detail?.contentId == seriesContentId) {
+                    episodeWindow.put(season.seasonNumber, withLocalProgress(page.data.episodes))
+                    publishCarousel()
+                }
+            }
+        }
+    }
+
+    /** Reload only the season list, keeping the current selection and rail. */
+    private suspend fun refreshSeasonUserData(seriesContentId: String) {
+        val result = catalogRepository.getSeasons(seriesContentId)
+        if (result !is ApiResult.Success) return
+        val refreshed = result.data.seasons
+        _uiState.update { state ->
+            if (state.detail?.contentId != seriesContentId) return@update state
+            val order = state.seasons.map { it.seasonNumber }
+            val byNumber = refreshed.associateBy { it.seasonNumber }
+            state.copy(
+                seasons = state.seasons.map { entry -> byNumber[entry.seasonNumber] ?: entry }
+                    .let { merged ->
+                        // Keep display order stable; append any new seasons.
+                        merged + refreshed.filter { it.seasonNumber !in order }
+                    },
+            )
+        }
+    }
+
     fun onSetRating(stars: Int) {
         val current = _uiState.value
         if (current.isTogglingRating) return
@@ -1421,6 +1520,9 @@ class TvItemDetailViewModel(
         )
     }
 
+    private var nextSeasonWatchMutationGeneration = 0L
+    private val seasonWatchMutationGenerations = mutableMapOf<Int, Long>()
+
     fun onSetEpisodeWatched(episodeContentId: String, watched: Boolean) {
         val current = _uiState.value
         val previousEpisodes = current.episodes
@@ -1470,6 +1572,9 @@ class TvItemDetailViewModel(
                 val season = _uiState.value.selectedSeason
                 if (!seriesId.isNullOrBlank() && season != null) {
                     loadEpisodes(seriesId, season, quiet = true)
+                    // One episode can complete or reopen its season, so the
+                    // season tab's watched flag must follow.
+                    refreshSeasonUserData(seriesId)
                 }
             }
         }
@@ -2074,6 +2179,19 @@ private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {
             played = watched,
             isInProgress = if (watched) false else current.isInProgress,
             positionSeconds = if (watched) null else current.positionSeconds,
+        ),
+    )
+}
+
+private fun Season.withWatchedState(watched: Boolean): Season {
+    val current = userData ?: SeasonUserData()
+    val total = current.watchedCount + current.unplayedCount
+    return copy(
+        userData = current.copy(
+            played = watched,
+            watchedCount = if (watched) total else 0,
+            unplayedCount = if (watched) 0 else total,
+            inProgressCount = 0,
         ),
     )
 }

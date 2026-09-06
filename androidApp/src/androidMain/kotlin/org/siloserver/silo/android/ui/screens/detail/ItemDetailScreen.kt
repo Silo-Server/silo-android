@@ -683,6 +683,9 @@ fun ItemDetailScreen(
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
+                            },
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },

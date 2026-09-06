@@ -1044,6 +1044,7 @@ private fun TvDetailContent(
                                 onCarouselEdgeRequested = viewModel::onCarouselEdgeRequested,
                                 onCarouselFocusLost = viewModel::onCarouselFocusLost,
                                 onSetEpisodeWatched = viewModel::onSetEpisodeWatched,
+                                onSetSeasonWatched = viewModel::onSetSeasonWatched,
                                 onSetEpisodeFavorite = viewModel::onSetEpisodeFavorite,
                             )
                             }
@@ -1988,6 +1989,7 @@ private fun EpisodesSection(
     onCarouselFocusLost: () -> Unit,
     onSetEpisodeWatched: (contentId: String, watched: Boolean) -> Unit,
     onSetEpisodeFavorite: (contentId: String, favorite: Boolean) -> Unit,
+    onSetSeasonWatched: ((season: org.siloserver.silo.model.catalog.Season, watched: Boolean) -> Unit)? = null,
 ) {
     val isSeries = detail.type == "series"
     val railEpisodes = if (isSeries) state.carouselEpisodes.ifEmpty { state.episodes } else state.episodes
@@ -2030,6 +2032,7 @@ private fun EpisodesSection(
                     // it is not attached yet, fall back to Play.
                     onDirectionUp = onReturnToSeriesSelector ?: onReturnToHero,
                     horizontalContentPadding = TvDetailHorizontalInset,
+                    onSetSeasonWatched = onSetSeasonWatched,
                 )
             } else {
                 TvSeasonPicker(

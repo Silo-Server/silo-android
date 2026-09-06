@@ -73,6 +73,9 @@ data class TvMediaCardActions(
     val onPlay: (() -> Unit)? = null,
     val playLabel: String = "Play",
     val onSetWatched: ((watched: Boolean) -> Unit)? = null,
+    /** Row text while the item is unwatched / watched. Defaults name no target. */
+    val watchedLabel: String = "Mark as Watched",
+    val unwatchedLabel: String = "Mark as Unwatched",
     val onToggleFavorite: ((favorite: Boolean) -> Unit)? = null,
     val onToggleWatchlist: ((inWatchlist: Boolean) -> Unit)? = null,
     val onRemoveFromContinueWatching: (() -> Unit)? = null,
@@ -196,7 +199,7 @@ private fun TvMediaCardMenuRows(
     }
     actions.onSetWatched?.let { setWatched ->
         TvMenuRow(
-            text = if (isPlayed) "Mark as Unwatched" else "Mark as Watched",
+            text = if (isPlayed) actions.unwatchedLabel else actions.watchedLabel,
             icon = if (isPlayed) Icons.Default.VisibilityOff else Icons.Default.Check,
             onClick = {
                 setWatched(!isPlayed)

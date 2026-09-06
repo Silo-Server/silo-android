@@ -6,6 +6,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,6 +58,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
+import org.siloserver.silo.tv.ui.components.TvMediaCardActions
+import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
 
 /**
@@ -154,6 +158,11 @@ fun TvSeriesModePicker(
     modifier: Modifier = Modifier,
     horizontalContentPadding: Dp = 0.dp,
     onDirectionUp: (() -> Boolean)? = null,
+    /**
+     * Long-press action on a season tab. Mirrors the tvOS season tab context
+     * menu: "Mark Season N as Watched / Unwatched" for that tab's season.
+     */
+    onSetSeasonWatched: ((season: Season, watched: Boolean) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val selectedFocusRequester = remember { FocusRequester() }
@@ -226,21 +235,33 @@ fun TvSeriesModePicker(
                 } else {
                     Modifier
                 },
+                contextActions = onSetSeasonWatched?.let { setWatched ->
+                    TvMediaCardActions(
+                        onSetWatched = { watched -> setWatched(season, watched) },
+                        watchedLabel = "Mark ${tvSeasonWatchedTargetLabel(season)} as Watched",
+                        unwatchedLabel = "Mark ${tvSeasonWatchedTargetLabel(season)} as Unwatched",
+                    )
+                },
+                isPlayed = season.userData?.played == true,
             )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvSeriesModeTab(
     title: String,
     isSelected: Boolean,
     onActivated: () -> Unit,
     modifier: Modifier = Modifier,
+    contextActions: TvMediaCardActions? = null,
+    isPlayed: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isPressed by interactionSource.collectIsPressedAsState()
+    var menuExpanded by remember { mutableStateOf(false) }
     val fill by animateColorAsState(
         targetValue = when {
             isFocused -> Color.White
@@ -294,14 +315,25 @@ private fun TvSeriesModeTab(
             .onFocusChanged { focusState ->
                 if (focusState.isFocused && !isSelected) onActivated()
             }
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onActivated,
+                onLongClick = contextActions?.let { { menuExpanded = true } },
             )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
+        if (contextActions != null) {
+            TvMediaCardContextMenu(
+                expanded = menuExpanded,
+                onDismiss = { menuExpanded = false },
+                actions = contextActions,
+                isPlayed = isPlayed,
+                isFavorite = false,
+                isInWatchlist = false,
+            )
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium.copy(
@@ -313,6 +345,13 @@ private fun TvSeriesModeTab(
         )
     }
 }
+
+/**
+ * The mark-watched action names the season by number even when the tab shows
+ * a custom title such as "Series 2"; the action names the watched target.
+ */
+internal fun tvSeasonWatchedTargetLabel(season: Season): String =
+    if (season.isSpecialsForDisplay() || season.seasonNumber == 0) "Specials" else "Season ${season.seasonNumber}"
 
 private fun Modifier.seriesModeFocusRing(visible: Boolean): Modifier = drawWithContent {
     drawContent()

@@ -9,6 +9,7 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.SeasonUserData
 import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.catalog.sortedForDisplay
 import org.siloserver.silo.model.download.DownloadCapability
@@ -174,6 +175,7 @@ class ItemDetailViewModel(
 
     private var watchedMutationGeneration = 0
     private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
+    private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
 
     private val descriptionTranslation = DescriptionTranslationController(
         repository = metadataAiRepository,
@@ -1108,6 +1110,109 @@ class ItemDetailViewModel(
         }
     }
 
+    /**
+     * Marks a whole season from its chip's long-press menu. The server fans
+     * the mutation out to the season's episodes; the local season flag and any
+     * loaded episode page for that season flip immediately and roll back if
+     * the server refuses. Success re-reads the season list so counts agree.
+     */
+    fun setSeasonWatched(season: Season, watched: Boolean) {
+        val state = _uiState.value
+        val seriesId = state.detail?.takeIf { it.type == "series" }?.contentId ?: return
+        val previousSeason = state.seasons.firstOrNull { it.seasonNumber == season.seasonNumber } ?: season
+        val previousEpisodes = state.episodesBySeason[season.seasonNumber]
+
+        val generation = (seasonWatchedMutationGenerations[season.seasonNumber] ?: 0) + 1
+        seasonWatchedMutationGenerations[season.seasonNumber] = generation
+        updateSeasonPlayedState(season.seasonNumber, watched)
+        viewModelScope.launch {
+            when (personalDataRepository.setWatched(season.contentId, watched)) {
+                is ApiResult.Success -> {
+                    if (seasonWatchedMutationGenerations[season.seasonNumber] != generation) return@launch
+                    refreshSeasonUserData(seriesId)
+                    if (_uiState.value.selectedSeasonNumber == season.seasonNumber) {
+                        loadEpisodes(seriesId, season.seasonNumber, forceRefresh = true)
+                    } else if (previousEpisodes != null) {
+                        // Refresh the cached pager page in place so a later
+                        // swipe shows server-resolved progress, not a skeleton.
+                        val page = catalogRepository.getEpisodes(seriesId, season.seasonNumber)
+                        if (page is ApiResult.Success) {
+                            val episodes = page.data.episodes.sortedBy { it.episodeNumber }
+                            _uiState.update {
+                                if (it.detail?.contentId != seriesId) it else it.copy(
+                                    episodesBySeason = it.episodesBySeason + (season.seasonNumber to episodes),
+                                )
+                            }
+                        }
+                    }
+                }
+                else -> if (seasonWatchedMutationGenerations[season.seasonNumber] == generation) {
+                    _uiState.update { live ->
+                        live.copy(
+                            seasons = live.seasons.map {
+                                if (it.seasonNumber == season.seasonNumber) previousSeason else it
+                            },
+                            episodesBySeason = if (previousEpisodes != null) {
+                                live.episodesBySeason + (season.seasonNumber to previousEpisodes)
+                            } else {
+                                live.episodesBySeason
+                            },
+                            episodes = if (live.selectedSeasonNumber == season.seasonNumber && previousEpisodes != null) {
+                                previousEpisodes
+                            } else {
+                                live.episodes
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
+        fun EpisodeListItem.updated(): EpisodeListItem =
+            copy(
+                userData = (userData ?: LeafItemUserData()).copy(
+                    played = played,
+                    isInProgress = false,
+                    positionSeconds = null,
+                ),
+            )
+
+        _uiState.update { state ->
+            val page = state.episodesBySeason[seasonNumber]?.map { it.updated() }
+            state.copy(
+                seasons = state.seasons.map { season ->
+                    if (season.seasonNumber != seasonNumber) season else {
+                        val current = season.userData ?: SeasonUserData()
+                        val total = current.watchedCount + current.unplayedCount
+                        season.copy(
+                            userData = current.copy(
+                                played = played,
+                                watchedCount = if (played) total else 0,
+                                unplayedCount = if (played) 0 else total,
+                                inProgressCount = 0,
+                            ),
+                        )
+                    }
+                },
+                episodesBySeason = if (page != null) state.episodesBySeason + (seasonNumber to page) else state.episodesBySeason,
+                episodes = if (state.selectedSeasonNumber == seasonNumber) state.episodes.map { it.updated() } else state.episodes,
+            )
+        }
+    }
+
+    /** Reload only the season list, preserving order and the current selection. */
+    private suspend fun refreshSeasonUserData(seriesId: String) {
+        val result = catalogRepository.getSeasons(seriesId)
+        if (result !is ApiResult.Success) return
+        val byNumber = result.data.seasons.associateBy { it.seasonNumber }
+        _uiState.update { state ->
+            if (state.detail?.contentId != seriesId) return@update state
+            state.copy(seasons = state.seasons.map { byNumber[it.seasonNumber] ?: it })
+        }
+    }
+
     /** Marks one episode from the in-page rail without navigating away. */
     fun setEpisodeWatched(episodeContentId: String, watched: Boolean) {
         val state = _uiState.value
@@ -1125,7 +1230,14 @@ class ItemDetailViewModel(
         updateEpisodePlayedState(episodeContentId, watched)
         viewModelScope.launch {
             when (personalDataRepository.setWatched(episodeContentId, watched)) {
-                is ApiResult.Success -> Unit
+                is ApiResult.Success -> {
+                    // One episode can complete or reopen its season, so the
+                    // season chip's watched flag must follow.
+                    val seriesId = _uiState.value.detail?.let { detail ->
+                        if (detail.type == "series") detail.contentId else detail.seriesId
+                    }
+                    if (!seriesId.isNullOrBlank()) refreshSeasonUserData(seriesId)
+                }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     updateEpisodePlayedState(episodeContentId, previous)
                 }
