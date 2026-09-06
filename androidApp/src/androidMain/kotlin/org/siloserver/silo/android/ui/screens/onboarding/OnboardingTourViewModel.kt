@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.onboarding.OnboardingFlow
@@ -57,6 +59,35 @@ class OnboardingTourViewModel(
 
     private var loadStarted = false
     private var tourScope: AuthScopeSnapshot? = null
+    private val progressLock = Mutex()
+    private var progressNeedsRead = false
+
+    /** A new explicit gesture may reconcile; it never replays the failed gesture. */
+    private suspend fun progress(
+        scope: AuthScopeSnapshot,
+        tourId: String,
+        write: suspend () -> ApiResult<Unit>,
+    ): ApiResult<Unit> = progressLock.withLock {
+        if (!scopeCurrent(scope)) return@withLock ApiResult.Error(0, "identity_changed", "The tour profile changed.")
+        if (progressNeedsRead) {
+            when (val state = onboardingRepository.getState(scope)) {
+                is ApiResult.Success -> {
+                    if (state.data.tourId != tourId) return@withLock ApiResult.Error(409, "tour_changed", "The tour changed. Open it again.")
+                    progressNeedsRead = false
+                    if (state.data.done) {
+                        markDoneLocally(scope)
+                        _uiState.update { it.copy(finished = true) }
+                        return@withLock ApiResult.Success(Unit)
+                    }
+                }
+                is ApiResult.Error -> return@withLock state
+                is ApiResult.NetworkError -> return@withLock state
+            }
+        }
+        // Set before suspending so cancellation also requires reconciliation.
+        progressNeedsRead = true
+        write().also { if (it is ApiResult.Success) progressNeedsRead = false }
+    }
 
     private suspend fun scopeCurrent(scope: AuthScopeSnapshot): Boolean =
         scope.isSameIdentityAs(tokenManager.snapshotCurrentScope())
@@ -129,7 +160,7 @@ class OnboardingTourViewModel(
             val serverId = scope.serverId
             val profileId = scope.profileId
             withContext(NonCancellable) {
-                if (onboardingRepository.complete(flow.tourId, null, scope) is ApiResult.Success) {
+                if (progress(scope, flow.tourId) { onboardingRepository.complete(flow.tourId, null, scope) } is ApiResult.Success) {
                     localCache.markDone(serverId, profileId)
                 }
             }
@@ -198,7 +229,7 @@ class OnboardingTourViewModel(
             persistChoiceIfAny(current.steps.getOrNull(current.currentIndex))
             viewModelScope.launch {
                 current.steps.getOrNull(index)?.let {
-                    onboardingRepository.recordStep(current.tourId, it.id, scope)
+                    progress(scope, current.tourId) { onboardingRepository.recordStep(current.tourId, it.id, scope) }
                 }
             }
         }
@@ -239,10 +270,9 @@ class OnboardingTourViewModel(
             // retries the tour rather than silently diverging from every
             // other client.
             withContext(NonCancellable) {
-                val result = if (skipped) {
-                    onboardingRepository.skip(current.tourId, lastStep, scope)
-                } else {
-                    onboardingRepository.complete(current.tourId, lastStep, scope)
+                val result = progress(scope, current.tourId) {
+                    if (skipped) onboardingRepository.skip(current.tourId, lastStep, scope)
+                    else onboardingRepository.complete(current.tourId, lastStep, scope)
                 }
                 if (result is ApiResult.Success) {
                     localCache.markDone(serverId, profileId)
