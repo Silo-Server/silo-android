@@ -28,7 +28,8 @@ val networkModule = module {
     single { PersonalDataApi(get(), get(), get()) }
     single { CollectionApi(get(), get(), get()) }
     single { ProfileApi(get(), get(), get()) }
-    single { SectionApi(get(), get()) }
+    single { org.siloserver.silo.network.apiv2.LibrarySectionItemsV2Api(get(), get(), get()) }
+    single { SectionApi(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.SimilarCardsV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.TasteProfileV2Api(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.DiscoverV2Api(get(), get(), get()) }

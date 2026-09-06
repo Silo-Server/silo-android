@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * Library content sections committed by the Skyline cascade. The extra browse
@@ -398,12 +399,33 @@ class TvLibraryDetailViewModel(
         }
     }
 
+    private var recommendedGeneration = 0L
+
     private fun loadRecommended() {
+        val run = ++recommendedGeneration
         loadedRecommended = true
         viewModelScope.launch {
             _uiState.update { it.copy(recommendedLoading = true, recommendedError = null) }
 
-            val layout = when (val layoutResult = sectionRepository.getLibrarySections(libraryId)) {
+            val owner = sectionRepository.captureLibrarySectionAuthority()
+            if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
+            if (owner == null) {
+                loadedRecommended = false
+                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = "Sign in to load library sections.") }
+                return@launch
+            }
+            suspend fun mayPublish(): Boolean {
+                val valid = sectionRepository.isLibrarySectionAuthorityCurrent(owner)
+                if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return false
+                if (!valid) {
+                    loadedRecommended = false
+                    _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false) }
+                }
+                return valid
+            }
+            val layoutResult = sectionRepository.getLibrarySections(libraryId)
+            if (!mayPublish()) return@launch
+            val layout = when (layoutResult) {
                 is ApiResult.Success -> layoutResult.data
                 is ApiResult.Error -> {
                     loadedRecommended = false
@@ -446,8 +468,9 @@ class TvLibraryDetailViewModel(
             } else {
                 val resolvedById = unresolved.map { section ->
                     async {
+                        if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@async section.id to section
                         section.id to when (
-                            val result = sectionRepository.getLibrarySectionItems(libraryId, section.id)
+                            val result = sectionRepository.getLibrarySectionItems(libraryId, section.id, owner)
                         ) {
                             is ApiResult.Success -> result.data.section ?: section
                             else -> section
@@ -457,6 +480,7 @@ class TvLibraryDetailViewModel(
                 sections.map { section -> resolvedById[section.id] ?: section }
             }
 
+            if (!mayPublish()) return@launch
             _uiState.update {
                 it.copy(
                     sections = resolved.visibleOnTv(),

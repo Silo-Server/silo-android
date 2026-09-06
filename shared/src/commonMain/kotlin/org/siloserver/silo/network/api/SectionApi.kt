@@ -10,7 +10,8 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 
-class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client)) {
+class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
+    private val sectionItems: LibrarySectionItemsV2Api? = null) {
 
     // --- Home ---
 
@@ -32,12 +33,10 @@ class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = 
         client.get("/api/v1/library/$libraryId/sections")
     }
 
-    suspend fun getLibrarySectionItems(
-        libraryId: Int,
-        sectionId: String
-    ): ApiResult<HomeSectionItemsResponse> = safeApiCall {
-        client.get("/api/v1/library/$libraryId/sections/$sectionId/items")
-    }
+    suspend fun captureLibrarySectionAuthority() = sectionItems?.capture()
+    suspend fun isLibrarySectionAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionItems?.current(owner) == true
+    suspend fun getLibrarySectionItems(libraryId: Int, sectionId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
+        sectionItems?.read(libraryId, sectionId, owner) ?: ApiResult.Error(0, "unavailable", "The library section reader is unavailable.")
 
     // --- Library Collections ---
 

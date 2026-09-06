@@ -116,12 +116,16 @@ class SectionRepository(
         return result
     }
 
+    suspend fun captureLibrarySectionAuthority() = sectionApi.captureLibrarySectionAuthority()
+    suspend fun isLibrarySectionAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isLibrarySectionAuthorityCurrent(owner)
+
     /** Fetches items within a specific library section. */
     suspend fun getLibrarySectionItems(
         libraryId: Int,
         sectionId: String,
+        owner: org.siloserver.silo.network.AuthScopeSnapshot,
     ): ApiResult<HomeSectionItemsResponse> =
-        sectionApi.getLibrarySectionItems(libraryId, sectionId)
+        sectionApi.getLibrarySectionItems(libraryId, sectionId, owner)
 
     /** Lists collections within a library as a flat list. Callers that need
      *  the grouped layout should use [getLibraryCollectionsGrouped]. */
