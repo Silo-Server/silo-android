@@ -14,6 +14,49 @@ import org.junit.Test
 class PlayerStatsSnapshotReducerTest {
 
     @Test
+    fun `Dolby Vision source reports the selected decoder base range`() {
+        for ((transfer, expected) in listOf(
+            C.COLOR_TRANSFER_ST2084 to "HDR10",
+            C.COLOR_TRANSFER_HLG to "HLG",
+            C.COLOR_TRANSFER_SDR to "SDR",
+        )) {
+            val format = Format.Builder()
+                .setSampleMimeType("video/dolby-vision")
+                .setCodecs("dvhe.08.06")
+                .setColorInfo(ColorInfo.Builder().setColorTransfer(transfer).build())
+                .build()
+            val input = reducePlayerStats(
+                PlayerStatsSnapshot(hdrMode = "Dolby Vision"),
+                PlaybackAnalyticsListener.Event.VideoFormatChanged(format),
+            )
+            assertEquals(null, input.hdrMode)
+            val output = reducePlayerStats(
+                input,
+                PlaybackAnalyticsListener.Event.VideoOutputFormatChanged(format, "video/hevc"),
+            )
+            assertEquals(expected, output.hdrMode)
+            assertEquals("dvhe.08.06", output.videoCodec)
+            val nativeOutput = reducePlayerStats(
+                output,
+                PlaybackAnalyticsListener.Event.VideoOutputFormatChanged(format, "video/dolby-vision"),
+            )
+            assertEquals("Dolby Vision", nativeOutput.hdrMode)
+        }
+    }
+
+    @Test
+    fun `unknown output clears the previous HDR mode`() {
+        val format = Format.Builder().setCodecs("dvhe.08.06").build()
+        for (mime in listOf(null, "video/hevc")) {
+            val output = reducePlayerStats(
+                PlayerStatsSnapshot(hdrMode = "Dolby Vision"),
+                PlaybackAnalyticsListener.Event.VideoOutputFormatChanged(format, mime),
+            )
+            assertEquals(null, output.hdrMode)
+        }
+    }
+
+    @Test
     fun `VideoFormatChanged fills resolution codec frame rate and hdr`() {
         val format = Format.Builder()
             .setSampleMimeType("video/avc")
@@ -36,7 +79,7 @@ class PlayerStatsSnapshotReducerTest {
         assertEquals("avc1.640028", result.videoCodec)
         assertEquals("1920x1080", result.resolution)
         assertEquals(23.976f, result.frameRate)
-        assertEquals("HDR10", result.hdrMode)
+        assertEquals(null, result.hdrMode)
         assertEquals("video/avc", result.videoMimeType)
         assertEquals(1920, result.videoWidth)
         assertEquals(1080, result.videoHeight)
@@ -148,7 +191,7 @@ class PlayerStatsSnapshotReducerTest {
     }
 
     @Test
-    fun `Dolby Vision codec produces Dolby Vision HDR mode`() {
+    fun `Dolby Vision input waits for decoder output`() {
         val format = Format.Builder()
             .setSampleMimeType("video/dolby-vision")
             .setCodecs("dvhe.05.06")
@@ -160,7 +203,7 @@ class PlayerStatsSnapshotReducerTest {
             PlaybackAnalyticsListener.Event.VideoFormatChanged(format),
         )
 
-        assertEquals("Dolby Vision", result.hdrMode)
+        assertEquals(null, result.hdrMode)
     }
 
     @Test

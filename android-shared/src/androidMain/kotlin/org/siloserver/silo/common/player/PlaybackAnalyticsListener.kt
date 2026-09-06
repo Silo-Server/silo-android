@@ -41,6 +41,7 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         ) : Event()
         data class AudioDecoderInitialized(val decoderName: String) : Event()
         data class VideoFormatChanged(val format: Format) : Event()
+        data class VideoOutputFormatChanged(val format: Format, val decoderMimeType: String?) : Event()
         data class AudioFormatChanged(val format: Format) : Event()
         data class DroppedFrames(val count: Int, val elapsedMs: Long) : Event()
         object AudioUnderrun : Event()
@@ -130,6 +131,10 @@ class PlaybackAnalyticsListener : AnalyticsListener {
             hdrMode = null,
         )
         emit(Event.VideoFormatChanged(format))
+    }
+
+    fun onVideoOutputFormatChanged(format: Format, decoderMimeType: String?) {
+        emit(Event.VideoOutputFormatChanged(format, decoderMimeType))
     }
 
     override fun onAudioInputFormatChanged(
