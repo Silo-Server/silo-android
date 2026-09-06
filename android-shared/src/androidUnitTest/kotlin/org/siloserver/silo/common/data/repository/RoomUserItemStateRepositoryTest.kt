@@ -49,24 +49,52 @@ class RoomUserItemStateRepositoryTest {
     /**
      * A season-level watched mutation is recorded against the season id only.
      * The episodes it fans out to keep their local resume rows unless the
-     * caller clears them, which would resurrect Resume on a played episode.
+     * caller confirms them, which would resurrect Resume on a played episode.
      */
     @Test
-    fun clearPlaybackProgressDropsChildResumeRowsAndQueuedPositions() = runTest {
+    fun recordConfirmedWatchedDropsChildResumeRowsAndQueuedPositionsWithoutQueuingRequests() = runTest {
         repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         repo.recordPosition("e2", fileId = 8, positionSeconds = 120.0, durationSeconds = 3600.0)
         assertNotNull(repo.localPlaybackProgress("e1"))
         assertNotNull(repo.localPlaybackProgress("e2"))
 
-        repo.clearPlaybackProgress(listOf("e1", "e2"))
+        repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
 
         assertNull(repo.localPlaybackProgress("e1"))
         assertNull(repo.localPlaybackProgress("e2"))
         assertTrue(repo.localPlaybackProgressForContent(listOf("e1", "e2")).isEmpty())
-        val pendingPositions = db.dirtyOperationDao()
-            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
-            .filter { it.opKind == OutboxOperation.SET_POSITION }
-        assertTrue(pendingPositions.isEmpty())
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
+        // Nothing left to send: the server already applied the season write.
+        assertTrue(db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).isEmpty())
+    }
+
+    /**
+     * A child whose position write is already in flight cannot have that
+     * write deleted. Its watched op must stay queued for one replay so the
+     * position cannot land last and reopen the episode on the server.
+     */
+    @Test
+    fun recordConfirmedWatchedKeepsReplayForChildWithInFlightPosition() = runTest {
+        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(1, db.dirtyOperationDao().claim(position.id))
+        var syncRequests = 0
+        val guardedRepo = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt") },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "guarded-${nextId++}" },
+        )
+
+        guardedRepo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
+
+        assertNull(guardedRepo.localPlaybackProgress("e1"))
+        val queuedWatched = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_WATCHED }
+        assertEquals(listOf("e1"), queuedWatched.map { it.targetContentId })
+        assertEquals(1, syncRequests)
     }
 
     @Test

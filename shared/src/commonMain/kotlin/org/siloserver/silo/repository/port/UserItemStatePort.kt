@@ -47,14 +47,17 @@ interface UserItemStatePort {
     suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome)
 
     /**
-     * Drop locally stored resume positions for the given items after the
-     * server confirmed a container-level watched mutation (season or series).
-     * [recordWatched] only clears progress for the mutated content id; the
-     * children it fans out to must be cleared here, or the local overlay would
-     * resurrect Resume on episodes the server now reports as played. No-op on
-     * the default port.
+     * Apply a server-confirmed container-level watched mutation (season or
+     * series) to the children it fanned out to. [recordWatched] only touches
+     * the mutated content id; without this the children keep their local
+     * resume rows and the overlay resurrects Resume on episodes the server now
+     * reports as played. Implementations record each child exactly as a
+     * confirmed single-item watched write: the projection flips, resume rows
+     * and queued position writes are cleared, and a child whose position write
+     * is already in flight keeps a queued replay so that position cannot land
+     * last. No-op on the default port.
      */
-    suspend fun clearPlaybackProgress(contentIds: List<String>) {
+    suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
     }
 
     /**

@@ -177,6 +177,7 @@ class ItemDetailViewModel(
     private val episodeWatchedMutationGenerations = mutableMapOf<String, Int>()
     private val seasonWatchedMutationGenerations = mutableMapOf<Int, Int>()
     private val seasonWatchedWrites = mutableMapOf<Int, Job>()
+    private val seasonWatchedBaselines = mutableMapOf<Int, SeasonWatchBaseline>()
 
     /**
      * Bumped by every watched mutation (season or episode). A refresh captured
@@ -1122,8 +1123,8 @@ class ItemDetailViewModel(
     /**
      * Marks a whole season from its chip's long-press menu. The server fans
      * the mutation out to the season's episodes; the local season flag and any
-     * loaded episode page for that season flip immediately and roll back if
-     * the server refuses. Success re-reads the season list so counts agree.
+     * loaded episode page for that season flip immediately and roll back to
+     * the last confirmed state if the server refuses.
      *
      * Writes for one season run strictly in order so the latest intent is the
      * last write the server sees. Post-write refreshes are guarded by
@@ -1133,99 +1134,126 @@ class ItemDetailViewModel(
     fun setSeasonWatched(season: Season, watched: Boolean) {
         val state = _uiState.value
         val seriesId = state.detail?.takeIf { it.type == "series" }?.contentId ?: return
-        val previousSeason = state.seasons.firstOrNull { it.seasonNumber == season.seasonNumber } ?: season
-        val previousEpisodes = state.episodesBySeason[season.seasonNumber]
+        val seasonNumber = season.seasonNumber
+        // The baseline is the last confirmed state. A second write that starts
+        // while the first is pending inherits it instead of snapshotting the
+        // first write's optimistic values.
+        val baseline = seasonWatchedBaselines.getOrPut(seasonNumber) {
+            SeasonWatchBaseline(
+                season = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: season,
+                episodes = state.episodesBySeason[seasonNumber],
+            )
+        }
 
         val revision = ++watchedStateRevision
-        val generation = (seasonWatchedMutationGenerations[season.seasonNumber] ?: 0) + 1
-        seasonWatchedMutationGenerations[season.seasonNumber] = generation
-        updateSeasonPlayedState(season.seasonNumber, watched)
-        val previousWrite = seasonWatchedWrites[season.seasonNumber]
-        seasonWatchedWrites[season.seasonNumber] = viewModelScope.launch {
+        val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
+        seasonWatchedMutationGenerations[seasonNumber] = generation
+        updateSeasonPlayedState(seasonNumber, watched)
+        val previousWrite = seasonWatchedWrites[seasonNumber]
+        seasonWatchedWrites[seasonNumber] = viewModelScope.launch {
             // Serialize with the previous write for this season so a quick
             // reversal cannot reach the server before the request it reverses.
             previousWrite?.join()
-            when (personalDataRepository.setWatched(season.contentId, watched)) {
-                is ApiResult.Success -> {
-                    if (seasonWatchedMutationGenerations[season.seasonNumber] != generation) return@launch
-                    // The server resolved the season to its episodes; drop
-                    // their local resume positions so the overlay cannot offer
-                    // Resume on an episode the server now reports as played.
-                    val knownEpisodes = previousEpisodes.orEmpty().map { it.contentId }
-                    if (knownEpisodes.isNotEmpty()) userItemState.clearPlaybackProgress(knownEpisodes)
+            val result = personalDataRepository.setWatched(season.contentId, watched)
+            val isCurrentMutation = seasonWatchedMutationGenerations[seasonNumber] == generation
+            val knownEpisodes = baseline.episodes.orEmpty().map { it.contentId }
 
-                    refreshSeasonUserData(seriesId, revision)
-                    if (revision != watchedStateRevision) return@launch
-                    if (_uiState.value.selectedSeasonNumber == season.seasonNumber) {
-                        loadEpisodes(seriesId, season.seasonNumber, forceRefresh = true, freshOnly = true)
-                    } else if (previousEpisodes != null) {
-                        // Refresh the cached pager page in place so a later
-                        // swipe shows server-resolved progress, not a skeleton.
-                        val page = catalogRepository.refreshEpisodes(seriesId, season.seasonNumber)
-                        if (revision != watchedStateRevision) return@launch
-                        if (page is ApiResult.Success) {
-                            val episodes = withLocalProgress(page.data.episodes.sortedBy { it.episodeNumber })
-                            if (revision != watchedStateRevision) return@launch
-                            _uiState.update {
-                                if (it.detail?.contentId != seriesId) it else it.copy(
-                                    episodesBySeason = it.episodesBySeason + (season.seasonNumber to episodes),
-                                )
+            if (result !is ApiResult.Success) {
+                // A superseded failure changes nothing: the newer write will
+                // roll back to the same confirmed baseline if it also fails.
+                if (!isCurrentMutation) return@launch
+                seasonWatchedMutationGenerations.remove(seasonNumber)
+                seasonWatchedBaselines.remove(seasonNumber)
+                _uiState.update { live ->
+                    val restoredPage = baseline.episodes
+                    live.copy(
+                        seasons = live.seasons.map {
+                            if (it.seasonNumber == seasonNumber) baseline.season else it
+                        },
+                        episodesBySeason = if (restoredPage != null) {
+                            live.episodesBySeason + (seasonNumber to restoredPage)
+                        } else {
+                            live.episodesBySeason - seasonNumber
+                        },
+                        episodes = if (live.selectedSeasonNumber == seasonNumber) {
+                            restoredPage ?: live.episodes.map { episode ->
+                                if (episode.seasonNumber == seasonNumber) {
+                                    episode.copy(userData = (episode.userData ?: LeafItemUserData()).copy(played = !watched))
+                                } else {
+                                    episode
+                                }
                             }
-                        }
-                    }
+                        } else {
+                            live.episodes
+                        },
+                    )
                 }
-                else -> if (seasonWatchedMutationGenerations[season.seasonNumber] == generation) {
-                    _uiState.update { live ->
-                        live.copy(
-                            seasons = live.seasons.map {
-                                if (it.seasonNumber == season.seasonNumber) previousSeason else it
-                            },
-                            episodesBySeason = if (previousEpisodes != null) {
-                                live.episodesBySeason + (season.seasonNumber to previousEpisodes)
-                            } else {
-                                live.episodesBySeason
-                            },
-                            episodes = if (live.selectedSeasonNumber == season.seasonNumber && previousEpisodes != null) {
-                                previousEpisodes
-                            } else {
-                                live.episodes
-                            },
-                        )
-                    }
+                return@launch
+            }
+
+            // The server resolved the season to its episodes. Confirm the ones
+            // this screen knows about right away so their local resume rows
+            // cannot offer Resume on an episode the server now reports played.
+            if (knownEpisodes.isNotEmpty()) userItemState.recordConfirmedWatched(knownEpisodes, watched)
+            if (!isCurrentMutation) {
+                // Superseded but confirmed: the newer pending write must roll
+                // back to this state, not to the one before it.
+                seasonWatchedBaselines[seasonNumber] = baseline.applied(watched)
+                return@launch
+            }
+            seasonWatchedMutationGenerations.remove(seasonNumber)
+            seasonWatchedBaselines.remove(seasonNumber)
+
+            // Fresh-only reads: a cached pre-mutation list would undo the
+            // optimistic state. The episode page is always fetched so children
+            // this screen never loaded are confirmed too.
+            refreshSeasonUserData(seriesId, revision)
+            val page = catalogRepository.refreshEpisodes(seriesId, seasonNumber)
+            if (page is ApiResult.Success) {
+                val unconfirmed = page.data.episodes.map { it.contentId }.filterNot { it in knownEpisodes }
+                if (unconfirmed.isNotEmpty()) userItemState.recordConfirmedWatched(unconfirmed, watched)
+            }
+            if (revision != watchedStateRevision) return@launch
+            if (_uiState.value.selectedSeasonNumber == seasonNumber) {
+                loadEpisodes(seriesId, seasonNumber, forceRefresh = true, freshOnly = true)
+            } else if (page is ApiResult.Success) {
+                // Refresh the cached pager page in place so a later swipe
+                // shows server-resolved progress, not a skeleton.
+                val episodes = withLocalProgress(page.data.episodes.sortedBy { it.episodeNumber })
+                if (revision != watchedStateRevision) return@launch
+                _uiState.update {
+                    if (it.detail?.contentId != seriesId) it else it.copy(
+                        episodesBySeason = it.episodesBySeason + (seasonNumber to episodes),
+                    )
                 }
             }
         }
     }
 
-    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
-        fun EpisodeListItem.updated(): EpisodeListItem =
-            copy(
-                userData = (userData ?: LeafItemUserData()).copy(
-                    played = played,
-                    isInProgress = false,
-                    positionSeconds = null,
-                ),
-            )
+    /** Last server-confirmed state of one season while a write for it is pending. */
+    private data class SeasonWatchBaseline(
+        val season: Season,
+        val episodes: List<EpisodeListItem>?,
+    ) {
+        fun applied(watched: Boolean) = SeasonWatchBaseline(
+            season = season.withSeasonWatchedState(watched),
+            episodes = episodes?.map { it.withSeasonWatchedState(watched) },
+        )
+    }
 
+    private fun updateSeasonPlayedState(seasonNumber: Int, played: Boolean) {
         _uiState.update { state ->
-            val page = state.episodesBySeason[seasonNumber]?.map { it.updated() }
+            val page = state.episodesBySeason[seasonNumber]?.map { it.withSeasonWatchedState(played) }
             state.copy(
                 seasons = state.seasons.map { season ->
-                    if (season.seasonNumber != seasonNumber) season else {
-                        val current = season.userData ?: SeasonUserData()
-                        val total = current.watchedCount + current.unplayedCount
-                        season.copy(
-                            userData = current.copy(
-                                played = played,
-                                watchedCount = if (played) total else 0,
-                                unplayedCount = if (played) 0 else total,
-                                inProgressCount = 0,
-                            ),
-                        )
-                    }
+                    if (season.seasonNumber == seasonNumber) season.withSeasonWatchedState(played) else season
                 },
                 episodesBySeason = if (page != null) state.episodesBySeason + (seasonNumber to page) else state.episodesBySeason,
-                episodes = if (state.selectedSeasonNumber == seasonNumber) state.episodes.map { it.updated() } else state.episodes,
+                // Flip only cards that belong to this season; the rail may still
+                // show another season while a switch is loading.
+                episodes = state.episodes.map { episode ->
+                    if (episode.seasonNumber == seasonNumber) episode.withSeasonWatchedState(played) else episode
+                },
             )
         }
     }
@@ -1315,3 +1343,25 @@ class ItemDetailViewModel(
         }
     }
 }
+
+private fun Season.withSeasonWatchedState(played: Boolean): Season {
+    val current = userData ?: SeasonUserData()
+    val total = current.watchedCount + current.unplayedCount
+    return copy(
+        userData = current.copy(
+            played = played,
+            watchedCount = if (played) total else 0,
+            unplayedCount = if (played) 0 else total,
+            inProgressCount = 0,
+        ),
+    )
+}
+
+private fun EpisodeListItem.withSeasonWatchedState(played: Boolean): EpisodeListItem =
+    copy(
+        userData = (userData ?: LeafItemUserData()).copy(
+            played = played,
+            isInProgress = false,
+            positionSeconds = null,
+        ),
+    )

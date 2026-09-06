@@ -424,24 +424,15 @@ class RoomUserItemStateRepository(
         }
     }
 
-    override suspend fun clearPlaybackProgress(contentIds: List<String>) {
-        if (contentIds.isEmpty()) return
-        val snapshot = snapshotProvider() ?: return
-        val serverId = snapshot.serverId
-        val profileId = snapshot.profileId ?: return
-        val nowMs = now()
-        db.withTransaction {
-            contentIds.distinct().forEach { contentId ->
-                // A queued position write for a child would otherwise drain
-                // after the confirmed watched mutation and reopen the episode.
-                outboxDao.deletePendingForTargetKind(
-                    serverId = serverId,
-                    profileId = profileId,
-                    contentId = contentId,
-                    opKind = OutboxOperation.SET_POSITION,
-                )
-                userStateDao.clearPlaybackProgress(serverId, profileId, contentId, nowMs)
-            }
+    override suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
+        // Reuse the single-item path so each child gets the same care: the
+        // projection flips, resume rows and pending position writes clear,
+        // and an in-flight position leaves the watched op queued for one
+        // idempotent replay. Resolving as synced immediately means no network
+        // request is sent unless that replay is required.
+        contentIds.distinct().forEach { contentId ->
+            val handle = recordWatched(contentId, watched)
+            resolve(handle, WriteOutcome.SYNCED)
         }
     }
 
