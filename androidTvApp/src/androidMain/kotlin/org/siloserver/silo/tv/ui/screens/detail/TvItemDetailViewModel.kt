@@ -81,6 +81,11 @@ data class TvItemDetailUiState(
     val seasons: List<Season> = emptyList(),
     val selectedSeason: Int? = null,
     val episodes: List<EpisodeListItem> = emptyList(),
+    val carouselEpisodes: List<EpisodeListItem> = emptyList(),
+    val carouselPreviousSeason: Int? = null,
+    val carouselNextSeason: Int? = null,
+    val carouselJump: TvEpisodeCarouselJump? = null,
+    val carouselLoadError: Boolean = false,
     val episodeFavoriteStates: Map<String, Boolean> = emptyMap(),
     /** The route's one-shot episode target has been applied (or safely rejected). */
     val entryEpisodeSelectionApplied: Boolean = false,
@@ -374,30 +379,6 @@ class TvItemDetailViewModel(
     val translationPhase: StateFlow<org.siloserver.silo.metadata.DescriptionTranslationPhase> =
         descriptionTranslation.phase
 
-    init {
-        viewModelScope.launch {
-            identityTransitions.transitions.collect { transition ->
-                if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
-                    pendingNextUpSelectionHandoff = null
-                }
-            }
-        }
-        observePreferredQuality()
-        capabilityDetector?.let(::observeAutomaticAudioPolicy)
-        if (contentId.isNotBlank()) {
-            // Restore this title's pre-play track choices (QA 2026-07-08: a
-            // manual subtitle selection reset on every return to the page —
-            // season switches and detail re-entry build a fresh ViewModel).
-            TvDetailTrackSelectionSession.recall(contentId)?.let { saved ->
-                _uiState.update {
-                    it.copy(
-                        selectedFileId = saved.fileId,
-                    )
-                }
-            }
-            loadAll()
-        }
-    }
 
     /**
      * Loads the cascaded subtitle preferences that annotate the selector row's
@@ -592,6 +573,7 @@ class TvItemDetailViewModel(
         }
         if (_uiState.value.selectedSeason != seasonNumber) return false
         refreshNextUp(episodes)
+        recordCarouselSeason(seasonNumber, episodes)
         return true
     }
 
@@ -614,6 +596,7 @@ class TvItemDetailViewModel(
                         it.copy(
                             isLoading = false,
                             detail = detail,
+                            seasonsLoading = detail.type.lowercase() == "series" || it.seasonsLoading,
                             userRating = detail.userRating,
                             isWatched = detail.userData?.played == true,
                             error = null,
@@ -1001,6 +984,8 @@ class TvItemDetailViewModel(
     fun onSeasonSelected(seasonNumber: Int) {
         if (_uiState.value.selectedSeason == seasonNumber) return
         seasonSelectionGeneration += 1
+        pendingCarouselEdge = null
+        pendingCarouselSeasonJump = seasonNumber
         // A focused episode belongs to the old season. The newly loaded rail
         // chooses its own suggested/current episode, exactly like tvOS.
         activeSeriesEpisodeContentId = null
@@ -1031,9 +1016,35 @@ class TvItemDetailViewModel(
     fun onSeriesEpisodeActivated(contentId: String?) {
         val state = _uiState.value
         if (state.detail?.type?.lowercase() != "series") return
-        val active = contentId?.let { id -> state.episodes.firstOrNull { it.contentId == id } }
+        val active = contentId?.let { id ->
+            (state.carouselEpisodes.ifEmpty { state.episodes }).firstOrNull { it.contentId == id }
+        }
+        pendingCarouselEdge = null
+        if (active != null) {
+            pendingCarouselSeasonJump = null
+            _uiState.update { it.copy(carouselJump = null) }
+        }
+        if (active != null && active.seasonNumber != state.selectedSeason) {
+            seasonSelectionGeneration += 1
+            episodeLoadRequestGeneration += 1
+            episodeLoadJob?.cancel()
+            loadedSeason = active.seasonNumber
+            episodeListGeneration += 1
+            _uiState.update {
+                it.copy(
+                    selectedSeason = active.seasonNumber,
+                    episodes = episodeWindow.get(active.seasonNumber).orEmpty(),
+                    episodesLoading = false,
+                )
+            }
+        }
         activeSeriesEpisodeContentId = active?.contentId
-        updateNextUp(active ?: resolveNextUpEpisode(state.episodes))
+        updateNextUp(active ?: resolveNextUpEpisode(_uiState.value.episodes))
+        if (active != null) {
+            if (active.seasonNumber != state.selectedSeason) publishCarousel()
+            prefetchCarouselNeighbors()
+            viewModelScope.launch { refreshEpisodeFavoriteStates(listOf(active)) }
+        }
     }
 
     /**
@@ -1047,8 +1058,122 @@ class TvItemDetailViewModel(
         val active = state.episodes.firstOrNull { it.contentId == contentId }
         _uiState.update { it.copy(entryEpisodeSelectionApplied = true) }
         if (active != null) {
+            pendingCarouselSeasonJump = null
+            pendingCarouselEdge = null
             activeSeriesEpisodeContentId = active.contentId
             updateNextUp(active)
+            _uiState.update {
+                it.copy(carouselJump = TvEpisodeCarouselJump(active.contentId, ++carouselJumpRevision))
+            }
+        }
+    }
+
+    private val episodeWindow = TvEpisodeWindow()
+    private val carouselLoads = mutableMapOf<Int, Job>()
+    private var carouselJumpRevision = 0
+    private var pendingCarouselSeasonJump: Int? = null
+    private var pendingCarouselEdge: Pair<String, Int>? = null
+
+    private fun recordCarouselSeason(season: Int, episodes: List<EpisodeListItem>) {
+        if (_uiState.value.detail?.type?.lowercase() != "series") return
+        episodeWindow.put(season, episodes)
+        publishCarousel()
+        if (pendingCarouselSeasonJump == season) {
+            pendingCarouselSeasonJump = null
+            episodes.firstOrNull()?.let { first ->
+                activeSeriesEpisodeContentId = first.contentId
+                updateNextUp(first)
+                _uiState.update {
+                    it.copy(carouselJump = TvEpisodeCarouselJump(first.contentId, ++carouselJumpRevision))
+                }
+            }
+        }
+        prefetchCarouselNeighbors()
+    }
+
+    private fun publishCarousel() {
+        val state = _uiState.value
+        if (state.detail?.type?.lowercase() != "series") return
+        val selected = state.selectedSeason ?: return
+        // Preserve optimistic watched-state edits on the active page.
+        if (state.episodes.firstOrNull()?.seasonNumber == selected) {
+            episodeWindow.put(selected, state.episodes)
+        }
+        episodeWindow.retainNear(state.seasons, selected)
+        val snapshot = episodeWindow.snapshot(state.seasons, selected)
+        _uiState.update {
+            it.copy(
+                carouselEpisodes = snapshot.episodes,
+                carouselPreviousSeason = snapshot.previousSeason,
+                carouselNextSeason = snapshot.nextSeason,
+            )
+        }
+        val pending = pendingCarouselEdge ?: return
+        val index = snapshot.episodes.indexOfFirst { it.contentId == pending.first }
+        val target = snapshot.episodes.getOrNull(index + pending.second).takeIf { index >= 0 }
+        if (target != null) {
+            pendingCarouselEdge = null
+            _uiState.update {
+                it.copy(carouselJump = TvEpisodeCarouselJump(target.contentId, ++carouselJumpRevision, true))
+            }
+        }
+    }
+
+    fun onCarouselFocusLost() {
+        pendingCarouselEdge = null
+    }
+
+    private fun prefetchCarouselNeighbors() {
+        val state = _uiState.value
+        if (state.detail?.type?.lowercase() != "series") return
+        val order = episodeWindow.orderedSeasons(state.seasons)
+        val selectedIndex = order.indexOf(state.selectedSeason)
+        if (selectedIndex < 0) return
+        listOfNotNull(order.getOrNull(selectedIndex - 1), order.getOrNull(selectedIndex + 1))
+            .forEach(::loadCarouselNeighbor)
+    }
+
+    /** Called only at a loaded edge; holding Right never skips an unloaded season. */
+    fun onCarouselEdgeRequested(contentId: String, direction: Int) {
+        if (direction != -1 && direction != 1) return
+        pendingCarouselEdge = contentId to direction
+        val state = _uiState.value
+        val season = if (direction < 0) state.carouselPreviousSeason else state.carouselNextSeason
+        season?.let(::loadCarouselNeighbor)
+    }
+
+    private fun loadCarouselNeighbor(season: Int) {
+        val state = _uiState.value
+        val series = state.detail?.takeIf { it.type.lowercase() == "series" } ?: return
+        if (episodeWindow.get(season) != null || carouselLoads[season]?.isActive == true) return
+        carouselLoads[season] = viewModelScope.launch {
+            _uiState.update { it.copy(carouselLoadError = false) }
+            try {
+                val result = catalogRepository.getEpisodes(series.contentId, season)
+                if (result is ApiResult.Success) {
+                    val episodes = withLocalProgress(result.data.episodes)
+                    // A distant season jump can make this prefetch obsolete.
+                    val live = _uiState.value
+                    val order = episodeWindow.orderedSeasons(live.seasons)
+                    val distance = kotlin.math.abs(order.indexOf(season) - order.indexOf(live.selectedSeason))
+                    val edge = episodeWindow.snapshot(live.seasons, live.selectedSeason ?: return@launch)
+                    if (distance <= 2 || season == edge.previousSeason || season == edge.nextSeason) {
+                        episodeWindow.put(season, episodes)
+                        publishCarousel()
+                        // Empty seasons are traversed, never mistaken for the end of the series.
+                        if (episodes.isEmpty()) {
+                            val snapshot = episodeWindow.snapshot(live.seasons, live.selectedSeason ?: return@launch)
+                            val before = order.indexOf(season) < order.indexOf(live.selectedSeason)
+                            (if (before) snapshot.previousSeason else snapshot.nextSeason)
+                                ?.let(::loadCarouselNeighbor)
+                        }
+                    }
+                } else {
+                    _uiState.update { it.copy(carouselLoadError = true) }
+                }
+            } finally {
+                carouselLoads.remove(season)
+            }
         }
     }
 
@@ -1077,6 +1202,7 @@ class TvItemDetailViewModel(
                             seasonsLoading = false,
                             seasons = plan.seasons,
                             selectedSeason = selectedSeasonNumber,
+                            episodesLoading = it.episodesLoading || (!preservesNewerSelection && selectedSeasonNumber != null),
                         )
                     }
                     if (!preservesNewerSelection) {
@@ -1182,6 +1308,7 @@ class TvItemDetailViewModel(
                     episodeListGeneration += 1
                     _uiState.update { it.copy(episodesLoading = false, episodes = episodes) }
                     refreshNextUp(episodes)
+                    recordCarouselSeason(seasonNumber, episodes)
                     val revalidationComplete =
                         refreshEpisodeFavoriteStates(episodes, revalidate = revalidateFavorites)
                     // Caught up only now, and only if every id we were asked to
@@ -1306,6 +1433,7 @@ class TvItemDetailViewModel(
             if (episode.contentId == episodeContentId) episode.withWatchedPlaybackState(watched) else episode
         }
         _uiState.update { it.copy(episodes = updatedEpisodes) }
+        publishCarousel()
         refreshNextUp(updatedEpisodes)
 
         viewModelScope.launch {
@@ -1323,6 +1451,7 @@ class TvItemDetailViewModel(
                             if (episode.contentId == episodeContentId) previousEpisode else episode
                         }
                         if (_uiState.compareAndSet(live, live.copy(episodes = restored))) {
+                            publishCarousel()
                             refreshNextUp(restored)
                         }
                     }
@@ -1910,6 +2039,32 @@ class TvItemDetailViewModel(
             }
         }
     }
+    // Start observers only after every cache and request field is initialized.
+    init {
+        viewModelScope.launch {
+            identityTransitions.transitions.collect { transition ->
+                if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
+                    pendingNextUpSelectionHandoff = null
+                }
+            }
+        }
+        observePreferredQuality()
+        capabilityDetector?.let(::observeAutomaticAudioPolicy)
+        if (contentId.isNotBlank()) {
+            // Restore this title's pre-play track choices (QA 2026-07-08: a
+            // manual subtitle selection reset on every return to the page —
+            // season switches and detail re-entry build a fresh ViewModel).
+            TvDetailTrackSelectionSession.recall(contentId)?.let { saved ->
+                _uiState.update {
+                    it.copy(
+                        selectedFileId = saved.fileId,
+                    )
+                }
+            }
+            loadAll()
+        }
+    }
+
 }
 
 private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {

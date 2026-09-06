@@ -233,6 +233,7 @@ internal fun TvAnchoredSelectorMenu(
                 },
                 onClick = { if (interactive) expansionRequested = true },
                 focusRequester = triggerFr,
+                titleOnFocus = label,
             )
             TvSelectorTriggerStyle.ConnectedSegment -> ConnectedSelectorTrigger(
                 icon = icon,

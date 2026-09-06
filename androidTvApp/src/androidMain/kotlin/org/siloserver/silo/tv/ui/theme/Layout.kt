@@ -17,6 +17,11 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import androidx.compose.ui.unit.Dp
@@ -126,13 +131,11 @@ fun rememberTvGridBringIntoViewSpec(topInset: Dp): BringIntoViewSpec {
  * it spun a new scroll job per frame. Measured on the Shield as p90 121ms and
  * near-frozen vertical navigation.
  *
- * Fast-out/slow-in at 480ms (tuned on the Shield): quick to start so rapid
- * presses feel connected, long enough to settle that a card-step reads as a
- * glide; a chain of presses retargets the running animation from its current
- * position, so it never stutters.
+ * Shared 100 ms card steps, tuned on the Shield. Horizontal repeats wait
+ * for the current step to settle so focus never outruns the visible cards.
  */
 val TvRailScrollSpec: AnimationSpec<Float> = tween(
-    durationMillis = 480,
+    durationMillis = 100,
     easing = FastOutSlowInEasing,
 )
 
@@ -210,10 +213,20 @@ private const val NEAR_EDGE_ITEMS = 2
  * [leading] is the row's start content padding.
  */
 @Composable
-fun Modifier.tvRailPinOnFocus(state: LazyListState, index: Int, leading: Dp): Modifier {
+fun Modifier.tvRailPinOnFocus(
+    state: LazyListState,
+    index: Int,
+    leading: Dp,
+): Modifier {
     val leadingPx = with(LocalDensity.current) { leading.toPx() }
     val scope = rememberCoroutineScope()
-    return onFocusChanged { focusState ->
+    return onPreviewKeyEvent { event ->
+        // Drop repeats during a card step rather than restarting its animation
+        // or queuing movement that would continue after the remote is released.
+        event.type == KeyEventType.KeyDown &&
+            (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) &&
+            state.isScrollInProgress
+    }.onFocusChanged { focusState ->
         if (focusState.isFocused) scope.launch { state.tvRailPinItem(index, leadingPx) }
     }
 }

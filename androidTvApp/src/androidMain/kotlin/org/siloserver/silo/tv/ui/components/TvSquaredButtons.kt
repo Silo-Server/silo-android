@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -29,6 +30,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
@@ -120,6 +126,7 @@ fun TvPrimaryPillButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    stableHero: Boolean = false,
 ) {
     SquaredPill(
         kind = PillKind.Primary,
@@ -128,6 +135,7 @@ fun TvPrimaryPillButton(
         onClick = onClick,
         modifier = modifier,
         focusRequester = focusRequester,
+        stableHero = stableHero,
     )
 }
 
@@ -165,17 +173,19 @@ private fun SquaredPill(
     onClick: () -> Unit,
     modifier: Modifier,
     focusRequester: FocusRequester?,
+    stableHero: Boolean = false,
 ) {
     val primary = kind == PillKind.Primary
     SquaredPillSurface(
         kind = kind,
         onClick = onClick,
-        modifier = modifier,
+        modifier = if (stableHero) modifier.height(38.dp) else modifier,
         focusRequester = focusRequester,
         capsule = true,
+        stableHero = stableHero,
         contentPadding = PaddingValues(
             horizontal = if (primary) 27.dp else 20.dp,
-            vertical = if (primary) 13.dp else 11.dp,
+            vertical = if (stableHero) 0.dp else if (primary) 13.dp else 11.dp,
         ),
     ) { foreground ->
         Row(
@@ -189,7 +199,7 @@ private fun SquaredPill(
             // pre-enlargement button height.
             Box(
                 modifier = Modifier
-                    .width(if (primary) 30.dp else 20.dp)
+                    .width(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp)
                     .height(if (primary) 16.dp else 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -197,14 +207,14 @@ private fun SquaredPill(
                     imageVector = icon,
                     contentDescription = null,
                     tint = foreground,
-                    modifier = Modifier.requiredSize(if (primary) 30.dp else 20.dp),
+                    modifier = Modifier.requiredSize(if (stableHero) 18.dp else if (primary) 30.dp else 20.dp),
                 )
             }
             Spacer(Modifier.width(if (primary) 9.dp else 8.dp))
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleLarge.copy(
-                    fontSize = if (primary) 17.sp else 15.sp,
+                    fontSize = if (stableHero) 14.sp else if (primary) 17.sp else 15.sp,
                 ),
                 color = foreground,
                 maxLines = 1,
@@ -230,6 +240,7 @@ internal fun SquaredPillSurface(
     enabled: Boolean = true,
     /** Hero Play/Start Over use tvOS Capsule; selector triggers keep their approved squared shape. */
     capsule: Boolean = false,
+    stableHero: Boolean = false,
     contentPadding: PaddingValues,
     content: @Composable (foreground: Color) -> Unit,
 ) {
@@ -242,7 +253,9 @@ internal fun SquaredPillSurface(
 
     // --- Body visuals (per kind) ---
     val foreground by animateColorAsState(
-        targetValue = when (kind) {
+        targetValue = if (stableHero) {
+            if (isFocused) Color.Black else Color.White
+        } else when (kind) {
             // The Play pill remains the bright primary action at rest. Making
             // it use the same translucent treatment as the circular utility
             // buttons erased the hierarchy and made the whole action cluster
@@ -254,7 +267,9 @@ internal fun SquaredPillSurface(
         label = "pillForeground",
     )
     val fill by animateColorAsState(
-        targetValue = when (kind) {
+        targetValue = if (stableHero) {
+            if (isFocused) Color.White else Color.White.copy(alpha = 0.10f)
+        } else when (kind) {
             PillKind.Primary -> if (isFocused) Color.White else Color.White.copy(alpha = 0.76f)
             PillKind.Secondary -> if (isFocused) Color.White else Color.Black.copy(alpha = 0.52f)
         },
@@ -302,7 +317,7 @@ internal fun SquaredPillSurface(
     )
 
     val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.025f else 1f,
+        targetValue = if (isFocused && !stableHero) 1.025f else 1f,
         animationSpec = focusSpring(),
         label = "pillFocusScale",
     )
@@ -337,14 +352,14 @@ internal fun SquaredPillSurface(
             )
             // Compact focus outline, half-scale port of tvOS width 2.5 / inset 3.
             .focusRing(
-                visible = isFocused,
+                visible = isFocused && !stableHero,
                 color = focusOutlineColor,
                 width = 1.25.dp,
                 inset = 1.5.dp,
                 corner = if (capsule) 50.dp else TvControlCorner + 2.dp,
             )
             .background(fill, shape)
-            .border(innerBorderWidth, innerBorderColor, shape)
+            .then(if (stableHero) Modifier else Modifier.border(innerBorderWidth, innerBorderColor, shape))
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { isFocused = it.isFocused }
             .clickable(
@@ -361,12 +376,9 @@ internal fun SquaredPillSurface(
 }
 
 /**
- * 72×72 circular icon toggle (Favorite / Watchlist / Watched). Mirrors
- * `TVCircleActionButton` + `TVCircleButtonStyle`.
- *
- * Fill white@0.10 → focus white; icon white → focus black; swaps [icon] /
- * [iconActive] on [isActive]. Focus ring white@0.96 3dp inset −5, scale 1.10,
- * shadow black@0.34 r16 y6, glow onSurface@0.15 r10.
+ * Circular action with optional tvOS-style label expansion on focus.
+ * [titleOnFocus] uses a fixed-height capsule without a focus ring or scale;
+ * icon-only callers retain their existing toggle treatment.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -378,10 +390,30 @@ fun TvSquareToggleButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
+    titleOnFocus: String? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
+
+    val titleStyle = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val expandedWidth = remember(titleOnFocus, textMeasurer, density) {
+        val textWidth = textMeasurer.measure(titleOnFocus.orEmpty(), titleStyle).size.width
+        with(density) { textWidth.toDp() } + 54.dp
+    }
+    val titleAlpha by animateFloatAsState(
+        targetValue = if (isFocused) 1f else 0f,
+        animationSpec = tween(durationMillis = 180, delayMillis = if (isFocused) 60 else 0),
+        label = "toggleTitleAlpha",
+    )
+    val showTitle = isFocused || titleAlpha > 0f
+    val capsuleWidth by animateDpAsState(
+        targetValue = if (showTitle && titleOnFocus != null) expandedWidth else 38.dp,
+        animationSpec = tween(durationMillis = 280),
+        label = "toggleWidth",
+    )
 
     val shape = CircleShape
 
@@ -407,7 +439,7 @@ fun TvSquareToggleButton(
     )
 
     val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.10f else 1f,
+        targetValue = if (isFocused && titleOnFocus == null) 1.10f else 1f,
         animationSpec = focusSpring(),
         label = "toggleFocusScale",
     )
@@ -422,8 +454,13 @@ fun TvSquareToggleButton(
 
     Box(
         modifier = modifier
-            // tvOS 72×72 ÷ 2 = 36dp, +4 per design review.
-            .size(40.dp)
+            .then(
+                if (titleOnFocus != null) {
+                    Modifier.width(capsuleWidth).height(38.dp)
+                } else {
+                    Modifier.size(40.dp)
+                },
+            )
             .graphicsLayer {
                 scaleX = scale
                 scaleY = scale
@@ -446,14 +483,15 @@ fun TvSquareToggleButton(
             )
             // Focus ring: white@0.96, 3dp, inset −2.5.
             .focusRing(
-                visible = isFocused,
+                visible = isFocused && titleOnFocus == null,
                 color = Color.White.copy(alpha = 0.96f),
                 width = 1.5.dp,
                 inset = 2.5.dp,
                 corner = 22.dp,
             )
             .background(fill, shape)
-            .border(innerBorderWidth, innerBorderColor, shape)
+            .then(if (titleOnFocus != null) Modifier.clip(shape) else Modifier)
+            .then(if (titleOnFocus == null) Modifier.border(innerBorderWidth, innerBorderColor, shape) else Modifier)
             .then(focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
             .onFocusChanged { isFocused = it.isFocused }
             .semantics { this.contentDescription = contentDescription }
@@ -464,11 +502,28 @@ fun TvSquareToggleButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = if (isActive) iconActive else icon,
-            contentDescription = null,
-            tint = foreground,
-            modifier = Modifier.size(16.dp),
-        )
+        Row(
+            modifier = Modifier
+                .then(if (titleOnFocus != null) Modifier.requiredWidth(if (showTitle) expandedWidth else 38.dp) else Modifier)
+                .padding(horizontal = if (showTitle && titleOnFocus != null) 14.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp, Alignment.CenterHorizontally),
+        ) {
+            Icon(
+                imageVector = if (isActive) iconActive else icon,
+                contentDescription = null,
+                tint = foreground,
+                modifier = Modifier.size(if (titleOnFocus != null) 19.dp else 16.dp),
+            )
+            if (showTitle && titleOnFocus != null) {
+                Text(
+                    text = titleOnFocus,
+                    color = foreground,
+                    style = titleStyle,
+                    modifier = Modifier.graphicsLayer { alpha = titleAlpha },
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
