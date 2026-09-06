@@ -47,5 +47,5 @@ val networkModule = module {
     single<NotificationsApi> { org.siloserver.silo.network.apiv2.NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get()) }
     single<WatchTogetherApi> { DefaultWatchTogetherApi(get()) }
-    single<DiagnosticsApi> { DefaultDiagnosticsApi(get()) }
+    single<DiagnosticsApi> { DefaultDiagnosticsApi(get(), gate = get()) }
 }

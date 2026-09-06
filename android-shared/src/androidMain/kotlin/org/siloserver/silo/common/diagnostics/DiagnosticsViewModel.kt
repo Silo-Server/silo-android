@@ -59,6 +59,7 @@ class DiagnosticsViewModel(
                 when (decision) {
                     is DiagnosticsUploadDecision.Uploaded,
                     is DiagnosticsUploadDecision.HostedProcessing,
+                    DiagnosticsUploadDecision.KeptUncertain,
                     DiagnosticsUploadDecision.KeptInvalid,
                     DiagnosticsUploadDecision.KeptTooLarge,
                     DiagnosticsUploadDecision.KeptServerUpdateRequired,

@@ -52,6 +52,26 @@ class DiagnosticsUploaderTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun persistedUncertainDispatchPreventsSendAfterRestart() = runTest {
+        val fixture = fixture()
+        fixture.store.markState(fixture.report.id, PendingReportStatus.PERMANENT_FAILURE, "delivery_uncertain")
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.uploadAutomatically(fixture.report.id))
+        assertEquals(0, fixture.api.uploadCalls)
+    }
+
+    @Test
+    fun uncertainSelfHostedSendIsPersistedAndNeverAutomaticallyRepeated() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.NetworkError(IllegalStateException("lost receipt"))
+        fixture.api.onUpload = { assertEquals("delivery_uncertain", fixture.store.load(fixture.report.id)?.state?.errorCode) }
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.upload(fixture.report.id))
+        assertEquals("delivery_uncertain", fixture.store.load(fixture.report.id)?.state?.errorCode)
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.uploadAutomatically(fixture.report.id))
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.uploadCalls)
+    }
+
+    @Test
     fun hostedWireIdCanonicalizesTheLocalUuidWithoutChangingItsIdentity() {
         assertEquals(
             "01234567-89ab-4def-8123-456789abcdef",
@@ -305,10 +325,10 @@ class DiagnosticsUploaderTest {
     @Test
     fun everyStableServerErrorHasExplicitPolicy() = runTest {
         val cases = mapOf(
-            "busy" to DiagnosticsUploadDecision.KeptRetryable,
+            "busy" to DiagnosticsUploadDecision.KeptUncertain,
             "quota_exceeded" to DiagnosticsUploadDecision.KeptRetryable,
             "rate_limited" to DiagnosticsUploadDecision.KeptRetryable,
-            "internal_error" to DiagnosticsUploadDecision.KeptRetryable,
+            "internal_error" to DiagnosticsUploadDecision.KeptUncertain,
             "too_large" to DiagnosticsUploadDecision.KeptTooLarge,
             "unsupported_schema" to DiagnosticsUploadDecision.KeptServerUpdateRequired,
             "storage_unavailable" to DiagnosticsUploadDecision.KeptUnavailable,
@@ -351,7 +371,7 @@ class DiagnosticsUploaderTest {
                 PendingReportStatus.PERMANENT_FAILURE
             }
             assertEquals(expectedStatus, state.status, code)
-            assertEquals(DiagnosticsErrorCode.fromWire(code).wire, state.errorCode, code)
+            assertEquals(if (expected == DiagnosticsUploadDecision.KeptUncertain) "delivery_uncertain" else DiagnosticsErrorCode.fromWire(code).wire, state.errorCode, code)
         }
     }
 
