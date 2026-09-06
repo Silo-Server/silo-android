@@ -21,6 +21,7 @@ class BrandingApiTest {
         val api = BrandingApi(
             HttpClient(
                 MockEngine {
+                    assertEquals("/api/v2/theme/branding", it.url.encodedPath)
                     respond(
                         content = """{"server_name":"Home Silo","login_subtitle":"Welcome"}""",
                         status = HttpStatusCode.OK,
@@ -36,4 +37,25 @@ class BrandingApiTest {
 
         assertEquals("Home Silo", result.data.serverName)
     }
+    @Test
+    fun `only missing v2 route permits legacy fallback`() = runTest {
+        for (status in listOf(HttpStatusCode.NotFound, HttpStatusCode.ServiceUnavailable)) {
+            val paths = mutableListOf<String>()
+            val client = HttpClient(MockEngine {
+                paths += it.url.encodedPath
+                if (paths.size == 1) respond("{}", status, headersOf(HttpHeaders.ContentType, "application/problem+json"))
+                else respond("""{"server_name":"Legacy"}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }) { install(ContentNegotiation) { json(SiloJson) } }
+            val result = BrandingApi(client).getBranding()
+            if (status == HttpStatusCode.NotFound) {
+                assertEquals("Legacy", assertIs<ApiResult.Success<BrandingStatus>>(result).data.serverName)
+                assertEquals(listOf("/api/v2/theme/branding", "/api/v1/theme/branding"), paths)
+            } else {
+                assertIs<ApiResult.Error>(result)
+                assertEquals(listOf("/api/v2/theme/branding"), paths)
+            }
+            client.close()
+        }
+    }
+
 }

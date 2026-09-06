@@ -404,7 +404,10 @@ class AuthRepository(
     private suspend fun refreshActiveServerDisplayName(activeId: String) {
         val registry = serverRegistry ?: return
         if (registry.activeServerId.value != activeId) return
-        val brandingName = (brandingApi?.getBranding() as? ApiResult.Success)
+        val branding = brandingApi?.getBranding()
+        if (registry.activeServerId.value != activeId) return
+        if (branding is ApiResult.NetworkError || (branding is ApiResult.Error && branding.code != 404)) return
+        val brandingName = (branding as? ApiResult.Success)
             ?.data
             ?.serverName
             .usableServerName()

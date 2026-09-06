@@ -80,6 +80,17 @@ class AuthRepositoryServerNameTest {
         assertNull(registry.fetchedName)
     }
 
+    @Test
+    fun `refresh preserves cached name on branding failure`() = runTest {
+        val registry = RecordingServerRegistry()
+        val health = FakeHealthApi(ApiResult.Success(HealthStatus("ok", "Wrong fallback")))
+        val repository = repository(registry,
+            FakeBrandingApi(ApiResult.Error(503, "unavailable", "unavailable")), health)
+        repository.refreshActiveServerName()
+        assertNull(registry.fetchedName)
+        assertEquals(0, health.calls)
+    }
+
     private fun repository(
         registry: RecordingServerRegistry,
         branding: BrandingApi,
