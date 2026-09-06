@@ -99,19 +99,20 @@ class SectionRepository(
     }
 
     /** Fetches a library's resolved sections (offline: last cached sections). */
-    suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> {
-        val requestIdentityGeneration = identityTransitions.generation.value
-        val cacheWriteLease = CatalogCacheWriteLease(requestIdentityGeneration)
-        val result = sectionApi.getLibrarySections(libraryId)
+    suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
+        fun changed() = ApiResult.Error(0, "library_section_authority_changed", "The initiating library identity changed.")
+        if (!isLibrarySectionAuthorityCurrent(owner)) return changed()
+        val result = sectionApi.getLibrarySections(libraryId, owner)
+        if (!isLibrarySectionAuthorityCurrent(owner)) return changed()
         if (result is ApiResult.Success) {
-            if (requestIdentityGeneration == identityTransitions.generation.value) {
-                catalogCache.cacheLibrarySections(libraryId, result.data.sections, cacheWriteLease)
-            }
+            catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner)
+            if (!isLibrarySectionAuthorityCurrent(owner)) return changed()
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedLibrarySections(libraryId)
-                ?.let { return ApiResult.Success(SectionsResponse(sections = it)) }
+            val cached = catalogCache.getCachedLibrarySectionsV2(libraryId, owner)
+            if (!isLibrarySectionAuthorityCurrent(owner)) return changed()
+            if (cached != null) return ApiResult.Success(SectionsResponse(cached))
         }
         return result
     }

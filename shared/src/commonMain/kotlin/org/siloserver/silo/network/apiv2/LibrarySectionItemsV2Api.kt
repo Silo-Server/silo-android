@@ -41,5 +41,32 @@ class LibrarySectionItemsV2Api(private val client: HttpClient, private val token
             is ApiResult.NetworkError -> result
         }
     }
+    suspend fun list(libraryId: Int, owner: AuthScopeSnapshot): ApiResult<SectionsResponse> {
+        if (libraryId <= 0) return ApiResult.Error(422, "validation_failed", "Invalid library.")
+        if (!current(owner)) return changed()
+        var receivedResponse = false
+        val result = safeApiV2Call<JsonObject>(gate) {
+            client.get("/api/v2/library/$libraryId/sections") { authScope(owner); requireSiloAuth() }
+                .also { receivedResponse = true; check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
+        }
+        if (!current(owner)) return changed()
+        return when (result) {
+            is ApiResult.Success -> try {
+                val sections = result.data["sections"] as? JsonArray ?: error("Missing sections")
+                sections.forEach { section ->
+                    val id = section.jsonObject["id"] as? JsonPrimitive
+                    check(id?.isString == true && id.content.isNotBlank())
+                    val items = section.jsonObject["items"] as? JsonArray ?: error("Missing cards")
+                    check(items.all { item ->
+                        val contentId = item.jsonObject["content_id"] as? JsonPrimitive
+                        contentId?.isString == true && contentId.content.isNotBlank()
+                    })
+                }
+                ApiResult.Success(SiloJson.decodeFromJsonElement<SectionsResponse>(result.data))
+            } catch (_: Exception) { ApiResult.Error(0, "invalid_library_sections", "The server returned unsupported library sections.") }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> if (receivedResponse) ApiResult.Error(0, "invalid_library_sections", "The library sections response could not be read.") else result
+        }
+    }
     private fun changed() = ApiResult.Error(0, "library_section_authority_changed", "The initiating library section identity changed.")
 }

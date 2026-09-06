@@ -36,6 +36,10 @@ import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.LibrarySectionItemsV2Api
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.SectionApi
@@ -51,6 +55,23 @@ import kotlin.test.assertEquals
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = android.app.Application::class)
 class LibrariesViewModelTest {
+    @Test
+    fun recommendedLatePinDoesNotPublish() = runTest {
+        val fixture = DeferredLibrariesFixture(setOf("sections:1"))
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            val request = viewModel.onlyActiveRequest()
+            fixture.owner = fixture.owner.copy(profileToken = "new")
+            fixture.complete("sections:1", sectionsBody("stale"))
+            request.join()
+            assertEquals(emptyList(), viewModel.uiState.value.sections)
+            assertEquals(false, viewModel.uiState.value.isLoadingSections)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
     @Test
     fun recommendedResponseFromPreviousLibraryCannotReplaceCurrentLibraryRows() = runTest {
         val fixture = DeferredLibrariesFixture(
@@ -318,13 +339,15 @@ class LibrariesViewModelTest {
     private class DeferredLibrariesFixture(
         private val deferredKeys: Set<String>,
     ) {
+        var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
+        private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         private val requests = Channel<String>(Channel.UNLIMITED)
         private val pendingRequests = mutableListOf<String>()
         private val responses = deferredKeys.associateWith { CompletableDeferred<String>() }
         private val client = HttpClient(
             MockEngine { request ->
                 val key = when (request.url.encodedPath) {
-                    "/api/v1/user/libraries" -> "libraries"
+                    "/api/v2/user/libraries" -> "libraries"
                     "/api/v1/catalog/filters" -> "filters"
                     "/api/v1/catalog" -> {
                         val baseKey = "catalog:${request.url.parameters["library_id"]}:" +
@@ -360,7 +383,7 @@ class LibrariesViewModelTest {
 
         fun viewModel(browsePrefs: BrowsePrefsStore? = null) = LibrariesViewModel(
             personalDataRepository = PersonalDataRepository(PersonalDataApi(client)),
-            sectionRepository = SectionRepository(SectionApi(client)),
+            sectionRepository = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens))),
             catalogRepository = CatalogRepository(CatalogApi(client)),
             browsePrefs = browsePrefs,
         )
@@ -388,10 +411,10 @@ class LibrariesViewModelTest {
 
         private fun immediateBody(key: String): String = when {
             key == "libraries" -> """
-                [
-                  {"id":1,"name":"First","type":"movies","sort_order":0},
-                  {"id":2,"name":"Second","type":"movies","sort_order":1}
-                ]
+                {"items":[
+                  {"id":"1","name":"First","type":"movies","sort_order":0},
+                  {"id":"2","name":"Second","type":"movies","sort_order":1}
+                ],"page":{"has_more":false}}
             """.trimIndent()
             key == "filters" ->
                 """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[]}"""

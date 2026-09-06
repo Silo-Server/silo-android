@@ -128,6 +128,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 enum class LibrariesSubtab {
     Recommended,
@@ -460,7 +461,22 @@ class LibrariesViewModel(
                 }
             }
 
-            when (val result = sectionRepository.getLibrarySections(libraryId)) {
+            val owner = sectionRepository.captureLibrarySectionAuthority()
+            if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
+            if (owner == null) {
+                recommendedLoadedLibraryId = null
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = "Sign in to load library sections.") }
+                return@launch
+            }
+            val result = sectionRepository.getLibrarySections(libraryId, owner)
+            val valid = sectionRepository.isLibrarySectionAuthorityCurrent(owner)
+            if (!isRecommendedRequestCurrent(requestGeneration, libraryId) || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
+            if (!valid) {
+                recommendedLoadedLibraryId = null
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList()) }
+                return@launch
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {

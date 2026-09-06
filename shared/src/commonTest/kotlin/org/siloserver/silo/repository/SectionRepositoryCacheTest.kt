@@ -1,6 +1,10 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.LibrarySectionItemsV2Api
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
@@ -34,14 +38,17 @@ import kotlin.test.assertTrue
  * cache on success, serve cached on NetworkError/5xx, never on 4xx.
  */
 class SectionRepositoryCacheTest {
+    private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
+    private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
+
 
     private class FakeCache(val preset: List<ResolvedSection>?) : CatalogCachePort {
         var cachedFor: Int? = null
         var cachedSections: List<ResolvedSection>? = null
-        override suspend fun cacheLibrarySections(libraryId: Int, sections: List<ResolvedSection>) {
+        override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot) {
             cachedFor = libraryId; cachedSections = sections
         }
-        override suspend fun getCachedLibrarySections(libraryId: Int): List<ResolvedSection>? = preset
+        override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? = preset
     }
 
     private fun repo(status: HttpStatusCode, body: String, cache: CatalogCachePort): SectionRepository {
@@ -50,7 +57,7 @@ class SectionRepositoryCacheTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return SectionRepository(SectionApi(client), cache)
+        return SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)), cache)
     }
 
     private fun gatedRepository(
@@ -77,7 +84,7 @@ class SectionRepositoryCacheTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         return SectionRepository(
-            sectionApi = SectionApi(client),
+            sectionApi = SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)),
             identityTransitions = identityTransitions,
             homeRequestDispatcher = homeRequestDispatcher,
         )
@@ -88,8 +95,8 @@ class SectionRepositoryCacheTest {
     @Test
     fun cachesOnSuccess() = runTest {
         val cache = FakeCache(preset = null)
-        val result = repo(HttpStatusCode.OK, """{"sections":[{"id":"s","section_type":"s","title":"s"}]}""", cache)
-            .getLibrarySections(7)
+        val result = repo(HttpStatusCode.OK, """{"sections":[{"id":"s","section_type":"s","title":"s","items":[]}]}""", cache)
+            .getLibrarySections(7, owner)
         assertTrue(result is ApiResult.Success)
         assertEquals(7, cache.cachedFor)
         assertEquals("s", cache.cachedSections?.first()?.id)
@@ -98,7 +105,7 @@ class SectionRepositoryCacheTest {
     @Test
     fun servesCacheOnServer5xx() = runTest {
         val cache = FakeCache(preset = listOf(section("cached")))
-        val result = repo(HttpStatusCode.ServiceUnavailable, "{}", cache).getLibrarySections(7)
+        val result = repo(HttpStatusCode.ServiceUnavailable, "{}", cache).getLibrarySections(7, owner)
         assertTrue(result is ApiResult.Success)
         assertEquals("cached", result.data.sections.first().id)
     }
@@ -106,7 +113,7 @@ class SectionRepositoryCacheTest {
     @Test
     fun doesNotServeCacheOn4xx() = runTest {
         val cache = FakeCache(preset = listOf(section("cached")))
-        val result = repo(HttpStatusCode.NotFound, "{}", cache).getLibrarySections(7)
+        val result = repo(HttpStatusCode.NotFound, "{}", cache).getLibrarySections(7, owner)
         assertTrue(result is ApiResult.Error)
     }
 
@@ -229,7 +236,7 @@ class SectionRepositoryCacheTest {
                 requestEntered.complete(Unit)
                 releaseResponse.await()
                 respond(
-                    """{"sections":[{"id":"old","section_type":"old","title":"Profile A"}]}""",
+                    """{"sections":[{"id":"old","section_type":"old","title":"Profile A","items":[]}]}""",
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )
@@ -240,17 +247,18 @@ class SectionRepositoryCacheTest {
         val cache = FakeCache(preset = null)
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val repository = SectionRepository(
-            sectionApi = SectionApi(client),
+            sectionApi = SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)),
             catalogCache = cache,
             identityTransitions = identityTransitions,
         )
 
-        val oldProfileRequest = async { repository.getLibrarySections(7) }
+        val oldProfileRequest = async { repository.getLibrarySections(7, owner) }
         requestEntered.await()
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) { }
+        owner = owner.copy(profileToken = "new")
         releaseResponse.complete(Unit)
 
-        assertTrue(oldProfileRequest.await() is ApiResult.Success)
+        assertTrue(oldProfileRequest.await() is ApiResult.Error)
         assertEquals(null, cache.cachedFor)
         assertEquals(null, cache.cachedSections)
     }

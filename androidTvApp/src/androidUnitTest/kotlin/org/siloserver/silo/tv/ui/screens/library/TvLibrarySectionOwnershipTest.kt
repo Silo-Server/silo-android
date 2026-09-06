@@ -36,7 +36,7 @@ class TvLibrarySectionOwnershipTest {
                 val card = """{"content_id":"movie:a","type":"movie","title":"$captured"}"""
                 val section = """{"id":"row","section_type":"custom","title":"Row","total_count":1,"items":[$card]}"""
                 val body = when (request.url.encodedPath) {
-                    "/api/v1/library/3/sections" -> {
+                    "/api/v2/library/3/sections" -> {
                         layoutHook()
                         if (inlined) """{"sections":[$section]}"""
                         else """{"sections":[{"id":"row","section_type":"custom","title":"Row","total_count":1,"items":[]}]}"""
@@ -44,7 +44,7 @@ class TvLibrarySectionOwnershipTest {
                     "/api/v2/library/3/sections/row/items" -> { fallbackReads++; sectionHook(); section }
                     else -> error("Unexpected request")
                 }
-                respond(body, if (failFallback && request.url.encodedPath.startsWith("/api/v2/")) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                respond(body, if (failFallback && request.url.encodedPath.endsWith("/items")) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
             }
         })) { install(ContentNegotiation) { json(SiloJson) } }
         val store = ViewModelStore()

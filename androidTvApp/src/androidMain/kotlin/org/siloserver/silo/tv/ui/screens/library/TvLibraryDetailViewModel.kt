@@ -423,7 +423,7 @@ class TvLibraryDetailViewModel(
                 }
                 return valid
             }
-            val layoutResult = sectionRepository.getLibrarySections(libraryId)
+            val layoutResult = sectionRepository.getLibrarySections(libraryId, owner)
             if (!mayPublish()) return@launch
             val layout = when (layoutResult) {
                 is ApiResult.Success -> layoutResult.data

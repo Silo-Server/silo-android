@@ -29,9 +29,8 @@ class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = 
 
     // --- Library Sections ---
 
-    suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> = safeApiCall {
-        client.get("/api/v1/library/$libraryId/sections")
-    }
+    suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> =
+        sectionItems?.list(libraryId, owner) ?: ApiResult.Error(0, "unavailable", "The library section reader is unavailable.")
 
     suspend fun captureLibrarySectionAuthority() = sectionItems?.capture()
     suspend fun isLibrarySectionAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionItems?.current(owner) == true
