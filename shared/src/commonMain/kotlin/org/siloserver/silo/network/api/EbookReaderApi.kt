@@ -22,7 +22,7 @@ import io.ktor.http.encodeURLPathPart
 
 open class EbookReaderApi(private val client: HttpClient, private val v2: org.siloserver.silo.network.apiv2.EbookReaderV2Api? = null) {
     fun readPath(contentId: String, fileId: Int): String =
-        "/api/v1/ebooks/${contentId.encodeURLPathPart()}/files/$fileId/read"
+        "/api/v2/ebooks/${contentId.encodeURLPathPart()}/files/$fileId/read"
 
     open suspend fun getConversionCapability(): ApiResult<EbookConversionCapability> = v2?.capability() ?: safeApiCall {
         client.get("/api/v1/ebooks/capability")

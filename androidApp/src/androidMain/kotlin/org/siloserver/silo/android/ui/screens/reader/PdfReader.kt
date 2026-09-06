@@ -69,6 +69,7 @@ import java.io.File
 @Composable
 fun PdfReader(
     fileUrl: String,
+    fileAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
     title: String,
     initialPage: Int = 0,
     onPageChanged: (Int) -> Unit,
@@ -85,10 +86,10 @@ fun PdfReader(
     // Resolve the file AND open the renderer in one IO step so the
     // ParcelFileDescriptor + PdfRenderer construction never runs in
     // composition on the main thread.
-    val handleResult by produceState<Result<PdfDocumentHandle>?>(initialValue = null, fileUrl) {
+    val handleResult by produceState<Result<PdfDocumentHandle>?>(initialValue = null, fileUrl, fileAuthority) {
         val produced = withContext(Dispatchers.IO) {
             readerLoadResult {
-                val file = resolveReaderFile(context, okHttp, fileUrl, tokenManager.getServerUrl(), "pdf")
+                val file = resolveReaderFile(context, okHttp, fileUrl, tokenManager.getServerUrl(), "pdf", fileAuthority, tokenManager)
                 val renderer = openRenderer(file)
                 PdfDocumentHandle(SerializedCloseable(renderer), renderer.pageCount)
             }

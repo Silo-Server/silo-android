@@ -31,6 +31,25 @@ import kotlin.test.assertFailsWith
 
 class MediaAuthInterceptorTest {
     @Test
+    fun `pinned reader rejects changed profile before sending`() {
+        val delegate = TokenManagerImpl()
+        runBlocking { delegate.saveTokens("access", "refresh", expiresIn = 3600) }
+        val scope = org.siloserver.silo.network.AuthScopeSnapshot("server", "first", "https://reader.example", null,
+            identityGeneration = 1, isIdentityGenerationStamped = true)
+        var current = scope
+        val tokens = object : TokenManager by delegate {
+            override suspend fun snapshotCurrentScope() = current
+        }
+        val chain = CapturingChain(Request.Builder().url("https://reader.example/api/v2/ebooks/book/files/7/read")
+            .tag(org.siloserver.silo.network.AuthScopeSnapshot::class.java, scope).build())
+        current = scope.copy(profileId = "second", identityGeneration = 2)
+        assertFailsWith<java.io.IOException> {
+            MediaAuthInterceptor(tokens, OkHttpClient()).intercept(chain)
+        }
+        assertEquals(null, chain.capturedRequest)
+    }
+
+    @Test
     fun `redirect from approved origin to unapproved cleartext is blocked before downstream`() {
         val origin = MockWebServer()
         val downstream = MockWebServer()

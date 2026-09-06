@@ -2,8 +2,8 @@
 
 The phone reader uses v2 ordered progress and guarded reader configuration.
 Ebooks remain excluded from Android TV navigation; its shared data bindings
-compile with the same transport. Binary reads and annotations retain their
-existing routes pending their separate migration.
+compile with the same transport. Binary reads use the v2 file route. Annotations retain their existing routes
+pending their separate migration.
 
 Page and locator changes capture the event time before asynchronous work starts.
 The existing Room transaction stores that time with the saved login incarnation,
@@ -34,3 +34,16 @@ responses, file identity, scoped validators, conflict fencing, other-client
 configuration preservation, competing login and overlay behavior, and Room
 coalescing. Phone and TV Kotlin compilation passes. No live server/device reader,
 physical process-kill, file download or annotation validation is claimed here.
+
+Remote ebook files use the captured saved login and profile throughout the PDF,
+comic and reflowable readers. Requests retain that scope through media-token
+refresh and refuse a changed identity before dispatch or retry. Cache names
+include the login incarnation and profile; old URL-only cache entries are not
+adopted. The loader checks identity before returning a cached or downloaded file.
+
+The full-file loader accepts HTTP 200 and does not follow redirects. It retains
+the existing 2 GiB declared/streamed size limit, temporary-file cleanup and Kindle
+conversion-failure handling. A partial response cannot be cached as a full book.
+Local files and content URIs keep their existing paths. This consumer does not
+issue HEAD, conditional or range requests; server support for those operations
+is not native test evidence.

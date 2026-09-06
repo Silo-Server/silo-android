@@ -195,7 +195,7 @@ class ReaderViewModelReaderTargetSourceTest {
         assertEquals(8, state.fileId)
         assertEquals(BookFormat.Epub, state.format)
         assertEquals(EbookReadMode.InApp, state.readMode)
-        assertEquals("/api/v1/ebooks/$CONTENT_ID/files/8/read", state.fileUrl)
+        assertEquals("/api/v2/ebooks/$CONTENT_ID/files/8/read", state.fileUrl)
         assertNull(state.localUri)
         assertEquals("book.epub", state.localDisplayName)
         assertNull(state.error)
@@ -329,14 +329,14 @@ class ReaderViewModelReaderTargetSourceTest {
             CatalogApi(
                 HttpClient(
                     MockEngine { request ->
-                        val body = if (request.url.encodedPath == "/api/v1/catalog/items/$CONTENT_ID") {
+                        val body = if (request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID") {
                             responseBody
                         } else {
                             """{"error":"not_found","message":"not found"}"""
                         }
                         respond(
                             content = body,
-                            status = if (request.url.encodedPath == "/api/v1/catalog/items/$CONTENT_ID") {
+                            status = if (request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID") {
                                 status
                             } else {
                                 HttpStatusCode.NotFound
@@ -380,9 +380,10 @@ class ReaderViewModelReaderTargetSourceTest {
               }
             ]
           },
+          "cast": [], "crew": [], "subtitles": [],
           "versions": [
             {
-              "file_id": $fileId,
+              "file_id": "$fileId",
               "file_name": "$fileName",
               "container": "$container"
             }

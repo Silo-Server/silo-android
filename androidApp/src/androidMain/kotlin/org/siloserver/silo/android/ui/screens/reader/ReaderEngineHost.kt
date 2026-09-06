@@ -53,6 +53,7 @@ fun ReaderEngineHost(
             ReaderEngineKind.Reflowable -> ReflowableReader(
                 format = state.format,
                 fileUrl = fileUrl,
+                fileAuthority = state.fileAuthority,
                 settings = state.displaySettings,
                 initialLocator = state.progressLocation,
                 onLocatorChanged = onLocatorChanged,
@@ -64,6 +65,7 @@ fun ReaderEngineHost(
             )
             ReaderEngineKind.FixedDocument -> PdfReader(
                 fileUrl = fileUrl,
+                fileAuthority = state.fileAuthority,
                 title = state.title,
                 initialPage = state.currentPage,
                 onPageChanged = onPageChanged,
@@ -72,6 +74,7 @@ fun ReaderEngineHost(
             )
             ReaderEngineKind.ComicManga -> ComicReader(
                 fileUrl = fileUrl,
+                fileAuthority = state.fileAuthority,
                 title = state.title,
                 initialPage = state.currentPage,
                 onPageChanged = onPageChanged,

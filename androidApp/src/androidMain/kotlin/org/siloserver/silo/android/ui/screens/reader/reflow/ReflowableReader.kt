@@ -46,6 +46,7 @@ import org.koin.compose.koinInject
 fun ReflowableReader(
     format: BookFormat,
     fileUrl: String,
+    fileAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
     settings: ReaderDisplaySettings,
     initialLocator: String?,
     onLocatorChanged: (locationJson: String, progress: Double) -> Unit,
@@ -60,7 +61,7 @@ fun ReflowableReader(
     val tokenManager = koinInject<TokenManager>()
     val systemDark = isSystemInDarkTheme()
 
-    val sourceResult by produceState<Result<ReflowableSource>?>(null, fileUrl) {
+    val sourceResult by produceState<Result<ReflowableSource>?>(null, fileUrl, fileAuthority) {
         value = withContext(Dispatchers.IO) {
             runCatching {
                 val file = resolveReaderFile(
@@ -69,6 +70,8 @@ fun ReflowableReader(
                     fileUrl,
                     tokenManager.getServerUrl(),
                     extension = format.wire,
+                    authority = fileAuthority,
+                    tokenManager = tokenManager,
                 )
                 buildReflowableSource(format, file, context.cacheDir)
             }

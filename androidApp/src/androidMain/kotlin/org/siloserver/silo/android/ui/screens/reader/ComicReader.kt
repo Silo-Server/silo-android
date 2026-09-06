@@ -58,6 +58,7 @@ import java.util.zip.ZipFile
 @Composable
 fun ComicReader(
     fileUrl: String,
+    fileAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
     title: String,
     initialPage: Int = 0,
     onPageChanged: (Int) -> Unit,
@@ -68,9 +69,9 @@ fun ComicReader(
     val okHttp = koinInject<OkHttpClient>()
     val tokenManager = koinInject<TokenManager>()
 
-    val localFileResult by produceState<Result<File>?>(initialValue = null, fileUrl) {
+    val localFileResult by produceState<Result<File>?>(initialValue = null, fileUrl, fileAuthority) {
         value = runCatching {
-            resolveReaderFile(context, okHttp, fileUrl, tokenManager.getServerUrl(), "cbz")
+            resolveReaderFile(context, okHttp, fileUrl, tokenManager.getServerUrl(), "cbz", fileAuthority, tokenManager)
         }
     }
     val fileResult = localFileResult
