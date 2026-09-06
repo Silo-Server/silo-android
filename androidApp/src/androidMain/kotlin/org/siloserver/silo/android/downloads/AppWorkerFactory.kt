@@ -55,6 +55,10 @@ class AppWorkerFactory : WorkerFactory() {
                     storage = koin.get<DownloadStorage>(),
                     metadataStore = koin.get<org.siloserver.silo.common.downloads.DownloadMetadataStore>(),
                     httpClient = koin.get<HttpClient>(),
+                    authorities = koin.get(),
+                    devices = koin.get(),
+                    transitions = koin.get(),
+                    gate = koin.get(),
                     activeScope = {
                         koin.get<org.siloserver.silo.network.ServerRegistry>().activeServerId.value to
                             koin.get<org.siloserver.silo.repository.ProfileRepository>().getActiveProfileId()

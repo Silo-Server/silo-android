@@ -22,7 +22,9 @@ import androidx.work.workDataOf
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.repository.DownloadsRepository
-import org.siloserver.silo.network.SiloAuthUnavailableException
+import org.siloserver.silo.network.*
+import org.siloserver.silo.network.apiv2.managedDownloadAuth
+import io.ktor.http.encodeURLPathPart
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.timeout
@@ -54,7 +56,7 @@ internal fun DownloadRecord.withWorkerStatus(
 )
 
 /**
- * Streams `GET /api/v1/downloads/{id}/file` to the local
+ * Streams `GET /api/v2/downloads/{id}/file` to the local
  * `<filesDir>/downloads/<serverId>/<profileId>/<fileId>/<original-name>`
  * location via [DownloadStorage], reporting progress to WorkManager at
  * most every ~200ms; the foreground notification is rebuilt only when
@@ -65,7 +67,7 @@ internal fun DownloadRecord.withWorkerStatus(
  *
  * **Failure handling.** On a transient IO error we return [Result.retry] so
  * WorkManager schedules a fresh attempt; the partial bytes on disk are
- * deleted first (no resume in v1) so the next attempt starts clean.
+ * retained with its validator so the next attempt can resume safely.
  */
 class DownloadWorker(
     private val appContext: Context,
@@ -73,16 +75,33 @@ class DownloadWorker(
     private val repository: DownloadsRepository,
     private val storage: DownloadStorage,
     private val metadataStore: DownloadMetadataStore,
-    private val httpClient: HttpClient,
+    httpClient: HttpClient,
     // Scope guard for the in-memory UI pushes: `repository` only mirrors the
     // ACTIVE scope's records, and record lookup is by mediaFileId alone — a
     // worker running for a background scope with a colliding fileId would
     // paint progress/Failed onto the wrong scope's card. Null = legacy call
     // sites keep the old (unguarded) behavior.
     private val activeScope: (suspend () -> Pair<String?, String?>)? = null,
+    private val authorities: DurableLoginAuthorityProvider? = null,
+    private val transitions: IdentityTransitionBarrier? = null,
+    private val devices: DeviceMetadataProvider? = null,
+    private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
 ) : CoroutineWorker(appContext, params) {
 
+    private val streamClient = lazy { httpClient.config { followRedirects = false } }
+    private val httpClient by streamClient
+    private var transferAuthority: DurableLoginAuthority? = null
+    private suspend fun requireOwner() {
+        if (authorities != null && (transferAuthority == null || transferAuthority != authorities.snapshotDurableLoginAuthority() || inputData.getString(KEY_DEVICE_ID) != devices?.current()?.id)) throw DownloadOwnerChanged()
+    }
+    private suspend fun <T : Any> ownedWrite(block: suspend () -> T): T {
+        requireOwner()
+        val authority = transferAuthority ?: return block()
+        return transitions?.withCurrentGeneration(authority.scope.identityGeneration) { block() } ?: throw DownloadOwnerChanged()
+    }
+
     private suspend fun uiPushAllowed(serverId: String, profileId: String): Boolean {
+        if (authorities != null && transferAuthority != authorities.snapshotDurableLoginAuthority()) return false
         val scope = activeScope ?: return true
         // Resolving the active scope must never abort an otherwise-healthy
         // download — this is called inside doWork()'s own catch block, where a
@@ -106,6 +125,13 @@ class DownloadWorker(
         val mediaType = inputData.getString(KEY_MEDIA_TYPE)
         val displayTitle = inputData.getString(KEY_DISPLAY_TITLE) ?: "Download"
         if (fileId < 0) return@withContext Result.failure()
+        if (authorities != null) {
+            val captured = authorities.snapshotDurableLoginAuthority() ?: return@withContext Result.retry()
+            if (!downloadWorkMatchesOwner(inputData.getString(KEY_LOGIN_ID), inputData.getString(KEY_ORIGIN),
+                inputData.getString(KEY_DEVICE_ID), serverId, profileId, captured, devices?.current()?.id)) return@withContext Result.failure()
+            transferAuthority = captured
+        }
+        if (gate.blocked() != null) return@withContext Result.retry()
         val lifetimeLease = DownloadWorkerLifetime.acquire(downloadId)
             ?: return@withContext Result.failure()
 
@@ -131,7 +157,9 @@ class DownloadWorker(
         val canResume = resumeFrom > 0 && resumeUri != null && !resumeValidator.isNullOrBlank()
 
         try {
-            httpClient.prepareGet("/api/v1/downloads/$downloadId/file") {
+            requireOwner()
+            httpClient.prepareGet("/api/v2/downloads/${downloadId.encodeURLPathPart()}/file") {
+                transferAuthority?.let { managedDownloadAuth(it.scope) }
                 // Streaming download: drop the global 60s TOTAL-request timeout (it
                 // guillotines large files mid-transfer) and keep only a socket/idle
                 // timeout so a genuinely stalled connection still fails → retry.
@@ -149,11 +177,12 @@ class DownloadWorker(
                     header(HttpHeaders.IfRange, resumeValidator!!)
                 }
             }.execute { response ->
+                requireOwner()
                 // 416 = our partial is invalid against the current server file
                 // (shrank/changed). Drop it and retry fresh (no Range next time).
                 if (canResume && response.status == HttpStatusCode.RequestedRangeNotSatisfiable) {
                     // Drop the partial; partialSize→0 makes the retry a fresh GET.
-                    storage.delete(serverId, profileId, fileId)
+                    ownedWrite { storage.delete(serverId, profileId, fileId); true }
                     throw IOException("range not satisfiable — restarting fresh")
                 }
                 // A non-original (remux/transcode) row is still `preparing`: the
@@ -162,12 +191,9 @@ class DownloadWorker(
                 // fatal "revoked" case — throw the preparing sentinel so we wait
                 // (WorkManager backoff) and re-probe on the next attempt instead
                 // of deleting the download. Other 409s stay fatal below.
-                if (response.status == HttpStatusCode.Conflict) {
-                    val errorCode = runCatching { response.bodyAsText() }
-                        .getOrNull()
-                        ?.let { extractDownloadErrorCode(it) }
-                    if (errorCode == DOWNLOAD_INACTIVE_ERROR) throw DownloadPreparingException()
-                }
+                // V2 returns a typed conflict without the legacy download_inactive
+                // code. Preserve the partial and use the existing bounded retry.
+                if (response.status == HttpStatusCode.Conflict) throw DownloadPreparingException()
                 downloadHttpStatusFailure(response.status)?.let { throw it }
 
                 val rangeInfo = parseContentRange(response.headers[HttpHeaders.ContentRange])
@@ -175,13 +201,13 @@ class DownloadWorker(
                     response.status == HttpStatusCode.PartialContent &&
                     rangeInfo != null && rangeInfo.start == resumeFrom
 
+                if (response.status == HttpStatusCode.PartialContent && !resuming) throw IOException("unusable partial download response")
                 val total: Long
                 var written: Long
                 val out: java.io.OutputStream
                 if (resuming) {
                     // 206 with a matching range → append to the existing partial.
-                    val append = storage.openAppend(resumeUri!!)
-                        ?: throw IOException("could not open partial for append")
+                    val append = ownedWrite { storage.openAppend(resumeUri!!) ?: throw IOException("could not open partial for append") }
                     activeUri = resumeUri
                     total = rangeInfo!!.total ?: -1L
                     written = resumeFrom
@@ -195,7 +221,7 @@ class DownloadWorker(
                         catalogFileName = fileName,
                         contentDisposition = response.headers["Content-Disposition"],
                     )
-                    val fresh = storage.prepareWrite(serverId, profileId, fileId, resolvedFileName, container, mediaType)
+                    val fresh = ownedWrite { storage.prepareWrite(serverId, profileId, fileId, resolvedFileName, container, mediaType) }
                     activeUri = fresh.uriString
                     total = response.headers["Content-Length"]?.toLongOrNull() ?: -1L
                     written = 0L
@@ -215,7 +241,7 @@ class DownloadWorker(
                         while (true) {
                             val n = input.read(buf)
                             if (n < 0) break
-                            out.write(buf, 0, n)
+                            ownedWrite { out.write(buf, 0, n); true }
                             written += n
 
                             val decision = throttle.onBytes(System.currentTimeMillis(), written, total)
@@ -259,7 +285,7 @@ class DownloadWorker(
             // worker exits and the UI re-renders.
             val pendingUri = activeUri ?: error("download target was not created")
             val finalBytes = storage.partialSize(pendingUri)
-            val finalUri = storage.completeWrite(pendingUri)
+            val finalUri = ownedWrite { storage.completeWrite(pendingUri) }
             Log.i(TAG, "doWork success id=$downloadId bytes=$finalBytes")
             DiagnosticsDownloadLogger.event("download completed")
             repository.refresh()
@@ -276,6 +302,9 @@ class DownloadWorker(
                 resumeValidator = "",
             )
             Result.success(workDataOf(KEY_BYTES_WRITTEN to finalBytes, KEY_TOTAL_BYTES to finalBytes))
+        } catch (e: DownloadOwnerChanged) {
+            // Preserve the original owner's partial; a new login cannot resume it.
+            Result.failure()
         } catch (e: CancellationException) {
             // Worker stopped — user cancel (notification action /
             // DownloadEnqueuer.cancel → cancelAllWorkByTag) or a
@@ -292,7 +321,7 @@ class DownloadWorker(
                 // Delete by scope+fileId (not just activeUri): a cancel before the
                 // response is classified leaves activeUri null but a prior attempt's
                 // partial may still be on disk.
-                runCatching { storage.delete(serverId, profileId, fileId) }
+                runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
             }
             throw e
         } catch (e: DownloadPreparingException) {
@@ -326,6 +355,7 @@ class DownloadWorker(
                 Result.retry()
             }
         } catch (e: Throwable) {
+            if (authorities != null && transferAuthority != authorities.snapshotDurableLoginAuthority()) return@withContext Result.failure()
             if (downloadAuthFailureIsRetriable(e)) {
                 Log.i(TAG, "doWork auth unavailable id=$downloadId")
                 DiagnosticsDownloadLogger.event("download auth unavailable")
@@ -336,6 +366,7 @@ class DownloadWorker(
         }
         } finally {
             lifetimeLease.close()
+            if (streamClient.isInitialized()) httpClient.close()
         }
     }
 
@@ -352,7 +383,7 @@ class DownloadWorker(
         DiagnosticsDownloadLogger.error("download failed")
         // Delete by scope+fileId so a partial from any attempt is cleaned up
         // even if this attempt failed before activeUri was assigned.
-        runCatching { storage.delete(serverId, profileId, fileId) }
+        runCatching { ownedWrite { storage.delete(serverId, profileId, fileId); true } }
         // Best-effort: publish failed state into the repo + sidecar.
         val record = if (uiPushAllowed(serverId, profileId)) repository.recordForFile(fileId) else null
         if (record != null) {
@@ -392,8 +423,8 @@ class DownloadWorker(
         // null = keep existing; "" = clear (download finished/failed); else set.
         resumeValidator: String? = null,
     ) {
-        runCatching {
-            val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return@runCatching
+        ownedWrite {
+            val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return@ownedWrite true
             metadataStore.writeSidecar(
                 serverId, profileId,
                 existing.copy(
@@ -412,7 +443,8 @@ class DownloadWorker(
                     updatedAtMs = System.currentTimeMillis(),
                 ),
             )
-        }.onFailure { Log.w(TAG, "updateSidecarStatus failed for fileId=$fileId", it) }
+            true
+        }
     }
 
     /**
@@ -464,6 +496,9 @@ class DownloadWorker(
     companion object {
         private const val TAG = "DownloadWorker"
         const val NOTIFICATION_CHANNEL_ID = "silo_downloads"
+        const val KEY_DEVICE_ID = "device_id"
+        const val KEY_LOGIN_ID = "login_id"
+        const val KEY_ORIGIN = "origin"
         const val KEY_DOWNLOAD_ID = "download_id"
         const val KEY_FILE_ID = "file_id"
         const val KEY_SERVER_ID = "server_id"
@@ -514,8 +549,14 @@ class DownloadWorker(
             mediaType: String?,
             displayTitle: String,
             wifiOnly: Boolean,
+            deviceId: String? = null,
+            loginId: String? = null,
+            origin: String? = null,
         ) {
             val data = workDataOf(
+                KEY_DEVICE_ID to deviceId,
+                KEY_LOGIN_ID to loginId,
+                KEY_ORIGIN to origin,
                 KEY_DOWNLOAD_ID to downloadId,
                 KEY_FILE_ID to fileId,
                 KEY_SERVER_ID to serverId,
@@ -593,7 +634,7 @@ internal fun extractDownloadErrorCode(body: String): String? =
 private val downloadErrorCodeRegex = Regex("""(?i)"error"\s*:\s*"([^"]*)"""")
 
 internal fun downloadHttpStatusFailure(status: HttpStatusCode): Throwable? = when {
-    status.isSuccess() -> null
+    status == HttpStatusCode.OK || status == HttpStatusCode.PartialContent -> null
     status.value >= 500 -> IOException("HTTP ${status.value} while downloading")
     // Transient client statuses — matches SyncEngine's classification
     // (401 auth refresh, 408 request timeout, 429 rate limit): retry
@@ -700,3 +741,10 @@ private fun String.decodeRfc5987(): String {
  */
 internal fun downloadAuthFailureIsRetriable(e: Throwable): Boolean =
     e is SiloAuthUnavailableException
+
+private class DownloadOwnerChanged : IllegalStateException("The download owner changed")
+
+internal fun downloadWorkMatchesOwner(loginId: String?, origin: String?, deviceId: String?, serverId: String,
+    profileId: String, authority: DurableLoginAuthority, currentDevice: String?): Boolean =
+    !deviceId.isNullOrBlank() && deviceId == currentDevice && loginId == authority.loginId &&
+        origin == authority.scope.serverUrl && serverId == authority.scope.serverId && profileId == authority.scope.profileId

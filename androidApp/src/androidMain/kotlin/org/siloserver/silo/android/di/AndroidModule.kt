@@ -312,7 +312,7 @@ val androidModule = module {
     // One-time import of the legacy .record.json sidecar tree into Room.
     single { org.siloserver.silo.common.downloads.LegacyDownloadImporter(androidContext().filesDir, get()) }
     single { OfflineMediaResolver(get(), get(), get()) }
-    single { DownloadEnqueuer(androidContext(), get(), get(), get(), get(), get(), get(), get()) }
+    single { DownloadEnqueuer(androidContext(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { DownloadSubscriptionEvaluatorFactory(get(), get(), get()) }
     // CoroutineWorker constructed by Koin's WorkerFactory — see
     // SiloApplication.onCreate `workManagerFactory()` call.
@@ -324,6 +324,10 @@ val androidModule = module {
             storage = get(),
             metadataStore = get(),
             httpClient = get(),
+            authorities = get(),
+            devices = get(),
+            transitions = get(),
+            gate = get(),
         )
     }
     worker {
