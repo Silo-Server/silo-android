@@ -8,11 +8,15 @@ import org.siloserver.silo.model.playback.ProgressRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.acceptsMetadataOwner
 import org.siloserver.silo.network.api.PlaybackApi
 
 class PlaybackRepository(
     private val playbackApi: PlaybackApi,
     private val sequenced: SequencedPlayback? = null,
+    private val tokens: TokenManager? = null,
 ) {
     val pendingPlayback = sequenced?.pending ?: MutableStateFlow(emptyList<String>())
     fun isSequenced(sessionId: String): Boolean = sequenced?.owns(sessionId) == true
@@ -23,8 +27,14 @@ class PlaybackRepository(
         catch (e: Exception) { ApiResult.Error(0, "playback_storage", "Playback recovery storage is unavailable.") }
 
     /** Starts a protocol-v3 playback attempt using the supplied client and route evidence. */
-    suspend fun startPlaybackV3(request: PlaybackStartRequestV3): ApiResult<PlaybackDecisionResponseV3> =
-        guarded { sequenced?.start(request) ?: playbackApi.startPlaybackV3(request) }
+    suspend fun startPlaybackV3(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> = guarded {
+        if (!tokens.acceptsMetadataOwner(expectedMetadataOwner, request.profileId)) return@guarded changedOwner()
+        val negotiated = sequenced?.start(request, expectedMetadataOwner)
+        if (negotiated != null) return@guarded negotiated
+        if (!tokens.acceptsMetadataOwner(expectedMetadataOwner, request.profileId)) return@guarded changedOwner()
+        playbackApi.startPlaybackV3(request, expectedMetadataOwner)
+    }
+    private fun changedOwner() = ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
 
     /** Requests a replacement protocol-v3 plan for an active [sessionId]. */
     suspend fun replanPlaybackV3(

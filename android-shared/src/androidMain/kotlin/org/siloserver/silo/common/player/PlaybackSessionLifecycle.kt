@@ -209,10 +209,13 @@ class PlaybackSessionLifecycle(
         stopSessionOnStop: Boolean = true,
         deferPublication: Boolean = false,
         isCurrent: () -> Boolean,
+        expectedMetadataOwnerCurrent: suspend () -> Boolean = { true },
     ): Boolean {
         val diagnosticsRecording = playbackSessions.recording()
         return mutex.withLock {
-            if (!isCurrent()) return@withLock false
+            val metadataCurrent = expectedMetadataOwnerCurrent()
+            currentCoroutineContext().ensureActive()
+            if (!metadataCurrent || !isCurrent()) return@withLock false
             val predecessor = if (deferPublication) {
                 pendingActiveSessionPublication?.predecessor
                     ?: captureActiveSessionSnapshot()
@@ -272,6 +275,7 @@ class PlaybackSessionLifecycle(
         stopSessionOnStop: Boolean = true,
         deferPublication: Boolean = false,
         expectedOwnershipEpoch: Long,
+        expectedMetadataOwnerCurrent: suspend () -> Boolean = { true },
     ): Boolean = try {
         currentCoroutineContext().ensureActive()
         val adopted = adoptActiveSessionIfCurrent(
@@ -281,6 +285,7 @@ class PlaybackSessionLifecycle(
             stopSessionOnStop = stopSessionOnStop,
             deferPublication = deferPublication,
             isCurrent = { stopEpoch == expectedOwnershipEpoch },
+            expectedMetadataOwnerCurrent = expectedMetadataOwnerCurrent,
         )
         if (!adopted) {
             sessionManager.stopSession(session.sessionId)

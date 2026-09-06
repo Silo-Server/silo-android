@@ -39,6 +39,7 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.port.LocalTrackSelection
 import org.siloserver.silo.repository.port.UserItemStatePort
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -54,6 +55,7 @@ internal data class MobileVideoSessionAllocation(
     val startPosition: Double?,
     /** `playback.max_bitrate_kbps`; null is uncapped. */
     val maxBitrateKbps: Int? = null,
+    val expectedMetadataOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null,
 )
 
 internal fun interface MobileVideoSessionAllocator {
@@ -141,10 +143,17 @@ internal class MobileVideoPlaybackStarter(
         if (!shouldReachServerForPlayback(reachabilityMonitor, request.force)) {
             return VideoPlaybackStartResult.ServerUnreachable(request.contentId)
         }
+        val expectedMetadataOwner = catalogRepository.captureWatchAuthority()
+            ?: return failure(request.contentId, "identity_unavailable: Playback metadata needs an authenticated profile.", diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
+        suspend fun ownerCurrent(): Boolean {
+            val valid = catalogRepository.isWatchAuthorityCurrent(expectedMetadataOwner)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            return valid
+        }
         val ownershipEpoch = sessionLifecycle.acquireOwnershipEpoch()
         var allocatedButUnpublishedSessionId: String? = null
         return try {
-            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId)) {
+            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner)) {
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
@@ -264,6 +273,8 @@ internal class MobileVideoPlaybackStarter(
                 ),
             )
 
+            if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl)
+                return failure(request.contentId, "identity_changed: The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             val v3Start = when (
                 val r = sessionAllocator?.allocate(
                     MobileVideoSessionAllocation(
@@ -276,6 +287,7 @@ internal class MobileVideoPlaybackStarter(
                         qualityPreference = playbackQualityIntent,
                         startPosition = startRequestPosition,
                         maxBitrateKbps = maxBitrateKbps,
+                        expectedMetadataOwner = expectedMetadataOwner,
                     ),
                 ) ?: playbackSessionManager.startVideoSessionV3(
                     fileId = version.fileId,
@@ -287,6 +299,7 @@ internal class MobileVideoPlaybackStarter(
                     qualityPreference = playbackQualityIntent,
                     startPosition = startRequestPosition,
                     maxBitrateKbps = maxBitrateKbps,
+                    expectedMetadataOwner = expectedMetadataOwner,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -318,6 +331,11 @@ internal class MobileVideoPlaybackStarter(
             val session = readyV3.session
             val resolved = session
             allocatedButUnpublishedSessionId = resolved.sessionId
+            if (!ownerCurrent()) {
+                stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+                allocatedButUnpublishedSessionId = null
+                return failure(request.contentId, "identity_changed: The metadata viewer changed after playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            }
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
                 ?: version.fileId
@@ -359,6 +377,7 @@ internal class MobileVideoPlaybackStarter(
                         params = startParams,
                         session = resolved,
                         expectedOwnershipEpoch = ownershipEpoch,
+                        expectedMetadataOwnerCurrent = ::ownerCurrent,
                     )
                 } catch (cancellation: CancellationException) {
                     // The lifecycle owns cancellation cleanup once adoption begins.
@@ -376,6 +395,11 @@ internal class MobileVideoPlaybackStarter(
                 )
             }
 
+            if (!ownerCurrent()) {
+                stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+                allocatedButUnpublishedSessionId = null
+                return failure(request.contentId, "identity_changed: The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            }
             val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
                 fileId = effectiveFileId,

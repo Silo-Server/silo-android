@@ -9,11 +9,15 @@ import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.ProgressRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.requireSiloAuth
 
 class PlaybackApi(private val client: HttpClient) {
 
-    suspend fun startPlaybackV3(request: PlaybackStartRequestV3): ApiResult<PlaybackDecisionResponseV3> = safeApiCall {
+    suspend fun startPlaybackV3(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> = safeApiCall {
         client.post("/api/v1/playback/start") {
+            expectedMetadataOwner?.let { authScope(it); requireSiloAuth() }
             contentType(ContentType.Application.Json)
             setBody(request)
         }
