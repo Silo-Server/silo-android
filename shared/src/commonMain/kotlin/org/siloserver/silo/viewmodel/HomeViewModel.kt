@@ -404,50 +404,43 @@ class HomeViewModel(
         viewModelScope.launch { mediaActions.memberships.perform(intent) }
     }
 
-    /**
-     * Removes an item from the home Continue Watching row. Optimistically
-     * removes it from any continue-watching / in-progress section and rolls
-     * back on failure.
-     */
-    fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) {
-        dismissHomeProgressItem(itemId) {
-            mediaActions.dismissContinueWatching(itemId, progressUpdatedAt)
-        }
-    }
+    private val pendingDismissals = mutableSetOf<String>()
 
-    fun dismissNextUp(itemId: String, seriesId: String) {
-        dismissHomeProgressItem(itemId) {
-            mediaActions.dismissNextUp(itemId, seriesId)
-        }
-    }
+    fun dismissContinueWatching(itemId: String, progressUpdatedAt: String) =
+        dismissHomeProgressItem("continue_watching", itemId, progressUpdatedAt)
 
-    private fun dismissHomeProgressItem(
-        itemId: String,
-        dismiss: suspend () -> ApiResult<Unit>,
-    ) {
-        val previous = _uiState.value.sections
-        _uiState.update { state ->
-            state.copy(
-                sections = state.sections.map { section ->
-                    if (
-                        section.sectionType == "continue_watching" ||
-                        section.sectionType == "in_progress" ||
-                        section.sectionType == "next_up" ||
-                        section.sectionType == "up_next"
-                    ) {
-                        section.copy(items = section.items.filterNot { it.contentId == itemId })
-                    } else {
-                        section
-                    }
-                }.filter { it.items.isNotEmpty() }
-            )
+    fun dismissNextUp(itemId: String, seriesId: String) =
+        dismissHomeProgressItem("next_up", itemId, seriesId)
+
+    private fun dismissHomeProgressItem(surface: String, itemId: String, anchor: String) {
+        val owner = displayedOwner ?: return
+        val generation = fetchGeneration
+        val observed = _uiState.value.sections
+        fun SectionItem.matches() = contentId == itemId &&
+            (if (surface == "continue_watching") progressUpdatedAt == anchor else seriesId == anchor)
+        fun ResolvedSection.progressRow() = sectionType in setOf("continue_watching", "in_progress", "next_up", "up_next")
+        fun List<ResolvedSection>.targetRows() = filter { it.progressRow() }.flatMap { section ->
+            section.items.filter { it.contentId == itemId }.map { section.id to it }
         }
+        val targets = observed.targetRows()
+        if (anchor.isBlank() || targets.none { it.second.matches() }) return
+        if (!pendingDismissals.add(itemId)) return
+        fun observationCurrent() = generation == fetchGeneration && displayedOwner == owner &&
+            _uiState.value.sections.targetRows() == targets
         viewModelScope.launch {
-            if (dismiss() !is ApiResult.Success) {
-                _uiState.update { it.copy(sections = previous) }
-            }
+            try {
+                if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
+                val result = sectionRepository.dismissHomeItem(surface, itemId, anchor, owner)
+                if (!mayPublish(owner, generation) || !observationCurrent()) return@launch
+                if (result is ApiResult.Success) {
+                    _uiState.update { state -> state.copy(sections = state.sections.map { section ->
+                        if (section.progressRow()) section.copy(items = section.items.filterNot { it.matches() }) else section
+                    }.filter { it.items.isNotEmpty() }) }
+                }
+            } finally { pendingDismissals.remove(itemId) }
         }
     }
+
 }
 
 private fun List<ResolvedSection>.duplicateSectionKeyCount(): Int =

@@ -49,6 +49,9 @@ class SectionRepository(
     suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSections(owner)
     suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSectionItems(id, owner)
 
+    suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
+        sectionApi.dismissHomeItem(surface, itemId, anchor, owner)
+
     /** Scoped consumers never share the legacy Home request or its cache. */
     suspend fun loadScopedHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot,
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.section.ResolvedSection>) -> Unit) {

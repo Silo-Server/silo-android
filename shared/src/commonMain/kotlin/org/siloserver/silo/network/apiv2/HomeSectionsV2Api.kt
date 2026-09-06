@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.http.*
 import kotlinx.serialization.json.*
+import kotlinx.coroutines.ensureActive
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
@@ -17,6 +18,24 @@ class HomeSectionsV2Api(private val client: HttpClient, private val tokens: Toke
         return owner.isSameIdentityAs(now) && owner.serverUrl == now?.serverUrl && owner.profileId == now?.profileId &&
             owner.profileToken == now?.profileToken && owner.credentialGenerationId == now?.credentialGenerationId
     }
+    suspend fun dismiss(surface: String, itemId: String, anchor: String, owner: AuthScopeSnapshot): ApiResult<Unit> {
+        if (surface !in setOf("continue_watching", "next_up") || itemId.isBlank() || anchor.isBlank())
+            return ApiResult.Error(422, "validation_failed", "A Home dismissal needs its observed item and anchor.")
+        if (!current(owner)) return changed()
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        val result = safeApiV2Call<Unit>(gate) {
+            client.put("/api/v2/home/dismissals/$surface/${itemId.encodeURLPathPart()}") {
+                authScope(owner)
+                requireSiloAuth()
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject { put(if (surface == "continue_watching") "progress_updated_at" else "series_id", anchor) })
+            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.NoContent) }
+        }
+        if (!current(owner)) return changed()
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        return result
+    }
+
     suspend fun list(owner: AuthScopeSnapshot): ApiResult<SectionsResponse> {
         if (!current(owner)) return changed()
         val result = safeApiV2Call<JsonObject>(gate) {

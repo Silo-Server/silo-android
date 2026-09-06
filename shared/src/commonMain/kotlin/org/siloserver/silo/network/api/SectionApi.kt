@@ -24,6 +24,9 @@ class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = 
     suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
         home?.section(id, owner) ?: ApiResult.Error(0, "unavailable", "The scoped home reader is unavailable.")
 
+    suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
+        home?.dismiss(surface, itemId, anchor, owner) ?: ApiResult.Error(0, "unavailable", "The scoped Home writer is unavailable.")
+
     suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> = safeApiCall {
         client.get("/api/v1/home/layout")
     }
