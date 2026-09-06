@@ -152,6 +152,7 @@ internal class MobileVideoPlaybackStarter(
         }
         val ownershipEpoch = sessionLifecycle.acquireOwnershipEpoch()
         var allocatedButUnpublishedSessionId: String? = null
+        var lifecycleAdopted = false
         return try {
             val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner)) {
                 is ApiResult.Success -> r.data
@@ -395,8 +396,9 @@ internal class MobileVideoPlaybackStarter(
                 )
             }
 
+            lifecycleAdopted = sessionAdopter == null
             if (!ownerCurrent()) {
-                stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+                stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId, lifecycleAdopted)
                 allocatedButUnpublishedSessionId = null
                 return failure(request.contentId, "identity_changed: The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
@@ -470,20 +472,22 @@ internal class MobileVideoPlaybackStarter(
             allocatedButUnpublishedSessionId = null
             result
         } catch (e: CancellationException) {
-            stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+            stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId, lifecycleAdopted)
             throw e
         } catch (e: Exception) {
-            stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+            stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId, lifecycleAdopted)
             Log.e(TAG, "Error loading content", e)
             failure(request.contentId, "Unexpected error: ${e.message}", e, PlaybackDiagnosticsCode.UNEXPECTED)
         }
     }
 
-    private suspend fun stopAllocatedButUnpublishedSession(sessionId: String?) {
+    private suspend fun stopAllocatedButUnpublishedSession(sessionId: String?, lifecycleAdopted: Boolean = false) {
         val allocatedSessionId = sessionId?.takeIf { it.isNotBlank() } ?: return
         withContext(NonCancellable) {
             try {
-                playbackSessionManager.stopSession(allocatedSessionId)
+                if (!lifecycleAdopted || !sessionLifecycle.retireUnpublishedSession(allocatedSessionId)) {
+                    playbackSessionManager.stopSession(allocatedSessionId)
+                }
             } catch (error: Exception) {
                 Log.w(TAG, "Could not stop unpublished playback session $allocatedSessionId", error)
             }

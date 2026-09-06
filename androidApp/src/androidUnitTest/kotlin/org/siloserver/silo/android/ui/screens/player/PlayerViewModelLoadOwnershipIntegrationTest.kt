@@ -881,7 +881,11 @@ private class FakeProfileRepository(
 
 private class FakeTokenManager : TokenManager {
     var metadataOwner: org.siloserver.silo.network.AuthScopeSnapshot? = org.siloserver.silo.network.AuthScopeSnapshot(SERVER_ID, PROFILE_ID, "https://silo.test", null, identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
-    override suspend fun snapshotCurrentScope() = metadataOwner
+    var beforeSnapshot: suspend () -> Unit = {}
+    override suspend fun snapshotCurrentScope(): org.siloserver.silo.network.AuthScopeSnapshot? {
+        beforeSnapshot()
+        return metadataOwner
+    }
     override val sessionExpired = MutableSharedFlow<Unit>()
     override suspend fun getAccessToken(): String = "access-token"
     override suspend fun getRefreshToken(): String? = null
@@ -1119,6 +1123,92 @@ class MobileStartupMetadataOwnerTest {
             assertEquals(if (stage in listOf("missing", "metadata")) 0 else 1, allocations)
             assertEquals(if (stage == "adoption") 1 else 0, adoptions)
             assertEquals(if (allocations == 0) emptyList() else listOf("owner-session"), manager.stoppedSessions)
+        } finally { client.close() }
+    }
+}
+
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class MobileStartupAdoptedOwnerCleanupTest {
+    @Test fun finalOwnerRejectionRetiresActualLifecycle() = runTest { scenario(false, false) }
+    @Test fun finalSnapshotCancellationRetiresActualLifecycle() = runTest { scenario(true, false) }
+    @Test fun finalOwnerRejectionProtectsNewerLifecycle() = runTest { scenario(false, true) }
+    @Test fun finalSnapshotCancellationProtectsNewerLifecycle() = runTest { scenario(true, true) }
+
+    private suspend fun TestScope.scenario(cancel: Boolean, replace: Boolean) {
+        val tokens = FakeTokenManager()
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val client = HttpClient(MockEngine { req ->
+            // No fabricated final progress, recovery probe or extra cleanup transport.
+            assertEquals("/api/v2/watch/starter", req.url.encodedPath)
+            respond("""{"content_id":"starter","type":"movie","title":"Starter","versions":[{"file_id":"41","duration_seconds":120}]}""", HttpStatusCode.OK, JSON_HEADERS)
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val manager = RecordingPlaybackSessionManager(client, tokens)
+            val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
+            fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
+                it.isAccessible = true
+                it.get(lifecycle)
+            }
+            var held = false
+            tokens.beforeSnapshot = {
+                if (!held && field("lastAdoptedSessionId") == "rejected") {
+                    held = true
+                    entered.complete(Unit)
+                    release.await()
+                }
+            }
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val starter = MobileVideoPlaybackStarter(
+                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens))),
+                manager, FakeProfileRepository(client, tokens),
+                PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
+                FakePlayerSettingsStore(), lifecycle,
+                ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
+                sessionAllocator = { ApiResult.Success(allocatedReady("rejected")) },
+                // Deliberately use production lifecycle adoption, not sessionAdopter.
+            )
+            val start = async {
+                starter.start(VideoPlaybackStartRequest(contentId = "starter", preferredFileId = 41, roomId = null, resumePositionOverride = null))
+            }
+            entered.await()
+            assertTrue(lifecycle.state.value is org.siloserver.silo.common.player.SessionState.Active)
+            val oldReporter = field("reporterJob") as kotlinx.coroutines.Job
+            assertTrue(oldReporter.isActive)
+            if (replace) {
+                lifecycle.adoptActiveSession(
+                    field("lastStartParams") as org.siloserver.silo.common.player.StartParams,
+                    allocatedReady("newer").session,
+                )
+            }
+            val newerReporter = if (replace) field("reporterJob") else null
+            tokens.metadataOwner = tokens.metadataOwner!!.copy(profileToken = "replacement")
+            if (cancel) {
+                start.cancel()
+                start.join()
+                assertTrue(start.isCancelled)
+            } else {
+                release.complete(Unit)
+                assertTrue(start.await() is VideoPlaybackStartResult.Error)
+            }
+            assertEquals(listOf("rejected"), manager.stoppedSessions)
+            assertTrue(manager.stopContextsActive.all { it })
+            assertFalse(oldReporter.isActive)
+            if (replace) {
+                assertEquals("newer", field("lastAdoptedSessionId"))
+                assertTrue(lifecycle.state.value is org.siloserver.silo.common.player.SessionState.Active)
+                assertTrue(field("reporterJob") === newerReporter)
+                assertTrue((newerReporter as kotlinx.coroutines.Job).isActive)
+                assertTrue(field("lastStartParams") != null)
+            } else {
+                assertEquals(org.siloserver.silo.common.player.SessionState.Idle, lifecycle.state.value)
+                for (name in listOf("lastAdoptedSessionId", "lastStartParams", "reporterJob", "recoveryJob", "recoveringFromMissingSession", "pendingActiveSessionPublication")) {
+                    assertNull(field(name), name)
+                }
+            }
         } finally { client.close() }
     }
 }

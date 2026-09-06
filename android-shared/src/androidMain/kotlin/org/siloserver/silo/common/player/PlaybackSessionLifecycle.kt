@@ -514,17 +514,25 @@ class PlaybackSessionLifecycle(
      * the stop a no-op once ownership has moved on.
      */
     suspend fun stop(expectedSessionId: String? = null) {
+        stopOwnedSession(expectedSessionId, unpublished = false)
+    }
+
+    /** Retire a rejected startup adoption without inventing a played progress sample. */
+    suspend fun retireUnpublishedSession(sessionId: String): Boolean =
+        stopOwnedSession(sessionId, unpublished = true)
+
+    private suspend fun stopOwnedSession(expectedSessionId: String?, unpublished: Boolean): Boolean {
         DiagnosticsPlaybackLogger.sessionEvent("session stop requested")
-        mutex.withLock {
+        return mutex.withLock {
             if (expectedSessionId != null) {
                 // Read the ownership token, not the presented state: a session
                 // being reconnected or restarted is still owned, and answering
                 // "no id" there let a stale stop cancel a live recovery.
                 val activeSessionId =
                     (_state.value as? SessionState.Active)?.session?.sessionId ?: lastAdoptedSessionId
-                if (activeSessionId != null && activeSessionId != expectedSessionId) {
+                if ((unpublished || activeSessionId != null) && activeSessionId != expectedSessionId) {
                     DiagnosticsPlaybackLogger.sessionEvent("session stop skipped, ownership moved")
-                    return
+                    return@withLock false
                 }
             }
             // Past the ownership guard: this stop is going to tear down, so any
@@ -538,7 +546,7 @@ class PlaybackSessionLifecycle(
             val pendingSessionId =
                 (_state.value as? SessionState.Active)?.session?.sessionId
             if (
-                pending != null &&
+                !unpublished && pending != null &&
                 pendingSessionId != null &&
                 pending.replacementSessionId == pendingSessionId &&
                 sessionManager.rollbackUnpublishedVideoSession(pendingSessionId)
@@ -561,7 +569,7 @@ class PlaybackSessionLifecycle(
             // Fire the final snapshot regardless — even during Reconnecting we
             // want to durably record where the user was so a fresh login resumes
             // there.
-            if (flushProgressOnStop) {
+            if (!unpublished && flushProgressOnStop) {
                 flushFinalProgress()
             }
 
@@ -589,6 +597,7 @@ class PlaybackSessionLifecycle(
             lastAdoptedSessionId = null
             _state.value = if (pendingStop) SessionState.Failed("Playback stop is pending. Retry from playback recovery.") else SessionState.Idle
             DiagnosticsPlaybackLogger.sessionEvent(if (pendingStop) "session stop pending" else "session stopped")
+            true
         }
     }
 
