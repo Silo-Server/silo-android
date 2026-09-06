@@ -4,15 +4,15 @@ import org.siloserver.silo.model.recommendation.DiscoverResponse
 import org.siloserver.silo.model.recommendation.TasteProfile
 import org.siloserver.silo.network.ApiResult
 import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.ktor.client.request.parameter
 
 class RecommendationApi(private val client: HttpClient, private val similar: org.siloserver.silo.network.apiv2.SimilarCardsV2Api? = null,
-    private val taste: org.siloserver.silo.network.apiv2.TasteProfileV2Api? = null) {
+    private val taste: org.siloserver.silo.network.apiv2.TasteProfileV2Api? = null,
+    private val discover: org.siloserver.silo.network.apiv2.DiscoverV2Api? = null) {
 
-    suspend fun getDiscover(): ApiResult<DiscoverResponse> = safeApiCall {
-        client.get("/api/v1/recommendations/discover")
-    }
+    suspend fun captureDiscoverAuthority() = discover?.capture()
+    suspend fun isDiscoverAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = discover?.current(owner) == true
+    suspend fun getDiscover(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<DiscoverResponse> =
+        discover?.read(owner) ?: ApiResult.Error(0, "unavailable", "The Discover transport is unavailable.")
 
     suspend fun captureTasteAuthority() = taste?.capture()
     suspend fun isTasteAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = taste?.current(owner) == true

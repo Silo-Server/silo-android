@@ -10,8 +10,11 @@ import org.siloserver.silo.network.api.RecommendationApi
 class RecommendationRepository(
     private val recommendationApi: RecommendationApi,
 ) {
-    suspend fun getDiscover(): ApiResult<DiscoverResponse> =
-        recommendationApi.getDiscover()
+    suspend fun getDiscover(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<DiscoverResponse> =
+        recommendationApi.getDiscover(owner)
+
+    suspend fun captureDiscoverAuthority() = recommendationApi.captureDiscoverAuthority()
+    suspend fun isDiscoverAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isDiscoverAuthorityCurrent(owner)
 
     suspend fun captureTasteAuthority() = recommendationApi.captureTasteAuthority()
     suspend fun isTasteAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isTasteAuthorityCurrent(owner)

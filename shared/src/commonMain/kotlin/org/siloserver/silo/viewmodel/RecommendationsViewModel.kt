@@ -48,11 +48,15 @@ class RecommendationsViewModel(
     }
 
     private suspend fun fetchRecommendations(run: Long) = coroutineScope {
-        val owner = recommendationRepository.captureTasteAuthority()
+        val owner = recommendationRepository.captureDiscoverAuthority()
         if (run != loadGeneration || !currentCoroutineContext().isActive) return@coroutineScope
-        val discoverResultDeferred = async { recommendationRepository.getDiscover() }
+        if (owner == null) {
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, sections = emptyList(), error = "Sign in to load recommendations.") }
+            return@coroutineScope
+        }
+        val discoverResultDeferred = async { recommendationRepository.getDiscover(owner) }
         val tasteProfileResultDeferred = async {
-            if (owner == null) null else recommendationRepository.getTasteProfile(owner)
+            recommendationRepository.getTasteProfile(owner)
         }
 
         val discoverResult = discoverResultDeferred.await()
@@ -61,10 +65,10 @@ class RecommendationsViewModel(
             else -> null
         }
 
-        val mayPublishTaste = owner != null && recommendationRepository.isTasteAuthorityCurrent(owner)
+        val mayPublish = recommendationRepository.isDiscoverAuthorityCurrent(owner)
         if (run != loadGeneration || !currentCoroutineContext().isActive) return@coroutineScope
-        if (owner != null && !mayPublishTaste) {
-            _uiState.update { it.copy(isLoading = false, isRefreshing = false, tasteProfile = null) }
+        if (!mayPublish) {
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, tasteProfile = null, sections = emptyList()) }
             return@coroutineScope
         }
         when (discoverResult) {
