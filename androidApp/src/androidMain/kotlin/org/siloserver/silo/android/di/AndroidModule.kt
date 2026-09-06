@@ -224,6 +224,8 @@ val androidModule = module {
             tokenProvider = get(),
             repository = get(),
             deviceIdProvider = { PairingDeviceId.stable(androidContext()) },
+            authorities = get(),
+            store = org.siloserver.silo.android.push.FilePushInstallationStore(androidContext()),
         )
     }
     single {

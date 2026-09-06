@@ -9,10 +9,12 @@ data class PushDeviceRegisterRequest(
     val token: String,
     @SerialName("device_id") val deviceId: String,
     @SerialName("push_mode") val pushMode: String = "private_push",
-)
+) { override fun toString() = "PushDeviceRegisterRequest(<redacted>)" }
 
 @Serializable
 data class PushDeviceRegisterResponse(
-    val id: String? = null,
-    @SerialName("push_mode") val pushMode: String = "private_push",
+    val id: String,
+    @SerialName("push_mode") val pushMode: String,
+    val generation: String,
+    @SerialName("server_device_id") val serverDeviceId: String,
 )
