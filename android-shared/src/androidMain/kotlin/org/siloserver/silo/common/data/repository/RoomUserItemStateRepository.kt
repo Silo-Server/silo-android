@@ -48,6 +48,8 @@ class RoomUserItemStateRepository(
     private val syncScheduler: OutboxSyncScheduler = OutboxSyncScheduler.NONE,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val ebookAuthorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : UserItemStatePort {
 
     private val contentDao = db.contentItemStateDao()
@@ -332,21 +334,32 @@ class RoomUserItemStateRepository(
         )
     }
 
-    override suspend fun recordEbookProgress(
-        contentId: String,
-        fileId: Int,
-        location: String,
-        progress: Double,
-    ) {
+    override suspend fun recordEbookProgress(contentId: String, fileId: Int, location: String, progress: Double) {
+        val snapshot = snapshotProvider() ?: return
+        recordEbookEvent(snapshot, contentId, fileId, location, progress, now(), null)
+    }
+
+    override suspend fun recordEbookProgress(authority: org.siloserver.silo.network.DurableLoginAuthority,
+        contentId: String, fileId: Int, location: String, progress: Double, eventTimeMs: Long) {
+        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return
+        identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+            recordEbookEvent(authority.scope, contentId, fileId, location, progress, eventTimeMs, authority.loginId)
+        }
+    }
+
+    private suspend fun recordEbookEvent(snapshot: AuthScopeSnapshot, contentId: String, fileId: Int,
+        location: String, progress: Double, nowMs: Long, loginId: String?) {
         if (contentId.isBlank() || location.isBlank() || !progress.isFinite()) return
         val clamped = progress.coerceIn(0.0, 1.0)
-        val snapshot = snapshotProvider() ?: return
         val serverId = snapshot.serverId
         val profileId = snapshot.profileId ?: return
-        val nowMs = now()
-
+        val key = "$serverId|$profileId|$contentId|${OutboxOperation.SET_EBOOK_PROGRESS}" +
+            (loginId?.let { "|$it" } ?: "")
         db.withTransaction {
+            val pending = outboxDao.getLatestByCoalesceKey(key)
+            if (loginId != null && pending != null && pending.createdAtMs >= nowMs) return@withTransaction
             val existing = userStateDao.get(serverId, profileId, contentId, fileId)
+            if (loginId != null && existing != null && existing.clientUpdatedAtMs >= nowMs) return@withTransaction
             val row = existing?.copy(cfi = location, readProgress = clamped, clientUpdatedAtMs = nowMs)
                 ?: UserItemStateEntity(
                     serverId = serverId,
@@ -371,9 +384,11 @@ class RoomUserItemStateRepository(
                     profileId = profileId,
                     targetContentId = contentId,
                     targetFileId = fileId,
-                    coalesceKey = "$serverId|$profileId|$contentId|${OutboxOperation.SET_EBOOK_PROGRESS}",
+                    coalesceKey = key,
                     idempotencyKey = idGenerator(),
-                    payloadJson = OutboxOperation.encodeEbookProgressPayload(fileId, location, clamped),
+                    opVersion = if (loginId == null) 1 else 2,
+                    payloadJson = OutboxOperation.encodeEbookProgressPayload(fileId, location, clamped,
+                        if (loginId == null) null else java.time.Instant.ofEpochMilli(nowMs).toString(), loginId, snapshot.serverUrl),
                     createdAtMs = nowMs,
                     nextAttemptAtMs = nowMs,
                 ),

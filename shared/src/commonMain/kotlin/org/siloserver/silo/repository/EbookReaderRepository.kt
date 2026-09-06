@@ -2,7 +2,6 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.ebook.SaveEbookAnnotationRequest
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
-import org.siloserver.silo.model.ebook.SaveEbookReaderConfigRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.EbookReaderApi
 import kotlinx.coroutines.sync.Mutex
@@ -35,17 +34,11 @@ class EbookReaderRepository(private val api: EbookReaderApi) {
         }
     }
 
-    suspend fun getProgress(contentId: String) =
-        api.getProgress(contentId)
+    suspend fun getProgress(contentId: String, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null) =
+        api.getProgress(contentId, scope)
 
     suspend fun saveProgress(contentId: String, request: SaveEbookProgressRequest) =
         api.saveProgress(contentId, request)
-
-    suspend fun getReaderConfig(contentId: String) =
-        api.getReaderConfig(contentId)
-
-    suspend fun saveReaderConfig(contentId: String, request: SaveEbookReaderConfigRequest) =
-        api.saveReaderConfig(contentId, request)
 
     suspend fun listAnnotations(contentId: String) =
         api.listAnnotations(contentId)

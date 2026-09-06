@@ -44,6 +44,7 @@ class SyncEngine(
     private val now: () -> Long = { System.currentTimeMillis() },
     private val batchLimit: Int = 50,
     private val memberships: org.siloserver.silo.repository.port.MembershipPort? = null,
+    private val ebookAuthorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
@@ -93,6 +94,17 @@ class SyncEngine(
             if (batch.isEmpty()) break
 
             for (op in batch) {
+                if (ebookAuthorities != null && op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) {
+                    val payload = runCatching { OutboxOperation.decodeEbookProgressPayload(op.payloadJson) }.getOrNull()
+                    val authority = ebookAuthorities.snapshotDurableLoginAuthority()
+                    if (authority == null || !authority.scope.isSameIdentityAs(scope))
+                        return DrainResult(synced, dropped, retriable + 1, dao.runnableLegacyCountForScope(serverId, profileId))
+                    if (op.opVersion < 2 || payload?.updatedAt == null || payload.loginId != authority.loginId ||
+                        payload.origin != scope.serverUrl) {
+                        dao.quarantineEbookProgress(op.id)
+                        continue
+                    }
+                }
                 if (dao.claim(op.id) != 1) continue // lost the claim; skip
 
                 val outcome = try {
@@ -232,7 +244,17 @@ class SyncEngine(
             fileId = payload.fileId,
             location = payload.location,
             progress = payload.progress,
+            updatedAt = payload.updatedAt,
         )
+        if (ebookAuthorities != null) {
+            val authority = ebookAuthorities.snapshotDurableLoginAuthority()
+            if (payload.loginId != authority?.loginId || authority?.scope?.isSameIdentityAs(scope) != true)
+                return WriteOutcome.RETRIABLE
+            // The server orders the original event time, including newer backward moves.
+            val result = ebookReaderApi.saveProgress(contentId, request, scope)
+            return if (result is ApiResult.Error && result.code == 0) WriteOutcome.RETRIABLE
+                else result.toWriteOutcome()
+        }
         return when (val server = ebookReaderApi.getProgress(contentId, scope)) {
             is ApiResult.Success ->
                 if (payload.progress > server.data.progress) {

@@ -173,6 +173,10 @@ interface UserItemStatePort {
     ) {
     }
 
+    /** V2 event: capture authority and event time before queuing any delayed work. */
+    suspend fun recordEbookProgress(authority: org.siloserver.silo.network.DurableLoginAuthority,
+        contentId: String, fileId: Int, location: String, progress: Double, eventTimeMs: Long) {}
+
     /** Locally-recorded ebook resume point for a file, or null. No-op (null) by default. */
     suspend fun localEbookProgress(contentId: String, fileId: Int): EbookLocalProgress? = null
 

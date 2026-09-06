@@ -19,6 +19,7 @@ data class SaveEbookProgressRequest(
     @SerialName("file_id") val fileId: Int,
     val location: String,
     val progress: Double,
+    @SerialName("updated_at") val updatedAt: String? = null,
 )
 
 @Serializable

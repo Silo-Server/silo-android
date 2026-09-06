@@ -117,7 +117,7 @@ val androidTvModule = module {
     single<org.siloserver.silo.repository.port.UserItemStatePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
-            db = get(),
+            db = get(), ebookAuthorities = get(), identityTransitions = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             syncScheduler = get(),
         )
@@ -147,7 +147,7 @@ val androidTvModule = module {
             db = get(),
             personalDataApi = get(),
             memberships = get(),
-            ebookReaderApi = get(),
+            ebookReaderApi = get(), ebookAuthorities = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
         )
     }

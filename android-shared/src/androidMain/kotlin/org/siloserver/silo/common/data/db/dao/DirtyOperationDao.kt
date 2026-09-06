@@ -34,6 +34,9 @@ interface DirtyOperationDao {
         return insert(op)
     }
 
+    @Query("UPDATE dirty_operations SET state = 'ebook_identity_quarantined' WHERE id = :id AND opKind = 'SET_EBOOK_PROGRESS' AND state = 'pending'")
+    suspend fun quarantineEbookProgress(id: Long): Int
+
     @Query(
         "DELETE FROM dirty_operations WHERE coalesceKey = :coalesceKey AND state = '${DirtyOperationEntity.STATE_PENDING}'",
     )

@@ -142,7 +142,7 @@ val androidModule = module {
     single<org.siloserver.silo.repository.port.UserItemStatePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
-            db = get(),
+            db = get(), ebookAuthorities = get(), identityTransitions = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             // Drain is requested only when a write is left pending (resolve RETRIABLE).
             syncScheduler = get(),
@@ -176,7 +176,7 @@ val androidModule = module {
             db = get(),
             personalDataApi = get(),
             memberships = get(),
-            ebookReaderApi = get(),
+            ebookReaderApi = get(), ebookAuthorities = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
         )
     }
@@ -502,7 +502,7 @@ val androidModule = module {
     viewModel {
         org.siloserver.silo.android.ui.screens.reader.ReaderViewModel(
             catalogRepository = get(),
-            ebookReaderRepository = get(),
+            ebookReaderRepository = get(), ebookAuthorities = get(), ebookV2 = get(), identityTransitions = get(),
             offlineMediaResolver = get(),
             localStateStore = get(),
             userItemStatePort = get(),

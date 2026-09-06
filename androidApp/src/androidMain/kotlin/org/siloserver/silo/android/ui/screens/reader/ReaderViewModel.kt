@@ -94,11 +94,17 @@ class ReaderViewModel(
     private val serverRegistry: ServerRegistry,
     private val profileRepository: ProfileRepository,
     savedStateHandle: SavedStateHandle,
+    private val ebookAuthorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val ebookV2: org.siloserver.silo.network.apiv2.EbookReaderV2Api? = null,
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val requestedFileId: Int? = savedStateHandle.get<String>("fileId")?.toIntOrNull()
     private var shouldSuppressInitialPageChange = false
+    private var readerAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null
+    private var configSession: org.siloserver.silo.repository.EbookConfigSession? = null
+    private var displayRevision = 0L
     private var progressSaveJob: Job? = null
     private val progressPersistMutex = Mutex()
 
@@ -111,6 +117,7 @@ class ReaderViewModel(
 
     private fun loadDetail() {
         viewModelScope.launch {
+            readerAuthority = ebookAuthorities?.snapshotDurableLoginAuthority()
             when (val r = catalogRepository.getItemDetail(contentId)) {
                 is ApiResult.Success -> {
                     val d = r.data
@@ -260,7 +267,7 @@ class ReaderViewModel(
         progressPercent = local.progressPercent
         bookmarks = local.bookmarks
 
-        when (val progress = ebookReaderRepository.getProgress(contentId)) {
+        when (val progress = ebookReaderRepository.getProgress(contentId, readerAuthority?.scope)) {
             is ApiResult.Success -> {
                 if (progress.data.fileId == fileId && local.progressLocation == null) {
                     progressLocation = progress.data.location
@@ -329,10 +336,25 @@ class ReaderViewModel(
     }
 
     private suspend fun loadDisplaySettings(): ReaderDisplaySettings {
+        val revision = displayRevision
         val (serverId, profileId) = resolveScope()
-        return withContext(Dispatchers.IO) {
-            localStateStore.readDisplaySettings(serverId, profileId)
-        } ?: ReaderDisplaySettings()
+        val local = withContext(Dispatchers.IO) { localStateStore.readDisplaySettings(serverId, profileId) }
+            ?: ReaderDisplaySettings()
+        val authority = readerAuthority ?: return local
+        val api = ebookV2 ?: return local
+        val session = org.siloserver.silo.repository.EbookConfigSession(api, contentId, authority.scope)
+        val loaded = session.load()
+        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return local
+        configSession = session
+        if (loaded is ApiResult.Success) {
+            val remote = loaded.data["android_reader"]
+            if (remote != null && displayRevision == revision) {
+                return runCatching {
+                    org.siloserver.silo.network.SiloJson.decodeFromJsonElement(ReaderDisplaySettings.serializer(), remote).normalized()
+                }.getOrElse { local }
+            }
+        } else _uiState.update { it.copy(syncError = "Reader settings are local. Server settings could not be loaded.") }
+        return if (displayRevision == revision) local else _uiState.value.displaySettings
     }
 
     fun onPageChanged(page: Int) {
@@ -414,6 +436,8 @@ class ReaderViewModel(
      * reflowable-locator ([onLocatorChanged]) progress reporting.
      */
     private fun persistProgress(fileId: Int, location: String, progressPercent: Double) {
+        val eventTimeMs = System.currentTimeMillis()
+        val authority = readerAuthority
         progressSaveJob?.cancel()
         // Optimistic + offline-first: the local Room projection is the resume
         // source and is written instantly, so progress is "saved" immediately;
@@ -426,7 +450,10 @@ class ReaderViewModel(
                 // VM is torn down right after the final page turn (back navigation
                 // cancels viewModelScope) — otherwise the last position is lost.
                 withContext(NonCancellable) {
-                    userItemStatePort.recordEbookProgress(contentId, fileId, location, progressPercent)
+                    if (authority != null) userItemStatePort.recordEbookProgress(authority,
+                        contentId, fileId, location, progressPercent, eventTimeMs)
+                    else if (ebookAuthorities == null) userItemStatePort.recordEbookProgress(contentId, fileId, location, progressPercent)
+                    else _uiState.update { it.copy(syncError = "Reading progress needs a saved account and profile.") }
                 }
             }
         }
@@ -462,12 +489,31 @@ class ReaderViewModel(
     }
 
     fun setDisplaySettings(settings: ReaderDisplaySettings) {
+        displayRevision++
+        val authority = readerAuthority
+        val session = configSession
         val normalized = settings.normalized()
         _uiState.update { it.copy(displaySettings = normalized) }
         viewModelScope.launch {
             val (serverId, profileId) = resolveScope()
-            withContext(Dispatchers.IO) {
+            if (authority != null) {
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@launch
+                val saved = identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+                    withContext(Dispatchers.IO) { localStateStore.writeDisplaySettings(serverId, profileId, normalized) }
+                    true
+                }
+                if (saved != true) return@launch
+            } else if (ebookAuthorities == null) withContext(Dispatchers.IO) {
                 localStateStore.writeDisplaySettings(serverId, profileId, normalized)
+            }
+            if (session == null && ebookV2 != null) {
+                _uiState.update { it.copy(syncError = "Reader settings are local. Reopen the reader to load server settings.") }
+            }
+            if (authority != null && authority == ebookAuthorities?.snapshotDurableLoginAuthority() && session != null) {
+                val value = org.siloserver.silo.network.SiloJson.encodeToJsonElement(ReaderDisplaySettings.serializer(), normalized)
+                val result = session.saveAndroidDisplay(value as kotlinx.serialization.json.JsonObject)
+                if (authority == ebookAuthorities?.snapshotDurableLoginAuthority() && result !is ApiResult.Success)
+                    _uiState.update { it.copy(syncError = "Reader settings are saved locally. Reopen the reader before retrying server sync.") }
             }
         }
     }
@@ -520,6 +566,7 @@ class ReaderViewModel(
     }
 
     private suspend fun resolveScope(): Pair<String, String> {
+        readerAuthority?.let { return it.scope.serverId to it.scope.profileId.orEmpty() }
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
         return serverId to profileId

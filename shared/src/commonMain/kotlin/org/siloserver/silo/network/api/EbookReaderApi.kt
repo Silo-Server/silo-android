@@ -3,11 +3,9 @@ package org.siloserver.silo.network.api
 import org.siloserver.silo.model.ebook.EbookAnnotation
 import org.siloserver.silo.model.ebook.EbookAnnotationListResponse
 import org.siloserver.silo.model.ebook.EbookConversionCapability
-import org.siloserver.silo.model.ebook.EbookReaderConfig
 import org.siloserver.silo.model.ebook.EbookReaderProgress
 import org.siloserver.silo.model.ebook.SaveEbookAnnotationRequest
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
-import org.siloserver.silo.model.ebook.SaveEbookReaderConfigRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.authScope
@@ -22,18 +20,18 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.encodeURLPathPart
 
-open class EbookReaderApi(private val client: HttpClient) {
+open class EbookReaderApi(private val client: HttpClient, private val v2: org.siloserver.silo.network.apiv2.EbookReaderV2Api? = null) {
     fun readPath(contentId: String, fileId: Int): String =
         "/api/v1/ebooks/${contentId.encodeURLPathPart()}/files/$fileId/read"
 
-    open suspend fun getConversionCapability(): ApiResult<EbookConversionCapability> = safeApiCall {
+    open suspend fun getConversionCapability(): ApiResult<EbookConversionCapability> = v2?.capability() ?: safeApiCall {
         client.get("/api/v1/ebooks/capability")
     }
 
     open suspend fun getProgress(
         contentId: String,
         scope: AuthScopeSnapshot? = null,
-    ): ApiResult<EbookReaderProgress> = safeApiCall {
+    ): ApiResult<EbookReaderProgress> = v2?.progress(contentId, scope) ?: safeApiCall {
         client.get("/api/v1/ebooks/${contentId.encodeURLPathPart()}/progress") {
             scope?.let { authScope(it) }
         }
@@ -43,23 +41,10 @@ open class EbookReaderApi(private val client: HttpClient) {
         contentId: String,
         request: SaveEbookProgressRequest,
         scope: AuthScopeSnapshot? = null,
-    ): ApiResult<EbookReaderProgress> = safeApiCall {
+    ): ApiResult<EbookReaderProgress> = v2?.saveProgress(contentId, request, scope) ?: safeApiCall {
         client.put("/api/v1/ebooks/${contentId.encodeURLPathPart()}/progress") {
             scope?.let { authScope(it) }
             contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
-
-    suspend fun getReaderConfig(contentId: String): ApiResult<EbookReaderConfig> = safeApiCall {
-        client.get("/api/v1/ebooks/${contentId.encodeURLPathPart()}/reader-config")
-    }
-
-    suspend fun saveReaderConfig(
-        contentId: String,
-        request: SaveEbookReaderConfigRequest,
-    ): ApiResult<EbookReaderConfig> = safeApiCall {
-        client.put("/api/v1/ebooks/${contentId.encodeURLPathPart()}/reader-config") {
             setBody(request)
         }
     }
