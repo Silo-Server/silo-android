@@ -63,9 +63,9 @@ fun rememberBrowseItemCardActions(
 
     val membershipActions by coordinator.memberships.actions.collectAsState()
     var displayed = state
-    membershipActions.values.filter { it.intent.key.itemId == item.contentId && it.confirmed && coordinator.memberships.current(it.intent) }.forEach {
+    membershipActions.values.filter { it.intent.key.itemId == item.contentId && it.baseline != null && coordinator.memberships.current(it.intent) }.forEach {
         displayed = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
-            displayed.copy(isFavorite = it.intent.present) else displayed.copy(inWatchlist = it.intent.present)
+            displayed.copy(isFavorite = it.baseline!!.present) else displayed.copy(inWatchlist = it.baseline!!.present)
     }
     return actions to displayed
 }

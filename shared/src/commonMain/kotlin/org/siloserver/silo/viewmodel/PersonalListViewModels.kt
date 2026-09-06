@@ -42,6 +42,7 @@ data class PersonalListQuery(
  * Shared UI state for paginated personal lists (favorites, watchlist, history).
  */
 data class PersonalListUiState(
+    val membershipReadWitnesses: Map<String, Set<org.siloserver.silo.repository.MembershipActions.Intent>> = emptyMap(),
     val items: List<BrowseItem> = emptyList(),
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
@@ -70,8 +71,8 @@ abstract class PersonalListViewModel(
     protected val _uiState = MutableStateFlow(PersonalListUiState())
     val uiState: StateFlow<PersonalListUiState> = if (memberships == null) _uiState.asStateFlow() else
         kotlinx.coroutines.flow.combine(_uiState, memberships.actions) { state, actions ->
-            val removed = actions.values.filter { it.confirmed && memberships.current(it.intent) &&
-                it.intent.key.kind == membershipKind && !it.intent.present }.map { it.intent.key.itemId }.toSet()
+            val removed = actions.values.filter { it.baseline != null && it.baseline !in state.membershipReadWitnesses[it.intent.key.itemId].orEmpty() && memberships.current(it.intent) &&
+                it.intent.key.kind == membershipKind && !it.baseline!!.present }.map { it.intent.key.itemId }.toSet()
             val items = state.items.filterNot { it.contentId in removed }
             state.copy(items = items, total = state.total?.let { (it - (state.items.size - items.size)).coerceAtLeast(0) })
         }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, PersonalListUiState())
@@ -169,6 +170,7 @@ abstract class PersonalListViewModel(
         _uiState.update { it.copy(isRefreshing = true, error = null) }
         viewModelScope.launch {
             val offset = 0
+            val membershipWitnesses = memberships?.readWitnesses().orEmpty()
             val result = fetchPage(offset, pageSize, query, null)
             // A newer replacement started while this refresh was in flight.
             // Release isRefreshing unless a newer REFRESH has re-claimed it —
@@ -192,6 +194,7 @@ abstract class PersonalListViewModel(
                     _uiState.update {
                     it.copy(
                         items = r.data.items,
+                        membershipReadWitnesses = r.data.items.associate { item -> item.contentId to membershipWitnesses },
                         hasMore = r.data.hasMore,
                         total = r.data.total,
                         effectiveSort = r.data.effectiveSort,
@@ -229,6 +232,7 @@ abstract class PersonalListViewModel(
         val requestQuery = query
         val cursor = if (reset) null else continuation
         viewModelScope.launch {
+            val membershipWitnesses = memberships?.readWitnesses().orEmpty()
             val result = fetchPage(offset, pageSize, requestQuery, cursor)
             // Superseded WHILE IN FLIGHT: something replaced the list, so this
             // page's offset no longer describes anything. Checked here rather
@@ -258,6 +262,8 @@ abstract class PersonalListViewModel(
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
+                            membershipReadWitnesses = (if (reset) emptyMap() else it.membershipReadWitnesses) +
+                                r.data.items.associate { item -> item.contentId to membershipWitnesses },
                             items = if (reset) r.data.items else it.items + r.data.items,
                             hasMore = r.data.hasMore,
                             total = r.data.total,

@@ -46,7 +46,10 @@ class SectionRepository(
         sectionApi.getHomeLayout()
 
     /** Fetches all home screen sections (with items pre-resolved). */
-    suspend fun getHomeSections(): ApiResult<SectionsResponse> {
+    suspend fun getHomeSections(coalesce: Boolean = true): ApiResult<SectionsResponse> {
+        // A consumer superseding acknowledged local state needs a request that
+        // actually starts now, not a shared response initiated before that ack.
+        if (!coalesce) return sectionApi.getHomeSections()
         val identityGeneration = identityTransitions.generation.value
         val request = homeRequestMutex.withLock {
             homeSectionsInFlight[identityGeneration] ?: run {

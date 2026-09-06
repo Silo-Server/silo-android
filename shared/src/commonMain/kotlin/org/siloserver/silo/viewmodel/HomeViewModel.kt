@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlin.time.TimeSource
 
 data class HomeUiState(
+    val membershipReadWitnesses: Set<org.siloserver.silo.repository.MembershipActions.Intent> = emptySet(),
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
     val sections: List<ResolvedSection> = emptyList(),
@@ -68,10 +69,10 @@ class HomeViewModel(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = kotlinx.coroutines.flow.combine(_uiState, mediaActions.memberships.actions) { state, actions ->
         var sections = state.sections
-        actions.values.filter { it.confirmed && mediaActions.memberships.current(it.intent) }.forEach { action ->
+        actions.values.filter { it.baseline != null && it.baseline !in state.membershipReadWitnesses && mediaActions.memberships.current(it.intent) }.forEach { action ->
             sections = sections.mapItem(action.intent.key.itemId) {
                 if (action.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
-                    it.withFavorite(action.intent.present) else it.withWatchlist(action.intent.present)
+                    it.withFavorite(action.baseline!!.present) else it.withWatchlist(action.baseline!!.present)
             }
         }
         state.copy(sections = sections)
@@ -215,6 +216,7 @@ class HomeViewModel(
      * tell whether their own work is still the newest before acting on it.
      */
     private suspend fun fetchSections(trigger: HomeLoadTrigger): Int {
+        val membershipWitnesses = mediaActions.memberships.readWitnesses()
         val requestIdentityGeneration = identityTransitions.generation.value
         val cacheWriteLease = HomeCacheWriteLease(requestIdentityGeneration)
         // Whether we already have something to show (cached or prior fetch) — if a
@@ -238,7 +240,7 @@ class HomeViewModel(
                 ),
             )
         }
-        when (val result = sectionRepository.getHomeSections()) {
+        when (val result = sectionRepository.getHomeSections(coalesce = membershipWitnesses.isEmpty())) {
             is ApiResult.Success -> {
                 val sections = result.data.sections
                 // `/home/sections` already returns each section with its items
@@ -293,6 +295,7 @@ class HomeViewModel(
                         it.copy(
                             isLoading = false,
                             sections = overlaid,
+                            membershipReadWitnesses = membershipWitnesses,
                             error = null,
                             sectionsFullyResolved = fullyResolved,
                         )

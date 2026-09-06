@@ -373,12 +373,12 @@ class TvItemDetailViewModel(
             val favorite = action.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE
             if (itemId == contentId) {
                 projected = if (favorite) projected.copy(isTogglingFavorite = action.busy,
-                    isFavorite = if (action.confirmed) action.intent.present else projected.isFavorite)
+                    isFavorite = if (action.baseline != null) action.baseline!!.present else projected.isFavorite)
                 else projected.copy(isTogglingWatchlist = action.busy,
-                    inWatchlist = if (action.confirmed) action.intent.present else projected.inWatchlist)
+                    inWatchlist = if (action.baseline != null) action.baseline!!.present else projected.inWatchlist)
             }
-            if (favorite && action.confirmed) projected = projected.copy(
-                episodeFavoriteStates = projected.episodeFavoriteStates + (itemId to action.intent.present))
+            if (favorite && action.baseline != null) projected = projected.copy(
+                episodeFavoriteStates = projected.episodeFavoriteStates + (itemId to action.baseline!!.present))
         }
         projected
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, TvItemDetailUiState())

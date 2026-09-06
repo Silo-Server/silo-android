@@ -148,9 +148,9 @@ class ItemDetailViewModel(
     private val _uiState = MutableStateFlow(ItemDetailUiState())
     val uiState: StateFlow<ItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
         var projected = state
-        actions.values.filter { it.confirmed && it.intent.key.itemId == contentId && personalDataRepository.memberships.current(it.intent) }.forEach {
+        actions.values.filter { it.baseline != null && it.intent.key.itemId == contentId && personalDataRepository.memberships.current(it.intent) }.forEach {
             projected = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
-                projected.copy(isFavorite = it.intent.present) else projected.copy(isInWatchlist = it.intent.present)
+                projected.copy(isFavorite = it.baseline!!.present) else projected.copy(isInWatchlist = it.baseline!!.present)
         }
         projected
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ItemDetailUiState())

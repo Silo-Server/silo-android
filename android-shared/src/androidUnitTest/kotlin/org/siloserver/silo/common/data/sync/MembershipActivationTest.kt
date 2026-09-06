@@ -154,7 +154,7 @@ class MembershipActivationTest {
             it.intent.key.kind == MembershipPort.Kind.FAVORITE && it.completion != null } }
         val item = vm.uiState.value.sections.single().items.single()
         assertEquals("Refreshed", item.title)
-        assertTrue(item.userState?.inWatchlist == true)
+        assertFalse(item.userState?.inWatchlist == true) // This read started after the watchlist acknowledgement.
         assertFalse(item.userState?.isFavorite == true)
     }
 
@@ -171,6 +171,100 @@ class MembershipActivationTest {
         repository.memberships.actions.first { it.values.single().confirmed }
         assertTrue(repository.memberships.confirmed(pending.intent))
         observer.cancel()
+    }
+
+    @Test fun acknowledgedHomeBaselineSurvivesOppositeFailureAndEarlierReadButYieldsToLaterRead() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val readEntered = CompletableDeferred<Unit>(); val readRelease = CompletableDeferred<Unit>()
+        val deleteEntered = CompletableDeferred<Unit>(); val deleteRelease = CompletableDeferred<Unit>()
+        var homeReads = 0
+        val client = client(MockEngine { request ->
+            if (request.url.encodedPath == "/api/v2/favorites/item") {
+                if (request.method == HttpMethod.Delete) { deleteEntered.complete(Unit); deleteRelease.await(); respond("", HttpStatusCode.ServiceUnavailable) }
+                else respond("", HttpStatusCode.NoContent)
+            } else {
+                if (++homeReads == 2) { readEntered.complete(Unit); readRelease.await() }
+                respond("""{"sections":[{"id":"row","section_type":"row","title":"Home","items":[{"content_id":"item","type":"movie","title":"Film","user_state":{"is_favorite":false}}]}]}""",
+                    HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        })
+        val (repository, _) = repository(client)
+        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier,
+            homeRequestDispatcher = StandardTestDispatcher(testScheduler)),
+            org.siloserver.silo.domain.MediaActionsCoordinator(repository), identityTransitions = barrier)
+        viewModels += vm
+        vm.uiState.first { !it.isLoading }
+        vm.refresh(); readEntered.await() // Captures no acknowledgement yet.
+        vm.toggleFavorite("item", true)
+        vm.uiState.first { it.sections.single().items.single().userState?.isFavorite == true }
+        readRelease.complete(Unit); vm.uiState.first { !it.isRefreshing }
+        assertTrue(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
+        vm.toggleFavorite("item", false); deleteEntered.await(); runCurrent()
+        assertTrue(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
+        deleteRelease.complete(Unit)
+        repository.memberships.actions.first { it.values.single().completion?.disposition == MembershipPort.Disposition.NEEDS_RECONCILIATION }
+        assertTrue(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
+        vm.refresh()
+        vm.uiState.first { !it.isRefreshing && it.sections.single().items.single().userState?.isFavorite == false }
+    }
+
+    @Test fun freshPersonalListReadSupersedesRemovalButEarlierReadCannotRestoreIt() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        for (kind in MembershipPort.Kind.entries) {
+            var reads = 0
+            val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+            val client = client(MockEngine { request ->
+                if (request.url.encodedPath == "/api/v2/catalog") {
+                    if (++reads == 2) { entered.complete(Unit); release.await() }
+                    respond(page(false), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                } else respond("", HttpStatusCode.NoContent)
+            })
+            val (repository, _) = repository(client)
+            val catalog = CatalogRepository(CatalogApi(client, CatalogV2Api(client, tokenManager = tokens)), identityTransitions = barrier)
+            val vm = if (kind == MembershipPort.Kind.FAVORITE) FavoritesViewModel(repository, catalog) else WatchlistViewModel(repository, catalog)
+            viewModels += vm
+            vm.uiState.first { !it.isLoading }
+            vm.refresh(); entered.await()
+            if (vm is FavoritesViewModel) vm.toggleFavorite("item") else (vm as WatchlistViewModel).removeFromWatchlist("item")
+            vm.uiState.first { it.items.isEmpty() }
+            release.complete(Unit); vm.uiState.first { !it.isRefreshing }
+            assertTrue(vm.uiState.value.items.isEmpty()); assertEquals(1, vm.uiState.value.total)
+            vm.refresh()
+            vm.uiState.first { !it.isRefreshing && it.items.isNotEmpty() }
+            assertEquals(2, vm.uiState.value.total)
+            assertEquals("item", vm.uiState.value.items.single().contentId)
+            vm.viewModelScope.cancel()
+        }
+    }
+
+    @Test fun postAckHomeRefreshCannotReusePreAckRequest() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var reads = 0
+        val client = client(MockEngine { request ->
+            if (request.url.encodedPath == "/api/v2/favorites/item") respond("", HttpStatusCode.NoContent)
+            else {
+                val ordinal = ++reads
+                if (ordinal == 2) { entered.complete(Unit); release.await() }
+                respond("""{"sections":[{"id":"row","section_type":"row","title":"Home","items":[{"content_id":"item","type":"movie","title":"Read $ordinal","user_state":{"is_favorite":false}}]}]}""",
+                    HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            }
+        })
+        val (repository, _) = repository(client)
+        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier,
+            homeRequestDispatcher = StandardTestDispatcher(testScheduler)),
+            org.siloserver.silo.domain.MediaActionsCoordinator(repository), identityTransitions = barrier)
+        viewModels += vm
+        vm.uiState.first { !it.isLoading }
+        vm.refresh(); entered.await()
+        vm.toggleFavorite("item", true)
+        vm.uiState.first { it.sections.single().items.single().userState?.isFavorite == true }
+        vm.refresh()
+        vm.uiState.first { it.sections.single().items.single().title == "Read 3" }
+        assertFalse(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
+        release.complete(Unit); advanceUntilIdle()
+        assertEquals("Read 3", vm.uiState.value.sections.single().items.single().title)
+        assertFalse(vm.uiState.value.sections.single().items.single().userState!!.isFavorite)
     }
 
 }

@@ -18,7 +18,8 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
     data class Key(val itemId: String, val kind: MembershipPort.Kind)
     data class Intent(val key: Key, val present: Boolean, val generation: Long, val revision: Long)
     data class Action(val intent: Intent, val command: MembershipPort.Command? = null,
-        val completion: MembershipPort.Completion? = null, val busy: Boolean = false) {
+        val completion: MembershipPort.Completion? = null, val busy: Boolean = false,
+        val baseline: Intent? = null) {
         val confirmed: Boolean get() = completion?.mayPublish == true && completion.disposition in setOf(
             MembershipPort.Disposition.ACKNOWLEDGED, MembershipPort.Disposition.RECONCILED)
     }
@@ -40,12 +41,14 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             return previous.intent
         }
         val intent = Intent(key, present, generation.value, kotlin.random.Random.nextLong())
-        mutableActions.update { it + (key to Action(intent)) }
+        mutableActions.update { it + (key to Action(intent, baseline = it[key]?.baseline)) }
         return intent
     }
 
     fun current(intent: Intent): Boolean = generation.value == intent.generation &&
         mutableActions.value[intent.key]?.intent == intent
+
+    fun readWitnesses(): Set<Intent> = mutableActions.value.values.mapNotNull { it.baseline }.toSet()
 
     fun confirmed(intent: Intent): Boolean = current(intent) && mutableActions.value[intent.key]?.confirmed == true
 
@@ -154,7 +157,10 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
         mutableActions.update { states ->
             val action = states[intent.key]
             if (generation.value != intent.generation || action?.intent != intent) states
-            else states + (intent.key to transform(action))
+            else {
+                val changed = transform(action)
+                states + (intent.key to if (changed.confirmed) changed.copy(baseline = changed.intent) else changed)
+            }
         }
     }
 }

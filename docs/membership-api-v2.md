@@ -119,7 +119,12 @@ Shared, phone and TV consumers capture per-item, per-field intents before launch
 work. A generation change clears those witnesses. Completion requires the same
 intent and generation; authoritative membership reads reject intervening intents.
 Admission retains the committed command witness even when its coroutine is cancelled.
-Confirmed fields overlay refreshed cards independently. A failed favorite cannot
+The last confirmed field value remains separate from a pending opposite intent.
+Home and personal-list reads capture confirmed witnesses before requesting data;
+accepted response rows supersede only those captured witnesses. An earlier read
+cannot erase a later acknowledgement. Home requests with confirmed witnesses do
+not join a request already in flight before the acknowledgement.
+Confirmed fields overlay older cards independently. A failed favorite cannot
 roll back another field or replace a newer home snapshot. Personal-list removals
 retain their row, total and continuation until acknowledged or reconciled.
 
