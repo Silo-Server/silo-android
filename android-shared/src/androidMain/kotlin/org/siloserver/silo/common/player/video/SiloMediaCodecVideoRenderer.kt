@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player.video
 
 import android.content.Context
+import android.media.MediaFormat
 import android.os.Handler
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
@@ -35,6 +36,7 @@ internal class SiloMediaCodecVideoRenderer(
      * replan instead of playing with an unverified presentation.
      */
     private val onBaseLayerDecoderMismatch: (String) -> Unit = {},
+    private val onVideoOutputFormatChanged: (Format, String?) -> Unit = { _, _ -> },
 ) : MediaCodecVideoRenderer(
     MediaCodecVideoRenderer.Builder(context)
         .setCodecAdapterFactory(codecAdapterFactory)
@@ -105,6 +107,13 @@ internal class SiloMediaCodecVideoRenderer(
         val result = super.onInputFormatChanged(formatHolder)
         profile8Input = formatHolder.format?.let(::isDolbyVisionProfile8) == true
         return result
+    }
+
+    override fun onOutputFormatChanged(format: Format, mediaFormat: MediaFormat?) {
+        super.onOutputFormatChanged(format, mediaFormat)
+        // The input can remain dvhe.08 even when Media3 opens an HEVC decoder.
+        // Report the selected decoder MIME, not the source codec identity.
+        onVideoOutputFormatChanged(format, codecInfo?.codecMimeType)
     }
 
     override fun onQueueInputBuffer(buffer: DecoderInputBuffer) {
