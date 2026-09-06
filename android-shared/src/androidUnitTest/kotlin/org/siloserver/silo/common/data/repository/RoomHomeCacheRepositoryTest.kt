@@ -71,6 +71,26 @@ class RoomHomeCacheRepositoryTest {
         assertNull(repo.getCachedHomeV2(owner))
     }
 
+    @Test
+    fun startupFillsAbsentButCannotReplaceScreenAfterTransactionWait() = runTest {
+        val owner = scope!!
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>(); val captured = CompletableDeferred<Unit>()
+        val screen = listOf(section("screen", "new"))
+        val blocker = async {
+            db.withTransaction { repo.cacheHomeV2(screen, owner); entered.complete(Unit); release.await() }
+        }
+        entered.await()
+        val warmRepo = RoomHomeCacheRepository(db, snapshotProvider = { captured.complete(Unit); scope })
+        val warmer = async { warmRepo.cacheHomeV2IfAbsent(listOf(section("startup", "old")), owner) }
+        captured.await(); release.complete(Unit); blocker.await(); warmer.await()
+        assertEquals(screen, repo.getCachedHomeV2(owner)?.sections)
+        scope = owner.copy(credentialEpoch = 2)
+        val replacement = scope!!
+        val startup = listOf(section("startup", "item"))
+        repo.cacheHomeV2IfAbsent(startup, replacement)
+        assertEquals(startup, repo.getCachedHomeV2(replacement)?.sections)
+    }
+
     @AfterTest
     fun tearDown() = db.close()
 

@@ -43,6 +43,19 @@ class RoomHomeCacheRepository(
         }
     }
 
+    override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+        val profile = owner.profileId ?: return
+        if (owner != snapshotProvider()) return
+        val key = scopedKey(owner)
+        val body = json.encodeToString(sections)
+        if (body.encodeToByteArray().size > MAX_CACHE_BYTES) return
+        db.withTransaction {
+            if (!stillCurrent() || scopedDao.get(owner.serverId, profile, key) != null) return@withTransaction
+            if (!stillCurrent()) return@withTransaction
+            scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+        }
+    }
+
     override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? {
         val profile = owner.profileId ?: return null
         if (owner != snapshotProvider()) return null
