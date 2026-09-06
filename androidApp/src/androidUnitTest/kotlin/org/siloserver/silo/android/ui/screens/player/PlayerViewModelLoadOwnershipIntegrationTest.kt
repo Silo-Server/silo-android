@@ -320,7 +320,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     LegacyDownloadImporter(tmp.newFolder(), db),
                 ),
                 serverRegistry = FakeServerRegistry(),
-                serverReachabilityMonitor = ServerReachabilityMonitor(healthApi, scope),
+                serverReachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null }),
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = PlaybackSessionLifecycle(
@@ -407,7 +407,7 @@ class MobileVideoPlaybackStarterCancellationTest {
                     PersonalDataRepository(PersonalDataApi(client)),
                     backgroundScope,
                 ),
-                reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
+                reachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
                 sessionAllocator = MobileVideoSessionAllocator {
                     allocated = true
                     ApiResult.Success(allocatedReady("allocated-session"))
@@ -732,7 +732,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 PersonalDataRepository(PersonalDataApi(client)),
                 backgroundScope,
             ),
-            reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
+            reachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
             userItemStatePort = userItemStatePort,
             sessionAllocator = {
                 onAllocation(it)

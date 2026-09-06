@@ -5,9 +5,13 @@ import io.ktor.client.network.sockets.ConnectTimeoutException
 import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.plugins.timeout
+import io.ktor.http.HttpHeaders
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.skipSiloAuth
 
@@ -67,10 +71,29 @@ class ApiV2Probe(private val client: HttpClient) {
      * Probes [serverUrl] (or the active server when null, resolved by the auth
      * plugin exactly like every other relative call).
      */
-    suspend fun probe(serverUrl: String? = null): ApiV2ProbeResult {
+    suspend fun probe(serverUrl: String? = null): ApiV2ProbeResult = request(serverUrl, fresh = false)
+
+    /** Fresh public foreground liveness read; never consults the negotiation cache. */
+    suspend fun probeFresh(serverUrl: String): ApiV2ProbeResult = withTimeoutOrNull(6_000L) {
+        try { request(serverUrl, fresh = true) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Throwable) { ApiV2ProbeResult.Failure(ApiV2ProbeResult.Kind.CONNECTION, cause = e) }
+    } ?: ApiV2ProbeResult.Failure(ApiV2ProbeResult.Kind.TIMEOUT)
+
+    private suspend fun request(serverUrl: String?, fresh: Boolean): ApiV2ProbeResult {
         val url = if (serverUrl == null) PATH else "${serverUrl.trimEnd('/')}$PATH"
         val response = try {
-            client.get(url) { skipSiloAuth() }
+            client.get(url) {
+                skipSiloAuth()
+                if (fresh) {
+                    header(HttpHeaders.CacheControl, "no-cache, no-store")
+                    timeout {
+                        connectTimeoutMillis = 6_000L
+                        requestTimeoutMillis = 6_000L
+                        socketTimeoutMillis = 6_000L
+                    }
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpRequestTimeoutException) {

@@ -1,8 +1,9 @@
 package org.siloserver.silo.common.network
 
 import android.os.SystemClock
-import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.api.HealthApi
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -29,72 +30,85 @@ data class ServerReachabilityState(
         get() = status != ServerReachabilityStatus.Unreachable
 }
 
-/**
- * Foreground server liveness monitor.
- *
- * Device connectivity only proves the network path exists; it does not prove
- * the configured Silo origin is alive. This monitor probes `/api/v1/health`
- * while the app is foregrounded and treats only a decoded health payload as
- * reachable, so proxy/tunnel error pages cannot masquerade as a healthy server.
- */
+/** The configured server and transition generation, never a discovered server identity. */
+data class ReachabilityTarget(val serverId: String, val url: String, val generation: Long)
+
+/** Foreground-only fresh public discovery. Health and playback recovery remain separate. */
 class ServerReachabilityMonitor(
-    private val healthApi: HealthApi,
+    private val probe: suspend (String) -> ApiV2ProbeResult,
     private val scope: CoroutineScope,
+    private val captureTarget: () -> ReachabilityTarget?,
+    targetChanges: kotlinx.coroutines.flow.Flow<*> = kotlinx.coroutines.flow.emptyFlow<Unit>(),
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
     private val onServerReconnected: suspend () -> Unit = {},
 ) {
     private val _state = MutableStateFlow(ServerReachabilityState())
     val state: StateFlow<ServerReachabilityState> = _state.asStateFlow()
-
     private val probeLock = Mutex()
     private var foregroundJob: Job? = null
+    private val run = java.util.concurrent.atomic.AtomicLong()
+    private val epoch = java.util.concurrent.atomic.AtomicLong()
+    private var stateTarget: ReachabilityTarget? = null
+
+    init {
+        scope.launch {
+            targetChanges.collect {
+                if (captureTarget() != stateTarget) reset()
+            }
+        }
+    }
+
+    private fun reset() {
+        run.incrementAndGet()
+        stateTarget = null
+        _state.value = ServerReachabilityState()
+    }
 
     fun startForeground() {
         if (foregroundJob?.isActive == true) return
+        epoch.incrementAndGet()
         foregroundJob = scope.launch {
             while (isActive) {
-                val probed = probeNow()
-                val nextDelay = if (probed.status == ServerReachabilityStatus.Unreachable) {
-                    UNREACHABLE_PROBE_INTERVAL_MS
-                } else {
-                    REACHABLE_PROBE_INTERVAL_MS
-                }
-                delay(nextDelay)
+                val probed = retryNow()
+                delay(if (probed.status == ServerReachabilityStatus.Unreachable)
+                    UNREACHABLE_PROBE_INTERVAL_MS else REACHABLE_PROBE_INTERVAL_MS)
             }
         }
     }
 
     fun stopForeground() {
+        epoch.incrementAndGet()
         foregroundJob?.cancel()
         foregroundJob = null
+        reset()
     }
 
-    suspend fun retryNow(): ServerReachabilityState = probeNow()
-
-    private suspend fun probeNow(): ServerReachabilityState = probeLock.withLock {
-        val wasUnreachable = _state.value.status == ServerReachabilityStatus.Unreachable
-        val result = healthApi.checkHealth()
-        val next = when (result) {
-            is ApiResult.Success -> ServerReachabilityState(
-                status = ServerReachabilityStatus.Reachable,
-                lastCheckedAtMs = nowMs(),
-            )
-            is ApiResult.Error -> ServerReachabilityState(
-                status = ServerReachabilityStatus.Unreachable,
-                lastCheckedAtMs = nowMs(),
-                message = result.message.ifBlank { result.error.ifBlank { "Server is offline" } },
-            )
-            is ApiResult.NetworkError -> ServerReachabilityState(
-                status = ServerReachabilityStatus.Unreachable,
-                lastCheckedAtMs = nowMs(),
-                message = result.exception.message ?: "Server is offline",
-            )
+    suspend fun retryNow(): ServerReachabilityState {
+        val target = captureTarget()
+        val requestRun = run.incrementAndGet()
+        val requestEpoch = epoch.get()
+        fun current() = run.get() == requestRun && epoch.get() == requestEpoch && captureTarget() == target
+        return probeLock.withLock {
+            currentCoroutineContext().ensureActive()
+            if (!current()) return@withLock _state.value
+            if (stateTarget != target) {
+                stateTarget = target
+                _state.value = ServerReachabilityState()
+            }
+            if (target == null) return@withLock _state.value
+            val wasUnreachable = _state.value.status == ServerReachabilityStatus.Unreachable
+            val result = probe(target.url)
+            currentCoroutineContext().ensureActive()
+            if (!current()) return@withLock _state.value
+            val next = when (result) {
+                is ApiV2ProbeResult.V2 -> ServerReachabilityState(ServerReachabilityStatus.Reachable, nowMs())
+                ApiV2ProbeResult.UpdateServer -> ServerReachabilityState(ServerReachabilityStatus.Unreachable, nowMs(), "Server update required")
+                is ApiV2ProbeResult.Failure -> ServerReachabilityState(ServerReachabilityStatus.Unreachable, nowMs(), "Server discovery unavailable: "+result.kind.name.lowercase())
+            }
+            _state.value = next
+            if (wasUnreachable && next.status == ServerReachabilityStatus.Reachable && current()) onServerReconnected()
+            next
         }
-        _state.value = next
-        if (wasUnreachable && next.status == ServerReachabilityStatus.Reachable) {
-            onServerReconnected()
-        }
-        next
     }
 
     companion object {

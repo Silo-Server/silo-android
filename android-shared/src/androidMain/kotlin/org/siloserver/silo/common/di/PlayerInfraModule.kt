@@ -168,8 +168,17 @@ val playerInfraModule = module {
     }
 
     single {
+        val registry = get<ServerRegistry>()
+        val transitions = get<org.siloserver.silo.network.IdentityTransitionBarrier>()
+        val discovery = get<org.siloserver.silo.network.apiv2.ApiV2Probe>()
         ServerReachabilityMonitor(
-            healthApi = get(),
+            probe = discovery::probeFresh,
+            captureTarget = {
+                registry.activeEntry.value?.let { entry ->
+                    org.siloserver.silo.common.network.ReachabilityTarget(entry.id, entry.url, transitions.generation.value)
+                }
+            },
+            targetChanges = kotlinx.coroutines.flow.combine(registry.activeEntry, transitions.generation) { entry, generation -> entry?.id to generation },
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             onServerReconnected = {
                 get<ServerDrivenConfigRefresher>().forceRefresh()
