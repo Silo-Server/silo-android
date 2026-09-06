@@ -52,7 +52,7 @@ import kotlinx.coroutines.launch
 data class ItemDetailUiState(
     val isLoading: Boolean = true,
     val detail: ItemDetail? = null,
-    val similarItems: List<ItemDetail> = emptyList(),
+    val similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val selectedSeasonNumber: Int = 1,
     val episodes: List<EpisodeListItem> = emptyList(),
@@ -138,6 +138,8 @@ class ItemDetailViewModel(
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
 ) : ViewModel() {
 
+    private var similarGeneration = 0L
+    private var similarJob: kotlinx.coroutines.Job? = null
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
         savedStateHandle.get<String>("seasonNumber")?.toIntOrNull()
@@ -303,7 +305,11 @@ class ItemDetailViewModel(
     }
 
     fun loadDetail() {
+        val similarRun = ++similarGeneration
+        similarJob?.cancel()
+        _uiState.update { it.copy(similarItems = emptyList()) }
         viewModelScope.launch {
+            val similarOwner = recommendationRepository.captureSimilarAuthority()
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
@@ -324,7 +330,9 @@ class ItemDetailViewModel(
                     }
                     // Restore a persisted audio/subtitle override for this item.
                     seedPersistedTrackSelection()
-                    viewModelScope.launch { loadSimilar(detail) }
+                    if (similarRun == similarGeneration) {
+                        similarJob = viewModelScope.launch { loadSimilar(detail, similarOwner, similarRun) }
+                    }
                     // For series, load seasons
                     if (detail.type == "series") {
                         loadSeasons(detail.contentId)
@@ -368,33 +376,11 @@ class ItemDetailViewModel(
         }
     }
 
-    private suspend fun loadSimilar(detail: ItemDetail) {
-        if (detail.type == "episode" || _uiState.value.similarItems.isNotEmpty()) return
-
-        val scored = when (
-            val result = recommendationRepository.getSimilar(detail.contentId, limit = 12)
-        ) {
-            is ApiResult.Success -> result.data.items
-            else -> return
-        }
-        if (scored.isEmpty()) return
-
-        val items = coroutineScope {
-            scored
-                .map { ref ->
-                    async {
-                        when (val result = catalogRepository.getItemDetail(ref.mediaItemId)) {
-                            is ApiResult.Success -> result.data
-                            else -> null
-                        }
-                    }
-                }
-                .awaitAll()
-                .filterNotNull()
-        }
-        if (items.isNotEmpty()) {
-            _uiState.update { it.copy(similarItems = items) }
-        }
+    private suspend fun loadSimilar(detail: ItemDetail, owner: org.siloserver.silo.network.AuthScopeSnapshot?, run: Long) {
+        if (owner == null || detail.type == "episode") return
+        recommendationRepository.loadSimilarCards(detail.contentId, owner,
+            stillCurrent = { run == similarGeneration && _uiState.value.detail?.contentId == detail.contentId },
+            publish = { cards -> _uiState.update { it.copy(similarItems = cards) } })
     }
 
     /**

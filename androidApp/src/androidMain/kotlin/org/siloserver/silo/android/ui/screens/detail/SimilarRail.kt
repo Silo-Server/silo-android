@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
-import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.BrowseItem
 
 /**
  * "More Like This" section — header plus a horizontal poster rail —
@@ -27,7 +27,7 @@ import org.siloserver.silo.model.catalog.ItemDetail
  */
 @Composable
 fun SimilarRail(
-    items: List<ItemDetail>,
+    items: List<BrowseItem>,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -44,7 +44,7 @@ fun SimilarRail(
 
 @Composable
 private fun SimilarRailContent(
-    items: List<ItemDetail>,
+    items: List<BrowseItem>,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -65,12 +65,12 @@ private fun SimilarRailContent(
                 title = item.title,
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
-                year = item.year.takeIf { it > 0 },
+                year = item.year?.takeIf { it > 0 },
                 type = item.type,
                 userState = null,
                 progress = null,
                 onClick = { onSelect(item.contentId) },
-                overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromItemDetail(item),
+                overlay = org.siloserver.silo.overlays.OverlayDataExtractor.fromBrowseItem(item),
                 sharedContentId = item.contentId,
             )
         }

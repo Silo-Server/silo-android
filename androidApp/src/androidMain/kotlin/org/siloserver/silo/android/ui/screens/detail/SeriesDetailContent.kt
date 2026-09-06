@@ -41,7 +41,7 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 @Composable
 fun SeriesDetailContent(
     detail: ItemDetail,
-    similarItems: List<ItemDetail> = emptyList(),
+    similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,

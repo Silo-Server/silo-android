@@ -1,9 +1,10 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.recommendation.DiscoverResponse
-import org.siloserver.silo.model.recommendation.ScoredItemsResponse
 import org.siloserver.silo.model.recommendation.TasteProfile
 import org.siloserver.silo.network.ApiResult
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import org.siloserver.silo.network.api.RecommendationApi
 
 class RecommendationRepository(
@@ -15,9 +16,17 @@ class RecommendationRepository(
     suspend fun getTasteProfile(): ApiResult<TasteProfile> =
         recommendationApi.getTasteProfile()
 
-    suspend fun getSimilar(
-        contentId: String,
-        limit: Int = 12,
-    ): ApiResult<ScoredItemsResponse> =
-        recommendationApi.getSimilar(contentId, limit)
+    suspend fun captureSimilarAuthority() = recommendationApi.captureSimilarAuthority()
+    suspend fun isSimilarAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isSimilarAuthorityCurrent(owner)
+    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<List<org.siloserver.silo.model.catalog.BrowseItem>> =
+        recommendationApi.getSimilar(contentId, limit, owner)
+    /** The synchronous run fence is evaluated after each suspended authority lookup. */
+    suspend fun loadSimilarCards(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.catalog.BrowseItem>) -> Unit) {
+        if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        val result = getSimilar(contentId, 12, owner)
+        if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        publish((result as? ApiResult.Success)?.data.orEmpty())
+    }
+
 }

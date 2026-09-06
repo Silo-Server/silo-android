@@ -364,6 +364,7 @@ class TvItemDetailViewModel(
     private val identityTransitions: IdentityTransitionBarrier,
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
 ) : ViewModel() {
+    private var similarGeneration = 0L
 
     private val _uiState = MutableStateFlow(TvItemDetailUiState())
     val uiState: StateFlow<TvItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
@@ -618,7 +619,11 @@ class TvItemDetailViewModel(
     }
 
     private fun loadDetail() {
+        val similarRun = ++similarGeneration
+        moreLikeThisJob?.cancel()
+        _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         viewModelScope.launch {
+            val similarOwner = recommendationRepository?.captureSimilarAuthority()
             when (val result = catalogRepository.getItemDetail(contentId)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -662,7 +667,7 @@ class TvItemDetailViewModel(
                             )
                         }
                     }
-                    loadMoreLikeThis(detail)
+                    loadMoreLikeThis(detail, similarOwner, similarRun)
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
@@ -1841,45 +1846,24 @@ class TvItemDetailViewModel(
         }
     }
 
-    private fun loadMoreLikeThis(detail: ItemDetail) {
-        // Apple parity (PhoneSimilarRail + QA 2026-07-08): the shelf shows REAL
-        // engine recommendations from /recommendations/similar, and simply
-        // doesn't render when the server has recommendations/embeddings
-        // disabled (error or empty response). The previous genre browse sorted
-        // by rating was not a recommendation. Episodes never show the shelf —
-        // viewers want the next episode, not a tangent (Apple showsSimilarRail).
-        if (detail.type.lowercase() == "episode") return
+    private fun loadMoreLikeThis(detail: ItemDetail, owner: org.siloserver.silo.network.AuthScopeSnapshot?, run: Long) {
+        if (owner == null || detail.type.lowercase() == "episode" || run != similarGeneration) return
         val recommendations = recommendationRepository ?: return
-
         moreLikeThisJob?.cancel()
         moreLikeThisJob = viewModelScope.launch {
-            // This shelf is secondary. Let the hero, seasons, and episode rail settle
-            // before starting more requests during item-open.
             delay(300)
+            if (!recommendations.isSimilarAuthorityCurrent(owner) || run != similarGeneration ||
+                _uiState.value.detail?.contentId != detail.contentId) return@launch
             _uiState.update { it.copy(moreLikeThisLoading = true) }
-            val scored = recommendations.getSimilar(detail.contentId, limit = 12)
-            if (scored !is ApiResult.Success || scored.data.items.isEmpty()) {
-                _uiState.update { it.copy(moreLikeThisLoading = false, moreLikeThis = emptyList()) }
-                return@launch
-            }
-            // Resolve refs to renderable items in parallel, preserving the
-            // engine's ranking; failed resolutions drop silently (Apple's
-            // withTaskGroup + zip-back-to-index).
-            val resolved = scored.data.items.map { ref ->
-                async {
-                    (catalogRepository.getItemDetail(ref.mediaItemId) as? ApiResult.Success)?.data
-                }
-            }.awaitAll()
-            val items = resolved
-                .filterNotNull()
-                .filterNot { isTvHiddenMediaType(it.type) || it.contentId == detail.contentId }
-                .take(16)
-                .map { it.toSectionItem() }
-            _uiState.update {
-                it.copy(moreLikeThisLoading = false, moreLikeThis = items)
-            }
+            recommendations.loadSimilarCards(detail.contentId, owner,
+                stillCurrent = { run == similarGeneration && _uiState.value.detail?.contentId == detail.contentId },
+                publish = { cards ->
+                    val items = similarCardsForTv(cards, detail.contentId)
+                    _uiState.update { it.copy(moreLikeThisLoading = false, moreLikeThis = items) }
+                })
         }
     }
+
 }
 
 private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {
@@ -2100,3 +2084,7 @@ private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.S
         ),
     )
 }
+
+/** Similar cards keep their server rank while honoring the existing TV surface exclusions. */
+internal fun similarCardsForTv(cards: List<BrowseItem>, sourceId: String): List<SectionItem> =
+    cards.filterNot { isTvHiddenMediaType(it.type) || it.contentId == sourceId }.map { it.toSectionItem() }

@@ -60,7 +60,7 @@ fun MovieDetailContent(
         url = detail.posterUrl,
         thumbhash = detail.posterThumbhash,
     ),
-    similarItems: List<ItemDetail> = emptyList(),
+    similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     isFavorite: Boolean,
     isInWatchlist: Boolean,
     selectedVersionIndex: Int,
