@@ -1053,6 +1053,7 @@ private fun TvPlaybackSettingsPane(
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
 ) {
+    val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
     val audioLanguages = remember(state.audioLanguage, state.audioLanguageSuggestions) {
         LanguageOptions.options(
@@ -1154,6 +1155,17 @@ private fun TvPlaybackSettingsPane(
                     value = passOutThresholdLabel(state.passOutThreshold),
                     onClick = { activePicker = PlaybackPicker.PassOutThreshold },
                 )
+            }
+        }
+        if (recovery.visible) {
+            item {
+                SettingsGroup(title = "Playback recovery") {
+                    SettingsActionRow(
+                        label = if (recovery.busy) "Recovering playback…" else "Retry pending playback stops",
+                        onClick = recovery.retry,
+                    )
+                    SettingsFooterText(text = recovery.message)
+                }
             }
         }
         item {

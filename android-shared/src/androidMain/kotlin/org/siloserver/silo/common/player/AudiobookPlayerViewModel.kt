@@ -1452,7 +1452,8 @@ class AudiobookPlayerViewModel(
         val state = _uiState.value
         if (state.durationSeconds <= 0) return  // metadata not loaded yet
         viewModelScope.launch {
-            if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+            if (state.positionSeconds > 0 && !suppressWholeBookPersistence &&
+                        state.sessionId?.let(playbackSessionManager::isSequenced) != true) {
                 // SINK 2 — whole-book durable resume. Records the WHOLE-BOOK
                 // (global) position against the WHOLE-BOOK total via a durable
                 // local projection + a content-level outbox op drained through
@@ -1546,7 +1547,8 @@ class AudiobookPlayerViewModel(
         viewModelScope.launch {
             try {
                 withContext(NonCancellable + Dispatchers.IO) {
-                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence) {
+                    if (state.positionSeconds > 0 && !suppressWholeBookPersistence &&
+                        state.sessionId?.let(playbackSessionManager::isSequenced) != true) {
                         // SINK 2: whole-book global position + whole-book total.
                         // Skipped on offline part-local playback, where
                         // positionSeconds is a PART position that must never be

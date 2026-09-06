@@ -54,6 +54,28 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
+    @Test fun `sequenced authority outage keeps session and stop pending without legacy progress`() = runTest {
+        val manager = object : FakeSessionManager() {
+            override fun isSequenced(sessionId: String) = true
+        }.apply {
+            progressDefault = ApiResult.Error(503, "authority_unavailable", "pending")
+            stopResult = ApiResult.Error(0, "stop_pending", "pending")
+        }
+        val personal = RecordingPersonalDataRepository()
+        val health = FakeHealthApi()
+        val lifecycle = newLifecycle(manager, healthApi = health, personalRepo = personal)
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("negotiated"))
+        lifecycle.reportOwnedPosition(90.0, 100.0, false)
+        advanceTimeBy(PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS + 100)
+        assertTrue(lifecycle.state.value is SessionState.Active)
+        assertEquals(0, health.callCount)
+        lifecycle.stop(expectedSessionId = "negotiated")
+        assertTrue(lifecycle.state.value is SessionState.Failed)
+        assertTrue(personal.syncCalls.isEmpty())
+        assertEquals(1, manager.stopCallCount)
+        assertEquals(2, manager.progressCallCount)
+    }
+
 
     @Test
     fun `adoptActiveSession reports progress without starting duplicate session`() = runTest {

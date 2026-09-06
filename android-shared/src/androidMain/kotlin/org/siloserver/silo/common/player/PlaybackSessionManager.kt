@@ -2556,6 +2556,8 @@ open class PlaybackSessionManager(
      * Reports the current playback position to the server.
      * Called periodically (every ~10 seconds) during active playback.
      */
+    open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
+
     open suspend fun reportProgress(
         sessionId: String,
         position: Double,
@@ -2610,7 +2612,7 @@ open class PlaybackSessionManager(
                 val active = activeVideoAttempt.get()
                 if (active?.sessionId != sessionId) break
                 if (activeVideoAttempt.compareAndSet(active, null)) {
-                    emitActiveVideoEvent(active, "stopped")
+                    emitActiveVideoEvent(active, if (isSequenced(sessionId)) "renderer_retired" else "stopped")
                     stoppedActiveSession = true
                     break
                 }

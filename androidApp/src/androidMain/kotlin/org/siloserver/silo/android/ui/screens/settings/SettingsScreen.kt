@@ -102,6 +102,7 @@ fun SettingsScreen(
     downloadsViewModel: DownloadsViewModel = koinViewModel(),
     diagnosticsViewModel: DiagnosticsViewModel = koinViewModel(),
 ) {
+    val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     val state by viewModel.uiState.collectAsState()
     var subtitleStyleVisible by remember { mutableStateOf(false) }
     org.siloserver.silo.android.ui.screens.player.SubtitleStyleSheet(
@@ -166,6 +167,18 @@ fun SettingsScreen(
                 )
             }
 
+            if (recovery.visible) {
+                item {
+                    SettingsSectionCard {
+                        SettingsNavigationRow(
+                            label = if (recovery.busy) "Recovering playback…" else "Retry pending playback stops",
+                            description = recovery.message,
+                            onClick = recovery.retry,
+                            enabled = !recovery.busy,
+                        )
+                    }
+                }
+            }
             if (shouldShowDiagnosticsEntry(diagnosticsState)) {
                 item {
                     SettingsSectionCard {

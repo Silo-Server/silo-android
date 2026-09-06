@@ -44,6 +44,15 @@ import org.koin.dsl.module
  * lifecycle here is wired but unused until Phase 1+ migrations.
  */
 val playerInfraModule = module {
+    single<org.siloserver.silo.repository.PlaybackJournalStore> {
+        org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
+    }
+    single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get()) }
+    single {
+        org.siloserver.silo.repository.SequencedPlayback(get(), get(), get(), get()) {
+            java.util.UUID.randomUUID().toString()
+        }
+    }
     // Shares the active session Player with the in-process UI so the video
     single { ActivePlayerHolder() }
 

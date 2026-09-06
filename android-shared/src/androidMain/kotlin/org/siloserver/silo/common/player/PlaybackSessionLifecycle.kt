@@ -560,8 +560,11 @@ class PlaybackSessionLifecycle(
                 flushFinalProgress()
             }
 
+            var pendingStop = false
             if (sessionId != null && stopActiveSessionOnStop) {
-                when (val r = sessionManager.stopSession(sessionId)) {
+                val r = sessionManager.stopSession(sessionId)
+                pendingStop = sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
+                when (r) {
                     is ApiResult.Error -> Log.w(TAG, "stopSession error: ${r.code} ${r.message}")
                     is ApiResult.NetworkError ->
                         Log.w(TAG, "stopSession network error: ${r.exception}")
@@ -579,9 +582,9 @@ class PlaybackSessionLifecycle(
             pendingActiveSessionPublication = null
             _notice.value = null
             lastAdoptedSessionId = null
-            _state.value = SessionState.Idle
+            _state.value = if (pendingStop) SessionState.Failed("Playback stop is pending. Retry from playback recovery.") else SessionState.Idle
+            DiagnosticsPlaybackLogger.sessionEvent(if (pendingStop) "session stop pending" else "session stopped")
         }
-        DiagnosticsPlaybackLogger.sessionEvent("session stopped")
     }
 
     /**
@@ -728,6 +731,12 @@ class PlaybackSessionLifecycle(
                 // params. Left unguarded, a late answer about episode A does
                 // all of that to episode B.
                 if (!ownsProgressReply(sess.sessionId)) continue
+                if (sessionManager.isSequenced(sess.sessionId)) {
+                    if (result !is ApiResult.Success) {
+                        _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                    }
+                    continue
+                }
                 when {
                     isPlaybackSessionMissing(result) -> handleSessionMissing(sess.sessionId)
                     result is ApiResult.NetworkError -> {
@@ -912,6 +921,12 @@ class PlaybackSessionLifecycle(
     }
 
     private suspend fun flushFinalProgress() {
+        val sessionId = lastAdoptedSessionId
+        if (sessionId != null && sessionManager.isSequenced(sessionId)) {
+            val position = lastPersistencePosition ?: lastReportedPosition ?: return
+            sessionManager.reportProgress(sessionId, position, lastIsPaused)
+            return
+        }
         val params = lastStartParams ?: return
         syncProgressSnapshot(
             contentId = params.contentId,

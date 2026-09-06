@@ -2189,6 +2189,7 @@ class PlayerViewModel(
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
+        if (_uiState.value.sessionId?.let(playbackSessionManager::isSequenced) == true) return
         if (positionSec < 0.0) return
         val contentId = _uiState.value.contentId.takeIf { it.isNotBlank() } ?: return
         val fileId = currentFileId() ?: return
@@ -4247,7 +4248,7 @@ class PlayerViewModel(
         val cid = state.contentId.takeIf { it.isNotBlank() }
         val fid = currentFileId()
         val scope = finalPositionScope
-        if (scope != null && cid != null && fid != null) {
+        if (ownedSessionId?.let(playbackSessionManager::isSequenced) != true && scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
