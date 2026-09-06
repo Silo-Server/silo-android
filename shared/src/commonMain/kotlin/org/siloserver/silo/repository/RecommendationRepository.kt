@@ -13,8 +13,10 @@ class RecommendationRepository(
     suspend fun getDiscover(): ApiResult<DiscoverResponse> =
         recommendationApi.getDiscover()
 
-    suspend fun getTasteProfile(): ApiResult<TasteProfile> =
-        recommendationApi.getTasteProfile()
+    suspend fun captureTasteAuthority() = recommendationApi.captureTasteAuthority()
+    suspend fun isTasteAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isTasteAuthorityCurrent(owner)
+    suspend fun getTasteProfile(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<TasteProfile> =
+        recommendationApi.getTasteProfile(owner)
 
     suspend fun captureSimilarAuthority() = recommendationApi.captureSimilarAuthority()
     suspend fun isSimilarAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isSimilarAuthorityCurrent(owner)

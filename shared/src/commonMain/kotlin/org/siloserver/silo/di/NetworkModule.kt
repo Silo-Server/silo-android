@@ -30,7 +30,8 @@ val networkModule = module {
     single { ProfileApi(get(), get(), get()) }
     single { SectionApi(get(), get()) }
     single { org.siloserver.silo.network.apiv2.SimilarCardsV2Api(get(), get(), get()) }
-    single { RecommendationApi(get(), get()) }
+    single { org.siloserver.silo.network.apiv2.TasteProfileV2Api(get(), get(), get()) }
+    single { RecommendationApi(get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<org.siloserver.silo.network.api.MetadataAiApi> { org.siloserver.silo.network.api.DefaultMetadataAiApi(get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.EventsSocketV2Api(get(), get(), get()) }
