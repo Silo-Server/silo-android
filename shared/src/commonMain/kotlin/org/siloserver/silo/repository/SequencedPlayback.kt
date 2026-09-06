@@ -118,7 +118,8 @@ class SequencedPlayback(
         sendStart(entry, current)
     }
 
-    private suspend fun sendStart(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot): ApiResult<PlaybackDecisionResponseV3> {
+    private suspend fun sendStart(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot,
+        adoptForPlayer: Boolean = true): ApiResult<PlaybackDecisionResponseV3> {
         if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
         return when (val result = api.start(captured, entry.start)) {
             is ApiResult.Success -> {
@@ -131,7 +132,7 @@ class SequencedPlayback(
                     if (SEQUENCED_PROGRESS_FEATURE !in decision.serverFeatures)
                         return failure("invalid_decision", "Playback omitted the negotiated progress feature.")
                     if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
-                    adopted += entry.attemptId
+                    if (adoptForPlayer) adopted += entry.attemptId
                     publish()
                     ApiResult.Success(decision)
                 } catch (e: Exception) { ApiResult.NetworkError(e) }
@@ -235,7 +236,7 @@ class SequencedPlayback(
             if (oldScope != null && !oldScope.isSameIdentityAs(live.scope)) continue
             scopes[entry.attemptId] = live.scope
             if (entry.sessionId == null) {
-                val startResult = sendStart(entry, live.scope)
+                val startResult = sendStart(entry, live.scope, adoptForPlayer = false)
                 if (startResult !is ApiResult.Success) return@withLock when (startResult) {
                     is ApiResult.Error -> startResult
                     is ApiResult.NetworkError -> startResult

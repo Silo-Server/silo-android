@@ -16,9 +16,10 @@ class SequencedPlaybackTest {
     private class Store : PlaybackJournalStore {
         var entries = emptyList<PlaybackJournalEntry>()
         var fail = false
+        var failStop = false
         override suspend fun read() = entries
         override suspend fun write(entries: List<PlaybackJournalEntry>) {
-            check(!fail) { "disk failed" }
+            check(!fail && !(failStop && entries.any { it.stop != null })) { "disk failed" }
             this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
         }
     }
@@ -200,6 +201,37 @@ class SequencedPlaybackTest {
             assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
             assertEquals("playback_pending", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
             assertEquals(1, starts); assertEquals(request().v2Body(installation), store.entries.single().start)
+        } finally { c.close() }
+    }
+
+    @Test fun recoveryReplayStaysPendingWhenFirstStopJournalWriteFails() = runTest {
+        val identity = Identity()
+        val store = Store().apply { entries = listOf(entry().copy(sessionId = null)); failStop = true }
+        var starts = 0; var deletes = 0
+        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","session_id":"session-1","delivery":"original_http","stream":{"url":"/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct"}}"""
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply(decision, HttpStatusCode.Created) }
+            "/api/v2/playback/session-1" -> {
+                deletes++
+                assertEquals(store.entries.single().stop, SiloJson.decodeFromString<PlaybackStopV2>(req.body.toByteArray().decodeToString()))
+                reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            }
+            else -> error("Unexpected request")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val repository = PlaybackRepository(org.siloserver.silo.network.api.PlaybackApi(c), runtime)
+            assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.recoverPlayback()).error)
+            assertEquals(1, starts); assertEquals(0, deletes)
+            assertEquals(listOf("attempt-1"), runtime.pending.value)
+            assertEquals("session-1", store.entries.single().sessionId)
+            assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "another"))).error)
+            store.failStop = false
+            assertIs<ApiResult.Success<Unit>>(repository.recoverPlayback())
+            assertEquals(1, starts); assertEquals(1, deletes)
+            assertTrue(store.entries.single().terminal); assertTrue(runtime.pending.value.isEmpty())
         } finally { c.close() }
     }
 
