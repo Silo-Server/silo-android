@@ -2,6 +2,7 @@ package org.siloserver.silo.common.player
 
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 
 /**
@@ -75,9 +76,12 @@ fun reducePlayerStats(
             current.resolution
         },
         frameRate = if (event.format.frameRate > 0f) event.format.frameRate else current.frameRate,
-        hdrMode = describeHdrMode(event.format) ?: current.hdrMode,
+        hdrMode = null, // Wait for the decoder output, including after format changes.
         colorTransfer = describeColorTransfer(event.format) ?: current.colorTransfer,
         colorRange = describeColorRange(event.format) ?: current.colorRange,
+    )
+    is PlaybackAnalyticsListener.Event.VideoOutputFormatChanged -> current.copy(
+        hdrMode = describeHdrMode(event.format, event.decoderMimeType),
     )
     is PlaybackAnalyticsListener.Event.AudioFormatChanged ->
         current.copy(audioCodec = event.format.codecs ?: event.format.sampleMimeType)
@@ -179,9 +183,9 @@ private fun describeColorRange(format: Format): String? = when (format.colorInfo
     else -> null
 }
 
-private fun describeHdrMode(format: Format): String? {
-    val codecs = format.codecs.orEmpty()
-    if (codecs.contains("dvh", ignoreCase = true) || codecs.contains("dvhe", ignoreCase = true)) {
+private fun describeHdrMode(format: Format, decoderMimeType: String?): String? {
+    if (decoderMimeType == null) return null
+    if (decoderMimeType.equals(MimeTypes.VIDEO_DOLBY_VISION, ignoreCase = true)) {
         return "Dolby Vision"
     }
     val colorInfo = format.colorInfo ?: return null

@@ -82,6 +82,7 @@ class SiloPlayerFactory(
     private val delayProcessor: DelayAudioProcessor,
     private val subtitleOffsetHolder: SubtitleOffsetHolder,
     private val libassBridge: LibassBridge,
+    private val playbackAnalytics: PlaybackAnalyticsListener,
 ) {
     val isTv: Boolean = TvModeDetector.isTv(context)
 
@@ -246,6 +247,11 @@ class SiloPlayerFactory(
                     eventHandler = eventHandler,
                     eventListener = eventListener,
                     runtimeCorrectionEnabled = runtimeCorrectionState::isEnabled,
+                    onVideoOutputFormatChanged = { format, decoderMimeType ->
+                        eventHandler.post {
+                            playbackAnalytics.onVideoOutputFormatChanged(format, decoderMimeType)
+                        }
+                    },
                     onBaseLayerDecoderMismatch = { decoderName ->
                         baseLayerDecoderMismatch.value = decoderName
                     },
