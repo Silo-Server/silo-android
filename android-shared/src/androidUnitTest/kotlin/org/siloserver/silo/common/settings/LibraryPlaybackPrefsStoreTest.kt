@@ -7,6 +7,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.LibraryPlaybackPrefsApi
 import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -99,6 +100,30 @@ class LibraryPlaybackPrefsStoreTest {
 
         assertEquals(0, store.libraryPrefs.value.size)
         assertEquals("boom", store.lastError.value)
+    }
+
+    @Test
+    fun `clear fences an in-flight list publication`() = runTest {
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val reply = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val client = HttpClient()
+        val api = object : LibraryPlaybackPrefsApi(client) {
+            override suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> {
+                started.complete(Unit)
+                reply.await()
+                return ApiResult.Success(LibraryPlaybackPrefsResponse(listOf(prefFor(1))))
+            }
+        }
+        try {
+            val store = DefaultLibraryPlaybackPrefsStore(LibraryPlaybackPrefsRepository(api))
+            val refresh = async { store.refresh() }
+            started.await()
+            store.clear()
+            reply.complete(Unit)
+            refresh.await()
+            assertTrue(store.libraryPrefs.value.isEmpty())
+            assertNull(store.lastError.value)
+        } finally { client.close() }
     }
 
     private fun prefFor(libraryId: Int, audio: String? = null, sub: String? = null) =

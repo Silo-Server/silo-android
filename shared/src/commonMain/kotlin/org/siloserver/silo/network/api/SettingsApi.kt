@@ -84,9 +84,12 @@ sealed class SettingsCapabilitiesResult {
 @OptIn(ExperimentalUuidApi::class)
 fun newSettingMutationId(): String = Uuid.random().toString()
 
-open class SettingsApi(private val client: HttpClient) {
+open class SettingsApi(
+    private val client: HttpClient,
+    private val readsV2: org.siloserver.silo.network.apiv2.SettingsReadsV2Api? = null,
+) {
 
-    open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = safeApiCall {
+    open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = readsV2?.overlayConfig() ?: safeApiCall {
         client.get("/api/v1/settings/overlay-config")
     }
 
@@ -201,7 +204,7 @@ open class SettingsApi(private val client: HttpClient) {
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
-    ): ApiResult<EffectiveSettingValuesResponse> = safeApiCall {
+    ): ApiResult<EffectiveSettingValuesResponse> = readsV2?.effectiveValues(keys, libraryIds, seriesIds) ?: safeApiCall {
         client.get("/api/v1/settings/values/effective") {
             url {
                 if (keys.isNotEmpty()) parameters.append("keys", keys.joinToString(","))

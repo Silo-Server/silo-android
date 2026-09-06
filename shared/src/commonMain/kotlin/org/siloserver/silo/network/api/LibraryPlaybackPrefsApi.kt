@@ -11,9 +11,12 @@ import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 
-open class LibraryPlaybackPrefsApi(private val client: HttpClient) {
+open class LibraryPlaybackPrefsApi(
+    private val client: HttpClient,
+    private val readsV2: org.siloserver.silo.network.apiv2.SettingsReadsV2Api? = null,
+) {
 
-    open suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> = safeApiCall {
+    open suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> = readsV2?.libraryPreferences() ?: safeApiCall {
         client.get("/api/v1/library-playback-prefs")
     }
 

@@ -64,6 +64,8 @@ class DefaultLibraryPlaybackPrefsStore(
     private val _isLoading = MutableStateFlow(false)
     private val _lastError = MutableStateFlow<String?>(null)
     private val refreshLock = Mutex()
+    private val stateLock = Any()
+    private var generation = 0L
     @Volatile private var hasHydrated: Boolean = false
 
     override val libraryPrefs: StateFlow<Map<Int, LibraryPlaybackPref>> = _libraryPrefs.asStateFlow()
@@ -76,19 +78,28 @@ class DefaultLibraryPlaybackPrefsStore(
     }
 
     override suspend fun refresh() = refreshLock.withLock {
-        _isLoading.value = true
-        _lastError.value = null
+        val expected = synchronized(stateLock) {
+            _isLoading.value = true
+            _lastError.value = null
+            generation
+        }
         try {
-            when (val result = repository.list()) {
-                is ApiResult.Success -> {
-                    _libraryPrefs.value = result.data
-                    hasHydrated = true
+            val result = repository.list()
+            synchronized(stateLock) {
+                if (generation != expected) return@synchronized
+                when (result) {
+                    is ApiResult.Success -> {
+                        _libraryPrefs.value = result.data
+                        hasHydrated = true
+                    }
+                    is ApiResult.Error -> _lastError.value = result.message
+                    is ApiResult.NetworkError -> _lastError.value = result.exception.message
                 }
-                is ApiResult.Error -> _lastError.value = result.message
-                is ApiResult.NetworkError -> _lastError.value = result.exception.message
             }
         } finally {
-            _isLoading.value = false
+            synchronized(stateLock) {
+                if (generation == expected) _isLoading.value = false
+            }
         }
     }
 
@@ -118,7 +129,9 @@ class DefaultLibraryPlaybackPrefsStore(
         return result
     }
 
-    override fun clear() {
+    override fun clear() = synchronized(stateLock) {
+        generation += 1
+        _isLoading.value = false
         _libraryPrefs.value = emptyMap()
         _lastError.value = null
         hasHydrated = false
