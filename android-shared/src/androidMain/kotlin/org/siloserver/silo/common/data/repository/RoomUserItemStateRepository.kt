@@ -529,22 +529,24 @@ class RoomUserItemStateRepository(
      * watched write: projection, resume rows, pending positions, and the
      * in-flight-position replay all behave the same.
      */
+    /** Returns false when the captured identity is no longer current; nothing was written. */
     suspend fun confirmContainerChild(
         scope: AuthScopeSnapshot,
         contentId: String,
         watched: Boolean,
         containerAtMs: Long,
-    ) {
+    ): Boolean {
         val serverId = scope.serverId
-        val profileId = scope.profileId ?: return
+        val profileId = scope.profileId ?: return true
         // The drain captured this scope before the container was acknowledged.
         // A sign-out or profile switch since then must not let an old
         // identity's confirmation land on rows the new identity now owns.
         // withCurrentGeneration also holds the identity mutex for the write.
-        val applied = identityTransitions.withCurrentGeneration(scope.identityGeneration) {
+        val replays = identityTransitions.withCurrentGeneration(scope.identityGeneration) {
             confirmContainerChildUnchecked(scope, serverId, profileId, contentId, watched, containerAtMs)
-        }
-        if (applied == true) syncScheduler.requestSync()
+        } ?: return false
+        if (replays) syncScheduler.requestSync()
+        return true
     }
 
     /** Returns true when a queued replay needs the drain woken. */

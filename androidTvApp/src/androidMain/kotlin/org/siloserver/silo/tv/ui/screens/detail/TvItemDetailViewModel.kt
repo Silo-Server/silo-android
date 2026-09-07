@@ -1702,7 +1702,12 @@ class TvItemDetailViewModel(
                         }
                     }
                 }
-                if (isCurrentMutation) episodeWatchMutationGenerations.remove(episodeContentId)
+                if (isCurrentMutation) {
+                    episodeWatchMutationGenerations.remove(episodeContentId)
+                    // The rejected write no longer counts as a newer intent, so
+                    // a season rollback may restore this episode again.
+                    episodeMutationStartedAt.remove(episodeContentId)
+                }
             } else {
                 // A superseded success still completed on the server, possibly
                 // last. It owns the refresh from here unless something newer

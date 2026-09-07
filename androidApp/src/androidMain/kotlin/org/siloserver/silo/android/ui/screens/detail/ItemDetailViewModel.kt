@@ -1369,6 +1369,9 @@ class ItemDetailViewModel(
                     if (!seriesId.isNullOrBlank()) refreshSeasonUserData(seriesId, refreshTicket)
                 }
                 else -> if (isCurrentMutation) {
+                    // The rejected write no longer counts as a newer intent, so
+                    // a season rollback may restore this episode again.
+                    episodeMutationStartedAt.remove(episodeContentId)
                     updateEpisodePlayedState(episodeContentId, previous)
                 }
             }

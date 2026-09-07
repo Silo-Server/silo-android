@@ -211,9 +211,34 @@ class RoomUserItemStateRepositoryTest {
         val captured = scopeS1.copy(identityGeneration = barrier.generation.value, isIdentityGenerationStamped = true)
         barrier.changing(org.siloserver.silo.network.IdentityTransitionKind.SIGN_OUT) { }
 
-        gated.confirmContainerChild(captured, "e1", watched = true, containerAtMs = 5_000L)
+        val applied = gated.confirmContainerChild(captured, "e1", watched = true, containerAtMs = 5_000L)
 
+        assertFalse(applied)
         assertNull(db.contentItemStateDao().get("s1", "p1", "e1"))
+    }
+
+    /**
+     * A child intent the server rejected is no intent at all. Its stamp must
+     * not shield the row from the season confirmation that did succeed.
+     */
+    @Test
+    fun rejectedChildIntentDoesNotBlockContainerConfirmation() = runTest {
+        var clock = 9_000L
+        val clocked = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
+        )
+        clocked.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val rejected = clocked.recordWatched("e1", watched = false)
+        clocked.resolve(rejected, WriteOutcome.TERMINAL)
+        assertEquals(0L, db.contentItemStateDao().get("s1", "p1", "e1")?.watchedIntentAtMs)
+
+        clocked.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertNull(clocked.localPlaybackProgress("e1"))
     }
 
     /**

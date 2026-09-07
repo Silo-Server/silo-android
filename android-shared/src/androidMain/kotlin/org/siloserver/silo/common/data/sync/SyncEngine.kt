@@ -59,12 +59,13 @@ class SyncEngine(
      * can be gated against the identity that accepted the container write.
      */
     fun interface WatchedChildConfirmer {
+        /** Returns false when the captured identity is no longer current and nothing was written. */
         suspend fun confirm(
             scope: AuthScopeSnapshot,
             contentId: String,
             watched: Boolean,
             containerAtMs: Long,
-        )
+        ): Boolean
     }
 
     data class DrainResult(
@@ -296,17 +297,18 @@ class SyncEngine(
         val confirmer = childConfirmer ?: return WriteOutcome.TERMINAL
         if (scope.profileId == null) return WriteOutcome.TERMINAL
         val payload = OutboxOperation.decodeReconcilePayload(op.payloadJson)
-        payload.knownChildIds.forEach { childId ->
-            confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)
+        // A confirmation declined by the identity gate means the captured
+        // identity moved on mid-drain. Keep the op queued for that identity's
+        // next drain instead of deleting it as done.
+        for (childId in payload.knownChildIds) {
+            if (!confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)) return WriteOutcome.RETRIABLE
         }
         return when (val page = api.getEpisodes(payload.seriesId, payload.seasonNumber, scope)) {
             is ApiResult.Success -> {
-                page.data.episodes
-                    .map { it.contentId }
-                    .filterNot { it in payload.knownChildIds }
-                    .forEach { childId ->
-                        confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)
-                    }
+                val discovered = page.data.episodes.map { it.contentId }.filterNot { it in payload.knownChildIds }
+                for (childId in discovered) {
+                    if (!confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)) return WriteOutcome.RETRIABLE
+                }
                 WriteOutcome.SYNCED
             }
             else -> page.toWriteOutcome()

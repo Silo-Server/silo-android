@@ -61,6 +61,7 @@ class SyncEngineTest {
 
     private val confirmed = mutableListOf<String>()
     private val confirmedScopes = mutableListOf<AuthScopeSnapshot>()
+    private var confirmApplies = true
     private var episodesStatus = HttpStatusCode.OK
     private fun reconcilingEngine() = SyncEngine(
         db = db,
@@ -82,6 +83,7 @@ class SyncEngineTest {
         childConfirmer = SyncEngine.WatchedChildConfirmer { scope, contentId, watched, _ ->
             confirmedScopes += scope
             confirmed += "$contentId=$watched"
+            confirmApplies
         },
     )
 
@@ -138,6 +140,16 @@ class SyncEngineTest {
         val result = reconcilingEngine().drainOnce()
         assertEquals(0, result.synced)
         assertTrue(confirmed.isEmpty())
+    }
+
+    /** A confirmation declined by the identity gate keeps the op queued for that identity. */
+    @Test
+    fun reconcileWatchedChildrenStaysQueuedWhenConfirmationIsGated() = runTest {
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        confirmApplies = false
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.retriable)
+        assertEquals(1, db.dirtyOperationDao().count())
     }
 
     /** A season write rejected during the drain must not leave its reconciliation to run later. */
