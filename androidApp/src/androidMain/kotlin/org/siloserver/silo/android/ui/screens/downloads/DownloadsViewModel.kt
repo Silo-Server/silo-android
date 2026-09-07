@@ -442,8 +442,12 @@ class DownloadsViewModel(
             .getOrElse { emptyList() }
         for (p in pending) {
             val fileId = p.mediaFileId ?: continue
-            withContext(Dispatchers.IO) { storage.delete(p.serverId, p.profileId, fileId) }
-            metadataStore.deleteSidecar(p.serverId, p.profileId, fileId)
+            metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
+                withContext(Dispatchers.IO) {
+                    storage.delete(p.serverId, p.profileId, fileId) ||
+                        !storage.exists(p.serverId, p.profileId, fileId)
+                }
+            }
         }
     }
 
