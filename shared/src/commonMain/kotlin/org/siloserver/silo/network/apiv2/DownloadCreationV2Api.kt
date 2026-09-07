@@ -42,7 +42,10 @@ class DownloadCreationV2Api(
         val result = safeApiV2Call<CreatedDownloadsV2>(gate) {
             client.post("/api/v2/downloads") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
-                header("X-Silo-Device-Id",device)
+                // The auth plugin attaches X-Silo-Device-Id for the current device;
+                // adding it here too sends two values, which the server stores as
+                // "id,id" and the receipt guard then rejects. `device` is only the
+                // identity the reply is checked against.
                 parameter("limit",100); cursor?.let { parameter("cursor",it) }
                 contentType(ContentType.Application.Json); setBody(body)
             }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.Accepted) }

@@ -21,13 +21,37 @@ class DownloadCreationV2Test {
     private fun api(c: HttpClient) = DownloadCreationV2Api(c,tokens,devices,DownloadRegistryV2Api(c,tokens,devices))
     private fun MockRequestHandleScope.json(body: String, status: HttpStatusCode = HttpStatusCode.OK) = respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))
 
+    @Test fun createSendsExactlyOneDeviceIdHeaderThroughTheAuthPlugin() = runTest {
+        // Regression: the creation API used to add X-Silo-Device-Id itself while the
+        // auth plugin also attached it, so the server received "device,device",
+        // stored that, and the receipt guard rejected the reply.
+        var deviceValues: List<String>? = null
+        val authenticated = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = scope }
+        authenticated.setServerUrl(scope.serverUrl); authenticated.saveTokens("access","refresh",3600)
+        val c = HttpClient(MockEngine {
+            if (it.method == HttpMethod.Get) json("""{"items":[],"page":{"has_more":false}}""") else {
+                deviceValues = it.headers.getAll("X-Silo-Device-Id")
+                json("""{"items":[$row],"skipped":[],"page":{"has_more":false}}""",HttpStatusCode.Accepted)
+            }
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = authenticated; deviceMetadataProvider = devices }
+        }
+        try {
+            val api = DownloadCreationV2Api(c,authenticated,devices,DownloadRegistryV2Api(c,authenticated,devices))
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42),scope))
+            assertEquals(listOf("device"),deviceValues)
+        } finally { c.close() }
+    }
+
     @Test fun singleAbsenceAndReplacementUseExactGuardWithoutLegacyFields() = runTest {
         var existing = false
         val c = client {
             if (it.method == HttpMethod.Get) json("""{"items":[${if (existing) row else ""}],"page":{"has_more":false}}""") else {
                 assertEquals("/api/v2/downloads",it.url.encodedPath)
                 assertEquals(scope,it.attributes[AuthScopeAttributeKey]); assertTrue(it.attributes[SingleAttemptAttributeKey])
-                assertEquals("device",it.headers["X-Silo-Device-Id"])
+                // No auth plugin on this client: the API must not add the device header itself.
+                assertNull(it.headers["X-Silo-Device-Id"])
                 val body = SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject
                 assertEquals(JsonPrimitive("42"),body["media_file_id"])
                 assertEquals(JsonPrimitive(if (existing) 7 else 0),body["expected_revision"])
