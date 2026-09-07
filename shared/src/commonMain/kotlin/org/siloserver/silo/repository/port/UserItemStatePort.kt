@@ -47,18 +47,22 @@ interface UserItemStatePort {
     suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome)
 
     /**
-     * Apply a server-confirmed container-level watched mutation (season or
-     * series) to the children it fanned out to. [recordWatched] only touches
-     * the mutated content id; without this the children keep their local
-     * resume rows and the overlay resurrects Resume on episodes the server now
-     * reports as played. Implementations record each child exactly as a
-     * confirmed single-item watched write: the projection flips, resume rows
-     * and queued position writes are cleared, and a child whose position write
-     * is already in flight keeps a queued replay so that position cannot land
-     * last. No-op on the default port.
+     * [recordWatched] for a container (a season) whose children the server
+     * resolves. The container write alone leaves the children's local resume
+     * rows in place, and the overlay would resurrect Resume on episodes the
+     * server now reports as played. Implementations queue a durable child
+     * reconciliation next to the container op: once the container write is
+     * acknowledged, [children.knownChildIds] are confirmed immediately and the
+     * rest are discovered from the catalog and confirmed by the sync engine,
+     * retried until the lookup succeeds. Each child is confirmed only when no
+     * child-level intent newer than the container action exists. The default
+     * port records a plain watched write.
      */
-    suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
-    }
+    suspend fun recordContainerWatched(
+        contentId: String,
+        watched: Boolean,
+        children: WatchedContainerChildren,
+    ): OutboxHandle = recordWatched(contentId, watched)
 
     /**
      * Durably record a playback position for offline-safe resume + sync. Unlike
@@ -225,6 +229,13 @@ data class LocalPlaybackProgress(
  * then false-ack/delete the op). Null for the no-op port (single-scope) →
  * unpinned, preserving the original behaviour.
  */
+/** Where a container's children live, for the durable child reconciliation. */
+data class WatchedContainerChildren(
+    val seriesId: String,
+    val seasonNumber: Int,
+    val knownChildIds: List<String>,
+)
+
 data class OutboxHandle(val opId: Long, val scope: AuthScopeSnapshot? = null) {
     companion object {
         val NONE = OutboxHandle(-1L)

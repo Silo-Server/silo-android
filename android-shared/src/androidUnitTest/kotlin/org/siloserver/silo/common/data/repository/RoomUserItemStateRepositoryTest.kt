@@ -9,6 +9,7 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
@@ -47,81 +48,75 @@ class RoomUserItemStateRepositoryTest {
     @AfterTest
     fun tearDown() = db.close()
 
+    private val children = WatchedContainerChildren(seriesId = "series-1", seasonNumber = 2, knownChildIds = listOf("e1"))
+
     /**
-     * A season-level watched mutation is recorded against the season id only.
-     * The episodes it fans out to keep their local resume rows unless the
-     * caller confirms them, which would resurrect Resume on a played episode.
+     * A season write queues its own SET_WATCHED plus a reconciliation op for
+     * the children, behind it, so the drain confirms children only after the
+     * server has acknowledged the container.
      */
     @Test
-    fun recordConfirmedWatchedDropsChildResumeRowsAndQueuedPositionsWithoutQueuingRequests() = runTest {
-        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
-        repo.recordPosition("e2", fileId = 8, positionSeconds = 120.0, durationSeconds = 3600.0)
-        assertNotNull(repo.localPlaybackProgress("e1"))
-        assertNotNull(repo.localPlaybackProgress("e2"))
+    fun recordContainerWatchedQueuesReconciliationBehindTheContainerWrite() = runTest {
+        val handle = repo.recordContainerWatched("season-1", watched = true, children = children)
+        assertTrue(handle.opId >= 0)
 
-        repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
+        val ops = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.SET_WATCHED, OutboxOperation.RECONCILE_WATCHED_CHILDREN), ops.map { it.opKind })
+        assertEquals(handle.opId, ops[0].id)
+        val payload = OutboxOperation.decodeReconcilePayload(ops[1].payloadJson)
+        assertEquals(true, payload.watched)
+        assertEquals("series-1", payload.seriesId)
+        assertEquals(2, payload.seasonNumber)
+        assertEquals(listOf("e1"), payload.knownChildIds)
+        // Only the season head is due first: the reconciliation waits behind it.
+        val heads = db.dirtyOperationDao().dueTargetHeads("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(handle.opId), heads.map { it.id })
+    }
+
+    /**
+     * Confirming a child behaves like a confirmed single-item write: the
+     * projection flips, resume rows and pending positions clear, and nothing
+     * is left queued for the network.
+     */
+    @Test
+    fun confirmContainerChildDropsResumeRowsAndQueuedPositionsWithoutQueuingRequests() = runTest {
+        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        assertNotNull(repo.localPlaybackProgress("e1"))
+
+        repo.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
 
         assertNull(repo.localPlaybackProgress("e1"))
-        assertNull(repo.localPlaybackProgress("e2"))
-        assertTrue(repo.localPlaybackProgressForContent(listOf("e1", "e2")).isEmpty())
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
-        // Nothing left to send: the server already applied the season write.
         assertTrue(db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).isEmpty())
     }
 
     /**
-     * A child the user toggled on its own while the season write was pending
-     * carries a newer intent; the container confirmation must not overwrite
-     * its projection or coalesce away its queued write.
+     * A child the user toggled after the container action carries a newer
+     * intent, whether or not its outbox op has drained already. An older
+     * intent (a stale queued op from before the action) does not protect it.
      */
     @Test
-    fun recordConfirmedWatchedLeavesChildrenWithTheirOwnPendingIntentAlone() = runTest {
-        val own = repo.recordWatched("e1", watched = false)
-        assertTrue(own.opId >= 0)
-
-        repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
-
-        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
-        assertNotNull(db.dirtyOperationDao().getById(own.opId))
-    }
-
-    /**
-     * The per-child confirmation must be atomic. Simulate a child-level write
-     * landing between the intent check and the record by issuing it from a
-     * second repository on the same database while the first is mid-loop.
-     * With per-child transactions the second write either waits and is then
-     * seen as the newer intent, or lands after and coalesces normally; in
-     * both cases the child's own pending op survives.
-     */
-    @Test
-    fun recordConfirmedWatchedDoesNotDropAChildWriteThatLandsDuringConfirmation() = runTest {
-        val other = RoomUserItemStateRepository(
+    fun confirmContainerChildKeepsIntentsNewerThanTheContainerActionOnly() = runTest {
+        var clock = 1000L
+        val clocked = RoomUserItemStateRepository(
             db = db,
             snapshotProvider = { currentSnapshot },
-            now = { 1000L },
-            idGenerator = { "other-${nextId++}" },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
         )
-        // Confirm a first child, then race a user toggle on the second child
-        // against its confirmation.
-        val own = kotlinx.coroutines.coroutineScope {
-            val confirmation = async(kotlinx.coroutines.Dispatchers.IO) {
-                repo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
-            }
-            val handle = other.recordWatched("e2", watched = false)
-            confirmation.await()
-            handle
-        }
+        // Stale intent from before the container action: superseded.
+        val stale = clocked.recordWatched("old", watched = false)
+        clocked.resolve(stale, WriteOutcome.SYNCED)
+        // Newer intent, already drained (no outbox row left to inspect).
+        clock = 9_000L
+        val newer = clocked.recordWatched("new", watched = false)
+        clocked.resolve(newer, WriteOutcome.SYNCED)
 
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
-        // Whichever order the two writes serialized in, the user's own intent
-        // for e2 is what remains queued.
-        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
-            .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e2" }
-        assertEquals(1, queued.size)
-        assertEquals(own.opId, queued.single().id)
-        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e2")?.watched)
+        clocked.confirmContainerChild("s1", "p1", "old", watched = true, containerAtMs = 5_000L)
+        clocked.confirmContainerChild("s1", "p1", "new", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "old")?.watched)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "new")?.watched)
     }
 
     /**
@@ -130,7 +125,7 @@ class RoomUserItemStateRepositoryTest {
      * position cannot land last and reopen the episode on the server.
      */
     @Test
-    fun recordConfirmedWatchedKeepsReplayForChildWithInFlightPosition() = runTest {
+    fun confirmContainerChildKeepsReplayForChildWithInFlightPosition() = runTest {
         repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
         assertEquals(1, db.dirtyOperationDao().claim(position.id))
@@ -143,7 +138,7 @@ class RoomUserItemStateRepositoryTest {
             idGenerator = { "guarded-${nextId++}" },
         )
 
-        guardedRepo.recordConfirmedWatched(listOf("e1", "e2"), watched = true)
+        guardedRepo.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
 
         assertNull(guardedRepo.localPlaybackProgress("e1"))
         val queuedWatched = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)

@@ -4,6 +4,7 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -13,12 +14,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.test.StandardTestDispatcher
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -57,73 +52,56 @@ class PersonalDataRepositoryPortTest {
             resolvedWith = outcome
         }
 
-        val confirmed = mutableListOf<Pair<List<String>, Boolean>>()
-        override suspend fun recordConfirmedWatched(contentIds: List<String>, watched: Boolean) {
-            confirmed += contentIds to watched
+        val containers = mutableListOf<Triple<String, Boolean, WatchedContainerChildren>>()
+        override suspend fun recordContainerWatched(
+            contentId: String,
+            watched: Boolean,
+            children: WatchedContainerChildren,
+        ): OutboxHandle {
+            containers += Triple(contentId, watched, children)
+            recorded += "container=$watched"
+            return OutboxHandle(seq++)
         }
     }
 
-    private fun repo(
-        status: HttpStatusCode,
-        port: UserItemStatePort,
-        reconciliationScope: CoroutineScope? = null,
-    ): PersonalDataRepository {
+    private fun repo(status: HttpStatusCode, port: UserItemStatePort): PersonalDataRepository {
         val client = HttpClient(
             MockEngine { respond("{}", status, headersOf(HttpHeaders.ContentType, "application/json")) },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return if (reconciliationScope == null) {
-            PersonalDataRepository(PersonalDataApi(client), port)
-        } else {
-            PersonalDataRepository(PersonalDataApi(client), port, reconciliationScope = reconciliationScope)
-        }
+        return PersonalDataRepository(PersonalDataApi(client), port)
     }
 
     /**
-     * A season write fans out on the server. The children must be confirmed
-     * locally even after the screen that started the write is gone, so the
-     * confirmation runs on the repository's scope, not the caller's.
+     * A season write hands the port everything the durable child
+     * reconciliation needs, then resolves the container op with the network
+     * outcome like any other content mutation.
      */
     @Test
-    fun setContainerWatchedConfirmsKnownAndResolvedChildrenOnItsOwnScope() = runTest {
+    fun setSeasonWatchedRecordsContainerWithChildrenThenResolves() = runTest {
         val port = RecordingPort()
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val repoScope = CoroutineScope(Job() + dispatcher)
-        val callerScope = CoroutineScope(Job() + dispatcher)
-        val repository = repo(HttpStatusCode.OK, port, reconciliationScope = repoScope)
-
-        var result: Any? = null
-        val call = callerScope.launch {
-            result = repository.setContainerWatched(
-                itemId = "season-1",
-                watched = true,
-                knownChildIds = listOf("e1"),
-                resolveChildIds = { listOf("e1", "e2", "e3") },
-            )
-        }
-        call.join()
-        // The caller leaves before reconciliation runs.
-        callerScope.cancel()
-        advanceUntilIdle()
-
+        val result = repo(HttpStatusCode.OK, port).setSeasonWatched(
+            seasonId = "season-1",
+            watched = true,
+            seriesId = "series-1",
+            seasonNumber = 2,
+            knownEpisodeIds = listOf("e1", "e2"),
+        )
         assertTrue(result is org.siloserver.silo.network.ApiResult.Success<*>)
-        assertEquals(listOf("watched=true"), port.recorded)
-        assertEquals(listOf(listOf("e1") to true, listOf("e2", "e3") to true), port.confirmed)
+        assertEquals(listOf("container=true"), port.recorded)
+        assertEquals(
+            listOf(Triple("season-1", true, WatchedContainerChildren("series-1", 2, listOf("e1", "e2")))),
+            port.containers,
+        )
+        assertEquals(WriteOutcome.SYNCED, port.resolvedWith)
     }
 
     @Test
-    fun setContainerWatchedDoesNotConfirmChildrenOnFailure() = runTest {
+    fun setSeasonWatchedResolvesTerminalOnForbidden() = runTest {
         val port = RecordingPort()
-        val dispatcher = StandardTestDispatcher(testScheduler)
-        val repository = repo(
-            HttpStatusCode.Forbidden,
-            port,
-            reconciliationScope = CoroutineScope(Job() + dispatcher),
-        )
-        repository.setContainerWatched("season-1", true, listOf("e1")) { listOf("e1", "e2") }
-        advanceUntilIdle()
-        assertTrue(port.confirmed.isEmpty())
+        repo(HttpStatusCode.Forbidden, port).setSeasonWatched("season-1", true, "series-1", 2, emptyList())
+        assertEquals(WriteOutcome.TERMINAL, port.resolvedWith)
     }
 
     @Test

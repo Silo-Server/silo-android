@@ -16,12 +16,9 @@ import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.canServeCache
 import org.siloserver.silo.repository.port.toWriteOutcome
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 open class PersonalDataRepository(
     private val personalDataApi: PersonalDataApi,
@@ -35,11 +32,6 @@ open class PersonalDataRepository(
     /** Offline read cache for the library list (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
-    /**
-     * Process-owned scope for work that must outlive the screen that started
-     * it. Child confirmation after a container write is the only user so far.
-     */
-    private val reconciliationScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     // -- Libraries --
 
@@ -166,35 +158,29 @@ open class PersonalDataRepository(
     }
 
     /**
-     * [setWatched] for a container (season or series) whose children the
-     * server resolves. On success the children are confirmed locally through
-     * [UserItemStatePort.recordConfirmedWatched] so their resume rows cannot
-     * resurrect Resume. [knownChildIds] are confirmed immediately;
-     * [resolveChildIds] is then invoked to discover the rest. Both run on a
-     * repository-owned scope so leaving the screen cannot cancel them, and
-     * both are skipped if the active identity changed in the meantime.
+     * [setWatched] for a season. The server fans the write out to the season's
+     * episodes; the port queues a durable child reconciliation so those
+     * episodes' local resume rows cannot resurrect Resume afterward, whether
+     * or not the screen that started the write is still alive.
      */
-    open suspend fun setContainerWatched(
-        itemId: String,
+    open suspend fun setSeasonWatched(
+        seasonId: String,
         watched: Boolean,
-        knownChildIds: List<String>,
-        resolveChildIds: suspend () -> List<String>?,
+        seriesId: String,
+        seasonNumber: Int,
+        knownEpisodeIds: List<String>,
     ): ApiResult<Unit> {
-        val identityGeneration = identityTransitions.generation.value
-        val result = setWatched(itemId, watched)
-        if (result !is ApiResult.Success) return result
-        reconciliationScope.launch {
-            if (identityTransitions.generation.value != identityGeneration) return@launch
-            if (knownChildIds.isNotEmpty()) {
-                userItemStatePort.recordConfirmedWatched(knownChildIds, watched)
-            }
-            val all = resolveChildIds() ?: return@launch
-            if (identityTransitions.generation.value != identityGeneration) return@launch
-            val remaining = all.filterNot { it in knownChildIds }
-            if (remaining.isNotEmpty()) {
-                userItemStatePort.recordConfirmedWatched(remaining, watched)
-            }
+        val handle = userItemStatePort.recordContainerWatched(
+            seasonId,
+            watched,
+            WatchedContainerChildren(seriesId, seasonNumber, knownEpisodeIds),
+        )
+        val result = if (watched) {
+            personalDataApi.markWatched(seasonId, handle.scope)
+        } else {
+            personalDataApi.markUnwatched(seasonId, handle.scope)
         }
+        userItemStatePort.resolve(handle, result.toWriteOutcome())
         return result
     }
 

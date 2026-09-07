@@ -810,9 +810,9 @@ class TvItemDetailViewModel(
      * Requests for one season run strictly in order so the latest intent is
      * always the last write the server sees. Rollback always returns to the
      * last server-confirmed state, not to an earlier pending intent. Every
-     * post-write refresh is guarded by [watchedStateRevision]: any watched
-     * mutation that starts while a refresh is suspended makes that refresh's
-     * result stale.
+     * post-write refresh publishes only while no other watched write has
+     * completed since it began, so the last write to finish owns the final
+     * server rollup.
      */
     fun onSetSeasonWatched(season: Season, watched: Boolean) {
         val current = _uiState.value
@@ -822,16 +822,19 @@ class TvItemDetailViewModel(
         // The baseline is the last confirmed state. A second write that starts
         // while the first is pending inherits it instead of snapshotting the
         // first write's optimistic values.
+        // An episode with its own write in flight shows that write's
+        // optimistic value; the baseline must hold its confirmed value.
+        fun List<EpisodeListItem>.confirmed() = map { episodeConfirmedStates[it.contentId] ?: it }
         val baseline = seasonWatchBaselines.getOrPut(seasonNumber) {
             TvSeasonWatchBaseline(
                 season = current.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: season,
                 // During a season switch the rail still shows the previous
                 // season as a placeholder; only episodes of this season count.
-                episodes = current.episodes.filter { it.seasonNumber == seasonNumber },
-                windowPage = episodeWindow.get(seasonNumber),
+                episodes = current.episodes.filter { it.seasonNumber == seasonNumber }.confirmed(),
+                windowPage = episodeWindow.get(seasonNumber)?.confirmed(),
             )
         }
-        val revision = ++watchedStateRevision
+        val generationStartedAt = ++episodeMutationClock
         val mutationGeneration = ++nextSeasonWatchMutationGeneration
         seasonWatchMutationGenerations[seasonNumber] = mutationGeneration
 
@@ -852,18 +855,19 @@ class TvItemDetailViewModel(
             // Serialize with the previous write for this season so a quick
             // reversal cannot reach the server before the request it reverses.
             previousWrite?.join()
-            val knownEpisodes = (baseline.windowPage ?: baseline.episodes).map { it.contentId }
-            // The repository confirms the children on its own scope, so
-            // leaving this screen cannot strand their durable resume rows.
-            val result = personalDataRepository.setContainerWatched(
-                itemId = season.contentId,
+            // The port queues a durable child reconciliation next to this
+            // write, so leaving this screen cannot strand the episodes'
+            // resume rows. Known episodes are confirmed first; the rest are
+            // discovered by the sync engine and retried until the lookup succeeds.
+            val result = personalDataRepository.setSeasonWatched(
+                seasonId = season.contentId,
                 watched = watched,
-                knownChildIds = knownEpisodes,
-                resolveChildIds = {
-                    val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
-                    (page as? ApiResult.Success)?.data?.episodes?.map { it.contentId }
-                },
+                seriesId = seriesContentId,
+                seasonNumber = seasonNumber,
+                knownEpisodeIds = (baseline.windowPage ?: baseline.episodes).map { it.contentId },
             )
+            completeWatchedWrite()
+            val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = seasonWatchMutationGenerations[seasonNumber] == mutationGeneration
             // Read the live baseline: an earlier serialized write for this
             // season may have advanced it after this write captured its own.
@@ -875,7 +879,10 @@ class TvItemDetailViewModel(
                 if (!isCurrentMutation) return@launch
                 seasonWatchMutationGenerations.remove(seasonNumber)
                 seasonWatchBaselines.remove(seasonNumber)
-                applySeasonWatchState(confirmed)
+                // Episodes the user toggled on their own after this season
+                // write began keep their newer state; only untouched
+                // episodes return to the confirmed baseline.
+                applySeasonWatchState(confirmed.withoutEpisodes(episodesTouchedSince(generationStartedAt)))
                 return@launch
             }
 
@@ -891,16 +898,16 @@ class TvItemDetailViewModel(
             // Fresh-only reads: a cached pre-mutation list would undo the
             // optimistic state.
             val seasonsResult = catalogRepository.refreshSeasons(seriesContentId)
-            if (revision != watchedStateRevision) return@launch
+            if (!refreshStillOwned(refreshTicket)) return@launch
             if (seasonsResult is ApiResult.Success) applySeasonUserData(seriesContentId, seasonsResult.data.seasons)
             if (_uiState.value.selectedSeason == seasonNumber) {
                 loadEpisodes(seriesContentId, seasonNumber, quiet = true, freshOnly = true)
             } else if (episodeWindow.get(seasonNumber) != null) {
                 val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
-                if (revision != watchedStateRevision) return@launch
+                if (!refreshStillOwned(refreshTicket)) return@launch
                 if (page is ApiResult.Success && _uiState.value.detail?.contentId == seriesContentId) {
                     val refreshed = withLocalProgress(page.data.episodes)
-                    if (revision != watchedStateRevision) return@launch
+                    if (!refreshStillOwned(refreshTicket)) return@launch
                     episodeWindow.put(seasonNumber, refreshed)
                     publishCarousel()
                 }
@@ -909,10 +916,29 @@ class TvItemDetailViewModel(
     }
 
     /**
-     * Bumped by every watched mutation (season or episode). A refresh captured
-     * before the bump must not publish its result afterwards.
+     * Refresh ownership follows server completion order, not start order: a
+     * post-write refresh publishes only if no other watched write completed
+     * after it began. The last write to finish is the one whose refresh
+     * carries the final server rollup.
      */
-    private var watchedStateRevision = 0L
+    private var lastWatchedCompletion = 0L
+    private var nextWatchedCompletion = 0L
+    private fun beginWatchedRefresh(): Long = lastWatchedCompletion
+    private fun completeWatchedWrite() { lastWatchedCompletion = ++nextWatchedCompletion }
+    private fun refreshStillOwned(startedAfterCompletion: Long) = lastWatchedCompletion == startedAfterCompletion
+
+    /**
+     * Confirmed (pre-optimistic) episode state while an episode write is in
+     * flight, and the logical time each episode write started. A season
+     * baseline reads confirmed values from here; a season rollback leaves
+     * alone any episode touched after the season write began.
+     */
+    private val episodeConfirmedStates = mutableMapOf<String, EpisodeListItem>()
+    private val episodeMutationStartedAt = mutableMapOf<String, Long>()
+    private var episodeMutationClock = 0L
+    private fun episodesTouchedSince(clock: Long): Set<String> =
+        episodeMutationStartedAt.filterValues { it > clock }.keys
+
     private val seasonWatchWrites = mutableMapOf<Int, Job>()
     private val seasonWatchBaselines = mutableMapOf<Int, TvSeasonWatchBaseline>()
 
@@ -923,16 +949,19 @@ class TvItemDetailViewModel(
      */
     private fun applySeasonWatchState(state: TvSeasonWatchBaseline) {
         val seasonNumber = state.season.seasonNumber
-        val byId = state.episodes.associateBy { it.contentId }
+        val byId = (state.windowPage ?: state.episodes).associateBy { it.contentId }
+        fun List<EpisodeListItem>.merged() = map { episode -> byId[episode.contentId] ?: episode }
         _uiState.update {
             it.copy(
                 seasons = it.seasons.map { entry ->
                     if (entry.seasonNumber == seasonNumber) state.season else entry
                 },
-                episodes = it.episodes.map { episode -> byId[episode.contentId] ?: episode },
+                episodes = it.episodes.merged(),
             )
         }
-        state.windowPage?.let { episodeWindow.put(seasonNumber, it) }
+        // Merge into the cached page so episodes deliberately left out of
+        // [state] keep their current state.
+        episodeWindow.get(seasonNumber)?.let { episodeWindow.put(seasonNumber, it.merged()) }
         publishCarousel()
         if (_uiState.value.selectedSeason == seasonNumber) refreshNextUp(_uiState.value.episodes)
     }
@@ -948,12 +977,18 @@ class TvItemDetailViewModel(
             episodes = episodes.map { it.withWatchedPlaybackState(watched) },
             windowPage = windowPage?.map { it.withWatchedPlaybackState(watched) },
         )
+
+        /** Drop [contentIds] from the restore so newer episode state survives. */
+        fun withoutEpisodes(contentIds: Set<String>) = if (contentIds.isEmpty()) this else copy(
+            episodes = episodes.filterNot { it.contentId in contentIds },
+            windowPage = windowPage?.filterNot { it.contentId in contentIds },
+        )
     }
 
-    /** Reload only the season list; publish it only if no newer mutation began. */
-    private suspend fun refreshSeasonUserData(seriesContentId: String, revision: Long) {
+    /** Reload only the season list; publish it only if no other watched write completed since. */
+    private suspend fun refreshSeasonUserData(seriesContentId: String, refreshTicket: Long) {
         val result = catalogRepository.refreshSeasons(seriesContentId)
-        if (revision != watchedStateRevision) return
+        if (!refreshStillOwned(refreshTicket)) return
         if (result is ApiResult.Success) applySeasonUserData(seriesContentId, result.data.seasons)
     }
 
@@ -1608,9 +1643,12 @@ class TvItemDetailViewModel(
         val previousEpisode = previousEpisodes.firstOrNull { it.contentId == episodeContentId }
         val mutationSeason = current.selectedSeason
         val listGeneration = episodeListGeneration
-        val revision = ++watchedStateRevision
         val mutationGeneration = ++nextEpisodeWatchMutationGeneration
         episodeWatchMutationGenerations[episodeContentId] = mutationGeneration
+        episodeMutationStartedAt[episodeContentId] = ++episodeMutationClock
+        // Remember the confirmed value only for the first of a run of writes,
+        // so a season baseline captured mid-run still sees the server state.
+        if (previousEpisode != null) episodeConfirmedStates.getOrPut(episodeContentId) { previousEpisode }
         val updatedEpisodes = previousEpisodes.map { episode ->
             if (episode.contentId == episodeContentId) episode.withWatchedPlaybackState(watched) else episode
         }
@@ -1620,7 +1658,10 @@ class TvItemDetailViewModel(
 
         viewModelScope.launch {
             val result = personalDataRepository.setWatched(episodeContentId, watched)
+            completeWatchedWrite()
+            val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
+            if (isCurrentMutation) episodeConfirmedStates.remove(episodeContentId)
             if (result !is ApiResult.Success) {
                 if (
                     isCurrentMutation &&
@@ -1654,7 +1695,7 @@ class TvItemDetailViewModel(
                     loadEpisodes(seriesId, season, quiet = true, freshOnly = true)
                     // One episode can complete or reopen its season, so the
                     // season tab's watched flag must follow.
-                    refreshSeasonUserData(seriesId, revision)
+                    refreshSeasonUserData(seriesId, refreshTicket)
                 }
             }
         }

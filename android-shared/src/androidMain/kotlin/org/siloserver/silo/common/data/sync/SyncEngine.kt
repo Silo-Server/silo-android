@@ -8,6 +8,7 @@ import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.WriteOutcome
@@ -43,10 +44,25 @@ class SyncEngine(
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val batchLimit: Int = 50,
+    /** Needed only for RECONCILE_WATCHED_CHILDREN; null drops those ops terminally. */
+    private val catalogApi: CatalogApi? = null,
+    /** Local confirmation sink for RECONCILE_WATCHED_CHILDREN; null drops those ops terminally. */
+    private val childConfirmer: WatchedChildConfirmer? = null,
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
     private val userStateDao = db.userItemStateDao()
+
+    /** Applies one acknowledged container write to one child, locally only. */
+    fun interface WatchedChildConfirmer {
+        suspend fun confirm(
+            serverId: String,
+            profileId: String,
+            contentId: String,
+            watched: Boolean,
+            containerAtMs: Long,
+        )
+    }
 
     data class DrainResult(
         val synced: Int = 0,
@@ -207,6 +223,8 @@ class SyncEngine(
 
             OutboxOperation.SET_EBOOK_PROGRESS -> return dispatchEbookProgress(op, contentId, scope)
 
+            OutboxOperation.RECONCILE_WATCHED_CHILDREN -> return dispatchReconcileWatchedChildren(op, scope)
+
             else -> {
                 // This engine version cannot send this kind. Drop it rather than
                 // retry forever.
@@ -250,6 +268,38 @@ class SyncEngine(
                 } else {
                     server.toWriteOutcome()
                 }
+        }
+    }
+
+    /**
+     * Confirm a season's episodes after the season's own SET_WATCHED drained.
+     * Known children are confirmed first so a lookup failure never loses them;
+     * the catalog lookup then discovers the rest. A transient lookup failure
+     * keeps the op queued with backoff, so discovery is retried rather than
+     * abandoned. Every confirmation is pinned to the drain's captured scope.
+     */
+    private suspend fun dispatchReconcileWatchedChildren(
+        op: DirtyOperationEntity,
+        scope: AuthScopeSnapshot,
+    ): WriteOutcome {
+        val api = catalogApi ?: return WriteOutcome.TERMINAL
+        val confirmer = childConfirmer ?: return WriteOutcome.TERMINAL
+        val profileId = scope.profileId ?: return WriteOutcome.TERMINAL
+        val payload = OutboxOperation.decodeReconcilePayload(op.payloadJson)
+        payload.knownChildIds.forEach { childId ->
+            confirmer.confirm(scope.serverId, profileId, childId, payload.watched, payload.containerAtMs)
+        }
+        return when (val page = api.getEpisodes(payload.seriesId, payload.seasonNumber, scope)) {
+            is ApiResult.Success -> {
+                page.data.episodes
+                    .map { it.contentId }
+                    .filterNot { it in payload.knownChildIds }
+                    .forEach { childId ->
+                        confirmer.confirm(scope.serverId, profileId, childId, payload.watched, payload.containerAtMs)
+                    }
+                WriteOutcome.SYNCED
+            }
+            else -> page.toWriteOutcome()
         }
     }
 
