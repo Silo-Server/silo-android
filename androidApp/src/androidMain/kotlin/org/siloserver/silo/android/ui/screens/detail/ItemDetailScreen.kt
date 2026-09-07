@@ -885,6 +885,9 @@ fun ItemDetailScreen(
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
+                            },
                             isDownloaded = downloadState.isDownloaded,
                             downloadProgress = downloadState.progress,
                             playOnDeviceLabel = PLAY_ON_DEVICE_LABEL,

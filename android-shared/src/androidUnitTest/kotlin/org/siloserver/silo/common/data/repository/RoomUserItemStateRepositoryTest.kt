@@ -163,6 +163,36 @@ class RoomUserItemStateRepositoryTest {
         assertEquals(1, syncRequests)
     }
 
+    /**
+     * Wall-clock stamps tie inside one millisecond. A child action issued
+     * after the container action in that same millisecond must still order
+     * after it; one issued before it must not.
+     */
+    @Test
+    fun childActionInTheSameMillisecondOrdersByIssueOrder() = runTest {
+        val frozen = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 5_000L },
+            idGenerator = { "frozen-${nextId++}" },
+        )
+        // Child "before" toggled, then the season, then child "after": all at now()=5000.
+        frozen.resolve(frozen.recordWatched("before", watched = false), WriteOutcome.SYNCED)
+        val container = frozen.recordContainerWatched("season-1", watched = true, children = children)
+        frozen.resolve(frozen.recordWatched("after", watched = false), WriteOutcome.SYNCED)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        frozen.resolve(container, WriteOutcome.SYNCED)
+
+        frozen.confirmContainerChild("s1", "p1", "before", watched = true, containerAtMs = containerAtMs)
+        frozen.confirmContainerChild("s1", "p1", "after", watched = true, containerAtMs = containerAtMs)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "before")?.watched)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "after")?.watched)
+    }
+
     /** Both container ops and the returned handle must share the scope captured once. */
     @Test
     fun recordContainerWatchedUsesOneScopeForBothOperations() = runTest {

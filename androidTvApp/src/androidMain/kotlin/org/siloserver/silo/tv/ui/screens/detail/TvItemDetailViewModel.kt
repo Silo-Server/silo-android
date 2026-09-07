@@ -816,8 +816,14 @@ class TvItemDetailViewModel(
      */
     fun onSetSeasonWatched(season: Season, watched: Boolean) {
         val current = _uiState.value
-        if (current.detail?.type?.lowercase() != "series") return
-        val seriesContentId = current.detail.contentId
+        val detail = current.detail ?: return
+        // Series pages own the series id; season and episode pages carry it
+        // as a parent reference. All three show season chips.
+        val seriesContentId = when (detail.type.lowercase()) {
+            "series" -> detail.contentId
+            "season", "episode" -> detail.seriesId
+            else -> null
+        }?.takeIf { it.isNotBlank() } ?: return
         val seasonNumber = season.seasonNumber
         // The baseline is the last confirmed state. A second write that starts
         // while the first is pending inherits it instead of snapshotting the
@@ -1680,8 +1686,12 @@ class TvItemDetailViewModel(
                     }
                 }
                 if (isCurrentMutation) episodeWatchMutationGenerations.remove(episodeContentId)
-            } else if (isCurrentMutation) {
-                episodeWatchMutationGenerations.remove(episodeContentId)
+            } else {
+                // A superseded success still completed on the server, possibly
+                // last. It owns the refresh from here unless something newer
+                // completes, so the rail cannot settle on a stale optimistic
+                // value. Only the current mutation clears its generation.
+                if (isCurrentMutation) episodeWatchMutationGenerations.remove(episodeContentId)
                 // Re-read the server-resolved season state without collapsing
                 // the rail or flashing its loading placeholder.
                 val detail = _uiState.value.detail

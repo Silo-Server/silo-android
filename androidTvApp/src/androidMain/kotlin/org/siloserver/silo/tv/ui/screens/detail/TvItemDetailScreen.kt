@@ -2041,6 +2041,7 @@ private fun EpisodesSection(
                     onSeasonSelected = onSeasonSelected,
                     onDirectionUp = onReturnToHero,
                     horizontalContentPadding = TvDetailHorizontalInset,
+                    onSetSeasonWatched = onSetSeasonWatched,
                 )
             }
         }

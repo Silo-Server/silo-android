@@ -55,6 +55,20 @@ class RoomUserItemStateRepository(
     private val userStateDao = db.userItemStateDao()
     private val outboxDao = db.dirtyOperationDao()
 
+    /**
+     * Strictly increasing stamp for watched actions. Wall-clock millisecond
+     * ticks can tie, and a child action issued after a container action in
+     * the same millisecond must still order after it. Issue order breaks
+     * the tie: every stamp is at least one greater than the last issued.
+     */
+    private val intentStampLock = Any()
+    private var lastIntentStampMs = 0L
+    private fun nextIntentStamp(): Long = synchronized(intentStampLock) {
+        val stamp = maxOf(now(), lastIntentStampMs + 1)
+        lastIntentStampMs = stamp
+        stamp
+    }
+
     override suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle =
         record(
             contentId,
@@ -456,6 +470,10 @@ class RoomUserItemStateRepository(
                 it.copy(watched = watched)
             }
             if (handle.opId < 0) return@withTransaction
+            // The container action's stamp is the one just issued to its row;
+            // it comes from the same monotonic sequence as child intents, so
+            // same-millisecond actions compare by issue order.
+            val containerAtMs = contentDao.get(serverId, profileId, contentId)?.watchedIntentAtMs ?: now()
             // Queue the child reconciliation behind the container op. Per-item
             // FIFO in the drain holds it until the container write is
             // acknowledged, and it stays queued through failures until the
@@ -477,7 +495,7 @@ class RoomUserItemStateRepository(
                             seriesId = children.seriesId,
                             seasonNumber = children.seasonNumber,
                             knownChildIds = children.knownChildIds,
-                            containerAtMs = nowMs,
+                            containerAtMs = containerAtMs,
                         ),
                     ),
                     createdAtMs = nowMs,
@@ -592,6 +610,7 @@ class RoomUserItemStateRepository(
         val serverId = snapshot.serverId
         val profileId = snapshot.profileId ?: return OutboxHandle.NONE
         val nowMs = now()
+        val intentStamp = if (stampsIntent) nextIntentStamp() else 0L
 
         var opId = OutboxHandle.NONE.opId
         db.withTransaction {
@@ -611,7 +630,7 @@ class RoomUserItemStateRepository(
             contentDao.upsert(
                 applyField(existing).copy(
                     clientUpdatedAtMs = nowMs,
-                    watchedIntentAtMs = if (stampsIntent) nowMs else existing.watchedIntentAtMs,
+                    watchedIntentAtMs = if (stampsIntent) intentStamp else existing.watchedIntentAtMs,
                 ),
             )
 

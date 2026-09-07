@@ -1140,7 +1140,11 @@ class ItemDetailViewModel(
      */
     fun setSeasonWatched(season: Season, watched: Boolean) {
         val state = _uiState.value
-        val seriesId = state.detail?.takeIf { it.type == "series" }?.contentId ?: return
+        val detail = state.detail ?: return
+        // Series pages own the series id; season and episode pages carry it
+        // as a parent reference. All three show season chips.
+        val seriesId = (if (detail.type == "series") detail.contentId else detail.seriesId)
+            ?.takeIf { it.isNotBlank() } ?: return
         val seasonNumber = season.seasonNumber
         // The baseline is the last confirmed state. A second write that starts
         // while the first is pending inherits it instead of snapshotting the
@@ -1338,6 +1342,9 @@ class ItemDetailViewModel(
             val isCurrentMutation = episodeWatchedMutationGenerations[episodeContentId] == generation
             if (isCurrentMutation) episodeConfirmedStates.remove(episodeContentId)
             when (result) {
+                // A superseded success still completed on the server, possibly
+                // last, so it refreshes too; the completion ticket decides who
+                // publishes.
                 is ApiResult.Success -> {
                     // One episode can complete or reopen its season, so the
                     // season chip's watched flag must follow.

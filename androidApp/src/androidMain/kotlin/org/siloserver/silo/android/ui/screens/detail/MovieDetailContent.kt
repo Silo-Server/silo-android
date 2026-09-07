@@ -90,6 +90,8 @@ fun MovieDetailContent(
     onSeasonSelected: (Int) -> Unit = {},
     onEpisodeDetailClick: (String) -> Unit = {},
     onEpisodeWatchedChange: (String, Boolean) -> Unit = { _, _ -> },
+    /** Long-press on a season chip. Targets that chip's season. */
+    onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
     isDownloaded: Boolean = false,
     downloadProgress: Float? = null,
     playOnDeviceLabel: String = "Play on device",
@@ -289,6 +291,7 @@ fun MovieDetailContent(
                             seasons = seasons,
                             selectedSeasonNumber = selectedSeasonNumber,
                             onSeasonSelected = onSeasonSelected,
+                            onSetSeasonWatched = onSeasonWatchedChange,
                         )
                     }
                     val selectedSeason = seasons.firstOrNull {
