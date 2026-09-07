@@ -135,6 +135,20 @@ class SyncEngineTest {
         assertTrue(confirmed.isEmpty())
     }
 
+    /** A season write rejected during the drain must not leave its reconciliation to run later. */
+    @Test
+    fun terminalContainerWriteDropsItsQueuedReconciliation() = runTest {
+        db.dirtyOperationDao().insert(
+            op(idempotencyKey = "season", targetContentId = "season-1", coalesceKey = "s1|p1|season-1|SET_WATCHED"),
+        )
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        status = HttpStatusCode.Forbidden
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.dropped)
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertTrue(confirmed.isEmpty())
+    }
+
     /** An engine without a catalog API cannot honour the op; drop rather than spin. */
     @Test
     fun reconcileWatchedChildrenIsDroppedWhenNoCatalogApiIsBound() = runTest {

@@ -407,16 +407,23 @@ class RoomUserItemStateRepository(
                     ?: false
                 if (requiresReplay) syncScheduler.requestSync()
                 else outboxDao.deleteById(handle.opId)
+                // An acknowledged container write leaves its child reconciliation
+                // queued; nothing else would wake the drain on this happy path.
+                if (op != null && op.opKind == OutboxOperation.SET_WATCHED && op.hasQueuedReconciliation()) {
+                    syncScheduler.requestSync()
+                }
             }
             // Rejected for good: drop the op AND revert the optimistic projection
             // field so the card overlay defers to server state (no fake local state
-            // across cold starts).
+            // across cold starts). A container's dependent reconciliation goes
+            // with it, or a later drain would confirm children the server refused.
             WriteOutcome.TERMINAL -> db.withTransaction {
                 outboxDao.getById(handle.opId)?.let {
                     if (outboxDao.countNewerPending(it.coalesceKey, it.id) == 0) {
                         contentDao.revertForTerminalOp(it)
                         userStateDao.restorePlaybackProgressForTerminalOp(it)
                     }
+                    if (it.opKind == OutboxOperation.SET_WATCHED) it.deleteQueuedReconciliation()
                 }
                 outboxDao.deleteById(handle.opId)
             }
@@ -486,9 +493,17 @@ class RoomUserItemStateRepository(
         watched: Boolean,
         containerAtMs: Long,
     ) {
+        var replays = false
         db.withTransaction {
             val ownIntentAtMs = contentDao.get(serverId, profileId, contentId)?.watchedIntentAtMs ?: 0L
             if (ownIntentAtMs > containerAtMs) return@withTransaction
+            // An older child write may still be on the wire (its op is pending
+            // while the inline request runs, or claimed by a drain). It can
+            // land after the season fan-out and restore the older value on the
+            // server, so the corrective write must actually be sent after it.
+            val olderWriteInFlight = outboxDao.getLatestByCoalesceKey(
+                "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
+            ) != null
             val handle = record(
                 contentId,
                 OutboxOperation.SET_WATCHED,
@@ -499,9 +514,26 @@ class RoomUserItemStateRepository(
             ) {
                 it.copy(watched = watched)
             }
-            resolve(handle, WriteOutcome.SYNCED)
+            if (olderWriteInFlight) {
+                // Leave the corrective op queued; per-item FIFO holds it behind
+                // a claimed older op, and coalescing has replaced a pending one.
+                replays = true
+            } else {
+                resolve(handle, WriteOutcome.SYNCED)
+            }
         }
+        if (replays) syncScheduler.requestSync()
     }
+
+    private suspend fun DirtyOperationEntity.hasQueuedReconciliation(): Boolean =
+        outboxDao.getLatestByCoalesceKey(reconciliationKey()) != null
+
+    private suspend fun DirtyOperationEntity.deleteQueuedReconciliation() {
+        outboxDao.deletePendingByCoalesceKey(reconciliationKey())
+    }
+
+    private fun DirtyOperationEntity.reconciliationKey(): String =
+        "$serverId|$profileId|$targetContentId|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}"
 
     override suspend fun localContentStates(contentIds: List<String>): Map<String, LocalContentState> {
         if (contentIds.isEmpty()) return emptyMap()

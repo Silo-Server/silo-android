@@ -134,6 +134,13 @@ class SyncEngine(
                         if (dao.countNewerPending(op.coalesceKey, op.id) == 0) {
                             contentDao.revertForTerminalOp(op)
                             userStateDao.restorePlaybackProgressForTerminalOp(op)
+                            // A rejected container write must not leave its child
+                            // reconciliation eligible to drain.
+                            if (op.opKind == OutboxOperation.SET_WATCHED) {
+                                dao.deletePendingByCoalesceKey(
+                                    "${op.serverId}|${op.profileId}|${op.targetContentId}|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}",
+                                )
+                            }
                         }
                         dao.deleteById(op.id)
                         dropped++

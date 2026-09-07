@@ -73,6 +73,61 @@ class RoomUserItemStateRepositoryTest {
         assertEquals(listOf(handle.opId), heads.map { it.id })
     }
 
+    /** Acknowledging the season write must wake the drain for its queued reconciliation. */
+    @Test
+    fun resolvingContainerWriteSyncedRequestsADrainForTheReconciliation() = runTest {
+        var syncRequests = 0
+        val scheduled = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "sched-${nextId++}" },
+        )
+        val handle = scheduled.recordContainerWatched("season-1", watched = true, children = children)
+        scheduled.resolve(handle, WriteOutcome.SYNCED)
+        assertEquals(1, syncRequests)
+        val remaining = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.RECONCILE_WATCHED_CHILDREN), remaining.map { it.opKind })
+    }
+
+    /** A rejected season write takes its reconciliation with it. */
+    @Test
+    fun resolvingContainerWriteTerminalDropsTheReconciliation() = runTest {
+        val handle = repo.recordContainerWatched("season-1", watched = true, children = children)
+        repo.resolve(handle, WriteOutcome.TERMINAL)
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertNull(db.contentItemStateDao().get("s1", "p1", "season-1")?.watched)
+    }
+
+    /**
+     * A child whose own older write is still on the wire gets a corrective
+     * op that stays queued for the drain instead of being resolved locally,
+     * so the season value is sent after that older request.
+     */
+    @Test
+    fun confirmContainerChildKeepsCorrectiveWriteQueuedBehindAnOlderChildWrite() = runTest {
+        var syncRequests = 0
+        val scheduled = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "sched-${nextId++}" },
+        )
+        // Older child write, inline request still in progress (op pending).
+        scheduled.recordWatched("e1", watched = false)
+
+        scheduled.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+
+        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e1" }
+        assertEquals(1, queued.size)
+        assertEquals(true, OutboxOperation.decodeBooleanPayload(queued.single().payloadJson))
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertEquals(1, syncRequests)
+    }
+
     /**
      * Confirming a child behaves like a confirmed single-item write: the
      * projection flips, resume rows and pending positions clear, and nothing
