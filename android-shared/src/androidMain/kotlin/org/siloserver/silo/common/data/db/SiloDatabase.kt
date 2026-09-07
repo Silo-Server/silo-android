@@ -49,7 +49,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         DownloadDeletionEntity::class,
         DownloadSubscriptionEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2),
@@ -59,6 +59,7 @@ import org.siloserver.silo.common.data.db.entity.UserItemStateEntity
         AutoMigration(from = 5, to = 6),
         AutoMigration(from = 6, to = 7),
         AutoMigration(from = 7, to = 8),
+        AutoMigration(from = 8, to = 9),
     ],
 )
 abstract class SiloDatabase : RoomDatabase() {

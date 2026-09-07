@@ -4,6 +4,7 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -16,6 +17,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Locks the Track B dual-path contract on [PersonalDataRepository]: each
@@ -49,6 +51,18 @@ class PersonalDataRepositoryPortTest {
         override suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome) {
             resolvedWith = outcome
         }
+
+        val containers = mutableListOf<Triple<String, Boolean, WatchedContainerChildren>>()
+        override suspend fun recordContainerWatched(
+            contentId: String,
+            watched: Boolean,
+            children: WatchedContainerChildren,
+            intentStamp: Long,
+        ): OutboxHandle {
+            containers += Triple(contentId, watched, children)
+            recorded += "container=$watched"
+            return OutboxHandle(seq++)
+        }
     }
 
     private fun repo(status: HttpStatusCode, port: UserItemStatePort): PersonalDataRepository {
@@ -58,6 +72,37 @@ class PersonalDataRepositoryPortTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         return PersonalDataRepository(PersonalDataApi(client), port)
+    }
+
+    /**
+     * A season write hands the port everything the durable child
+     * reconciliation needs, then resolves the container op with the network
+     * outcome like any other content mutation.
+     */
+    @Test
+    fun setSeasonWatchedRecordsContainerWithChildrenThenResolves() = runTest {
+        val port = RecordingPort()
+        val result = repo(HttpStatusCode.OK, port).setSeasonWatched(
+            seasonId = "season-1",
+            watched = true,
+            seriesId = "series-1",
+            seasonNumber = 2,
+            knownEpisodeIds = listOf("e1", "e2"),
+        )
+        assertTrue(result is org.siloserver.silo.network.ApiResult.Success<*>)
+        assertEquals(listOf("container=true"), port.recorded)
+        assertEquals(
+            listOf(Triple("season-1", true, WatchedContainerChildren("series-1", 2, listOf("e1", "e2")))),
+            port.containers,
+        )
+        assertEquals(WriteOutcome.SYNCED, port.resolvedWith)
+    }
+
+    @Test
+    fun setSeasonWatchedResolvesTerminalOnForbidden() = runTest {
+        val port = RecordingPort()
+        repo(HttpStatusCode.Forbidden, port).setSeasonWatched("season-1", true, "series-1", 2, emptyList())
+        assertEquals(WriteOutcome.TERMINAL, port.resolvedWith)
     }
 
     @Test

@@ -16,6 +16,7 @@ import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.canServeCache
 import org.siloserver.silo.repository.port.toWriteOutcome
 
@@ -155,6 +156,39 @@ open class PersonalDataRepository(
         userItemStatePort.resolve(handle, result.toWriteOutcome())
         return result
     }
+
+    /**
+     * [setWatched] for a season. The server fans the write out to the season's
+     * episodes; the port queues a durable child reconciliation so those
+     * episodes' local resume rows cannot resurrect Resume afterward, whether
+     * or not the screen that started the write is still alive.
+     */
+    open suspend fun setSeasonWatched(
+        seasonId: String,
+        watched: Boolean,
+        seriesId: String,
+        seasonNumber: Int,
+        knownEpisodeIds: List<String>,
+        /** From [reserveWatchedIntentStamp] at action time; 0 stamps at record time. */
+        intentStamp: Long = 0L,
+    ): ApiResult<Unit> {
+        val handle = userItemStatePort.recordContainerWatched(
+            seasonId,
+            watched,
+            WatchedContainerChildren(seriesId, seasonNumber, knownEpisodeIds),
+            intentStamp,
+        )
+        val result = if (watched) {
+            personalDataApi.markWatched(seasonId, handle.scope)
+        } else {
+            personalDataApi.markUnwatched(seasonId, handle.scope)
+        }
+        userItemStatePort.resolve(handle, result.toWriteOutcome())
+        return result
+    }
+
+    /** See [UserItemStatePort.reserveWatchedIntentStamp]. */
+    open suspend fun reserveWatchedIntentStamp(): Long = userItemStatePort.reserveWatchedIntentStamp()
 
     // -- Continue Watching dismissals --
 

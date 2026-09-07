@@ -136,6 +136,7 @@ val androidModule = module {
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
             // Drain is requested only when a write is left pending (resolve RETRIABLE).
             syncScheduler = get(),
         )
@@ -164,11 +165,17 @@ val androidModule = module {
     }
     single {
         val tokenManager: TokenManager = get()
+        val userItemState: org.siloserver.silo.repository.port.UserItemStatePort = get()
         org.siloserver.silo.common.data.sync.SyncEngine(
             db = get(),
             personalDataApi = get(),
             ebookReaderApi = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            catalogApi = get(),
+            childConfirmer = (userItemState as? org.siloserver.silo.common.data.repository.RoomUserItemStateRepository)
+                ?.let { repository ->
+                    org.siloserver.silo.common.data.sync.SyncEngine.WatchedChildConfirmer(repository::confirmContainerChild)
+                },
         )
     }
 

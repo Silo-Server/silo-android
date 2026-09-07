@@ -38,7 +38,12 @@ interface ContentItemStateDao {
 
     // Revert a single optimistic field to "unknown" after its outbox op is dropped
     // (terminal server rejection) — the overlay then defers to server state.
-    @Query("UPDATE content_item_state SET watched = NULL WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
+    // A rejected watched intent is no longer an intent: its stamp must not
+    // shield the row from a later container confirmation.
+    @Query(
+        "UPDATE content_item_state SET watched = NULL, watchedIntentAtMs = 0 " +
+            "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId",
+    )
     suspend fun clearWatched(serverId: String, profileId: String, contentId: String)
 
     @Query("UPDATE content_item_state SET favorite = NULL WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
@@ -49,4 +54,8 @@ interface ContentItemStateDao {
 
     @Query("DELETE FROM content_item_state WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
     suspend fun delete(serverId: String, profileId: String, contentId: String)
+
+    /** Highest watched-intent stamp ever persisted; seeds the monotonic sequence after a restart. */
+    @Query("SELECT COALESCE(MAX(watchedIntentAtMs), 0) FROM content_item_state")
+    suspend fun maxWatchedIntentAtMs(): Long
 }

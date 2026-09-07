@@ -10,6 +10,8 @@ import org.siloserver.silo.common.data.sync.OutboxSyncScheduler
 import org.siloserver.silo.common.data.sync.revertForTerminalOp
 import org.siloserver.silo.common.data.sync.restorePlaybackProgressForTerminalOp
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.port.EbookLocalProgress
 import org.siloserver.silo.repository.port.LocalContentState
 import org.siloserver.silo.repository.port.LocalPlaybackProgress
@@ -18,7 +20,10 @@ import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
@@ -48,11 +53,31 @@ class RoomUserItemStateRepository(
     private val syncScheduler: OutboxSyncScheduler = OutboxSyncScheduler.NONE,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    /** Gates drain-time child confirmations against the identity that captured them. */
+    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) : UserItemStatePort {
 
     private val contentDao = db.contentItemStateDao()
     private val userStateDao = db.userItemStateDao()
     private val outboxDao = db.dirtyOperationDao()
+
+    /**
+     * Strictly increasing stamp for watched actions. Wall-clock millisecond
+     * ticks can tie, and a child action issued after a container action in
+     * the same millisecond must still order after it. Issue order breaks the
+     * tie: every stamp is at least one greater than the last issued. The
+     * floor is seeded from the highest stamp already persisted, so a clock
+     * that moved backwards across a restart cannot hand out a stamp below
+     * an intent recorded by the previous process.
+     */
+    private val intentStampMutex = Mutex()
+    private var lastIntentStampMs: Long? = null
+    private suspend fun nextIntentStamp(): Long = intentStampMutex.withLock {
+        val floor = lastIntentStampMs ?: contentDao.maxWatchedIntentAtMs()
+        val stamp = maxOf(now(), floor + 1)
+        lastIntentStampMs = stamp
+        stamp
+    }
 
     override suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle =
         record(
@@ -60,6 +85,7 @@ class RoomUserItemStateRepository(
             OutboxOperation.SET_WATCHED,
             JsonPrimitive(watched).toString(),
             clearPlaybackProgress = true,
+            stampsIntent = true,
         ) {
             it.copy(watched = watched)
         }
@@ -405,16 +431,23 @@ class RoomUserItemStateRepository(
                     ?: false
                 if (requiresReplay) syncScheduler.requestSync()
                 else outboxDao.deleteById(handle.opId)
+                // An acknowledged container write leaves its child reconciliation
+                // queued; nothing else would wake the drain on this happy path.
+                if (op != null && op.opKind == OutboxOperation.SET_WATCHED && op.hasQueuedReconciliation()) {
+                    syncScheduler.requestSync()
+                }
             }
             // Rejected for good: drop the op AND revert the optimistic projection
             // field so the card overlay defers to server state (no fake local state
-            // across cold starts).
+            // across cold starts). A container's dependent reconciliation goes
+            // with it, or a later drain would confirm children the server refused.
             WriteOutcome.TERMINAL -> db.withTransaction {
                 outboxDao.getById(handle.opId)?.let {
                     if (outboxDao.countNewerPending(it.coalesceKey, it.id) == 0) {
                         contentDao.revertForTerminalOp(it)
                         userStateDao.restorePlaybackProgressForTerminalOp(it)
                     }
+                    if (it.opKind == OutboxOperation.SET_WATCHED) it.deleteQueuedReconciliation()
                 }
                 outboxDao.deleteById(handle.opId)
             }
@@ -423,6 +456,166 @@ class RoomUserItemStateRepository(
             WriteOutcome.RETRIABLE -> syncScheduler.requestSync()
         }
     }
+
+    override suspend fun reserveWatchedIntentStamp(): Long = nextIntentStamp()
+
+    override suspend fun recordContainerWatched(
+        contentId: String,
+        watched: Boolean,
+        children: WatchedContainerChildren,
+        intentStamp: Long,
+    ): OutboxHandle {
+        val snapshot = snapshotProvider() ?: return OutboxHandle.NONE
+        val serverId = snapshot.serverId
+        val profileId = snapshot.profileId ?: return OutboxHandle.NONE
+        var handle = OutboxHandle.NONE
+        db.withTransaction {
+            // Both ops and the returned handle share this one snapshot, so a
+            // scope change mid-call cannot split the write from its children.
+            handle = record(
+                contentId,
+                OutboxOperation.SET_WATCHED,
+                JsonPrimitive(watched).toString(),
+                clearPlaybackProgress = true,
+                scopeOverride = snapshot,
+                stampsIntent = true,
+                intentStampOverride = intentStamp.takeIf { it > 0L },
+            ) {
+                it.copy(watched = watched)
+            }
+            if (handle.opId < 0) return@withTransaction
+            // The container action's stamp is the one on its row: reserved when
+            // the user acted, or issued just now. Either way it comes from the
+            // same monotonic sequence as child intents.
+            val containerAtMs = contentDao.get(serverId, profileId, contentId)?.watchedIntentAtMs ?: now()
+            // Queue the child reconciliation behind the container op. Per-item
+            // FIFO in the drain holds it until the container write is
+            // acknowledged, and it stays queued through failures until the
+            // catalog lookup succeeds, so leaving the screen or losing the
+            // network cannot strand the children's resume rows.
+            val nowMs = now()
+            outboxDao.enqueueCoalescing(
+                DirtyOperationEntity(
+                    opKind = OutboxOperation.RECONCILE_WATCHED_CHILDREN,
+                    serverId = serverId,
+                    profileId = profileId,
+                    targetContentId = contentId,
+                    targetFileId = null,
+                    coalesceKey = "$serverId|$profileId|$contentId|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}",
+                    idempotencyKey = idGenerator(),
+                    payloadJson = OutboxOperation.encodeReconcilePayload(
+                        OutboxOperation.ReconcileWatchedChildrenPayload(
+                            watched = watched,
+                            seriesId = children.seriesId,
+                            seasonNumber = children.seasonNumber,
+                            knownChildIds = children.knownChildIds,
+                            containerAtMs = containerAtMs,
+                        ),
+                    ),
+                    createdAtMs = nowMs,
+                    nextAttemptAtMs = nowMs,
+                ),
+            )
+        }
+        return handle
+    }
+
+    /**
+     * Confirm one child of an acknowledged container write. Runs as one
+     * transaction so a child-level write cannot interleave with the check.
+     * The child keeps its own state when its intent is newer than the
+     * container action, whether that intent is still queued or already
+     * drained. Otherwise it is recorded exactly like a confirmed single-item
+     * watched write: projection, resume rows, pending positions, and the
+     * in-flight-position replay all behave the same.
+     */
+    /** Returns false when the captured identity is no longer current; nothing was written. */
+    suspend fun confirmContainerChild(
+        scope: AuthScopeSnapshot,
+        contentId: String,
+        watched: Boolean,
+        containerAtMs: Long,
+    ): Boolean {
+        val serverId = scope.serverId
+        val profileId = scope.profileId ?: return true
+        // The drain captured this scope before the container was acknowledged.
+        // A sign-out or profile switch since then must not let an old
+        // identity's confirmation land on rows the new identity now owns.
+        // withCurrentGeneration also holds the identity mutex for the write.
+        val replays = identityTransitions.withCurrentGeneration(scope.identityGeneration) {
+            confirmContainerChildUnchecked(scope, serverId, profileId, contentId, watched, containerAtMs)
+        } ?: return false
+        if (replays) syncScheduler.requestSync()
+        return true
+    }
+
+    /** Returns true when a queued replay needs the drain woken. */
+    private suspend fun confirmContainerChildUnchecked(
+        localScope: AuthScopeSnapshot,
+        serverId: String,
+        profileId: String,
+        contentId: String,
+        watched: Boolean,
+        containerAtMs: Long,
+    ): Boolean {
+        var replays = false
+        db.withTransaction {
+            val row = contentDao.get(serverId, profileId, contentId)
+            val ownIntentAtMs = row?.watchedIntentAtMs ?: 0L
+            if (ownIntentAtMs > containerAtMs) {
+                // The user's own newer intent wins locally, but the season
+                // fan-out may have landed on the server after it. Replay that
+                // intent, queued (not resolved), so it is sent after the
+                // container settled and after any in-flight write of its own.
+                val newerValue = row?.watched ?: return@withTransaction
+                record(
+                    contentId,
+                    OutboxOperation.SET_WATCHED,
+                    JsonPrimitive(newerValue).toString(),
+                    scopeOverride = localScope,
+                    coalesces = false,
+                ) {
+                    it.copy(watched = newerValue)
+                }
+                replays = true
+                return@withTransaction
+            }
+            // An older child write may still be on the wire: its op is pending
+            // while the inline request runs, or claimed by a drain. It can land
+            // after the season fan-out and restore the older value on the
+            // server, so the corrective write must be sent after it. Inserting
+            // without coalescing keeps that older row as a FIFO barrier.
+            val olderWriteInFlight = outboxDao.getLatestByCoalesceKey(
+                "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
+            ) != null
+            val handle = record(
+                contentId,
+                OutboxOperation.SET_WATCHED,
+                JsonPrimitive(watched).toString(),
+                clearPlaybackProgress = true,
+                scopeOverride = localScope,
+                coalesces = !olderWriteInFlight,
+            ) {
+                it.copy(watched = watched)
+            }
+            if (olderWriteInFlight) {
+                replays = true
+            } else {
+                resolve(handle, WriteOutcome.SYNCED)
+            }
+        }
+        return replays
+    }
+
+    private suspend fun DirtyOperationEntity.hasQueuedReconciliation(): Boolean =
+        outboxDao.getLatestByCoalesceKey(reconciliationKey()) != null
+
+    private suspend fun DirtyOperationEntity.deleteQueuedReconciliation() {
+        outboxDao.deletePendingByCoalesceKey(reconciliationKey())
+    }
+
+    private fun DirtyOperationEntity.reconciliationKey(): String =
+        "$serverId|$profileId|$targetContentId|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}"
 
     override suspend fun localContentStates(contentIds: List<String>): Map<String, LocalContentState> {
         if (contentIds.isEmpty()) return emptyMap()
@@ -437,12 +630,24 @@ class RoomUserItemStateRepository(
         opKind: String,
         payloadJson: String,
         clearPlaybackProgress: Boolean = false,
+        /** Pin to a captured identity instead of the live one (outbox drain). */
+        scopeOverride: AuthScopeSnapshot? = null,
+        /** A direct user watched action; container confirmations leave it untouched. */
+        stampsIntent: Boolean = false,
+        /**
+         * False keeps an older pending op for the same key in place as a
+         * per-item FIFO barrier instead of replacing it.
+         */
+        coalesces: Boolean = true,
+        /** A stamp reserved earlier at action time, so it orders as of then. */
+        intentStampOverride: Long? = null,
         applyField: (ContentItemStateEntity) -> ContentItemStateEntity,
     ): OutboxHandle {
-        val snapshot = snapshotProvider() ?: return OutboxHandle.NONE
+        val snapshot = scopeOverride ?: snapshotProvider() ?: return OutboxHandle.NONE
         val serverId = snapshot.serverId
         val profileId = snapshot.profileId ?: return OutboxHandle.NONE
         val nowMs = now()
+        val intentStamp = if (stampsIntent) intentStampOverride ?: nextIntentStamp() else 0L
 
         var opId = OutboxHandle.NONE.opId
         db.withTransaction {
@@ -459,7 +664,12 @@ class RoomUserItemStateRepository(
                     clientUpdatedAtMs = nowMs,
                     serverUpdatedAtMs = null,
                 )
-            contentDao.upsert(applyField(existing).copy(clientUpdatedAtMs = nowMs))
+            contentDao.upsert(
+                applyField(existing).copy(
+                    clientUpdatedAtMs = nowMs,
+                    watchedIntentAtMs = if (stampsIntent) intentStamp else existing.watchedIntentAtMs,
+                ),
+            )
 
             var operationPayload = payloadJson
             if (clearPlaybackProgress) {
@@ -504,20 +714,19 @@ class RoomUserItemStateRepository(
                 )
             }
 
-            opId = outboxDao.enqueueCoalescing(
-                DirtyOperationEntity(
-                    opKind = opKind,
-                    serverId = serverId,
-                    profileId = profileId,
-                    targetContentId = contentId,
-                    targetFileId = null,
-                    coalesceKey = "$serverId|$profileId|$contentId|$opKind",
-                    idempotencyKey = idGenerator(),
-                    payloadJson = operationPayload,
-                    createdAtMs = nowMs,
-                    nextAttemptAtMs = nowMs,
-                ),
+            val op = DirtyOperationEntity(
+                opKind = opKind,
+                serverId = serverId,
+                profileId = profileId,
+                targetContentId = contentId,
+                targetFileId = null,
+                coalesceKey = "$serverId|$profileId|$contentId|$opKind",
+                idempotencyKey = idGenerator(),
+                payloadJson = operationPayload,
+                createdAtMs = nowMs,
+                nextAttemptAtMs = nowMs,
             )
+            opId = if (coalesces) outboxDao.enqueueCoalescing(op) else outboxDao.insert(op)
         }
         return OutboxHandle(opId, snapshot)
     }
