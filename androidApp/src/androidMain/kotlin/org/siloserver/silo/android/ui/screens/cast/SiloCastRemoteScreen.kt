@@ -176,7 +176,10 @@ fun SiloCastRemoteScreen(
                 },
             )
 
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentAlignment = Alignment.Center,
+            ) {
                 when {
                     state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
                     playback == null -> RemoteConnecting(
