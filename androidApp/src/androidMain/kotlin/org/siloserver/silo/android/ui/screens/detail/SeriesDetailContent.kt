@@ -302,6 +302,9 @@ fun SeriesDetailContent(
                                 DownloadCircleButton(
                                     isDownloaded = downloadState.isDownloaded,
                                     progress = downloadState.progress,
+                                    // A selected episode must never fall back to
+                                    // downloading the whole series while it loads.
+                                    enabled = selectedEpisodeContentId == null || onEpisodeDownloadClick != null,
                                     onClick = {
                                         if (onEpisodeDownloadClick != null && onSeriesDownloadClick != null) {
                                             showDownloadMenu = true

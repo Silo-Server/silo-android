@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.mutableStateOf
@@ -385,17 +386,19 @@ internal fun DownloadCircleButton(
     isDownloaded: Boolean,
     progress: Float?,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     val isInFlight = progress != null && !isDownloaded
     Box(
         modifier = Modifier
             .size(42.dp)
+            .alpha(if (enabled) 1f else 0.45f)
             .clip(CircleShape)
             .background(
                 if (isDownloaded) SiloDetailActionControlActive
                 else SiloDetailActionControl
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (isInFlight) {
