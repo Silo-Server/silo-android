@@ -457,10 +457,13 @@ class RoomUserItemStateRepository(
         }
     }
 
+    override suspend fun reserveWatchedIntentStamp(): Long = nextIntentStamp()
+
     override suspend fun recordContainerWatched(
         contentId: String,
         watched: Boolean,
         children: WatchedContainerChildren,
+        intentStamp: Long,
     ): OutboxHandle {
         val snapshot = snapshotProvider() ?: return OutboxHandle.NONE
         val serverId = snapshot.serverId
@@ -476,13 +479,14 @@ class RoomUserItemStateRepository(
                 clearPlaybackProgress = true,
                 scopeOverride = snapshot,
                 stampsIntent = true,
+                intentStampOverride = intentStamp.takeIf { it > 0L },
             ) {
                 it.copy(watched = watched)
             }
             if (handle.opId < 0) return@withTransaction
-            // The container action's stamp is the one just issued to its row;
-            // it comes from the same monotonic sequence as child intents, so
-            // same-millisecond actions compare by issue order.
+            // The container action's stamp is the one on its row: reserved when
+            // the user acted, or issued just now. Either way it comes from the
+            // same monotonic sequence as child intents.
             val containerAtMs = contentDao.get(serverId, profileId, contentId)?.watchedIntentAtMs ?: now()
             // Queue the child reconciliation behind the container op. Per-item
             // FIFO in the drain holds it until the container write is
@@ -633,13 +637,15 @@ class RoomUserItemStateRepository(
          * per-item FIFO barrier instead of replacing it.
          */
         coalesces: Boolean = true,
+        /** A stamp reserved earlier at action time, so it orders as of then. */
+        intentStampOverride: Long? = null,
         applyField: (ContentItemStateEntity) -> ContentItemStateEntity,
     ): OutboxHandle {
         val snapshot = scopeOverride ?: snapshotProvider() ?: return OutboxHandle.NONE
         val serverId = snapshot.serverId
         val profileId = snapshot.profileId ?: return OutboxHandle.NONE
         val nowMs = now()
-        val intentStamp = if (stampsIntent) nextIntentStamp() else 0L
+        val intentStamp = if (stampsIntent) intentStampOverride ?: nextIntentStamp() else 0L
 
         var opId = OutboxHandle.NONE.opId
         db.withTransaction {

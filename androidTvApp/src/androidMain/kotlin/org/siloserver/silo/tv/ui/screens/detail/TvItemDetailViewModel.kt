@@ -858,6 +858,10 @@ class TvItemDetailViewModel(
 
         val previousWrite = seasonWatchWrites[seasonNumber]
         seasonWatchWrites[seasonNumber] = viewModelScope.launch {
+            // Reserve this action's ordering stamp now, before waiting on an
+            // earlier write, so an episode toggled after this action still
+            // ranks as newer than it.
+            val intentStamp = personalDataRepository.reserveWatchedIntentStamp()
             // Serialize with the previous write for this season so a quick
             // reversal cannot reach the server before the request it reverses.
             previousWrite?.join()
@@ -871,6 +875,7 @@ class TvItemDetailViewModel(
                 seriesId = seriesContentId,
                 seasonNumber = seasonNumber,
                 knownEpisodeIds = (baseline.windowPage ?: baseline.episodes).map { it.contentId },
+                intentStamp = intentStamp,
             )
             completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()

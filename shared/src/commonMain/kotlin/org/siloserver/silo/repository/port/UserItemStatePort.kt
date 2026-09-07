@@ -62,7 +62,17 @@ interface UserItemStatePort {
         contentId: String,
         watched: Boolean,
         children: WatchedContainerChildren,
+        /** A stamp from [reserveWatchedIntentStamp] taken when the user acted; 0 issues one now. */
+        intentStamp: Long = 0L,
     ): OutboxHandle = recordWatched(contentId, watched)
+
+    /**
+     * Issue the ordering stamp for a watched action at the moment the user
+     * performs it, so a container write that must wait behind an earlier
+     * write still orders before any child action made after it. 0 on the
+     * default port.
+     */
+    suspend fun reserveWatchedIntentStamp(): Long = 0L
 
     /**
      * Durably record a playback position for offline-safe resume + sync. Unlike

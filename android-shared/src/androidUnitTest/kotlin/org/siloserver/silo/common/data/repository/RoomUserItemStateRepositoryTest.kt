@@ -249,6 +249,28 @@ class RoomUserItemStateRepositoryTest {
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "child")?.watched)
     }
 
+    /**
+     * A season action queued behind an earlier write reserves its stamp when
+     * the user acts. An episode toggled after that, but before the season
+     * write records, still ranks newer than the season action.
+     */
+    @Test
+    fun reservedContainerStampOrdersBeforeALaterChildToggle() = runTest {
+        val reserved = repo.reserveWatchedIntentStamp()
+        // User toggles a child after the (still waiting) season action.
+        repo.resolve(repo.recordWatched("e1", watched = false), WriteOutcome.SYNCED)
+        // The season write finally records with the stamp reserved earlier.
+        repo.recordContainerWatched("season-1", watched = true, children = children, intentStamp = reserved)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        assertEquals(reserved, containerAtMs)
+
+        repo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = containerAtMs)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+    }
+
     /** Both container ops and the returned handle must share the scope captured once. */
     @Test
     fun recordContainerWatchedUsesOneScopeForBothOperations() = runTest {

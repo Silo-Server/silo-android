@@ -57,6 +57,7 @@ class PersonalDataRepositoryPortTest {
             contentId: String,
             watched: Boolean,
             children: WatchedContainerChildren,
+            intentStamp: Long,
         ): OutboxHandle {
             containers += Triple(contentId, watched, children)
             recorded += "container=$watched"

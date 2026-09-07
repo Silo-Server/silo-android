@@ -1169,7 +1169,6 @@ class ItemDetailViewModel(
         }
         val generationStartedAt = ++episodeMutationClock
 
-        val previousEpisodesLoaded = state.episodesBySeason[seasonNumber] != null
         val generation = (seasonWatchedMutationGenerations[seasonNumber] ?: 0) + 1
         seasonWatchedMutationGenerations[seasonNumber] = generation
         // Optimistic: flip the chip and any loaded page for this season.
@@ -1181,6 +1180,10 @@ class ItemDetailViewModel(
         )
         val previousWrite = seasonWatchedWrites[seasonNumber]
         seasonWatchedWrites[seasonNumber] = viewModelScope.launch {
+            // Reserve this action's ordering stamp now, before waiting on an
+            // earlier write, so an episode toggled after this action still
+            // ranks as newer than it.
+            val intentStamp = personalDataRepository.reserveWatchedIntentStamp()
             // Serialize with the previous write for this season so a quick
             // reversal cannot reach the server before the request it reverses.
             previousWrite?.join()
@@ -1194,6 +1197,7 @@ class ItemDetailViewModel(
                 seriesId = seriesId,
                 seasonNumber = seasonNumber,
                 knownEpisodeIds = baseline.episodes.orEmpty().map { it.contentId },
+                intentStamp = intentStamp,
             )
             completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()
@@ -1230,9 +1234,10 @@ class ItemDetailViewModel(
             if (!refreshStillOwned(refreshTicket)) return@launch
             if (_uiState.value.selectedSeasonNumber == seasonNumber) {
                 loadEpisodes(seriesId, seasonNumber, forceRefresh = true, freshOnly = true, refreshTicket = refreshTicket)
-            } else if (previousEpisodesLoaded) {
+            } else if (_uiState.value.episodesBySeason[seasonNumber] != null) {
                 // Refresh the cached pager page in place so a later swipe
-                // shows server-resolved progress, not a skeleton.
+                // shows server-resolved progress, not a skeleton. Checked live:
+                // the download roll-up may have cached this page during the write.
                 val page = catalogRepository.refreshEpisodes(seriesId, seasonNumber)
                 if (!refreshStillOwned(refreshTicket)) return@launch
                 if (page is ApiResult.Success) {

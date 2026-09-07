@@ -169,11 +169,14 @@ open class PersonalDataRepository(
         seriesId: String,
         seasonNumber: Int,
         knownEpisodeIds: List<String>,
+        /** From [reserveWatchedIntentStamp] at action time; 0 stamps at record time. */
+        intentStamp: Long = 0L,
     ): ApiResult<Unit> {
         val handle = userItemStatePort.recordContainerWatched(
             seasonId,
             watched,
             WatchedContainerChildren(seriesId, seasonNumber, knownEpisodeIds),
+            intentStamp,
         )
         val result = if (watched) {
             personalDataApi.markWatched(seasonId, handle.scope)
@@ -183,6 +186,9 @@ open class PersonalDataRepository(
         userItemStatePort.resolve(handle, result.toWriteOutcome())
         return result
     }
+
+    /** See [UserItemStatePort.reserveWatchedIntentStamp]. */
+    open suspend fun reserveWatchedIntentStamp(): Long = userItemStatePort.reserveWatchedIntentStamp()
 
     // -- Continue Watching dismissals --
 
