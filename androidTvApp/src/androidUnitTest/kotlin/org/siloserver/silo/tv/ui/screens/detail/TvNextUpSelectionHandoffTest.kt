@@ -52,6 +52,8 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.port.LocalTrackSelection
 import org.siloserver.silo.repository.port.OutboxHandle
+import org.siloserver.silo.repository.port.PersonalWrite
+import org.siloserver.silo.repository.port.PersonalWriteHandle
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.tv.testing.FakePlayerSettingsStore
@@ -721,13 +723,18 @@ class TvNextUpSelectionHandoffTest {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
         val client = scenario.client(tokenManager)
-        val userState = RecordingUserItemState()
+        val userState = RecordingUserItemState(tokenManager)
+        // Queued snapshots below control handoff races. Personal writes capture
+        // the same current identity without consuming those handoff checkpoints.
+        val personalTokens = object : TokenManager by tokenManager {
+            override suspend fun snapshotCurrentScope() = tokenManager.currentScope()
+        }
         val catalogRepository = CatalogRepository(
             catalogApi = CatalogApi(client, CatalogV2Api(client, tokenManager = tokenManager)),
             identityTransitions = identityTransitions,
         )
         val personalDataRepository = PersonalDataRepository(
-            personalDataApi = PersonalDataApi(client, tokenManager = tokenManager),
+            personalDataApi = PersonalDataApi(client, tokenManager = personalTokens),
             userItemStatePort = userState,
             identityTransitions = identityTransitions,
         )
@@ -862,12 +869,12 @@ class TvNextUpSelectionHandoffTest {
                     }
                     "/api/v2/catalog/items/$seasonTwoEpisodeId" ->
                         json(itemDetailJson(seasonTwoEpisodeId, newVersions, newLastFileId))
-                    "/api/v1/watched/$episodeOneId" -> {
+                    "/api/v2/watched/$episodeOneId" -> {
                         episodeOneWatchGate?.await()
                         episodeOneWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
                     }
-                    "/api/v1/watched/$episodeTwoId" -> {
+                    "/api/v2/watched/$episodeTwoId" -> {
                         episodeTwoWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
                     }
@@ -892,13 +899,17 @@ class TvNextUpSelectionHandoffTest {
             ]}""".trimIndent()
     }
 
-    private class RecordingUserItemState : UserItemStatePort {
+    private class RecordingUserItemState(private val tokens: FakeTokenManager) : UserItemStatePort {
         data class Write(val contentId: String, val fileId: Int, val kind: String, val fingerprint: String?)
 
         val saved = ConcurrentHashMap<Pair<String, Int>, LocalTrackSelection>()
         val writes = CopyOnWriteArrayList<Write>()
         val readGates = ConcurrentHashMap<Pair<String, Int>, CompletableDeferred<Unit>>()
         val startedReads: MutableSet<Pair<String, Int>> = ConcurrentHashMap.newKeySet()
+
+        private var nextPersonalWrite = 0L
+        override suspend fun beginPersonalWrite(command: PersonalWrite) =
+            PersonalWriteHandle(++nextPersonalWrite, tokens.currentScope(), command)
 
         override suspend fun recordWatched(contentId: String, watched: Boolean) = OutboxHandle.NONE
         override suspend fun recordFavorite(contentId: String, favorite: Boolean) = OutboxHandle.NONE
