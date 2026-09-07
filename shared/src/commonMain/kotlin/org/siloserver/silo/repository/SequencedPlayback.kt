@@ -198,7 +198,7 @@ class SequencedPlayback(
         }
         if (entry.replans.any { it.response == null && it.rejectedCode == null })
             return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
-        if (entry.replans.size >= 8) return@withLock failure("replan_limit", "This playback session has reached its replan limit.")
+        // Settled history fences old request IDs; it is not a lifetime reanchor budget.
         val intent = PlaybackReplanIntent(body)
         entry = entry.copy(replans = entry.replans + intent)
         save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.

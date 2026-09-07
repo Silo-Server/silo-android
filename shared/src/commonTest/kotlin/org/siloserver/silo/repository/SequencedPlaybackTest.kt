@@ -272,6 +272,56 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun settledReanchorsAndUnsupportedRequestsDoNotExhaustAdmission() = runTest {
+        val identity = Identity(); val store = Store(); var replans = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/replan" -> {
+                replans++
+                assertTrue(req.attributes[SingleAttemptAttributeKey])
+                assertEquals(store.entries.single().replans.last().body.toString(), req.body.toByteArray().decodeToString())
+                when (replans) {
+                    5 -> reply("""{"code":"unsupported","detail":"Replan is unavailable."}""", HttpStatusCode.NotImplemented)
+                    13 -> throw IllegalStateException("lost response")
+                    else -> reply(adoptedDecision)
+                }
+            }
+            else -> error("Unexpected transport")
+        } }
+        fun reanchor(index: Int) = replanRequest().copy(replanRequestId = "reanchor-$index", positionSeconds = index.toDouble())
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            for (index in 1..12) {
+                val result = runtime.replan("session-1", reanchor(index))
+                if (index == 5) assertEquals(501, assertIs<ApiResult.Error>(result).code)
+                else assertIs<ApiResult.Success<*>>(result)
+            }
+            assertEquals(12, replans)
+            assertEquals(12, store.entries.single().replans.size)
+            assertEquals(501, assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(5))).code)
+            assertEquals("stale_replan", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(1))).error)
+            assertIs<ApiResult.Success<*>>(runtime.replan("session-1", reanchor(12)))
+            assertEquals(12, replans)
+
+            assertIs<ApiResult.NetworkError>(runtime.replan("session-1", reanchor(13)))
+            val retained = store.entries.single()
+            assertNull(retained.replans.last().response)
+            assertNull(retained.replans.last().rejectedCode)
+            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13))).error)
+            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(14))).error)
+            assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13).copy(positionSeconds = 99.0))).error)
+            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(restarted.replan("session-1", reanchor(14))).error)
+            identity.scope = identity.scope.copy(identityGeneration = 2)
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(14))).error)
+            assertEquals(13, replans)
+            assertEquals(retained, store.entries.single())
+        } finally { c.close() }
+    }
+
     @Test fun replanCachesExactDecisionAndRejectsNewBodyAndChangedOwner() = runTest {
         val identity = Identity(); val store = Store(); var replans = 0
         val c = client { req -> when (req.url.encodedPath) {
