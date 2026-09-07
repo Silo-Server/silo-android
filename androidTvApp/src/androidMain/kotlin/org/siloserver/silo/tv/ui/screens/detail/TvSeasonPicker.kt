@@ -6,6 +6,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,6 +58,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
+import org.siloserver.silo.tv.ui.components.TvMediaCardActions
+import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
 import org.siloserver.silo.tv.ui.theme.TvControlCorner
 
 /**
@@ -72,6 +76,8 @@ fun TvSeasonPicker(
     modifier: Modifier = Modifier,
     horizontalContentPadding: Dp = 0.dp,
     onDirectionUp: (() -> Boolean)? = null,
+    /** Long-press action on a chip: "Mark Season N as Watched / Unwatched". */
+    onSetSeasonWatched: ((season: Season, watched: Boolean) -> Unit)? = null,
 ) {
     if (seasons.isEmpty()) return
     val listState = rememberLazyListState()
@@ -133,6 +139,14 @@ fun TvSeasonPicker(
                 } else {
                     Modifier
                 },
+                contextActions = onSetSeasonWatched?.let { setWatched ->
+                    val target = tvSeasonWatchedTargetLabel(season)
+                    TvMediaCardActions(
+                        onSetWatched = { watched -> setWatched(season, watched) },
+                        watchedLabel = "Mark $target as Watched",
+                        unwatchedLabel = "Mark $target as Unwatched",
+                    )
+                },
             )
         }
     }
@@ -154,6 +168,11 @@ fun TvSeriesModePicker(
     modifier: Modifier = Modifier,
     horizontalContentPadding: Dp = 0.dp,
     onDirectionUp: (() -> Boolean)? = null,
+    /**
+     * Long-press action on a season tab. Mirrors the tvOS season tab context
+     * menu: "Mark Season N as Watched / Unwatched" for that tab's season.
+     */
+    onSetSeasonWatched: ((season: Season, watched: Boolean) -> Unit)? = null,
 ) {
     val listState = rememberLazyListState()
     val selectedFocusRequester = remember { FocusRequester() }
@@ -226,21 +245,34 @@ fun TvSeriesModePicker(
                 } else {
                     Modifier
                 },
+                contextActions = onSetSeasonWatched?.let { setWatched ->
+                    val target = tvSeasonWatchedTargetLabel(season)
+                    TvMediaCardActions(
+                        onSetWatched = { watched -> setWatched(season, watched) },
+                        watchedLabel = "Mark $target as Watched",
+                        unwatchedLabel = "Mark $target as Unwatched",
+                    )
+                },
+                isPlayed = season.userData?.played == true,
             )
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TvSeriesModeTab(
     title: String,
     isSelected: Boolean,
     onActivated: () -> Unit,
     modifier: Modifier = Modifier,
+    contextActions: TvMediaCardActions? = null,
+    isPlayed: Boolean = false,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isPressed by interactionSource.collectIsPressedAsState()
+    var menuExpanded by remember { mutableStateOf(false) }
     val fill by animateColorAsState(
         targetValue = when {
             isFocused -> Color.White
@@ -294,14 +326,25 @@ private fun TvSeriesModeTab(
             .onFocusChanged { focusState ->
                 if (focusState.isFocused && !isSelected) onActivated()
             }
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onActivated,
+                onLongClick = contextActions?.let { { menuExpanded = true } },
             )
             .padding(horizontal = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
+        if (contextActions != null) {
+            TvMediaCardContextMenu(
+                expanded = menuExpanded,
+                onDismiss = { menuExpanded = false },
+                actions = contextActions,
+                isPlayed = isPlayed,
+                isFavorite = false,
+                isInWatchlist = false,
+            )
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium.copy(
@@ -313,6 +356,13 @@ private fun TvSeriesModeTab(
         )
     }
 }
+
+/**
+ * The mark-watched action names the season by number even when the tab shows
+ * a custom title such as "Series 2"; the action names the watched target.
+ */
+internal fun tvSeasonWatchedTargetLabel(season: Season): String =
+    if (season.isSpecialsForDisplay()) "Specials" else "Season ${season.seasonNumber}"
 
 private fun Modifier.seriesModeFocusRing(visible: Boolean): Modifier = drawWithContent {
     drawContent()
@@ -333,17 +383,19 @@ private fun Modifier.seriesModeFocusRing(visible: Boolean): Modifier = drawWithC
  * visuals (no Surface halo). 22sp label; idle transparent + white@0.25 1.5dp
  * outline; focus white@0.18 fill + scale 1.04; selected white fill / black label.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun TvSeasonChip(
     season: Season,
     isSelected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    contextActions: TvMediaCardActions? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(TvControlCorner)
 
     val fill by animateColorAsState(
@@ -378,14 +430,25 @@ private fun TvSeasonChip(
             .background(fill, shape)
             .border(borderWidth, borderColor, shape)
             .onFocusChanged { isFocused = it.isFocused }
-            .clickable(
+            .combinedClickable(
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
+                onLongClick = contextActions?.let { { menuExpanded = true } },
             )
             .padding(horizontal = 13.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,
     ) {
+        if (contextActions != null) {
+            TvMediaCardContextMenu(
+                expanded = menuExpanded,
+                onDismiss = { menuExpanded = false },
+                actions = contextActions,
+                isPlayed = season.userData?.played == true,
+                isFavorite = false,
+                isInWatchlist = false,
+            )
+        }
         Text(
             text = tvSeasonPickerLabel(season),
             style = MaterialTheme.typography.titleLarge.copy(

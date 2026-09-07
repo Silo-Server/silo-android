@@ -211,6 +211,35 @@ class CatalogRepository(
         }
     }
 
+    /**
+     * Re-read the season list after a watched mutation. Unlike [getSeasons],
+     * a network failure or 5xx never falls back to the pre-mutation cache,
+     * because a stale success here would silently undo the optimistic state
+     * the caller is trying to confirm.
+     */
+    suspend fun refreshSeasons(seriesId: String): ApiResult<SeasonsResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val result = catalogApi.getSeasons(seriesId)
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheSeasons(seriesId, result.data, cacheWriteLease)
+            }
+        }
+        return result
+    }
+
+    /** Episode-list counterpart of [refreshSeasons]: fresh data or a failure, never stale cache. */
+    suspend fun refreshEpisodes(seriesId: String, seasonNumber: Int): ApiResult<EpisodesResponse> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val result = catalogApi.getEpisodes(seriesId, seasonNumber)
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheEpisodes(seriesId, seasonNumber, result.data, cacheWriteLease)
+            }
+        }
+        return result
+    }
+
     /** Returns the last cached season list without touching the network. */
     suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? =
         catalogCache.getCachedSeasons(seriesId)

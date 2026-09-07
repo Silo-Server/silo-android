@@ -8,6 +8,7 @@ import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.EbookReaderApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.WriteOutcome
@@ -43,10 +44,29 @@ class SyncEngine(
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val batchLimit: Int = 50,
+    /** Needed only for RECONCILE_WATCHED_CHILDREN; null drops those ops terminally. */
+    private val catalogApi: CatalogApi? = null,
+    /** Local confirmation sink for RECONCILE_WATCHED_CHILDREN; null drops those ops terminally. */
+    private val childConfirmer: WatchedChildConfirmer? = null,
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
     private val userStateDao = db.userItemStateDao()
+
+    /**
+     * Applies one acknowledged container write to one child, locally only.
+     * Receives the drain's captured [AuthScopeSnapshot] so the confirmation
+     * can be gated against the identity that accepted the container write.
+     */
+    fun interface WatchedChildConfirmer {
+        /** Returns false when the captured identity is no longer current and nothing was written. */
+        suspend fun confirm(
+            scope: AuthScopeSnapshot,
+            contentId: String,
+            watched: Boolean,
+            containerAtMs: Long,
+        ): Boolean
+    }
 
     data class DrainResult(
         val synced: Int = 0,
@@ -118,6 +138,13 @@ class SyncEngine(
                         if (dao.countNewerPending(op.coalesceKey, op.id) == 0) {
                             contentDao.revertForTerminalOp(op)
                             userStateDao.restorePlaybackProgressForTerminalOp(op)
+                            // A rejected container write must not leave its child
+                            // reconciliation eligible to drain.
+                            if (op.opKind == OutboxOperation.SET_WATCHED) {
+                                dao.deletePendingByCoalesceKey(
+                                    "${op.serverId}|${op.profileId}|${op.targetContentId}|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}",
+                                )
+                            }
                         }
                         dao.deleteById(op.id)
                         dropped++
@@ -207,6 +234,8 @@ class SyncEngine(
 
             OutboxOperation.SET_EBOOK_PROGRESS -> return dispatchEbookProgress(op, contentId, scope)
 
+            OutboxOperation.RECONCILE_WATCHED_CHILDREN -> return dispatchReconcileWatchedChildren(op, scope)
+
             else -> {
                 // This engine version cannot send this kind. Drop it rather than
                 // retry forever.
@@ -250,6 +279,39 @@ class SyncEngine(
                 } else {
                     server.toWriteOutcome()
                 }
+        }
+    }
+
+    /**
+     * Confirm a season's episodes after the season's own SET_WATCHED drained.
+     * Known children are confirmed first so a lookup failure never loses them;
+     * the catalog lookup then discovers the rest. A transient lookup failure
+     * keeps the op queued with backoff, so discovery is retried rather than
+     * abandoned. Every confirmation is pinned to the drain's captured scope.
+     */
+    private suspend fun dispatchReconcileWatchedChildren(
+        op: DirtyOperationEntity,
+        scope: AuthScopeSnapshot,
+    ): WriteOutcome {
+        val api = catalogApi ?: return WriteOutcome.TERMINAL
+        val confirmer = childConfirmer ?: return WriteOutcome.TERMINAL
+        if (scope.profileId == null) return WriteOutcome.TERMINAL
+        val payload = OutboxOperation.decodeReconcilePayload(op.payloadJson)
+        // A confirmation declined by the identity gate means the captured
+        // identity moved on mid-drain. Keep the op queued for that identity's
+        // next drain instead of deleting it as done.
+        for (childId in payload.knownChildIds) {
+            if (!confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)) return WriteOutcome.RETRIABLE
+        }
+        return when (val page = api.getEpisodes(payload.seriesId, payload.seasonNumber, scope)) {
+            is ApiResult.Success -> {
+                val discovered = page.data.episodes.map { it.contentId }.filterNot { it in payload.knownChildIds }
+                for (childId in discovered) {
+                    if (!confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)) return WriteOutcome.RETRIABLE
+                }
+                WriteOutcome.SYNCED
+            }
+            else -> page.toWriteOutcome()
         }
     }
 

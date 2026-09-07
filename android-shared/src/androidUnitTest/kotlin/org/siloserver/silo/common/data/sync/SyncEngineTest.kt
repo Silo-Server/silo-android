@@ -59,6 +59,122 @@ class SyncEngineTest {
         batchLimit = batchLimit,
     )
 
+    private val confirmed = mutableListOf<String>()
+    private val confirmedScopes = mutableListOf<AuthScopeSnapshot>()
+    private var confirmApplies = true
+    private var episodesStatus = HttpStatusCode.OK
+    private fun reconcilingEngine() = SyncEngine(
+        db = db,
+        personalDataApi = api,
+        ebookReaderApi = ebookApi,
+        snapshotProvider = { snapshot },
+        now = { clock },
+        catalogApi = org.siloserver.silo.network.api.CatalogApi(
+            HttpClient(
+                MockEngine {
+                    respond(
+                        """{"episodes":[{"content_id":"e1","season_number":2,"episode_number":1},{"content_id":"e2","season_number":2,"episode_number":2}]}""",
+                        episodesStatus,
+                        headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                },
+            ) { install(ContentNegotiation) { json(SiloJson) } },
+        ),
+        childConfirmer = SyncEngine.WatchedChildConfirmer { scope, contentId, watched, _ ->
+            confirmedScopes += scope
+            confirmed += "$contentId=$watched"
+            confirmApplies
+        },
+    )
+
+    private fun reconcileOp(idempotencyKey: String) = DirtyOperationEntity(
+        opKind = OutboxOperation.RECONCILE_WATCHED_CHILDREN,
+        serverId = "s1",
+        profileId = "p1",
+        targetContentId = "season-1",
+        targetFileId = null,
+        coalesceKey = "s1|p1|season-1|${OutboxOperation.RECONCILE_WATCHED_CHILDREN}",
+        idempotencyKey = idempotencyKey,
+        payloadJson = OutboxOperation.encodeReconcilePayload(
+            OutboxOperation.ReconcileWatchedChildrenPayload(
+                watched = true, seriesId = "series-1", seasonNumber = 2,
+                knownChildIds = listOf("e1"), containerAtMs = 500L,
+            ),
+        ),
+        createdAtMs = 1L,
+        nextAttemptAtMs = 0L,
+    )
+
+    /** Known children first, then every episode the catalog reports, once, all pinned to the drain scope. */
+    @Test
+    fun reconcileWatchedChildrenConfirmsKnownThenDiscoveredEpisodes() = runTest {
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.synced)
+        assertEquals(listOf("e1=true", "e2=true"), confirmed)
+        assertTrue(confirmedScopes.all { it == snapshot })
+        assertEquals(0, db.dirtyOperationDao().count())
+    }
+
+    /**
+     * A transient lookup failure keeps the op queued with backoff instead of
+     * abandoning discovery; the known children were still confirmed.
+     */
+    @Test
+    fun reconcileWatchedChildrenRetriesDiscoveryOnTransientFailure() = runTest {
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        episodesStatus = HttpStatusCode.ServiceUnavailable
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.retriable)
+        assertEquals(listOf("e1=true"), confirmed)
+        assertEquals(1, db.dirtyOperationDao().count())
+    }
+
+    /** The reconciliation waits behind its container's own write (per-item FIFO). */
+    @Test
+    fun reconcileWatchedChildrenWaitsForTheContainerWrite() = runTest {
+        db.dirtyOperationDao().insert(
+            op(idempotencyKey = "season", targetContentId = "season-1", coalesceKey = "s1|p1|season-1|SET_WATCHED", nextAttemptAtMs = 10_000L),
+        )
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(0, result.synced)
+        assertTrue(confirmed.isEmpty())
+    }
+
+    /** A confirmation declined by the identity gate keeps the op queued for that identity. */
+    @Test
+    fun reconcileWatchedChildrenStaysQueuedWhenConfirmationIsGated() = runTest {
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        confirmApplies = false
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.retriable)
+        assertEquals(1, db.dirtyOperationDao().count())
+    }
+
+    /** A season write rejected during the drain must not leave its reconciliation to run later. */
+    @Test
+    fun terminalContainerWriteDropsItsQueuedReconciliation() = runTest {
+        db.dirtyOperationDao().insert(
+            op(idempotencyKey = "season", targetContentId = "season-1", coalesceKey = "s1|p1|season-1|SET_WATCHED"),
+        )
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        status = HttpStatusCode.Forbidden
+        val result = reconcilingEngine().drainOnce()
+        assertEquals(1, result.dropped)
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertTrue(confirmed.isEmpty())
+    }
+
+    /** An engine without a catalog API cannot honour the op; drop rather than spin. */
+    @Test
+    fun reconcileWatchedChildrenIsDroppedWhenNoCatalogApiIsBound() = runTest {
+        db.dirtyOperationDao().insert(reconcileOp("r1"))
+        val result = engine().drainOnce()
+        assertEquals(1, result.dropped)
+        assertEquals(0, db.dirtyOperationDao().count())
+    }
+
     @AfterTest
     fun tearDown() = db.close()
 

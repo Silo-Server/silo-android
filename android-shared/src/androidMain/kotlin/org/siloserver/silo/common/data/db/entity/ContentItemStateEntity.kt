@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.db.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 
 /**
@@ -30,4 +31,10 @@ data class ContentItemStateEntity(
     val favorite: Boolean?,
     val clientUpdatedAtMs: Long,
     val serverUpdatedAtMs: Long?,
+    /**
+     * When the user last set [watched] on this exact item. A container
+     * (season) confirmation skips children whose own intent is newer than the
+     * container action, even after that intent's outbox op has drained.
+     */
+    @ColumnInfo(defaultValue = "0") val watchedIntentAtMs: Long = 0L,
 )

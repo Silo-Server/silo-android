@@ -52,9 +52,25 @@ data class OutboxOperation(
         val requiresReplay: Boolean = false,
     )
 
+    /**
+     * Payload for [RECONCILE_WATCHED_CHILDREN]. Queued next to a container's
+     * SET_WATCHED op and drained after it: confirms [knownChildIds], then
+     * discovers the rest from the catalog. [containerAtMs] orders the
+     * container action against child-level intents.
+     */
+    @Serializable
+    data class ReconcileWatchedChildrenPayload(
+        val watched: Boolean,
+        val seriesId: String,
+        val seasonNumber: Int,
+        val knownChildIds: List<String>,
+        val containerAtMs: Long,
+    )
+
     companion object {
         const val SET_POSITION = "SET_POSITION"
         const val SET_WATCHED = "SET_WATCHED"
+        const val RECONCILE_WATCHED_CHILDREN = "RECONCILE_WATCHED_CHILDREN"
         const val SET_RATING = "SET_RATING"
         const val SET_FAVORITE = "SET_FAVORITE"
         const val SET_EBOOK_PROGRESS = "SET_EBOOK_PROGRESS"
@@ -103,6 +119,11 @@ data class OutboxOperation(
             return if (element is JsonPrimitive) WatchedPayload(watched = element.boolean)
             else json.decodeFromJsonElement(element)
         }
+
+        fun encodeReconcilePayload(payload: ReconcileWatchedChildrenPayload): String = json.encodeToString(payload)
+
+        fun decodeReconcilePayload(payloadJson: String): ReconcileWatchedChildrenPayload =
+            json.decodeFromString(payloadJson)
 
         /** Rating payload is the int value, or null for "clear rating". */
         fun decodeRatingPayload(payloadJson: String): Int? =

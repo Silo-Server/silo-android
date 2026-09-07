@@ -47,6 +47,34 @@ interface UserItemStatePort {
     suspend fun resolve(handle: OutboxHandle, outcome: WriteOutcome)
 
     /**
+     * [recordWatched] for a container (a season) whose children the server
+     * resolves. The container write alone leaves the children's local resume
+     * rows in place, and the overlay would resurrect Resume on episodes the
+     * server now reports as played. Implementations queue a durable child
+     * reconciliation next to the container op: once the container write is
+     * acknowledged, [children.knownChildIds] are confirmed immediately and the
+     * rest are discovered from the catalog and confirmed by the sync engine,
+     * retried until the lookup succeeds. Each child is confirmed only when no
+     * child-level intent newer than the container action exists. The default
+     * port records a plain watched write.
+     */
+    suspend fun recordContainerWatched(
+        contentId: String,
+        watched: Boolean,
+        children: WatchedContainerChildren,
+        /** A stamp from [reserveWatchedIntentStamp] taken when the user acted; 0 issues one now. */
+        intentStamp: Long = 0L,
+    ): OutboxHandle = recordWatched(contentId, watched)
+
+    /**
+     * Issue the ordering stamp for a watched action at the moment the user
+     * performs it, so a container write that must wait behind an earlier
+     * write still orders before any child action made after it. 0 on the
+     * default port.
+     */
+    suspend fun reserveWatchedIntentStamp(): Long = 0L
+
+    /**
      * Durably record a playback position for offline-safe resume + sync. Unlike
      * the mutations above there is no inline network call to [resolve]: the write
      * persists a file-level local projection (for resume) and enqueues a single
@@ -211,6 +239,13 @@ data class LocalPlaybackProgress(
  * then false-ack/delete the op). Null for the no-op port (single-scope) →
  * unpinned, preserving the original behaviour.
  */
+/** Where a container's children live, for the durable child reconciliation. */
+data class WatchedContainerChildren(
+    val seriesId: String,
+    val seasonNumber: Int,
+    val knownChildIds: List<String>,
+)
+
 data class OutboxHandle(val opId: Long, val scope: AuthScopeSnapshot? = null) {
     companion object {
         val NONE = OutboxHandle(-1L)

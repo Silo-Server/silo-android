@@ -111,6 +111,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
             syncScheduler = get(),
         )
     }
@@ -135,11 +136,17 @@ val androidTvModule = module {
     }
     single {
         val tokenManager: TokenManager = get()
+        val userItemState: org.siloserver.silo.repository.port.UserItemStatePort = get()
         org.siloserver.silo.common.data.sync.SyncEngine(
             db = get(),
             personalDataApi = get(),
             ebookReaderApi = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            catalogApi = get(),
+            childConfirmer = (userItemState as? org.siloserver.silo.common.data.repository.RoomUserItemStateRepository)
+                ?.let { repository ->
+                    org.siloserver.silo.common.data.sync.SyncEngine.WatchedChildConfirmer(repository::confirmContainerChild)
+                },
         )
     }
 

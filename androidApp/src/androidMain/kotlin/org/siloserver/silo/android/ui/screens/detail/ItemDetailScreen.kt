@@ -691,6 +691,9 @@ fun ItemDetailScreen(
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
+                            },
                             onSeasonSelected = { viewModel.selectSeason(it) },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
@@ -889,6 +892,9 @@ fun ItemDetailScreen(
                             onEpisodeDetailClick = onItemDetailClick,
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
+                            },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
                             },
                             isDownloaded = downloadState.isDownloaded,
                             downloadProgress = downloadState.progress,

@@ -68,4 +68,22 @@ class SiloDatabaseMigrationTest {
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }
+
+    @Test
+    fun migration8To9AddsWatchedIntentTimestampDefaultingToZero() {
+        migrationHelper.createDatabase(DATABASE_NAME, 8).use { database ->
+            database.execSQL(
+                "INSERT INTO content_item_state (serverId, profileId, contentId, watched, clientUpdatedAtMs) VALUES (?, ?, ?, ?, ?)",
+                arrayOf<Any?>("server-a", "profile-a", "content-a", 1, 1234L),
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(DATABASE_NAME, 9, true).use { database ->
+            database.query("SELECT watched, watchedIntentAtMs FROM content_item_state").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+                assertEquals(0L, cursor.getLong(1))
+            }
+        }
+    }
 }

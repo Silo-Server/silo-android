@@ -221,6 +221,25 @@ class CatalogRepositoryDetailCacheTest {
         assertTrue(result is ApiResult.Success)
     }
 
+    /**
+     * A post-mutation refresh must surface the failure rather than hand back
+     * the pre-mutation cache as a success, or the caller would treat stale
+     * data as confirmation and undo its optimistic state.
+     */
+    @Test
+    fun refreshSeasonsDoesNotServeCacheOnServer5xx() = runTest {
+        val cache = FakeCache(seasonsPreset = SeasonsResponse(seasons = emptyList()))
+        val result = repo(HttpStatusCode.ServiceUnavailable, "{}", cache).refreshSeasons("series-1")
+        assertTrue(result !is ApiResult.Success)
+    }
+
+    @Test
+    fun refreshEpisodesDoesNotServeCacheOnServer5xx() = runTest {
+        val cache = FakeCache(episodesPreset = EpisodesResponse(episodes = emptyList()))
+        val result = repo(HttpStatusCode.BadGateway, "{}", cache).refreshEpisodes("series-1", 2)
+        assertTrue(result !is ApiResult.Success)
+    }
+
     @Test
     fun continueWatchingSeasonPrefetchUsesCachedNavigationWithoutNetwork() = runTest {
         val cache = FakeCache(

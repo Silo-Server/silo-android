@@ -9,7 +9,9 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.port.OutboxHandle
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
+import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -45,6 +47,353 @@ class RoomUserItemStateRepositoryTest {
 
     @AfterTest
     fun tearDown() = db.close()
+
+    private val children = WatchedContainerChildren(seriesId = "series-1", seasonNumber = 2, knownChildIds = listOf("e1"))
+    private val scopeS1 = AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt")
+
+    /**
+     * A season write queues its own SET_WATCHED plus a reconciliation op for
+     * the children, behind it, so the drain confirms children only after the
+     * server has acknowledged the container.
+     */
+    @Test
+    fun recordContainerWatchedQueuesReconciliationBehindTheContainerWrite() = runTest {
+        val handle = repo.recordContainerWatched("season-1", watched = true, children = children)
+        assertTrue(handle.opId >= 0)
+
+        val ops = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.SET_WATCHED, OutboxOperation.RECONCILE_WATCHED_CHILDREN), ops.map { it.opKind })
+        assertEquals(handle.opId, ops[0].id)
+        val payload = OutboxOperation.decodeReconcilePayload(ops[1].payloadJson)
+        assertEquals(true, payload.watched)
+        assertEquals("series-1", payload.seriesId)
+        assertEquals(2, payload.seasonNumber)
+        assertEquals(listOf("e1"), payload.knownChildIds)
+        // Only the season head is due first: the reconciliation waits behind it.
+        val heads = db.dirtyOperationDao().dueTargetHeads("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(handle.opId), heads.map { it.id })
+    }
+
+    /** Acknowledging the season write must wake the drain for its queued reconciliation. */
+    @Test
+    fun resolvingContainerWriteSyncedRequestsADrainForTheReconciliation() = runTest {
+        var syncRequests = 0
+        val scheduled = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "sched-${nextId++}" },
+        )
+        val handle = scheduled.recordContainerWatched("season-1", watched = true, children = children)
+        scheduled.resolve(handle, WriteOutcome.SYNCED)
+        assertEquals(1, syncRequests)
+        val remaining = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.RECONCILE_WATCHED_CHILDREN), remaining.map { it.opKind })
+    }
+
+    /** A rejected season write takes its reconciliation with it. */
+    @Test
+    fun resolvingContainerWriteTerminalDropsTheReconciliation() = runTest {
+        val handle = repo.recordContainerWatched("season-1", watched = true, children = children)
+        repo.resolve(handle, WriteOutcome.TERMINAL)
+        assertEquals(0, db.dirtyOperationDao().count())
+        assertNull(db.contentItemStateDao().get("s1", "p1", "season-1")?.watched)
+    }
+
+    /**
+     * A child whose own older write is still on the wire gets a corrective
+     * op inserted behind it, not coalesced over it. The older row stays as a
+     * per-item FIFO barrier, so the drain cannot send the correction until
+     * that older request has resolved.
+     */
+    @Test
+    fun confirmContainerChildQueuesCorrectiveWriteBehindAnOlderInFlightChildWrite() = runTest {
+        var syncRequests = 0
+        val scheduled = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "sched-${nextId++}" },
+        )
+        // Older child write, inline request still in progress (op pending).
+        val older = scheduled.recordWatched("e1", watched = false)
+
+        scheduled.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e1" }
+        assertEquals(listOf(false, true), queued.map { OutboxOperation.decodeBooleanPayload(it.payloadJson) })
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertEquals(1, syncRequests)
+        // Only the older write is a due head; the correction waits behind it.
+        assertEquals(listOf(older.opId), db.dirtyOperationDao().dueTargetHeads("s1", "p1", 40_000L, 10).map { it.id })
+        // Once the older inline request is acknowledged, the correction is next.
+        scheduled.resolve(older, WriteOutcome.SYNCED)
+        val head = db.dirtyOperationDao().dueTargetHeads("s1", "p1", 40_000L, 10).single()
+        assertEquals(true, OutboxOperation.decodeBooleanPayload(head.payloadJson))
+    }
+
+    /**
+     * A child the user toggled after the container action keeps its value
+     * locally and re-sends it, queued, so the server ends up with the newer
+     * intent even when the season fan-out landed after it.
+     */
+    @Test
+    fun confirmContainerChildReplaysANewerChildIntentAfterTheContainer() = runTest {
+        var clock = 9_000L
+        var syncRequests = 0
+        val clocked = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
+        )
+        val newer = clocked.recordWatched("e1", watched = false)
+        clocked.resolve(newer, WriteOutcome.SYNCED)
+        assertEquals(0, db.dirtyOperationDao().count())
+
+        clocked.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        val replay = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).single()
+        assertEquals(OutboxOperation.SET_WATCHED, replay.opKind)
+        assertEquals(false, OutboxOperation.decodeBooleanPayload(replay.payloadJson))
+        assertEquals(1, syncRequests)
+    }
+
+    /**
+     * Wall-clock stamps tie inside one millisecond. A child action issued
+     * after the container action in that same millisecond must still order
+     * after it; one issued before it must not.
+     */
+    @Test
+    fun childActionInTheSameMillisecondOrdersByIssueOrder() = runTest {
+        val frozen = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 5_000L },
+            idGenerator = { "frozen-${nextId++}" },
+        )
+        // Child "before" toggled, then the season, then child "after": all at now()=5000.
+        frozen.resolve(frozen.recordWatched("before", watched = false), WriteOutcome.SYNCED)
+        val container = frozen.recordContainerWatched("season-1", watched = true, children = children)
+        frozen.resolve(frozen.recordWatched("after", watched = false), WriteOutcome.SYNCED)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        frozen.resolve(container, WriteOutcome.SYNCED)
+
+        frozen.confirmContainerChild(scopeS1, "before", watched = true, containerAtMs = containerAtMs)
+        frozen.confirmContainerChild(scopeS1, "after", watched = true, containerAtMs = containerAtMs)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "before")?.watched)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "after")?.watched)
+    }
+
+    /**
+     * A confirmation carries the identity that accepted the container write.
+     * Once that identity has moved on, the confirmation must not land.
+     */
+    @Test
+    fun confirmContainerChildIsSkippedAfterAnIdentityTransition() = runTest {
+        val barrier = org.siloserver.silo.network.DefaultIdentityTransitionBarrier()
+        val gated = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 1000L },
+            idGenerator = { "gated-${nextId++}" },
+            identityTransitions = barrier,
+        )
+        val captured = scopeS1.copy(identityGeneration = barrier.generation.value, isIdentityGenerationStamped = true)
+        barrier.changing(org.siloserver.silo.network.IdentityTransitionKind.SIGN_OUT) { }
+
+        val applied = gated.confirmContainerChild(captured, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertFalse(applied)
+        assertNull(db.contentItemStateDao().get("s1", "p1", "e1"))
+    }
+
+    /**
+     * A child intent the server rejected is no intent at all. Its stamp must
+     * not shield the row from the season confirmation that did succeed.
+     */
+    @Test
+    fun rejectedChildIntentDoesNotBlockContainerConfirmation() = runTest {
+        var clock = 9_000L
+        val clocked = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
+        )
+        clocked.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val rejected = clocked.recordWatched("e1", watched = false)
+        clocked.resolve(rejected, WriteOutcome.TERMINAL)
+        assertEquals(0L, db.contentItemStateDao().get("s1", "p1", "e1")?.watchedIntentAtMs)
+
+        clocked.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertNull(clocked.localPlaybackProgress("e1"))
+    }
+
+    /**
+     * The monotonic stamp floor is seeded from persisted rows, so a clock
+     * that moved backwards across a restart cannot issue a stamp below an
+     * intent the previous process recorded.
+     */
+    @Test
+    fun intentStampsNeverFallBelowPersistedStampsAfterRestart() = runTest {
+        val earlier = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 9_000L },
+            idGenerator = { "earlier-${nextId++}" },
+        )
+        earlier.resolve(earlier.recordWatched("child", watched = false), WriteOutcome.SYNCED)
+
+        // "Restart" with a clock that went backwards.
+        val restarted = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 3_000L },
+            idGenerator = { "restarted-${nextId++}" },
+        )
+        restarted.recordContainerWatched("season-1", watched = true, children = children)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        assertTrue(containerAtMs > 9_000L)
+
+        restarted.confirmContainerChild(scopeS1, "child", watched = true, containerAtMs = containerAtMs)
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "child")?.watched)
+    }
+
+    /**
+     * A season action queued behind an earlier write reserves its stamp when
+     * the user acts. An episode toggled after that, but before the season
+     * write records, still ranks newer than the season action.
+     */
+    @Test
+    fun reservedContainerStampOrdersBeforeALaterChildToggle() = runTest {
+        val reserved = repo.reserveWatchedIntentStamp()
+        // User toggles a child after the (still waiting) season action.
+        repo.resolve(repo.recordWatched("e1", watched = false), WriteOutcome.SYNCED)
+        // The season write finally records with the stamp reserved earlier.
+        repo.recordContainerWatched("season-1", watched = true, children = children, intentStamp = reserved)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        assertEquals(reserved, containerAtMs)
+
+        repo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = containerAtMs)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+    }
+
+    /** Both container ops and the returned handle must share the scope captured once. */
+    @Test
+    fun recordContainerWatchedUsesOneScopeForBothOperations() = runTest {
+        var calls = 0
+        val switching = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = {
+                calls += 1
+                if (calls == 1) AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt")
+                else AuthScopeSnapshot("s2", "p2", "https://s2.example", "pt")
+            },
+            now = { 1000L },
+            idGenerator = { "switch-${nextId++}" },
+        )
+        val handle = switching.recordContainerWatched("season-1", watched = true, children = children)
+        assertEquals("s1", handle.scope?.serverId)
+        val ops = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.SET_WATCHED, OutboxOperation.RECONCILE_WATCHED_CHILDREN), ops.map { it.opKind })
+        assertEquals(0, db.dirtyOperationDao().countForScope("s2", "p2"))
+    }
+
+    /**
+     * Confirming a child behaves like a confirmed single-item write: the
+     * projection flips, resume rows and pending positions clear, and nothing
+     * is left queued for the network.
+     */
+    @Test
+    fun confirmContainerChildDropsResumeRowsAndQueuedPositionsWithoutQueuingRequests() = runTest {
+        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        assertNotNull(repo.localPlaybackProgress("e1"))
+
+        repo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertNull(repo.localPlaybackProgress("e1"))
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        assertTrue(db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).isEmpty())
+    }
+
+    /**
+     * A child the user toggled after the container action carries a newer
+     * intent, whether or not its outbox op has drained already. An older
+     * intent (a stale queued op from before the action) does not protect it.
+     */
+    @Test
+    fun confirmContainerChildKeepsIntentsNewerThanTheContainerActionOnly() = runTest {
+        var clock = 1000L
+        val clocked = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
+        )
+        // Stale intent from before the container action: superseded.
+        val stale = clocked.recordWatched("old", watched = false)
+        clocked.resolve(stale, WriteOutcome.SYNCED)
+        // Newer intent, already drained (no outbox row left to inspect).
+        clock = 9_000L
+        val newer = clocked.recordWatched("new", watched = false)
+        clocked.resolve(newer, WriteOutcome.SYNCED)
+
+        clocked.confirmContainerChild(scopeS1, "old", watched = true, containerAtMs = 5_000L)
+        clocked.confirmContainerChild(scopeS1, "new", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "old")?.watched)
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "new")?.watched)
+        // The stale child is confirmed locally with nothing queued; the newer
+        // child's intent is queued for replay after the container.
+        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        assertEquals(listOf("new"), queued.map { it.targetContentId })
+    }
+
+    /**
+     * A child whose position write is already in flight cannot have that
+     * write deleted. Its watched op must stay queued for one replay so the
+     * position cannot land last and reopen the episode on the server.
+     */
+    @Test
+    fun confirmContainerChildKeepsReplayForChildWithInFlightPosition() = runTest {
+        repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
+        val position = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10).single()
+        assertEquals(1, db.dirtyOperationDao().claim(position.id))
+        var syncRequests = 0
+        val guardedRepo = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt") },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { 1000L },
+            idGenerator = { "guarded-${nextId++}" },
+        )
+
+        guardedRepo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertNull(guardedRepo.localPlaybackProgress("e1"))
+        val queuedWatched = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .filter { it.opKind == OutboxOperation.SET_WATCHED }
+        assertEquals(listOf("e1"), queuedWatched.map { it.targetContentId })
+        assertEquals(1, syncRequests)
+    }
 
     @Test
     fun recordWatchedWritesProjectionAndContentScopedOutboxOp() = runTest {

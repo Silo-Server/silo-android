@@ -66,6 +66,8 @@ fun SeriesDetailContent(
     onEpisodePlayClick: (String, Double?) -> Unit,
     onEpisodeDetailClick: (String) -> Unit,
     onEpisodeWatchedChange: (String, Boolean) -> Unit,
+    /** Long-press on a season chip. Targets that chip's season. */
+    onSeasonWatchedChange: (Season, Boolean) -> Unit,
     onSeasonSelected: (Int) -> Unit,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
@@ -165,6 +167,7 @@ fun SeriesDetailContent(
                     seasons = seasons,
                     selectedSeasonNumber = selectedSeasonNumber,
                     onSeasonSelected = onSeasonSelected,
+                    onSetSeasonWatched = onSeasonWatchedChange,
                 )
             }
             if (showsEpisodeDetails) {

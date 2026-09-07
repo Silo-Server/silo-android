@@ -5,6 +5,8 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.authScope
 
 class CatalogApi(private val client: HttpClient) {
 
@@ -101,11 +103,15 @@ class CatalogApi(private val client: HttpClient) {
         client.get("/api/v1/catalog/series/$seriesId/seasons")
     }
 
+    /** [scope] pins the request to a captured identity; the outbox drain passes it. */
     suspend fun getEpisodes(
         seriesId: String,
-        seasonNumber: Int
+        seasonNumber: Int,
+        scope: AuthScopeSnapshot? = null,
     ): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes")
+        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes") {
+            scope?.let { authScope(it) }
+        }
     }
 
     suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
