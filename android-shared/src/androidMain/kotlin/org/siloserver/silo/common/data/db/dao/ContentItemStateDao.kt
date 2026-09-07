@@ -49,4 +49,8 @@ interface ContentItemStateDao {
 
     @Query("DELETE FROM content_item_state WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
     suspend fun delete(serverId: String, profileId: String, contentId: String)
+
+    /** Highest watched-intent stamp ever persisted; seeds the monotonic sequence after a restart. */
+    @Query("SELECT COALESCE(MAX(watchedIntentAtMs), 0) FROM content_item_state")
+    suspend fun maxWatchedIntentAtMs(): Long
 }

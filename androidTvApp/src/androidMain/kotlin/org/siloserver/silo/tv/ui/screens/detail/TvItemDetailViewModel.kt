@@ -872,7 +872,7 @@ class TvItemDetailViewModel(
                 seasonNumber = seasonNumber,
                 knownEpisodeIds = (baseline.windowPage ?: baseline.episodes).map { it.contentId },
             )
-            completeWatchedWrite()
+            completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = seasonWatchMutationGenerations[seasonNumber] == mutationGeneration
             // Read the live baseline: an earlier serialized write for this
@@ -907,7 +907,7 @@ class TvItemDetailViewModel(
             if (!refreshStillOwned(refreshTicket)) return@launch
             if (seasonsResult is ApiResult.Success) applySeasonUserData(seriesContentId, seasonsResult.data.seasons)
             if (_uiState.value.selectedSeason == seasonNumber) {
-                loadEpisodes(seriesContentId, seasonNumber, quiet = true, freshOnly = true)
+                loadEpisodes(seriesContentId, seasonNumber, quiet = true, freshOnly = true, refreshTicket = refreshTicket)
             } else if (episodeWindow.get(seasonNumber) != null) {
                 val page = catalogRepository.refreshEpisodes(seriesContentId, seasonNumber)
                 if (!refreshStillOwned(refreshTicket)) return@launch
@@ -930,7 +930,10 @@ class TvItemDetailViewModel(
     private var lastWatchedCompletion = 0L
     private var nextWatchedCompletion = 0L
     private fun beginWatchedRefresh(): Long = lastWatchedCompletion
-    private fun completeWatchedWrite() { lastWatchedCompletion = ++nextWatchedCompletion }
+    /** Only a write the server accepted can change what the server reports. */
+    private fun completeWatchedWrite(result: ApiResult<Unit>) {
+        if (result is ApiResult.Success) lastWatchedCompletion = ++nextWatchedCompletion
+    }
     private fun refreshStillOwned(startedAfterCompletion: Long) = lastWatchedCompletion == startedAfterCompletion
 
     /**
@@ -1000,7 +1003,11 @@ class TvItemDetailViewModel(
 
     private fun applySeasonUserData(seriesContentId: String, refreshed: List<Season>) {
         _uiState.update { state ->
-            if (state.detail?.contentId != seriesContentId) return@update state
+            // The page may be the series itself or one of its seasons or
+            // episodes; all of them own this season list.
+            if (state.detail?.let { it.contentId == seriesContentId || it.seriesId == seriesContentId } != true) {
+                return@update state
+            }
             val order = state.seasons.map { it.seasonNumber }
             val byNumber = refreshed.associateBy { it.seasonNumber }
             state.copy(
@@ -1491,6 +1498,8 @@ class TvItemDetailViewModel(
         favoritesVersion: Long? = null,
         /** Post-mutation reloads must not be satisfied by a stale cache fallback. */
         freshOnly: Boolean = false,
+        /** A post-write reload publishes only while it still owns the refresh. */
+        refreshTicket: Long? = null,
     ) {
         // Cancel any in-flight episode load so a slower response for a
         // previously-selected season can't overwrite episodes/next-up for the
@@ -1505,7 +1514,10 @@ class TvItemDetailViewModel(
         episodeLoadJob = viewModelScope.launch {
             fun ownsRequest(): Boolean =
                 requestGeneration == episodeLoadRequestGeneration &&
-                    _uiState.value.selectedSeason == seasonNumber
+                    _uiState.value.selectedSeason == seasonNumber &&
+                    // A watched write that completed while this reload was in
+                    // flight owns the next refresh; this page is stale.
+                    (refreshTicket == null || refreshStillOwned(refreshTicket))
 
             if (!ownsRequest()) return@launch
             if (!quiet) _uiState.update { it.copy(episodesLoading = true) }
@@ -1664,7 +1676,7 @@ class TvItemDetailViewModel(
 
         viewModelScope.launch {
             val result = personalDataRepository.setWatched(episodeContentId, watched)
-            completeWatchedWrite()
+            completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
             if (isCurrentMutation) episodeConfirmedStates.remove(episodeContentId)
@@ -1702,7 +1714,7 @@ class TvItemDetailViewModel(
                 }
                 val season = _uiState.value.selectedSeason
                 if (!seriesId.isNullOrBlank() && season != null) {
-                    loadEpisodes(seriesId, season, quiet = true, freshOnly = true)
+                    loadEpisodes(seriesId, season, quiet = true, freshOnly = true, refreshTicket = refreshTicket)
                     // One episode can complete or reopen its season, so the
                     // season tab's watched flag must follow.
                     refreshSeasonUserData(seriesId, refreshTicket)

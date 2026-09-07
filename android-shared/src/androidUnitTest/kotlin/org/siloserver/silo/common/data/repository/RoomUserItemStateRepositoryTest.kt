@@ -49,6 +49,7 @@ class RoomUserItemStateRepositoryTest {
     fun tearDown() = db.close()
 
     private val children = WatchedContainerChildren(seriesId = "series-1", seasonNumber = 2, knownChildIds = listOf("e1"))
+    private val scopeS1 = AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt")
 
     /**
      * A season write queues its own SET_WATCHED plus a reconciliation op for
@@ -119,7 +120,7 @@ class RoomUserItemStateRepositoryTest {
         // Older child write, inline request still in progress (op pending).
         val older = scheduled.recordWatched("e1", watched = false)
 
-        scheduled.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+        scheduled.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
 
         val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
             .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e1" }
@@ -154,7 +155,7 @@ class RoomUserItemStateRepositoryTest {
         clocked.resolve(newer, WriteOutcome.SYNCED)
         assertEquals(0, db.dirtyOperationDao().count())
 
-        clocked.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+        clocked.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
 
         assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
         val replay = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).single()
@@ -186,11 +187,66 @@ class RoomUserItemStateRepositoryTest {
             .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
         frozen.resolve(container, WriteOutcome.SYNCED)
 
-        frozen.confirmContainerChild("s1", "p1", "before", watched = true, containerAtMs = containerAtMs)
-        frozen.confirmContainerChild("s1", "p1", "after", watched = true, containerAtMs = containerAtMs)
+        frozen.confirmContainerChild(scopeS1, "before", watched = true, containerAtMs = containerAtMs)
+        frozen.confirmContainerChild(scopeS1, "after", watched = true, containerAtMs = containerAtMs)
 
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "before")?.watched)
         assertEquals(false, db.contentItemStateDao().get("s1", "p1", "after")?.watched)
+    }
+
+    /**
+     * A confirmation carries the identity that accepted the container write.
+     * Once that identity has moved on, the confirmation must not land.
+     */
+    @Test
+    fun confirmContainerChildIsSkippedAfterAnIdentityTransition() = runTest {
+        val barrier = org.siloserver.silo.network.DefaultIdentityTransitionBarrier()
+        val gated = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 1000L },
+            idGenerator = { "gated-${nextId++}" },
+            identityTransitions = barrier,
+        )
+        val captured = scopeS1.copy(identityGeneration = barrier.generation.value, isIdentityGenerationStamped = true)
+        barrier.changing(org.siloserver.silo.network.IdentityTransitionKind.SIGN_OUT) { }
+
+        gated.confirmContainerChild(captured, "e1", watched = true, containerAtMs = 5_000L)
+
+        assertNull(db.contentItemStateDao().get("s1", "p1", "e1"))
+    }
+
+    /**
+     * The monotonic stamp floor is seeded from persisted rows, so a clock
+     * that moved backwards across a restart cannot issue a stamp below an
+     * intent the previous process recorded.
+     */
+    @Test
+    fun intentStampsNeverFallBelowPersistedStampsAfterRestart() = runTest {
+        val earlier = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 9_000L },
+            idGenerator = { "earlier-${nextId++}" },
+        )
+        earlier.resolve(earlier.recordWatched("child", watched = false), WriteOutcome.SYNCED)
+
+        // "Restart" with a clock that went backwards.
+        val restarted = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            now = { 3_000L },
+            idGenerator = { "restarted-${nextId++}" },
+        )
+        restarted.recordContainerWatched("season-1", watched = true, children = children)
+        val containerAtMs = db.dirtyOperationDao()
+            .dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+            .first { it.opKind == OutboxOperation.RECONCILE_WATCHED_CHILDREN }
+            .let { OutboxOperation.decodeReconcilePayload(it.payloadJson).containerAtMs }
+        assertTrue(containerAtMs > 9_000L)
+
+        restarted.confirmContainerChild(scopeS1, "child", watched = true, containerAtMs = containerAtMs)
+        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "child")?.watched)
     }
 
     /** Both container ops and the returned handle must share the scope captured once. */
@@ -224,7 +280,7 @@ class RoomUserItemStateRepositoryTest {
         repo.recordPosition("e1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         assertNotNull(repo.localPlaybackProgress("e1"))
 
-        repo.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+        repo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
 
         assertNull(repo.localPlaybackProgress("e1"))
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
@@ -253,8 +309,8 @@ class RoomUserItemStateRepositoryTest {
         val newer = clocked.recordWatched("new", watched = false)
         clocked.resolve(newer, WriteOutcome.SYNCED)
 
-        clocked.confirmContainerChild("s1", "p1", "old", watched = true, containerAtMs = 5_000L)
-        clocked.confirmContainerChild("s1", "p1", "new", watched = true, containerAtMs = 5_000L)
+        clocked.confirmContainerChild(scopeS1, "old", watched = true, containerAtMs = 5_000L)
+        clocked.confirmContainerChild(scopeS1, "new", watched = true, containerAtMs = 5_000L)
 
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "old")?.watched)
         assertEquals(false, db.contentItemStateDao().get("s1", "p1", "new")?.watched)
@@ -283,7 +339,7 @@ class RoomUserItemStateRepositoryTest {
             idGenerator = { "guarded-${nextId++}" },
         )
 
-        guardedRepo.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+        guardedRepo.confirmContainerChild(scopeS1, "e1", watched = true, containerAtMs = 5_000L)
 
         assertNull(guardedRepo.localPlaybackProgress("e1"))
         val queuedWatched = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)

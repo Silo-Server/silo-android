@@ -111,6 +111,7 @@ val androidTvModule = module {
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
             syncScheduler = get(),
         )
     }

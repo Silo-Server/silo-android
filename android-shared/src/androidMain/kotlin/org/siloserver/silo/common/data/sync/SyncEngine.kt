@@ -53,11 +53,14 @@ class SyncEngine(
     private val contentDao = db.contentItemStateDao()
     private val userStateDao = db.userItemStateDao()
 
-    /** Applies one acknowledged container write to one child, locally only. */
+    /**
+     * Applies one acknowledged container write to one child, locally only.
+     * Receives the drain's captured [AuthScopeSnapshot] so the confirmation
+     * can be gated against the identity that accepted the container write.
+     */
     fun interface WatchedChildConfirmer {
         suspend fun confirm(
-            serverId: String,
-            profileId: String,
+            scope: AuthScopeSnapshot,
             contentId: String,
             watched: Boolean,
             containerAtMs: Long,
@@ -291,10 +294,10 @@ class SyncEngine(
     ): WriteOutcome {
         val api = catalogApi ?: return WriteOutcome.TERMINAL
         val confirmer = childConfirmer ?: return WriteOutcome.TERMINAL
-        val profileId = scope.profileId ?: return WriteOutcome.TERMINAL
+        if (scope.profileId == null) return WriteOutcome.TERMINAL
         val payload = OutboxOperation.decodeReconcilePayload(op.payloadJson)
         payload.knownChildIds.forEach { childId ->
-            confirmer.confirm(scope.serverId, profileId, childId, payload.watched, payload.containerAtMs)
+            confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)
         }
         return when (val page = api.getEpisodes(payload.seriesId, payload.seasonNumber, scope)) {
             is ApiResult.Success -> {
@@ -302,7 +305,7 @@ class SyncEngine(
                     .map { it.contentId }
                     .filterNot { it in payload.knownChildIds }
                     .forEach { childId ->
-                        confirmer.confirm(scope.serverId, profileId, childId, payload.watched, payload.containerAtMs)
+                        confirmer.confirm(scope, childId, payload.watched, payload.containerAtMs)
                     }
                 WriteOutcome.SYNCED
             }

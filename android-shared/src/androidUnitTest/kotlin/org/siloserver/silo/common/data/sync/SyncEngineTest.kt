@@ -60,6 +60,7 @@ class SyncEngineTest {
     )
 
     private val confirmed = mutableListOf<String>()
+    private val confirmedScopes = mutableListOf<AuthScopeSnapshot>()
     private var episodesStatus = HttpStatusCode.OK
     private fun reconcilingEngine() = SyncEngine(
         db = db,
@@ -78,7 +79,10 @@ class SyncEngineTest {
                 },
             ) { install(ContentNegotiation) { json(SiloJson) } },
         ),
-        childConfirmer = SyncEngine.WatchedChildConfirmer { _, _, contentId, watched, _ -> confirmed += "$contentId=$watched" },
+        childConfirmer = SyncEngine.WatchedChildConfirmer { scope, contentId, watched, _ ->
+            confirmedScopes += scope
+            confirmed += "$contentId=$watched"
+        },
     )
 
     private fun reconcileOp(idempotencyKey: String) = DirtyOperationEntity(
@@ -99,13 +103,14 @@ class SyncEngineTest {
         nextAttemptAtMs = 0L,
     )
 
-    /** Known children first, then every episode the catalog reports, once. */
+    /** Known children first, then every episode the catalog reports, once, all pinned to the drain scope. */
     @Test
     fun reconcileWatchedChildrenConfirmsKnownThenDiscoveredEpisodes() = runTest {
         db.dirtyOperationDao().insert(reconcileOp("r1"))
         val result = reconcilingEngine().drainOnce()
         assertEquals(1, result.synced)
         assertEquals(listOf("e1=true", "e2=true"), confirmed)
+        assertTrue(confirmedScopes.all { it == snapshot })
         assertEquals(0, db.dirtyOperationDao().count())
     }
 

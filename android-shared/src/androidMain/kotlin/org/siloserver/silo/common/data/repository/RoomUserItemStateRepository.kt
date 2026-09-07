@@ -10,6 +10,8 @@ import org.siloserver.silo.common.data.sync.OutboxSyncScheduler
 import org.siloserver.silo.common.data.sync.revertForTerminalOp
 import org.siloserver.silo.common.data.sync.restorePlaybackProgressForTerminalOp
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.repository.port.EbookLocalProgress
 import org.siloserver.silo.repository.port.LocalContentState
 import org.siloserver.silo.repository.port.LocalPlaybackProgress
@@ -20,6 +22,8 @@ import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.WatchedContainerChildren
 import org.siloserver.silo.repository.port.WriteOutcome
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
@@ -49,6 +53,8 @@ class RoomUserItemStateRepository(
     private val syncScheduler: OutboxSyncScheduler = OutboxSyncScheduler.NONE,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val idGenerator: () -> String = { UUID.randomUUID().toString() },
+    /** Gates drain-time child confirmations against the identity that captured them. */
+    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) : UserItemStatePort {
 
     private val contentDao = db.contentItemStateDao()
@@ -58,13 +64,17 @@ class RoomUserItemStateRepository(
     /**
      * Strictly increasing stamp for watched actions. Wall-clock millisecond
      * ticks can tie, and a child action issued after a container action in
-     * the same millisecond must still order after it. Issue order breaks
-     * the tie: every stamp is at least one greater than the last issued.
+     * the same millisecond must still order after it. Issue order breaks the
+     * tie: every stamp is at least one greater than the last issued. The
+     * floor is seeded from the highest stamp already persisted, so a clock
+     * that moved backwards across a restart cannot hand out a stamp below
+     * an intent recorded by the previous process.
      */
-    private val intentStampLock = Any()
-    private var lastIntentStampMs = 0L
-    private fun nextIntentStamp(): Long = synchronized(intentStampLock) {
-        val stamp = maxOf(now(), lastIntentStampMs + 1)
+    private val intentStampMutex = Mutex()
+    private var lastIntentStampMs: Long? = null
+    private suspend fun nextIntentStamp(): Long = intentStampMutex.withLock {
+        val floor = lastIntentStampMs ?: contentDao.maxWatchedIntentAtMs()
+        val stamp = maxOf(now(), floor + 1)
         lastIntentStampMs = stamp
         stamp
     }
@@ -516,17 +526,36 @@ class RoomUserItemStateRepository(
      * in-flight-position replay all behave the same.
      */
     suspend fun confirmContainerChild(
+        scope: AuthScopeSnapshot,
+        contentId: String,
+        watched: Boolean,
+        containerAtMs: Long,
+    ) {
+        val serverId = scope.serverId
+        val profileId = scope.profileId ?: return
+        // The drain captured this scope before the container was acknowledged.
+        // A sign-out or profile switch since then must not let an old
+        // identity's confirmation land on rows the new identity now owns.
+        // withCurrentGeneration also holds the identity mutex for the write.
+        val applied = identityTransitions.withCurrentGeneration(scope.identityGeneration) {
+            confirmContainerChildUnchecked(scope, serverId, profileId, contentId, watched, containerAtMs)
+        }
+        if (applied == true) syncScheduler.requestSync()
+    }
+
+    /** Returns true when a queued replay needs the drain woken. */
+    private suspend fun confirmContainerChildUnchecked(
+        localScope: AuthScopeSnapshot,
         serverId: String,
         profileId: String,
         contentId: String,
         watched: Boolean,
         containerAtMs: Long,
-    ) {
+    ): Boolean {
         var replays = false
         db.withTransaction {
             val row = contentDao.get(serverId, profileId, contentId)
             val ownIntentAtMs = row?.watchedIntentAtMs ?: 0L
-            val localScope = AuthScopeSnapshot(serverId, profileId, "", null)
             if (ownIntentAtMs > containerAtMs) {
                 // The user's own newer intent wins locally, but the season
                 // fan-out may have landed on the server after it. Replay that
@@ -569,7 +598,7 @@ class RoomUserItemStateRepository(
                 resolve(handle, WriteOutcome.SYNCED)
             }
         }
-        if (replays) syncScheduler.requestSync()
+        return replays
     }
 
     private suspend fun DirtyOperationEntity.hasQueuedReconciliation(): Boolean =

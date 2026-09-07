@@ -136,6 +136,7 @@ val androidModule = module {
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
             db = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
+            identityTransitions = get(),
             // Drain is requested only when a write is left pending (resolve RETRIABLE).
             syncScheduler = get(),
         )

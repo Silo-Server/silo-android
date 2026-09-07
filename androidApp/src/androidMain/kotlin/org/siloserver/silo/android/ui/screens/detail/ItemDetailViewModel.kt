@@ -188,7 +188,10 @@ class ItemDetailViewModel(
     private var lastWatchedCompletion = 0L
     private var nextWatchedCompletion = 0L
     private fun beginWatchedRefresh(): Long = lastWatchedCompletion
-    private fun completeWatchedWrite() { lastWatchedCompletion = ++nextWatchedCompletion }
+    /** Only a write the server accepted can change what the server reports. */
+    private fun completeWatchedWrite(result: ApiResult<Unit>) {
+        if (result is ApiResult.Success) lastWatchedCompletion = ++nextWatchedCompletion
+    }
     private fun refreshStillOwned(startedAfterCompletion: Long) = lastWatchedCompletion == startedAfterCompletion
 
     private val descriptionTranslation = DescriptionTranslationController(
@@ -755,6 +758,8 @@ class ItemDetailViewModel(
         preferPrefetched: Boolean = false,
         /** Post-mutation reloads must not be satisfied by a stale cache fallback. */
         freshOnly: Boolean = false,
+        /** A post-write reload publishes only while it still owns the refresh. */
+        refreshTicket: Long? = null,
     ) {
         episodeLoadJob?.cancel()
         val cachedEpisodes = _uiState.value.episodesBySeason[seasonNumber]
@@ -797,6 +802,9 @@ class ItemDetailViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(result.data.episodes)
+                    // A watched write that completed while this reload was in
+                    // flight owns the next refresh; this page is stale.
+                    if (refreshTicket != null && !refreshStillOwned(refreshTicket)) return@launch
                     loadedSeasonNumber = seasonNumber
                     _uiState.update {
                         val cache = it.episodesBySeason + (seasonNumber to episodes)
@@ -1187,7 +1195,7 @@ class ItemDetailViewModel(
                 seasonNumber = seasonNumber,
                 knownEpisodeIds = baseline.episodes.orEmpty().map { it.contentId },
             )
-            completeWatchedWrite()
+            completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = seasonWatchedMutationGenerations[seasonNumber] == generation
             // Read the live baseline: an earlier serialized write for this
@@ -1221,7 +1229,7 @@ class ItemDetailViewModel(
             refreshSeasonUserData(seriesId, refreshTicket)
             if (!refreshStillOwned(refreshTicket)) return@launch
             if (_uiState.value.selectedSeasonNumber == seasonNumber) {
-                loadEpisodes(seriesId, seasonNumber, forceRefresh = true, freshOnly = true)
+                loadEpisodes(seriesId, seasonNumber, forceRefresh = true, freshOnly = true, refreshTicket = refreshTicket)
             } else if (previousEpisodesLoaded) {
                 // Refresh the cached pager page in place so a later swipe
                 // shows server-resolved progress, not a skeleton.
@@ -1307,7 +1315,9 @@ class ItemDetailViewModel(
         if (result !is ApiResult.Success) return
         val byNumber = result.data.seasons.associateBy { it.seasonNumber }
         _uiState.update { state ->
-            if (state.detail?.contentId != seriesId) return@update state
+            // The page may be the series itself or one of its seasons or
+            // episodes; all of them own this season list.
+            if (state.detail?.let { it.contentId == seriesId || it.seriesId == seriesId } != true) return@update state
             state.copy(seasons = state.seasons.map { byNumber[it.seasonNumber] ?: it })
         }
     }
@@ -1337,7 +1347,7 @@ class ItemDetailViewModel(
         updateEpisodePlayedState(episodeContentId, watched)
         viewModelScope.launch {
             val result = personalDataRepository.setWatched(episodeContentId, watched)
-            completeWatchedWrite()
+            completeWatchedWrite(result)
             val refreshTicket = beginWatchedRefresh()
             val isCurrentMutation = episodeWatchedMutationGenerations[episodeContentId] == generation
             if (isCurrentMutation) episodeConfirmedStates.remove(episodeContentId)
