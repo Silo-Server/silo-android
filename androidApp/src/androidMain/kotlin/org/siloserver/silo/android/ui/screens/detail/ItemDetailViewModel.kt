@@ -803,8 +803,13 @@ class ItemDetailViewModel(
                 is ApiResult.Success -> {
                     val episodes = withLocalProgress(result.data.episodes)
                     // A watched write that completed while this reload was in
-                    // flight owns the next refresh; this page is stale.
-                    if (refreshTicket != null && !refreshStillOwned(refreshTicket)) return@launch
+                    // flight owns the next refresh; this page is stale. Drop
+                    // only the page: the loading flag this load raised must
+                    // still come down, or the pager shows its skeleton forever.
+                    if (refreshTicket != null && !refreshStillOwned(refreshTicket)) {
+                        _uiState.update { it.copy(isLoadingEpisodes = false) }
+                        return@launch
+                    }
                     loadedSeasonNumber = seasonNumber
                     _uiState.update {
                         val cache = it.episodesBySeason + (seasonNumber to episodes)
