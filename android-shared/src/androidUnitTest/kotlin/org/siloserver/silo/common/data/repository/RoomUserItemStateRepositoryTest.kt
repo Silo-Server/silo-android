@@ -102,11 +102,12 @@ class RoomUserItemStateRepositoryTest {
 
     /**
      * A child whose own older write is still on the wire gets a corrective
-     * op that stays queued for the drain instead of being resolved locally,
-     * so the season value is sent after that older request.
+     * op inserted behind it, not coalesced over it. The older row stays as a
+     * per-item FIFO barrier, so the drain cannot send the correction until
+     * that older request has resolved.
      */
     @Test
-    fun confirmContainerChildKeepsCorrectiveWriteQueuedBehindAnOlderChildWrite() = runTest {
+    fun confirmContainerChildQueuesCorrectiveWriteBehindAnOlderInFlightChildWrite() = runTest {
         var syncRequests = 0
         val scheduled = RoomUserItemStateRepository(
             db = db,
@@ -116,16 +117,71 @@ class RoomUserItemStateRepositoryTest {
             idGenerator = { "sched-${nextId++}" },
         )
         // Older child write, inline request still in progress (op pending).
-        scheduled.recordWatched("e1", watched = false)
+        val older = scheduled.recordWatched("e1", watched = false)
 
         scheduled.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
 
         val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
             .filter { it.opKind == OutboxOperation.SET_WATCHED && it.targetContentId == "e1" }
-        assertEquals(1, queued.size)
-        assertEquals(true, OutboxOperation.decodeBooleanPayload(queued.single().payloadJson))
+        assertEquals(listOf(false, true), queued.map { OutboxOperation.decodeBooleanPayload(it.payloadJson) })
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
         assertEquals(1, syncRequests)
+        // Only the older write is a due head; the correction waits behind it.
+        assertEquals(listOf(older.opId), db.dirtyOperationDao().dueTargetHeads("s1", "p1", 40_000L, 10).map { it.id })
+        // Once the older inline request is acknowledged, the correction is next.
+        scheduled.resolve(older, WriteOutcome.SYNCED)
+        val head = db.dirtyOperationDao().dueTargetHeads("s1", "p1", 40_000L, 10).single()
+        assertEquals(true, OutboxOperation.decodeBooleanPayload(head.payloadJson))
+    }
+
+    /**
+     * A child the user toggled after the container action keeps its value
+     * locally and re-sends it, queued, so the server ends up with the newer
+     * intent even when the season fan-out landed after it.
+     */
+    @Test
+    fun confirmContainerChildReplaysANewerChildIntentAfterTheContainer() = runTest {
+        var clock = 9_000L
+        var syncRequests = 0
+        val clocked = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = { currentSnapshot },
+            syncScheduler = OutboxSyncScheduler { syncRequests += 1 },
+            now = { clock },
+            idGenerator = { "clocked-${nextId++}" },
+        )
+        val newer = clocked.recordWatched("e1", watched = false)
+        clocked.resolve(newer, WriteOutcome.SYNCED)
+        assertEquals(0, db.dirtyOperationDao().count())
+
+        clocked.confirmContainerChild("s1", "p1", "e1", watched = true, containerAtMs = 5_000L)
+
+        assertEquals(false, db.contentItemStateDao().get("s1", "p1", "e1")?.watched)
+        val replay = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10).single()
+        assertEquals(OutboxOperation.SET_WATCHED, replay.opKind)
+        assertEquals(false, OutboxOperation.decodeBooleanPayload(replay.payloadJson))
+        assertEquals(1, syncRequests)
+    }
+
+    /** Both container ops and the returned handle must share the scope captured once. */
+    @Test
+    fun recordContainerWatchedUsesOneScopeForBothOperations() = runTest {
+        var calls = 0
+        val switching = RoomUserItemStateRepository(
+            db = db,
+            snapshotProvider = {
+                calls += 1
+                if (calls == 1) AuthScopeSnapshot("s1", "p1", "https://s1.example", "pt")
+                else AuthScopeSnapshot("s2", "p2", "https://s2.example", "pt")
+            },
+            now = { 1000L },
+            idGenerator = { "switch-${nextId++}" },
+        )
+        val handle = switching.recordContainerWatched("season-1", watched = true, children = children)
+        assertEquals("s1", handle.scope?.serverId)
+        val ops = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 2000L, limit = 10)
+        assertEquals(listOf(OutboxOperation.SET_WATCHED, OutboxOperation.RECONCILE_WATCHED_CHILDREN), ops.map { it.opKind })
+        assertEquals(0, db.dirtyOperationDao().countForScope("s2", "p2"))
     }
 
     /**
@@ -172,6 +228,10 @@ class RoomUserItemStateRepositoryTest {
 
         assertEquals(true, db.contentItemStateDao().get("s1", "p1", "old")?.watched)
         assertEquals(false, db.contentItemStateDao().get("s1", "p1", "new")?.watched)
+        // The stale child is confirmed locally with nothing queued; the newer
+        // child's intent is queued for replay after the container.
+        val queued = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = 40_000L, limit = 10)
+        assertEquals(listOf("new"), queued.map { it.targetContentId })
     }
 
     /**

@@ -443,7 +443,18 @@ class RoomUserItemStateRepository(
         val profileId = snapshot.profileId ?: return OutboxHandle.NONE
         var handle = OutboxHandle.NONE
         db.withTransaction {
-            handle = recordWatched(contentId, watched)
+            // Both ops and the returned handle share this one snapshot, so a
+            // scope change mid-call cannot split the write from its children.
+            handle = record(
+                contentId,
+                OutboxOperation.SET_WATCHED,
+                JsonPrimitive(watched).toString(),
+                clearPlaybackProgress = true,
+                scopeOverride = snapshot,
+                stampsIntent = true,
+            ) {
+                it.copy(watched = watched)
+            }
             if (handle.opId < 0) return@withTransaction
             // Queue the child reconciliation behind the container op. Per-item
             // FIFO in the drain holds it until the container write is
@@ -495,12 +506,32 @@ class RoomUserItemStateRepository(
     ) {
         var replays = false
         db.withTransaction {
-            val ownIntentAtMs = contentDao.get(serverId, profileId, contentId)?.watchedIntentAtMs ?: 0L
-            if (ownIntentAtMs > containerAtMs) return@withTransaction
-            // An older child write may still be on the wire (its op is pending
-            // while the inline request runs, or claimed by a drain). It can
-            // land after the season fan-out and restore the older value on the
-            // server, so the corrective write must actually be sent after it.
+            val row = contentDao.get(serverId, profileId, contentId)
+            val ownIntentAtMs = row?.watchedIntentAtMs ?: 0L
+            val localScope = AuthScopeSnapshot(serverId, profileId, "", null)
+            if (ownIntentAtMs > containerAtMs) {
+                // The user's own newer intent wins locally, but the season
+                // fan-out may have landed on the server after it. Replay that
+                // intent, queued (not resolved), so it is sent after the
+                // container settled and after any in-flight write of its own.
+                val newerValue = row?.watched ?: return@withTransaction
+                record(
+                    contentId,
+                    OutboxOperation.SET_WATCHED,
+                    JsonPrimitive(newerValue).toString(),
+                    scopeOverride = localScope,
+                    coalesces = false,
+                ) {
+                    it.copy(watched = newerValue)
+                }
+                replays = true
+                return@withTransaction
+            }
+            // An older child write may still be on the wire: its op is pending
+            // while the inline request runs, or claimed by a drain. It can land
+            // after the season fan-out and restore the older value on the
+            // server, so the corrective write must be sent after it. Inserting
+            // without coalescing keeps that older row as a FIFO barrier.
             val olderWriteInFlight = outboxDao.getLatestByCoalesceKey(
                 "$serverId|$profileId|$contentId|${OutboxOperation.SET_WATCHED}",
             ) != null
@@ -509,14 +540,12 @@ class RoomUserItemStateRepository(
                 OutboxOperation.SET_WATCHED,
                 JsonPrimitive(watched).toString(),
                 clearPlaybackProgress = true,
-                scopeOverride = AuthScopeSnapshot(serverId, profileId, "", null),
-                stampsIntent = false,
+                scopeOverride = localScope,
+                coalesces = !olderWriteInFlight,
             ) {
                 it.copy(watched = watched)
             }
             if (olderWriteInFlight) {
-                // Leave the corrective op queued; per-item FIFO holds it behind
-                // a claimed older op, and coalescing has replaced a pending one.
                 replays = true
             } else {
                 resolve(handle, WriteOutcome.SYNCED)
@@ -552,6 +581,11 @@ class RoomUserItemStateRepository(
         scopeOverride: AuthScopeSnapshot? = null,
         /** A direct user watched action; container confirmations leave it untouched. */
         stampsIntent: Boolean = false,
+        /**
+         * False keeps an older pending op for the same key in place as a
+         * per-item FIFO barrier instead of replacing it.
+         */
+        coalesces: Boolean = true,
         applyField: (ContentItemStateEntity) -> ContentItemStateEntity,
     ): OutboxHandle {
         val snapshot = scopeOverride ?: snapshotProvider() ?: return OutboxHandle.NONE
@@ -624,20 +658,19 @@ class RoomUserItemStateRepository(
                 )
             }
 
-            opId = outboxDao.enqueueCoalescing(
-                DirtyOperationEntity(
-                    opKind = opKind,
-                    serverId = serverId,
-                    profileId = profileId,
-                    targetContentId = contentId,
-                    targetFileId = null,
-                    coalesceKey = "$serverId|$profileId|$contentId|$opKind",
-                    idempotencyKey = idGenerator(),
-                    payloadJson = operationPayload,
-                    createdAtMs = nowMs,
-                    nextAttemptAtMs = nowMs,
-                ),
+            val op = DirtyOperationEntity(
+                opKind = opKind,
+                serverId = serverId,
+                profileId = profileId,
+                targetContentId = contentId,
+                targetFileId = null,
+                coalesceKey = "$serverId|$profileId|$contentId|$opKind",
+                idempotencyKey = idGenerator(),
+                payloadJson = operationPayload,
+                createdAtMs = nowMs,
+                nextAttemptAtMs = nowMs,
             )
+            opId = if (coalesces) outboxDao.enqueueCoalescing(op) else outboxDao.insert(op)
         }
         return OutboxHandle(opId, snapshot)
     }
