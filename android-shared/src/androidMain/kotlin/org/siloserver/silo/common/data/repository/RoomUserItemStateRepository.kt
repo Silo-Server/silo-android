@@ -20,6 +20,15 @@ import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.WriteOutcome
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.booleanOrNull
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.repository.port.PersonalWrite
+import org.siloserver.silo.repository.port.PersonalWriteHandle
 import java.util.UUID
 
 /**
@@ -55,6 +64,73 @@ class RoomUserItemStateRepository(
     private val contentDao = db.contentItemStateDao()
     private val userStateDao = db.userItemStateDao()
     private val outboxDao = db.dirtyOperationDao()
+
+    override suspend fun beginPersonalWrite(command: PersonalWrite): PersonalWriteHandle? {
+        if (!command.valid()) return null
+        val authority = ebookAuthorities?.snapshotDurableLoginAuthority() ?: return null
+        val snapshot = authority.scope
+        val profile = snapshot.profileId ?: return null
+        if (snapshot.credentialGenerationId != null || !snapshot.isSameIdentityAs(snapshotProvider())) return null
+        return db.withTransaction {
+            if (authority != ebookAuthorities.snapshotDurableLoginAuthority()) return@withTransaction null
+            // Legacy bytes have no safe v2 replay authority; never coalesce, convert or supersede them.
+            if (outboxDao.unresolvedPersonalCount(snapshot.serverId, profile, command.itemId) != 0)
+                return@withTransaction null
+            val nowMs = now()
+            val existing = contentDao.get(snapshot.serverId, profile, command.itemId)
+                ?: ContentItemStateEntity(snapshot.serverId, profile, command.itemId, null, null, null, nowMs, null)
+            val payload = buildJsonObject {
+                put("login_id", authority.loginId)
+                put("origin", snapshot.serverUrl)
+                put("method", command.method)
+                put("path", command.path)
+                command.body?.let { put("body", it) }
+                put("command", SiloJson.encodeToJsonElement(PersonalWrite.serializer(), command))
+                put("projection_updated_at_ms", existing.clientUpdatedAtMs)
+                put("projection_existed", contentDao.get(snapshot.serverId, profile, command.itemId) != null)
+                put("previous_watched", existing.watched?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
+                put("previous_rating", existing.ratingValue?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull)
+            }.toString()
+            val id = outboxDao.insert(DirtyOperationEntity(
+                opKind = "PERSONAL_V2", serverId = snapshot.serverId, profileId = profile,
+                targetContentId = command.itemId, targetFileId = null,
+                coalesceKey = "personal-v2|${snapshot.serverId}|$profile|${command.itemId}",
+                idempotencyKey = idGenerator(), opVersion = 2, payloadJson = payload,
+                state = "personal_uncertain", createdAtMs = nowMs,
+            ))
+            PersonalWriteHandle(id, snapshot, command)
+        }
+    }
+
+    override suspend fun completePersonalWrite(handle: PersonalWriteHandle) {
+        db.withTransaction {
+            val row = outboxDao.getById(handle.opId) ?: return@withTransaction
+            if (row.opKind != "PERSONAL_V2" || row.state != "personal_uncertain" ||
+                row.serverId != handle.scope.serverId || row.profileId != handle.scope.profileId ||
+                row.targetContentId != handle.command.itemId) return@withTransaction
+            val saved = SiloJson.parseToJsonElement(row.payloadJson) as kotlinx.serialization.json.JsonObject
+            if (saved["command"] != SiloJson.encodeToJsonElement(PersonalWrite.serializer(), handle.command)) return@withTransaction
+            // Publish only an acknowledged write, and only over the local state observed at admission.
+            // Unknown/rejected writes never persist an optimistic success after the UI rolls back.
+            val current = contentDao.get(row.serverId, row.profileId, row.targetContentId)
+            val existed = saved["projection_existed"]?.jsonPrimitive?.booleanOrNull == true
+            val unchanged = if (!existed) current == null else current != null &&
+                current.clientUpdatedAtMs == saved.getValue("projection_updated_at_ms").jsonPrimitive.long &&
+                current.watched == saved["previous_watched"]?.jsonPrimitive?.booleanOrNull &&
+                current.ratingValue == saved["previous_rating"]?.jsonPrimitive?.intOrNull
+            if (unchanged) {
+                val previous = current ?: ContentItemStateEntity(row.serverId, row.profileId, row.targetContentId, null, null, null, now(), null)
+                val projected = when (val command = handle.command) {
+                    is PersonalWrite.Watched -> previous.copy(watched = command.watched)
+                    is PersonalWrite.Rating -> previous.copy(ratingValue = command.rating)
+                }
+                contentDao.upsert(projected.copy(clientUpdatedAtMs = now()))
+                if (handle.command is PersonalWrite.Watched)
+                    userStateDao.clearPlaybackProgressBefore(row.serverId, row.profileId, row.targetContentId, row.createdAtMs, now())
+            }
+            outboxDao.deleteById(row.id)
+        }
+    }
 
     override suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle =
         record(
@@ -164,6 +240,10 @@ class RoomUserItemStateRepository(
                 serverUpdatedAtMs = null,
             )
             userStateDao.upsert(row)
+
+            // V2 playback sends sequenced progress under its admitted session. Keep local resume,
+            // but never coalesce a new position into a legacy queue with unknown authority.
+            if (ebookAuthorities != null) return@withTransaction
 
             // Content-level outbox op: syncProgress is keyed by content id, so the
             // coalesce key omits fileId — all pending positions for the item

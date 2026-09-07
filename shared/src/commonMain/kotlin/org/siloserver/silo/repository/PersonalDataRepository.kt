@@ -1,10 +1,11 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.personal.ProgressListResponse
 import org.siloserver.silo.model.personal.RatingEntry
 import org.siloserver.silo.model.personal.SyncProgressItem
-import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.apiv2.HistoryContinuationV2
 import org.siloserver.silo.network.apiv2.HistoryPageV2
@@ -19,7 +20,6 @@ import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.canServeCache
-import org.siloserver.silo.repository.port.toWriteOutcome
 
 open class PersonalDataRepository(
     private val personalDataApi: PersonalDataApi,
@@ -82,9 +82,9 @@ open class PersonalDataRepository(
     suspend fun listProgress(): ApiResult<ProgressListResponse> =
         personalDataApi.listProgress()
 
-    /** Syncs local progress state with the server. */
+    /** Legacy sessionless convenience path: admitted playback uses sequenced v2 progress. */
     open suspend fun syncProgress(items: List<SyncProgressItem>): ApiResult<Unit> =
-        personalDataApi.syncProgress(SyncProgressRequest(items = items))
+        ApiResult.Error(0, "playback_unavailable", "Progress needs an admitted v2 playback session. Start playback again.")
 
     // -- Ratings --
 
@@ -97,36 +97,50 @@ open class PersonalDataRepository(
         personalDataApi.getRating(itemId)
 
     /** Sets or updates the user's star rating (integer 1-5) for a specific item. */
-    suspend fun setRating(itemId: String, rating: Int): ApiResult<Unit> {
-        val handle = userItemStatePort.recordRating(itemId, rating)
-        val result = personalDataApi.setRating(itemId, rating, handle.scope)
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
+    suspend fun setRating(itemId: String, rating: Int): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, rating))
+
+    suspend fun deleteRating(itemId: String): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, null))
+
+    open suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
+
+    private val personalDispatchMutex = Mutex()
+    private val consumedPersonalIntents = mutableSetOf<Long>()
+    private var personalSequence = 0L
+    private val latestPersonalIntents = mutableMapOf<String, org.siloserver.silo.repository.port.PersonalWriteIntent>()
+
+    fun beginWatched(itemId: String, watched: Boolean) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
+    fun beginRating(itemId: String, rating: Int?) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, rating))
+    private fun beginPersonal(command: org.siloserver.silo.repository.port.PersonalWrite) =
+        org.siloserver.silo.repository.port.PersonalWriteIntent(command, identityTransitions.generation.value, ++personalSequence)
+            .also { latestPersonalIntents[command.itemId] = it }
+    fun isCurrent(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) =
+        intent.identityGeneration == identityTransitions.generation.value && latestPersonalIntents[intent.command.itemId] == intent
+
+    private suspend fun writePersonal(command: org.siloserver.silo.repository.port.PersonalWrite): ApiResult<Unit> =
+        performPersonalWrite(beginPersonal(command))
+
+    suspend fun performPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent): ApiResult<Unit> {
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+        val admitted = personalDispatchMutex.withLock { consumedPersonalIntents.add(intent.sequence) }
+        if (!admitted) return ApiResult.Error(0, "personal_write_consumed", "This action was already submitted. Its outcome will not be replayed.")
+        return dispatchPersonalWrite(intent)
     }
 
-    /** Removes the user's rating for a specific item. */
-    suspend fun deleteRating(itemId: String): ApiResult<Unit> {
-        val handle = userItemStatePort.recordRating(itemId, null)
-        val result = personalDataApi.deleteRating(itemId, handle.scope)
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
-    }
-
-    // -- Watched --
-
-    /**
-     * Toggle the watched state for an item. The server resolves leaf
-     * targets, so passing a series / season ID marks the appropriate
-     * episodes.
-     */
-    open suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> {
-        val handle = userItemStatePort.recordWatched(itemId, watched)
-        val result = if (watched) {
-            personalDataApi.markWatched(itemId, handle.scope)
-        } else {
-            personalDataApi.markUnwatched(itemId, handle.scope)
-        }
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
+    private suspend fun dispatchPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent): ApiResult<Unit> {
+        val command = intent.command
+        if (!command.valid()) return ApiResult.Error(422, "validation_failed", "Invalid personal-data command.")
+        val handle = userItemStatePort.beginPersonalWrite(command)
+            ?: return ApiResult.Error(0, "personal_write_pending", "This item needs an active saved account with no unresolved personal-data writes.")
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+        val result = personalDataApi.writePersonal(handle)
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+        if (result is ApiResult.Success) userItemStatePort.completePersonalWrite(handle)
         return result
     }
 

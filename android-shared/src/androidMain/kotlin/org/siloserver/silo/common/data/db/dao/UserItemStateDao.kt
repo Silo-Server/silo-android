@@ -43,6 +43,12 @@ interface UserItemStateDao {
         updatedAtMs: Long,
     )
 
+    /** A delayed watched acknowledgement must not clear a newer local resume sample. */
+    @Query("UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs " +
+        "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
+        "AND clientUpdatedAtMs < :admittedAtMs")
+    suspend fun clearPlaybackProgressBefore(serverId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
+
     /** Restore a reset resume row only while it is still the untouched reset. */
     @Query(
         "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = :previousUpdatedAtMs " +

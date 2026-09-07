@@ -4,8 +4,6 @@ import android.util.Log
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
-import org.siloserver.silo.model.personal.SyncProgressItem
-import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.EbookReaderApi
@@ -13,29 +11,7 @@ import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
-/**
- * Drains the `dirty_operations` outbox to the server (Track B). Replays each
- * pending op through the **raw [PersonalDataApi]** — never [PersonalDataRepository],
- * which would re-enter the local-first port and re-enqueue the op forever.
- *
- * Every send is **pinned** to the scope captured at drain start via
- * [AuthScopeSnapshot]: the auth plugin binds the request to that server URL,
- * profile, and exact live credential slot, so a scope switch mid-drain can't
- * send an op to the wrong account, and continuing to drain the captured scope
- * after a switch is correct.
- *
- * Correctness still rests on:
- * - **Atomic claim** ([DirtyOperationDao.claim]) — a row is sent at most once.
- * - **Reclaim** at drain start — in-flight rows stranded by a crash are dropped
- *   if a newer pending op supersedes them, else returned to pending.
- * - **Atomic supersede-or-record** on transient failure.
- * - **Per-item FIFO** — an op is held back while an older op for the same
- *   content id is still queued, so backoff can't reorder a watched/position pair.
- *
- * Transient failures (no network / 401 / 408 / 429 / 5xx) are kept indefinitely
- * with capped backoff — offline data is never dropped on a retry cap. Only
- * terminal 4xx, unknown op kinds, and superseded rows are dropped.
- */
+/** Drains typed membership and ebook writes. Legacy personal-data rows remain unchanged and unsent. */
 class SyncEngine(
     db: SiloDatabase,
     private val personalDataApi: PersonalDataApi,
@@ -182,49 +158,8 @@ class SyncEngine(
     }
 
     private suspend fun dispatch(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
-        val contentId = op.targetContentId
-        val result = when (op.opKind) {
-            OutboxOperation.SET_WATCHED -> {
-                val watched = OutboxOperation.decodeBooleanPayload(op.payloadJson)
-                if (watched) personalDataApi.markWatched(contentId, scope) else personalDataApi.markUnwatched(contentId, scope)
-            }
-
-            OutboxOperation.SET_RATING -> {
-                val rating = OutboxOperation.decodeRatingPayload(op.payloadJson)
-                if (rating == null) personalDataApi.deleteRating(contentId, scope) else personalDataApi.setRating(contentId, rating, scope)
-            }
-
-            OutboxOperation.SET_POSITION -> {
-                // Replay happens after the playback session is gone, so use the
-                // sessionless content-level sync. force_overwrite=false → the
-                // server takes GREATEST(position), so a stale offline replay
-                // never rewinds a further position from another device.
-                val (position, duration) = OutboxOperation.decodePositionPayload(op.payloadJson)
-                personalDataApi.syncProgress(
-                    SyncProgressRequest(
-                        items = listOf(
-                            SyncProgressItem(
-                                mediaItemId = contentId,
-                                position = position,
-                                duration = duration ?: 0.0,
-                                forceOverwrite = false,
-                            ),
-                        ),
-                    ),
-                    scope,
-                )
-            }
-
-            OutboxOperation.SET_EBOOK_PROGRESS -> return dispatchEbookProgress(op, contentId, scope)
-
-            else -> {
-                // This engine version cannot send this kind. Drop it rather than
-                // retry forever.
-                Log.w(TAG, "Dropping un-replayable outbox op kind=${op.opKind} id=${op.id}")
-                return WriteOutcome.TERMINAL
-            }
-        }
-        return result.toWriteOutcome()
+        check(op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) { "Legacy personal-data intents must remain held" }
+        return dispatchEbookProgress(op, op.targetContentId, scope)
     }
 
     /**

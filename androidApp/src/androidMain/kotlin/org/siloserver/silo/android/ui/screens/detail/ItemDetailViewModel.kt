@@ -850,11 +850,15 @@ class ItemDetailViewModel(
      */
     fun setRating(stars: Int) {
         val target = stars.coerceIn(1, 5)
+        val writeIntent = personalDataRepository.beginRating(contentId, target)
         viewModelScope.launch {
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val previous = _uiState.value.userRating
             // Optimistic update
             _uiState.update { it.copy(userRating = target) }
-            when (personalDataRepository.setRating(contentId, target)) {
+            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+            when (writeResult) {
                 is ApiResult.Success -> { /* already updated */ }
                 else -> {
                     // Revert on failure
@@ -866,11 +870,15 @@ class ItemDetailViewModel(
 
     /** Removes the user's rating with optimistic update + revert on failure. */
     fun clearRating() {
+        val writeIntent = personalDataRepository.beginRating(contentId, null)
         viewModelScope.launch {
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val previous = _uiState.value.userRating ?: return@launch
             // Optimistic update
             _uiState.update { it.copy(userRating = null) }
-            when (personalDataRepository.deleteRating(contentId)) {
+            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+            when (writeResult) {
                 is ApiResult.Success -> { /* already updated */ }
                 else -> {
                     // Revert on failure
@@ -1076,8 +1084,11 @@ class ItemDetailViewModel(
         val target = !current
         val generation = ++watchedMutationGeneration
         updatePlayedState(target)
+        val writeIntent = personalDataRepository.beginWatched(contentId, target)
         viewModelScope.launch {
-            when (personalDataRepository.setWatched(contentId, target)) {
+            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+            when (writeResult) {
                 is ApiResult.Success -> { /* already updated */ }
                 else -> if (generation == watchedMutationGeneration) updatePlayedState(current)
             }
@@ -1099,8 +1110,11 @@ class ItemDetailViewModel(
         val generation = (episodeWatchedMutationGenerations[episodeContentId] ?: 0) + 1
         episodeWatchedMutationGenerations[episodeContentId] = generation
         updateEpisodePlayedState(episodeContentId, watched)
+        val writeIntent = personalDataRepository.beginWatched(episodeContentId, watched)
         viewModelScope.launch {
-            when (personalDataRepository.setWatched(episodeContentId, watched)) {
+            val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+            when (writeResult) {
                 is ApiResult.Success -> Unit
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     updateEpisodePlayedState(episodeContentId, previous)

@@ -10,6 +10,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.requireSiloAuth
 import org.siloserver.silo.network.apiv2.HistoryV2Api
 import org.siloserver.silo.network.apiv2.HistoryContinuationV2
@@ -43,6 +44,26 @@ class PersonalDataApi(
      */
     private val tokenManager: TokenManager? = null,
 ) {
+
+    suspend fun writePersonal(handle: org.siloserver.silo.repository.port.PersonalWriteHandle): ApiResult<Unit> {
+        val scope = handle.scope
+        if (tokenManager == null || scope != tokenManager.snapshotCurrentScope())
+            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+        val command = handle.command
+        if (!command.valid()) return ApiResult.Error(422, "validation_failed", "Invalid personal-data command.")
+        val result = safeApiV2Call<Unit>(apiV2Gate) {
+            client.request(command.path) {
+                method = HttpMethod.parse(command.method)
+                authScope(scope)
+                requireSiloAuth()
+                singleAttempt()
+                command.body?.let { contentType(ContentType.Application.Json); setBody(it) }
+            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.NoContent) }
+        }
+        if (scope != tokenManager.snapshotCurrentScope())
+            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+        return result
+    }
 
     // --- User Libraries ---
 

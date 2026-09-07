@@ -21,6 +21,10 @@ class MediaActionsCoordinator(
     suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> =
         personalDataRepository.setWatched(itemId, watched)
 
+    fun beginWatched(itemId: String, watched: Boolean) = personalDataRepository.beginWatched(itemId, watched)
+    suspend fun performPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) = personalDataRepository.performPersonalWrite(intent)
+    fun isCurrent(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) = personalDataRepository.isCurrent(intent)
+
     val memberships get() = personalDataRepository.memberships
 
     suspend fun dismissContinueWatching(

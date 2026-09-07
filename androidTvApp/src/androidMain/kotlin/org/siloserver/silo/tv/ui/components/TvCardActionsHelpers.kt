@@ -38,11 +38,12 @@ fun rememberTvBrowseItemCardActions(
     val actions = remember(item.contentId, coordinator, scope) {
         TvMediaCardActions(
             onSetWatched = { watched ->
+                val writeIntent = coordinator.beginWatched(item.contentId, watched)
                 val previous = state
                 state = state.copy(played = watched)
                 scope.launch {
-                    if (coordinator.setWatched(item.contentId, watched) !is ApiResult.Success) {
-                        state = previous
+                    if (coordinator.performPersonalWrite(writeIntent) !is ApiResult.Success) {
+                        if (coordinator.isCurrent(writeIntent)) state = previous
                     }
                 }
             },

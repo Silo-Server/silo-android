@@ -20,6 +20,11 @@ import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 @Dao
 interface DirtyOperationDao {
 
+    // Personal-data v1 rows are held byte-for-byte, including crash-stranded rows.
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+        "AND targetContentId = :contentId AND opKind IN ('SET_WATCHED', 'SET_RATING', 'SET_POSITION', 'PERSONAL_V2')")
+    suspend fun unresolvedPersonalCount(serverId: String, profileId: String, contentId: String): Int
+
     @Insert
     suspend fun insert(op: DirtyOperationEntity): Long
 
@@ -135,12 +140,12 @@ interface DirtyOperationDao {
      */
     @Query(
         "SELECT candidate.* FROM dirty_operations candidate " +
-            "WHERE candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
+            "WHERE candidate.opKind = 'SET_EBOOK_PROGRESS' AND candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
             "AND candidate.nextAttemptAtMs <= :nowMs " +
             "AND candidate.serverId = :serverId AND candidate.profileId = :profileId " +
             "AND NOT EXISTS (" +
             "SELECT 1 FROM dirty_operations older " +
-            "WHERE older.serverId = candidate.serverId " +
+            "WHERE older.opKind = 'SET_EBOOK_PROGRESS' AND older.serverId = candidate.serverId " +
             "AND older.profileId = candidate.profileId " +
             "AND older.targetContentId = candidate.targetContentId " +
             "AND older.state IN ('${DirtyOperationEntity.STATE_PENDING}', '${DirtyOperationEntity.STATE_IN_FLIGHT}') " +
@@ -202,7 +207,7 @@ interface DirtyOperationDao {
      * never touches another server/profile's rows.
      */
     @Query(
-        "DELETE FROM dirty_operations WHERE state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+        "DELETE FROM dirty_operations WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND profileId = :profileId " +
             "AND EXISTS (SELECT 1 FROM dirty_operations newer " +
             "WHERE newer.coalesceKey = dirty_operations.coalesceKey " +
@@ -214,7 +219,7 @@ interface DirtyOperationDao {
     /** Return remaining crash-stranded in-flight rows (for one scope) to pending. */
     @Query(
         "UPDATE dirty_operations SET state = '${DirtyOperationEntity.STATE_PENDING}' " +
-            "WHERE state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+            "WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND profileId = :profileId",
     )
     suspend fun resetInFlightToPending(serverId: String, profileId: String)
@@ -251,7 +256,7 @@ interface DirtyOperationDao {
 
     /** Future worker cutover must use this count, not all unresolved membership states. */
     @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
-        "AND state IN ('pending', 'in_flight')")
+        "AND opKind = 'SET_EBOOK_PROGRESS' AND state IN ('pending', 'in_flight')")
     suspend fun runnableLegacyCountForScope(serverId: String, profileId: String): Int
 
     @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +

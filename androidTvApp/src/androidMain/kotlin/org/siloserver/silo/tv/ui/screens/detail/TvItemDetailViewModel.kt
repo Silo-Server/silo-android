@@ -776,8 +776,10 @@ class TvItemDetailViewModel(
                 detail = it.detail?.withWatchedPlaybackState(target),
             )
         }
+        val writeIntent = personalDataRepository.beginWatched(contentId, target)
         viewModelScope.launch {
-            val result = personalDataRepository.setWatched(contentId, target)
+            val result = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             if (result !is ApiResult.Success) {
                 // Roll back on error.
                 _uiState.update {
@@ -802,8 +804,10 @@ class TvItemDetailViewModel(
         val target = stars.coerceIn(1, 5)
         val previous = current.userRating
         _uiState.update { it.copy(isTogglingRating = true, userRating = target) }
+        val writeIntent = personalDataRepository.beginRating(contentId, target)
         viewModelScope.launch {
-            val result = personalDataRepository.setRating(contentId, target)
+            val result = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             if (result !is ApiResult.Success) {
                 // Roll back on error.
                 _uiState.update {
@@ -820,8 +824,10 @@ class TvItemDetailViewModel(
         if (current.isTogglingRating) return
         val previous = current.userRating ?: return
         _uiState.update { it.copy(isTogglingRating = true, userRating = null) }
+        val writeIntent = personalDataRepository.beginRating(contentId, null)
         viewModelScope.launch {
-            val result = personalDataRepository.deleteRating(contentId)
+            val result = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             if (result !is ApiResult.Success) {
                 // Roll back on error.
                 _uiState.update {
@@ -1431,8 +1437,10 @@ class TvItemDetailViewModel(
         publishCarousel()
         refreshNextUp(updatedEpisodes)
 
+        val writeIntent = personalDataRepository.beginWatched(episodeContentId, watched)
         viewModelScope.launch {
-            val result = personalDataRepository.setWatched(episodeContentId, watched)
+            val result = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
             if (result !is ApiResult.Success) {
                 if (

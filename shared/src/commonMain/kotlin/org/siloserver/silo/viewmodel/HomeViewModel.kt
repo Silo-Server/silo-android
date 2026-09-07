@@ -384,10 +384,13 @@ class HomeViewModel(
      * reflects in the UI.
      */
     fun setWatched(itemId: String, watched: Boolean) {
+        val writeIntent = mediaActions.beginWatched(itemId, watched)
         val previous = _uiState.value.sections
         _uiState.update { state -> state.copy(sections = state.sections.mapItem(itemId) { it.withPlayed(watched) }) }
         viewModelScope.launch {
-            when (mediaActions.setWatched(itemId, watched)) {
+            val result = mediaActions.performPersonalWrite(writeIntent)
+            if (!mediaActions.isCurrent(writeIntent)) return@launch
+            when (result) {
                 is ApiResult.Success -> refresh()
                 else -> _uiState.update { it.copy(sections = previous) }
             }

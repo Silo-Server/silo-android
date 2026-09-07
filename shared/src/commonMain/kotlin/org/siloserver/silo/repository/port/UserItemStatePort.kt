@@ -37,6 +37,11 @@ sealed interface TrackSelectionFingerprintUpdate {
  * server result so the op can be acked, kept for retry, or dropped.
  */
 interface UserItemStatePort {
+    /** Persist before dispatch; null means missing authority or an unresolved predecessor. */
+    suspend fun beginPersonalWrite(command: PersonalWrite): PersonalWriteHandle? = null
+    /** Only a verified 204 settles this non-retryable command. Other outcomes retain uncertainty. */
+    suspend fun completePersonalWrite(handle: PersonalWriteHandle) {}
+
 
     /** rating `null` clears the rating. */
     suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle

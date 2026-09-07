@@ -42,11 +42,12 @@ fun rememberBrowseItemCardActions(
     val actions = remember(item.contentId, coordinator, scope) {
         MediaCardActions(
             onSetWatched = { watched ->
+                val writeIntent = coordinator.beginWatched(item.contentId, watched)
                 val previous = state
                 state = state.copy(played = watched)
                 scope.launch {
-                    if (coordinator.setWatched(item.contentId, watched).isFailure()) {
-                        state = previous
+                    if (coordinator.performPersonalWrite(writeIntent).isFailure()) {
+                        if (coordinator.isCurrent(writeIntent)) state = previous
                     }
                 }
             },
