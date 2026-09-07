@@ -3,7 +3,6 @@ package org.siloserver.silo.common.player
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.CleartextOriginConsent
-import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.canonicalHttpOrigin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -11,7 +10,9 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.runBlocking
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Connection
+import okhttp3.Dispatcher
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -21,7 +22,11 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -53,7 +58,7 @@ class MediaAuthInterceptorTest {
                 .header("X-Stream-Signature", "secret-plan-header")
                 .build()
 
-            assertFailsWith<CleartextOriginNotApprovedException> {
+            assertFailsWith<CleartextMediaOriginNotApprovedException> {
                 client.newCall(request).execute().close()
             }
             assertEquals(1, origin.requestCount)
@@ -64,6 +69,67 @@ class MediaAuthInterceptorTest {
         }
     }
 
+    @Test
+    fun `async cleartext redirect rejection reaches the failure callback`() {
+        val origin = MockWebServer()
+        val downstream = MockWebServer()
+        val uncaught = AtomicReference<Throwable?>()
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "cleartext-callback-test").apply {
+                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, error ->
+                    uncaught.set(error)
+                }
+            }
+        }
+        origin.start()
+        downstream.start()
+        try {
+            origin.enqueue(
+                MockResponse()
+                    .setResponseCode(302)
+                    .setHeader("Location", downstream.url("/asset")),
+            )
+            val approvedOrigin = canonicalHttpOrigin(origin.url("/").toString())
+            val consent = object : CleartextOriginConsent {
+                override suspend fun isApproved(origin: String): Boolean =
+                    canonicalHttpOrigin(origin) == approvedOrigin
+            }
+            val client = buildPlayerOkHttpClient(consent).newBuilder()
+                .dispatcher(Dispatcher(executor))
+                .build()
+            val completed = CountDownLatch(1)
+            var failure: IOException? = null
+
+            client.newCall(Request.Builder().url(origin.url("/redirect")).build())
+                .enqueue(object : Callback {
+                    override fun onFailure(call: Call, error: IOException) {
+                        failure = error
+                        completed.countDown()
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        response.close()
+                        completed.countDown()
+                    }
+                })
+
+            assertTrue(
+                completed.await(2, TimeUnit.SECONDS),
+                "unchecked interceptor failure escaped the OkHttp dispatcher",
+            )
+            executor.shutdown()
+            assertTrue(executor.awaitTermination(2, TimeUnit.SECONDS))
+            assertNull(uncaught.get(), "interceptor failure escaped the OkHttp dispatcher")
+            assertTrue(failure is CleartextMediaOriginNotApprovedException)
+            assertEquals("Cleartext media origin is not approved", failure?.message)
+            assertEquals(1, origin.requestCount)
+            assertEquals(0, downstream.requestCount)
+        } finally {
+            executor.shutdownNow()
+            origin.shutdown()
+            downstream.shutdown()
+        }
+    }
 
     @Test
     fun `adds auth and active profile headers to media and reader requests`() {
