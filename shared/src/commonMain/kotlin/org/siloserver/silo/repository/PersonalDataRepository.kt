@@ -109,15 +109,21 @@ open class PersonalDataRepository(
     private val personalDispatchMutex = Mutex()
     private val consumedPersonalIntents = mutableSetOf<Long>()
     private var personalSequence = 0L
-    private val latestPersonalIntents = mutableMapOf<String, org.siloserver.silo.repository.port.PersonalWriteIntent>()
+    private val latestPersonalIntents = mutableMapOf<Pair<String, String>, org.siloserver.silo.repository.port.PersonalWriteIntent>()
+
+    private fun personalIntentKey(command: org.siloserver.silo.repository.port.PersonalWrite) = command.itemId to
+        when (command) {
+            is org.siloserver.silo.repository.port.PersonalWrite.Watched -> "watched"
+            is org.siloserver.silo.repository.port.PersonalWrite.Rating -> "rating"
+        }
 
     fun beginWatched(itemId: String, watched: Boolean) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
     fun beginRating(itemId: String, rating: Int?) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, rating))
     private fun beginPersonal(command: org.siloserver.silo.repository.port.PersonalWrite) =
         org.siloserver.silo.repository.port.PersonalWriteIntent(command, identityTransitions.generation.value, ++personalSequence)
-            .also { latestPersonalIntents[command.itemId] = it }
+            .also { latestPersonalIntents[personalIntentKey(command)] = it }
     fun isCurrent(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) =
-        intent.identityGeneration == identityTransitions.generation.value && latestPersonalIntents[intent.command.itemId] == intent
+        intent.identityGeneration == identityTransitions.generation.value && latestPersonalIntents[personalIntentKey(intent.command)] == intent
 
     private suspend fun writePersonal(command: org.siloserver.silo.repository.port.PersonalWrite): ApiResult<Unit> =
         performPersonalWrite(beginPersonal(command))

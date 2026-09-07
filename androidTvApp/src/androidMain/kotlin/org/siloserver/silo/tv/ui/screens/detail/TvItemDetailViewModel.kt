@@ -764,6 +764,20 @@ class TvItemDetailViewModel(
         viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
+    private var watchedMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
+    private var ratingMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
+
+    private fun releaseInvalidatedPersonalMutations(generation: Long) {
+        if (watchedMutationOwner?.identityGeneration?.let { it < generation } == true) {
+            watchedMutationOwner = null
+            _uiState.update { it.copy(isTogglingWatched = false) }
+        }
+        if (ratingMutationOwner?.identityGeneration?.let { it < generation } == true) {
+            ratingMutationOwner = null
+            _uiState.update { it.copy(isTogglingRating = false) }
+        }
+    }
+
     fun onToggleWatched() {
         val current = _uiState.value
         if (current.isTogglingWatched) return
@@ -777,23 +791,31 @@ class TvItemDetailViewModel(
             )
         }
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
+        watchedMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.performPersonalWrite(writeIntent)
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(
-                        isTogglingWatched = false,
-                        isWatched = !target,
-                        detail = previousDetail,
-                    )
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(
+                            isTogglingWatched = false,
+                            isWatched = !target,
+                            detail = previousDetail,
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingWatched = false) }
+                    // Re-read server-resolved state (including series/season episode
+                    // resolution) without flashing the full detail loading screen.
+                    refreshOnReturn()
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingWatched = false) }
-                // Re-read server-resolved state (including series/season episode
-                // resolution) without flashing the full detail loading screen.
-                refreshOnReturn()
+            } finally {
+                if (watchedMutationOwner == writeIntent) {
+                    watchedMutationOwner = null
+                    _uiState.update { it.copy(isTogglingWatched = false) }
+                }
             }
         }
     }
@@ -805,16 +827,24 @@ class TvItemDetailViewModel(
         val previous = current.userRating
         _uiState.update { it.copy(isTogglingRating = true, userRating = target) }
         val writeIntent = personalDataRepository.beginRating(contentId, target)
+        ratingMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.performPersonalWrite(writeIntent)
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingRating = false, userRating = previous)
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(isTogglingRating = false, userRating = previous)
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingRating = false) }
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingRating = false) }
+            } finally {
+                if (ratingMutationOwner == writeIntent) {
+                    ratingMutationOwner = null
+                    _uiState.update { it.copy(isTogglingRating = false) }
+                }
             }
         }
     }
@@ -825,16 +855,24 @@ class TvItemDetailViewModel(
         val previous = current.userRating ?: return
         _uiState.update { it.copy(isTogglingRating = true, userRating = null) }
         val writeIntent = personalDataRepository.beginRating(contentId, null)
+        ratingMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.performPersonalWrite(writeIntent)
-            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingRating = false, userRating = previous)
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(isTogglingRating = false, userRating = previous)
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingRating = false) }
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingRating = false) }
+            } finally {
+                if (ratingMutationOwner == writeIntent) {
+                    ratingMutationOwner = null
+                    _uiState.update { it.copy(isTogglingRating = false) }
+                }
             }
         }
     }
@@ -2000,6 +2038,7 @@ class TvItemDetailViewModel(
         viewModelScope.launch {
             identityTransitions.transitions.collect { transition ->
                 if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
+                    releaseInvalidatedPersonalMutations(transition.generation)
                     pendingNextUpSelectionHandoff = null
                     episodeListGeneration++
                     _uiState.update { it.copy(isFavorite = false, inWatchlist = false, episodeFavoriteStates = emptyMap()) }
