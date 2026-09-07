@@ -158,6 +158,9 @@ class CastPlaybackPreparer(
         handle: CastPlaybackSessionHandle,
     ): CastMediaSpec {
         val plan = ready.plan
+        requireCastUrlCredentialCompatibility(plan.stream.url)
+        plan.subtitle.artifact?.url?.let(::requireCastUrlCredentialCompatibility)
+        plan.subtitle.inventory.mapNotNull { it.url }.forEach(::requireCastUrlCredentialCompatibility)
         val serverUrl = tokenManager.getServerUrl()
         val token = tokenManager.getAccessToken()
 
@@ -803,4 +806,11 @@ internal fun appendCastStreamToken(url: String, encodedToken: String): String {
     val fragment = url.substringAfter('#', "")
     val separator = if ('?' in base) '&' else '?'
     return "$base${separator}st=$encodedToken" + if ('#' in url) "#$fragment" else ""
+}
+
+/** A URL-only receiver cannot satisfy proxy v3's captured header contract. */
+internal fun requireCastUrlCredentialCompatibility(url: String) {
+    require(!io.ktor.http.Url(url).encodedPath.startsWith("/stream/v3/")) {
+        "This playback route requires headers that the Cast receiver cannot supply."
+    }
 }

@@ -123,3 +123,40 @@ Phone and TV builds check caller and Settings integration. These checks do not
 establish rendered media behavior, device process-kill durability, live server
 admission or physical TV acceptance. Actual isolated native media validation is a
 separate requirement; client conformance does not activate the server runtime.
+
+## Proxy auxiliary subtitles
+
+A proxy subtitle artifact must identify the issued proxy origin and session with
+an absolute credential-free URL:
+`/stream/v3/{session_id}/subtitles/{nonnegative track}.{format}`. Supported route
+suffixes are `ass`, `ssa`, `srt`, `vtt` and `sup`; renderer support still determines
+which artifacts can be mounted. Preserve the issued `file_id` and immutable
+`embedded_stream_index`, `external_subtitle_key` or `downloaded_subtitle_id`
+selectors, including their encoded bytes. PGS `windowed`, `position` and
+`duration` options remain unchanged. Duplicate pins are preserved for the
+producer's authoritative rejection. Do not append an access token or substitute
+`source_file_id` for `file_id`.
+
+The server publishes references, not viewer credentials. Its auxiliary producer
+requires a live captured `Authorization: Bearer ...` header and matching
+`X-Profile-Id` selector. The recipe's signed profile remains authority; the
+selector is not proof. Android captures the headers actually sent on the owning
+START or replan request and joins them to the validated artifact only in
+transient native request state. Bearer credentials are excluded from serialized
+plans and durable journals. A changed identity, stopped session or replacement
+plan invalidates the old scope. A later data-source open cannot substitute the
+ambient token or selected profile, refresh auxiliary credentials, or send them
+to another origin, session, path or changed subtitle query.
+
+The actual subtitle data source uses those captured headers only for issued
+references. Auxiliary redirects and automatic connection-failure retries are
+disabled. Existing signed `/stream/subtitles/{token}/...` references and API
+executor references with opaque `st` remain separate URL families. Android has
+no runtime font-bundle loader in this path; DTO inventory does not establish
+`/fonts` consumption or justify creating one. The URL-only Cast receiver cannot
+supply the proxy header contract; Cast preparation refuses proxy v3 routes before
+its existing query-signing step rather than appending an access token.
+
+This requires the server proxy auxiliary producer, immutable artifact
+construction and configured admission to be joined and reviewed. Native source
+and transport tests do not establish that runtime wiring or media acceptance.

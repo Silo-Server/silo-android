@@ -347,7 +347,7 @@ class TvVideoPlaybackStarter(
                 playMethod = resolved.playMethod,
                 playbackPlan = resolved.playbackPlan,
                 playbackPlanV3 = readyV3.plan,
-                requestHeaders = readyV3.plan.stream.headers,
+                requestHeaders = readyV3.plan.stream.effectiveRequestHeaders,
                 delivery = resolvedDelivery,
                 container = readyV3.plan.stream.container ?: effectiveVersion?.container,
                 title = watchDetail.title,

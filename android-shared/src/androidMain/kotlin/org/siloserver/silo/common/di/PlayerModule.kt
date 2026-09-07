@@ -62,7 +62,7 @@ val playerModule = module {
 
     @OptIn(UnstableApi::class)
     single<HttpDataSource.Factory>(PLAYER_HTTP_DATA_SOURCE_FACTORY_QUALIFIER) {
-        OkHttpDataSource.Factory(get<OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER))
+        OkHttpDataSource.Factory(org.siloserver.silo.common.player.auxiliaryAwareCallFactory(get<OkHttpClient>(PLAYER_TRANSPORT_OKHTTP_QUALIFIER)))
     }
 
     @OptIn(UnstableApi::class)

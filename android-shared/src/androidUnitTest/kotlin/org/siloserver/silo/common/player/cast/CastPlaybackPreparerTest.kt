@@ -15,6 +15,15 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CastPlaybackPreparerTest {
+    @org.junit.Test
+    fun proxyRoutesCannotBecomeTokenizedCastUrls() {
+        for (url in listOf("https://proxy.example/stream/v3/session-1", "https://proxy.example/stream/v3/session-1/subtitles/0.vtt?file_id=42")) {
+            kotlin.test.assertFailsWith<IllegalArgumentException> { requireCastUrlCredentialCompatibility(url) }
+        }
+        requireCastUrlCredentialCompatibility("https://proxy.example/stream/subtitles/signed/0.vtt")
+        requireCastUrlCredentialCompatibility("https://api.example/api/v2/stream/session/subtitles/0.vtt?st=opaque")
+    }
+
     @Test
     fun shiftedSubtitleAuthenticationPrecedesFragment() {
         val shifted = castSubtitleUrlForTimeline("https://server/subtitles/2.vtt?file_id=42#cue", 90.5)

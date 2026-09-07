@@ -62,6 +62,8 @@ class SequencedPlayback(
     private var entries: List<PlaybackJournalEntry>? = null
     private val adopted = mutableSetOf<String>()
     private val discovered = mutableMapOf<String, CapturedPlaybackManifest>()
+    private val auxiliaryGenerations = mutableMapOf<String, Long>()
+    private val auxiliaryHeaders = mutableMapOf<String, ProxyAuxiliaryRequestHeaders>()
     private val scopes = mutableMapOf<String, AuthScopeSnapshot>()
     private val _pending = MutableStateFlow<List<String>>(emptyList())
     val pending = _pending.asStateFlow()
@@ -84,6 +86,7 @@ class SequencedPlayback(
         val next = load().filterNot { it.attemptId == entry.attemptId } + entry
         store.write(next)
         entries = next
+        if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
     }
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
@@ -211,7 +214,8 @@ class SequencedPlayback(
         adoptForPlayer: Boolean = true, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> {
         if (scope(entry) == null || !tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
             return failure("identity_changed", "The active viewer changed.")
-        return when (val result = api.start(captured, entry.start)) {
+        var sentHeaders: Map<String, String> = emptyMap()
+        return when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
             is ApiResult.Success -> {
                 // Only the durable HTTP 201 terminal contract proves this bound attempt never activated.
                 // The API enforces 201; generic conflicts/errors never reach this settlement path.
@@ -238,15 +242,41 @@ class SequencedPlayback(
                     if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
                     if (!tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
                         return failure("identity_changed", "The metadata viewer changed after playback admission.")
+                    val ready = withAuxiliaryAuthority(decision, entry, captured, sentHeaders)
                     if (adoptForPlayer) adopted += entry.attemptId
                     publish()
-                    ApiResult.Success(decision)
+                    ApiResult.Success(ready)
                 } catch (e: Exception) { ApiResult.NetworkError(e) }
             }
             // Preserve uncertain starts, including validation responses until pre-admission is proven.
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun withAuxiliaryAuthority(
+        decision: PlaybackDecisionResponseV3, entry: PlaybackJournalEntry,
+        captured: AuthScopeSnapshot, sentHeaders: Map<String, String>,
+    ): PlaybackDecisionResponseV3 {
+        val generation = (auxiliaryGenerations[entry.attemptId] ?: 0) + 1
+        auxiliaryGenerations[entry.attemptId] = generation
+        auxiliaryHeaders.remove(entry.attemptId)
+        val plan = decision.playbackPlan ?: return decision
+        val references = (plan.subtitle.inventory.mapNotNull { it.url } + listOfNotNull(plan.subtitle.artifact?.url))
+            .filter(::isProxyAuxiliaryUrl).toSet()
+        if (references.isEmpty()) return decision
+        val headers = capturedProxyAuxiliaryHeaders(sentHeaders)
+        require(headers["X-Profile-Id"] == entry.profileId)
+        val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, references, headers) {
+            mutex.withLock {
+                val live = authorities.snapshotDurableLoginAuthority()
+                live?.loginId == entry.loginId && live.scope == captured &&
+                    auxiliaryGenerations[entry.attemptId] == generation &&
+                    entries?.any { it.attemptId == entry.attemptId && !it.terminal && it.stop == null } == true
+            }
+        }
+        auxiliaryHeaders[entry.attemptId] = ephemeral
+        return decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = ephemeral)))
     }
 
     private fun timelineRefusal(entry: PlaybackJournalEntry, body: JsonObject): PlaybackDecisionResponseV3? {
@@ -283,7 +313,17 @@ class SequencedPlayback(
             if (previous.body != body) return@withLock failure("replan_conflict", "A replan identity cannot be reused with a different request.")
             previous.response?.let {
                 if (previous !== entry.replans.last()) return@withLock failure("stale_replan", "A newer replan superseded this decision.")
-                return@withLock ApiResult.Success(decodePlaybackDecisionV2(it))
+                val decision = decodePlaybackDecisionV2(it)
+                val plan = decision.playbackPlan
+                val hasProxyAuxiliary = plan?.subtitle?.let { subtitle ->
+                    (subtitle.inventory.mapNotNull { row -> row.url } + listOfNotNull(subtitle.artifact?.url)).any(::isProxyAuxiliaryUrl)
+                } == true
+                if (hasProxyAuxiliary && plan != null) {
+                    val headers = auxiliaryHeaders[entry.attemptId]
+                        ?: return@withLock failure("playback_unavailable", "The retained plan has no live auxiliary request authority.")
+                    return@withLock ApiResult.Success(decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = headers))))
+                }
+                return@withLock ApiResult.Success(decision)
             }
             previous.rejectedCode?.let { return@withLock ApiResult.Error(it, "replan_rejected", previous.rejectedMessage ?: "Replan is unavailable.") }
             return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
@@ -295,7 +335,8 @@ class SequencedPlayback(
         entry = entry.copy(replans = entry.replans + intent)
         save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.
         if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
-        when (val result = api.replan(captured, sessionId, body)) {
+        var sentHeaders: Map<String, String> = emptyMap()
+        when (val result = api.replan(captured, sessionId, body) { sentHeaders = it }) {
             is ApiResult.Success -> {
                 val decision = decodePlaybackDecisionV2(result.data)
                 if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
@@ -306,7 +347,7 @@ class SequencedPlayback(
                     return@withLock failure("invalid_timeline", "A replan cannot change the captured audiobook part.")
                 save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
                 if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
-                ApiResult.Success(decision)
+                ApiResult.Success(withAuxiliaryAuthority(decision, entry, captured, sentHeaders))
             }
             is ApiResult.Error -> {
                 // A documented unsupported operation is pre-admission. Other errors remain uncertain.
@@ -487,9 +528,17 @@ internal fun decodePlaybackDecisionV2(body: JsonObject): PlaybackDecisionRespons
         }
     }
     plan["stream"]?.jsonObject?.get("url")?.let(::validateUrl)
+    fun validateSubtitleUrl(element: JsonElement?) {
+        validateUrl(element)
+        val raw = (element as? JsonPrimitive)?.contentOrNull ?: return
+        if (isProxyAuxiliaryUrl(raw)) {
+            val stream = requireNotNull(plan["stream"] as? JsonObject)
+            validateProxySubtitleUrl(raw, stream.getValue("url").jsonPrimitive.content)
+        }
+    }
     plan["subtitle"]?.jsonObject?.let { subtitle ->
-        subtitle["artifact"]?.takeIf { it is JsonObject }?.jsonObject?.get("url")?.let(::validateUrl)
-        (subtitle["inventory"] as? JsonArray)?.forEach { row -> validateUrl(row.jsonObject["url"]) }
+        subtitle["artifact"]?.takeIf { it is JsonObject }?.jsonObject?.get("url")?.let(::validateSubtitleUrl)
+        (subtitle["inventory"] as? JsonArray)?.forEach { row -> validateSubtitleUrl(row.jsonObject["url"]) }
     }
     val fields = plan.toMutableMap()
     for (key in listOf("requested_media_file_id", "effective_media_file_id")) fields[key]?.let { fields[key] = rendererId(it) }

@@ -88,3 +88,13 @@ internal fun buildPlayerRefreshOkHttpClient(): OkHttpClient =
         .writeTimeout(15, TimeUnit.SECONDS)
         .callTimeout(20, TimeUnit.SECONDS)
         .build()
+
+/** Auxiliary GETs must surface denial/redirect/lost response without a transport replay. */
+internal fun auxiliaryAwareCallFactory(client: OkHttpClient): okhttp3.Call.Factory {
+    val auxiliary = client.newBuilder().followRedirects(false).followSslRedirects(false)
+        .retryOnConnectionFailure(false).build()
+    return okhttp3.Call.Factory { request ->
+        if (org.siloserver.silo.network.apiv2.isProxyAuxiliaryUrl(request.url.toString())) auxiliary.newCall(request)
+        else client.newCall(request)
+    }
+}

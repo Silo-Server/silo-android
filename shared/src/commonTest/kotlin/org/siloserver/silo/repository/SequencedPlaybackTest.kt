@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.request.header
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -191,6 +193,40 @@ class SequencedPlaybackTest {
             runtime.discoverTimeline(43, "book", identity.scope)
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "original"), identity.scope)).error)
             assertFalse(store.entries.single().terminal); assertNull(store.entries.single().rejectedStartDecision)
+        } finally { c.close() }
+    }
+
+    @Test fun proxyAuxiliaryUsesActualRequestHeadersOnlyEphemerallyAndFencesIdentity() = runTest {
+        val identity = Identity(); val store = Store()
+        val wire = adoptedDecision.replace("/api/v2/stream/session-1", "https://proxy.example/stream/v3/session-1")
+            .replace("\"decision_reason\":", "\"subtitle\":{\"mode\":\"render\",\"artifact\":{\"url\":\"https://proxy.example/stream/v3/session-1/subtitles/0.ass?file_id=42&embedded_stream_index=0\",\"mime_type\":\"text/x-ssa\",\"format\":\"ass\"}},\"decision_reason\":")
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(wire, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/replan" -> reply(wire)
+            else -> error("Unexpected request")
+        } }.config { defaultRequest { header("Authorization", "Bearer captured-request"); header("X-Profile-Id", "profile") } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val decision = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request(), identity.scope)).data
+            val headers = assertIs<ProxyAuxiliaryRequestHeaders>(decision.playbackPlan!!.stream.effectiveRequestHeaders)
+            assertEquals("Bearer captured-request", headers["Authorization"])
+            assertTrue(headers.isCurrent())
+            assertTrue(decision.playbackPlan!!.stream.headers.isEmpty())
+            assertFalse(SiloJson.encodeToString(decision).contains("captured-request"))
+            assertFalse(SiloJson.encodeToString(store.entries).contains("captured-request"))
+            val replacement = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.replan("session-1", replanRequest())).data
+            val replacementHeaders = assertIs<ProxyAuxiliaryRequestHeaders>(replacement.playbackPlan!!.stream.effectiveRequestHeaders)
+            assertFalse(headers.isCurrent())
+            assertTrue(replacementHeaders.isCurrent())
+            val repeated = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.replan("session-1", replanRequest())).data
+            assertSame(replacementHeaders, repeated.playbackPlan!!.stream.effectiveRequestHeaders)
+            assertFalse(SiloJson.encodeToString(store.entries).contains("captured-request"))
+            assertFalse(SiloJson.encodeToString(replacement).contains("captured-request"))
+            identity.scope = identity.scope.copy(profileId = "new-profile", identityGeneration = 2)
+            assertFalse(replacementHeaders.isCurrent())
+            assertEquals("profile", headers["X-Profile-Id"])
         } finally { c.close() }
     }
 

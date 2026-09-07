@@ -552,6 +552,8 @@ class SiloPlayerFactory(
      */
     private fun requestHeadersFor(uri: android.net.Uri): Map<String, String> {
         val scope = requestHeaderScope ?: return emptyMap()
+        val captured = scope.headers as? org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders
+        if (captured != null) return scopedProxyRequestHeaders(uri.toString(), captured)
         val issued = scope.streamUri
         if (!uri.scheme.equals(issued.scheme, ignoreCase = true) ||
             !uri.host.equals(issued.host, ignoreCase = true) ||

@@ -102,21 +102,27 @@ class PlaybackV2Api(private val client: HttpClient) {
         client.get("/api/v2/account/me") { authScope(scope); requireSiloAuth() }
     }
 
-    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject): ApiResult<JsonObject> =
+    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
         safeApiV2Call(ApiV2Gate.Unrestricted) {
             client.post("/api/v2/playback/start") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { check(!it.status.isSuccess() || it.status.value == 201) }
+            }.also {
+                captureHeaders(it.call.request.headers.entries().filter { entry -> entry.key.equals("Authorization", true) || entry.key.equals("X-Profile-Id", true) }.associate { entry -> entry.key to entry.value.single() })
+                check(!it.status.isSuccess() || it.status.value == 201)
+            }
         }
 
-    suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject): ApiResult<JsonObject> =
+    suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
         safeApiV2Call(ApiV2Gate.Unrestricted) {
             client.post {
                 url { path("api", "v2", "playback", sessionId, "replan") }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { check(!it.status.isSuccess() || it.status.value == 200) }
+            }.also {
+                captureHeaders(it.call.request.headers.entries().filter { entry -> entry.key.equals("Authorization", true) || entry.key.equals("X-Profile-Id", true) }.associate { entry -> entry.key to entry.value.single() })
+                check(!it.status.isSuccess() || it.status.value == 200)
+            }
         }
 
     suspend fun routeEvent(scope: AuthScopeSnapshot, body: JsonObject): ApiResult<PlaybackRouteEventReceiptV2> =

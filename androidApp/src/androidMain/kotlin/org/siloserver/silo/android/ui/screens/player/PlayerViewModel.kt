@@ -1891,7 +1891,7 @@ class PlayerViewModel(
                                 playbackPlan = decision.session.playbackPlan,
                                 delivery = decision.plan.delivery,
                                 streamUrl = decision.plan.stream.url,
-                                requestHeaders = decision.plan.stream.headers,
+                                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                                 container = decision.plan.stream.container
                                     ?: effectiveVersion?.container
                                     ?: current.container.takeIf { effectiveFileId == fileId },
@@ -2857,7 +2857,7 @@ class PlayerViewModel(
                 playbackPlan = decision.session.playbackPlan,
                 delivery = decision.plan.delivery,
                 streamUrl = decision.plan.stream.url,
-                requestHeaders = decision.plan.stream.headers,
+                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                 container = decision.plan.stream.container ?: current.container,
                 startPosition = decision.plan.timeline.playerStartSeconds,
                 mediaMountGeneration = mountGeneration,
@@ -3121,7 +3121,7 @@ class PlayerViewModel(
                 playbackPlan = ready.session.playbackPlan,
                 delivery = ready.plan.delivery,
                 streamUrl = ready.plan.stream.url,
-                requestHeaders = ready.plan.stream.headers,
+                requestHeaders = ready.plan.stream.effectiveRequestHeaders,
                 container = ready.plan.stream.container
                     ?: effectiveVersion.container
                     ?: current.container.takeIf { effectiveFileId == predecessorFileId },
