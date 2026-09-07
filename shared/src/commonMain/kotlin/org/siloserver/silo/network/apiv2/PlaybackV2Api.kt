@@ -26,7 +26,9 @@ data class PlaybackCapabilitiesV2(
 
 @Serializable
 data class PlaybackSampleV2(val sequence: Long, val position: Double,
-    @SerialName("is_paused") val isPaused: Boolean)
+    @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("timeline_id") val timelineId: String? = null,
+    @SerialName("item_position") val itemPosition: Double? = null)
 
 @Serializable
 data class PlaybackProgressV2(
@@ -34,6 +36,7 @@ data class PlaybackProgressV2(
     val sequence: Long,
     val position: Double,
     @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("timeline_id") val timelineId: String? = null,
 )
 
 @Serializable
@@ -43,6 +46,7 @@ data class PlaybackStopV2(
     val sequence: Long? = null,
     val position: Double? = null,
     @SerialName("is_paused") val isPaused: Boolean? = null,
+    @SerialName("timeline_id") val timelineId: String? = null,
 )
 
 @Serializable
@@ -83,6 +87,15 @@ class PlaybackV2Api(private val client: HttpClient) {
         safeApiV2Call(ApiV2Gate.Unrestricted) {
             client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }
                 .also { check(!it.status.isSuccess() || it.status.value == 200) }
+        }
+
+    suspend fun timeline(scope: AuthScopeSnapshot, fileId: Int, installationId: String): ApiResult<PlaybackManifestV2> =
+        safeApiV2Call(ApiV2Gate.Unrestricted) {
+            client.get("/api/v2/playback/timelines/$fileId") {
+                authScope(scope); requireSiloAuth()
+                parameter("installation_id", installationId)
+                header(HttpHeaders.CacheControl, "no-store")
+            }.also { check(!it.status.isSuccess() || it.status.value == 200) }
         }
 
     suspend fun account(scope: AuthScopeSnapshot): ApiResult<Account> = safeApiV2Call(ApiV2Gate.Unrestricted) {

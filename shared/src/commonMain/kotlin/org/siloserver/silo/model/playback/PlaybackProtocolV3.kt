@@ -154,6 +154,7 @@ enum class SubtitleFidelityPreference {
 enum class ProgressPersistenceV3 {
     @SerialName("server") SERVER,
     @SerialName("client") CLIENT,
+    @SerialName("client_bound") CLIENT_BOUND,
 }
 
 @Serializable
@@ -165,6 +166,7 @@ data class PlaybackDecisionResponseV3(
     @Serializable(with = TolerantPlaybackPlanV3Serializer::class)
     @SerialName("playback_plan") val playbackPlan: PlaybackPlanV3? = null,
     val terminal: PlaybackTerminalV3? = null,
+    @SerialName("progress_timeline") val progressTimeline: org.siloserver.silo.network.apiv2.PlaybackProgressTimelineV2? = null,
 )
 
 /**
@@ -396,6 +398,7 @@ data class PlaybackTransformationV3(
 @Serializable
 enum class PlaybackTransformationExecutor {
     @SerialName("client") CLIENT,
+    @SerialName("client_bound") CLIENT_BOUND,
     @SerialName("server") SERVER,
 }
 
@@ -417,6 +420,7 @@ data class PlaybackStartRequestV3(
     @SerialName("subtitle_fidelity_preference") val subtitleFidelityPreference: SubtitleFidelityPreference,
     @SerialName("start_position") val startPosition: Double? = null,
     @SerialName("progress_persistence") val progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
+    @SerialName("timeline_id") val timelineId: String? = null,
     @SerialName("audio_track_id") val audioTrackId: String? = null,
     @SerialName("audio_track_index") val audioTrackIndex: Int? = null,
     @SerialName("subtitle_track_id") val subtitleTrackId: String? = null,

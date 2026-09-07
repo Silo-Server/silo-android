@@ -47,6 +47,158 @@ class SequencedPlaybackTest {
     private fun MockRequestHandleScope.reply(body: String, status: HttpStatusCode = HttpStatusCode.OK) =
         respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
 
+    private val manifest = PlaybackManifestV2(installation, "a".repeat(64), "book", "edition", 1000.0,
+        listOf(PlaybackManifestPartV2("42", 0.0, 600.0), PlaybackManifestPartV2("43", 600.0, 400.0)))
+    private fun boundRequest(file: Int, attempt: String) = request().copy(fileId = file, playbackAttemptId = attempt,
+        progressPersistence = ProgressPersistenceV3.CLIENT_BOUND, timelineId = manifest.timelineId,
+        clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3 + BOUND_CLIENT_TIMELINE_FEATURE, startPosition = 0.0)
+    private fun boundDecision(file: Int, session: String): String {
+        val base = SiloJson.parseToJsonElement(adoptedDecision.replace("session-1", session).replace("\"42\"", "\"$file\"")).jsonObject
+        return JsonObject(base + ("progress_timeline" to SiloJson.encodeToJsonElement(manifest.select(file)))).toString()
+    }
+
+    @Test fun unboundJournalAndCommandsDoNotGainTimelineFields() {
+        val legacy = entry().copy(progress = PlaybackProgressV2(installation, 1, 30.0, false),
+            stop = PlaybackStopV2(installation, stopId))
+        val encoded = SiloJson.encodeToString(legacy)
+        assertFalse(encoded.contains("timeline")); assertFalse(encoded.contains("manifest"))
+        assertFalse(encoded.contains("acceptedBoundSample"))
+        assertEquals(legacy, SiloJson.decodeFromString<PlaybackJournalEntry>(encoded))
+    }
+
+    @Test fun boundPartCannotStartUntilOldTerminalReceiptAndStopKeepsTimelineWithoutFinalSample() = runTest {
+        val identity = Identity(); val store = Store(); var starts = 0; var allowStop = false
+        val stops = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/playback/timelines/43" -> {
+                assertEquals(installation, req.url.parameters["installation_id"])
+                assertEquals(identity.scope, req.attributes[AuthScopeAttributeKey])
+                reply(SiloJson.encodeToString(manifest))
+            }
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> {
+                starts++
+                val body = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                assertEquals("client_bound", body.getValue("progress_persistence").jsonPrimitive.content)
+                assertEquals(manifest.timelineId, body.getValue("timeline_id").jsonPrimitive.content)
+                reply(boundDecision(body.getValue("file_id").jsonPrimitive.content.toInt(), "session-$starts"), HttpStatusCode.Created)
+            }
+            "/api/v2/playback/session-1/progress" -> {
+                val sent = SiloJson.decodeFromString<PlaybackProgressV2>(req.body.toByteArray().decodeToString())
+                assertEquals(30.0, sent.position); assertEquals(manifest.timelineId, sent.timelineId)
+                reply(SiloJson.encodeToString(PlaybackMutationV2("applied", PlaybackSampleV2(sent.sequence, 30.0, false, manifest.timelineId, 630.0))))
+            }
+            "/api/v2/playback/session-1" -> {
+                stops += req.body.toByteArray().decodeToString()
+                val sent = SiloJson.decodeFromString<PlaybackStopV2>(stops.last())
+                assertNull(sent.position); assertEquals(manifest.timelineId, sent.timelineId)
+                if (!allowStop) throw IllegalStateException("lost stop")
+                reply(SiloJson.encodeToString(PlaybackMutationV2("stopped", stopId = sent.stopId)))
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val captured = assertIs<ApiResult.Success<CapturedPlaybackManifest>>(runtime.discoverTimeline(43, "book", identity.scope)).data
+            assertIs<ApiResult.Success<*>>(runtime.start(boundRequest(43, "part-two"), identity.scope))
+            assertIs<ApiResult.Success<*>>(runtime.progress("session-1", 30.0, false))
+            assertEquals(630.0, runtime.boundResume(captured))
+            assertEquals("stop_pending", assertIs<ApiResult.Error>(runtime.stop("session-1")).error)
+            assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(boundRequest(42, "cross-part"), identity.scope)).error)
+            assertEquals(1, starts)
+            allowStop = true
+            assertIs<ApiResult.Success<*>>(runtime.stop("session-1"))
+            assertEquals(1, stops.distinct().size)
+            assertIs<ApiResult.Success<*>>(runtime.start(boundRequest(42, "cross-part"), identity.scope))
+            assertEquals(2, starts)
+            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertEquals(630.0, restarted.boundResume(captured))
+            identity.login = "new-login"
+            assertNull(restarted.boundResume(captured))
+        } finally { c.close() }
+    }
+
+    @Test fun boundLostProgressReplaysExactLocalCommandAndRejectsWrongGlobalReceipt() = runTest {
+        val identity = Identity(); val store = Store(); val bodies = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/playback/timelines/43" -> reply(SiloJson.encodeToString(manifest))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(boundDecision(43, "session-1"), HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> {
+                bodies += req.body.toByteArray().decodeToString()
+                if (bodies.size == 1) throw IllegalStateException("lost reply")
+                val sent = SiloJson.decodeFromString<PlaybackProgressV2>(bodies.last())
+                reply(SiloJson.encodeToString(PlaybackMutationV2("applied", PlaybackSampleV2(sent.sequence, sent.position, false, manifest.timelineId, sent.position))))
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.discoverTimeline(43, "book", identity.scope))
+            assertIs<ApiResult.Success<*>>(runtime.start(boundRequest(43, "part-two"), identity.scope))
+            assertIs<ApiResult.NetworkError>(runtime.progress("session-1", 30.0, false))
+            assertEquals("invalid_progress_receipt", assertIs<ApiResult.Error>(runtime.progress("session-1", 80.0, false)).error)
+            assertEquals(2, bodies.size); assertEquals(bodies[0], bodies[1])
+            assertEquals(30.0, store.entries.single().progress?.position)
+            assertNull(store.entries.single().acceptedBoundSample)
+        } finally { c.close() }
+    }
+
+    @Test fun boundFinalStopRequiresTheExactLocalSampleAndPersistsAcceptedGlobalResume() = runTest {
+        val identity = Identity(); val store = Store(); var validReceipt = false; val stops = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/playback/timelines/43" -> reply(SiloJson.encodeToString(manifest))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(boundDecision(43, "session-1"), HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> throw IllegalStateException("lost progress")
+            "/api/v2/playback/session-1" -> {
+                stops += req.body.toByteArray().decodeToString()
+                val sent = SiloJson.decodeFromString<PlaybackStopV2>(stops.last())
+                assertEquals(30.0, sent.position); assertEquals(manifest.timelineId, sent.timelineId)
+                val local = if (validReceipt) 30.0 else 31.0
+                reply(SiloJson.encodeToString(PlaybackMutationV2("stopped",
+                    PlaybackSampleV2(requireNotNull(sent.sequence), local, false, manifest.timelineId, 600.0 + local), sent.stopId)))
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val captured = assertIs<ApiResult.Success<CapturedPlaybackManifest>>(runtime.discoverTimeline(43, "book", identity.scope)).data
+            assertIs<ApiResult.Success<*>>(runtime.start(boundRequest(43, "part-two"), identity.scope))
+            assertIs<ApiResult.NetworkError>(runtime.progress("session-1", 30.0, false))
+            assertEquals("invalid_stop_receipt", assertIs<ApiResult.Error>(runtime.stop("session-1")).error)
+            assertFalse(store.entries.single().terminal)
+            assertNull(runtime.boundResume(captured))
+            validReceipt = true
+            assertIs<ApiResult.Success<*>>(runtime.stop("session-1"))
+            assertEquals(stops[0], stops[1])
+            assertTrue(store.entries.single().terminal)
+            assertEquals(630.0, runtime.boundResume(captured))
+        } finally { c.close() }
+    }
+
+    @Test fun boundStartConflictNeverRefreshesManifestOrRebasesTheAttempt() = runTest {
+        val identity = Identity(); val store = Store(); var starts = 0; var discoveries = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/playback/timelines/43" -> { discoveries++; reply(SiloJson.encodeToString(manifest)) }
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply("{}", HttpStatusCode.Conflict) }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.discoverTimeline(43, "book", identity.scope))
+            assertEquals(409, assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "part-two"), identity.scope)).code)
+            val retained = store.entries.single()
+            assertIs<ApiResult.Error>(runtime.start(boundRequest(42, "fresh-attempt"), identity.scope))
+            assertEquals(1, starts); assertEquals(1, discoveries); assertEquals(retained, store.entries.single())
+        } finally { c.close() }
+    }
+
     @Test fun recoveryRetriesDrainingWithExactStopAndNoAutoplay() = runTest {
         val store = Store().apply { entries = listOf(entry()) }
         val deletes = mutableListOf<String>()

@@ -513,9 +513,8 @@ class PlaybackSessionLifecycle(
      * episode the user just started. Passing the id the caller was playing makes
      * the stop a no-op once ownership has moved on.
      */
-    suspend fun stop(expectedSessionId: String? = null) {
+    suspend fun stop(expectedSessionId: String? = null): Boolean =
         stopOwnedSession(expectedSessionId, unpublished = false)
-    }
 
     /** Retire a rejected startup adoption without inventing a played progress sample. */
     suspend fun retireUnpublishedSession(sessionId: String): Boolean =
@@ -583,6 +582,10 @@ class PlaybackSessionLifecycle(
                         Log.w(TAG, "stopSession network error: ${r.exception}")
                     else -> {}
                 }
+            }
+            if (pendingStop) {
+                _state.value = SessionState.Failed("Playback stop is pending. Retry from playback recovery.")
+                return@withLock false // Retain the old session and clocks until its terminal receipt.
             }
             lastStartParams = null
             lastReportedPosition = null
@@ -937,7 +940,7 @@ class PlaybackSessionLifecycle(
     private suspend fun flushFinalProgress() {
         val sessionId = lastAdoptedSessionId
         if (sessionId != null && sessionManager.isSequenced(sessionId)) {
-            val position = lastPersistencePosition ?: lastReportedPosition ?: return
+            val position = lastReportedPosition ?: return
             sessionManager.reportProgress(sessionId, position, lastIsPaused)
             return
         }

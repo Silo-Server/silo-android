@@ -54,6 +54,21 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
+    @Test fun `bound final flush stays local and pending stop retains old ownership for terminal retry`() = runTest {
+        val manager = object : FakeSessionManager() { override fun isSequenced(sessionId: String) = true }
+        manager.stopResult = ApiResult.Error(0, "stop_pending", "pending")
+        val lifecycle = newLifecycle(manager)
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("bound-part"))
+        lifecycle.reportPosition(30.0, 400.0, true, "bound-part", 630.0, 1000.0)
+        assertFalse(lifecycle.stop("bound-part"))
+        assertEquals(30.0, manager.lastProgressPosition)
+        manager.stopResult = ApiResult.Success(Unit)
+        assertTrue(lifecycle.stop("bound-part"))
+        assertEquals(2, manager.stopCallCount)
+        assertEquals(30.0, manager.lastProgressPosition)
+        assertTrue(lifecycle.state.value is SessionState.Idle)
+    }
+
     @Test fun `sequenced authority outage keeps session and stop pending without legacy progress`() = runTest {
         val manager = object : FakeSessionManager() {
             override fun isSequenced(sessionId: String) = true
