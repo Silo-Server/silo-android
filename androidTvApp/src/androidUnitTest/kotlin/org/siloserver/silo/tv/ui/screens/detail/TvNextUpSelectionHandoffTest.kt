@@ -29,7 +29,9 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeAttributeKey
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.apiv2.CatalogV2Api
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
@@ -718,19 +720,19 @@ class TvNextUpSelectionHandoffTest {
     private fun createFixture(scenario: Scenario): Fixture {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
-        val client = scenario.client()
+        val client = scenario.client(tokenManager)
         val userState = RecordingUserItemState()
         val catalogRepository = CatalogRepository(
-            catalogApi = CatalogApi(client),
+            catalogApi = CatalogApi(client, CatalogV2Api(client, tokenManager = tokenManager)),
             identityTransitions = identityTransitions,
         )
         val personalDataRepository = PersonalDataRepository(
-            personalDataApi = PersonalDataApi(client),
+            personalDataApi = PersonalDataApi(client, tokenManager = tokenManager),
             userItemStatePort = userState,
             identityTransitions = identityTransitions,
         )
         val profileRepository = ProfileRepository(
-            profileApi = ProfileApi(client),
+            profileApi = ProfileApi(client, tokens = tokenManager),
             tokenManager = tokenManager,
             identityTransitions = identityTransitions,
         )
@@ -806,40 +808,44 @@ class TvNextUpSelectionHandoffTest {
         var episodeOneDefaultVersions = oldVersions
         val episodeOneResponses = ConcurrentLinkedDeque<DetailResponse>()
 
-        fun client(): HttpClient = HttpClient(
+        fun client(tokenManager: FakeTokenManager): HttpClient = HttpClient(
             MockEngine { request ->
+                if (request.url.encodedPath.startsWith("/api/v2/")) {
+                    val owner = request.attributes[AuthScopeAttributeKey]
+                    assertTrue(owner.isSameIdentityAs(tokenManager.currentScope()))
+                }
                 fun json(content: String) = respond(
                     content = content,
                     status = HttpStatusCode.OK,
                     headers = JSON_HEADERS,
                 )
                 when (request.url.encodedPath) {
-                    "/api/v1/catalog/items/$seriesId" -> json(
-                        """{"content_id":"$seriesId","type":"$seriesType","title":"Series"}""",
+                    "/api/v2/catalog/items/$seriesId" -> json(
+                        """{"content_id":"$seriesId","type":"$seriesType","title":"Series","cast":[],"crew":[],"versions":[],"subtitles":[]}""",
                     )
-                    "/api/v1/catalog/series/$seriesId/seasons" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons" -> {
                         seasonsRequests.incrementAndGet()
                         seasonsGate?.await()
                         json(
-                            """{"seasons":[
+                            """{"items":[
                                 {"content_id":"season-1$suffix","season_number":1,"title":"Season 1"},
                                 {"content_id":"season-2$suffix","season_number":2,"title":"Season 2"}
                             ]}""".trimIndent(),
                         )
                     }
-                    "/api/v1/catalog/series/$seriesId/seasons/1/episodes" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons/1/episodes" -> {
                         seasonOneEpisodesGate?.await()
                         json(episodesJson())
                     }
-                    "/api/v1/catalog/series/$seriesId/seasons/2/episodes" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons/2/episodes" -> {
                         seasonTwoEpisodesGate?.await()
                         json(
-                            """{"episodes":[
+                            """{"items":[
                                 {"content_id":"$seasonTwoEpisodeId","season_number":2,"episode_number":1,"title":"Season Two"}
                             ]}""".trimIndent(),
                         )
                     }
-                    "/api/v1/catalog/items/$episodeOneId" -> {
+                    "/api/v2/catalog/items/$episodeOneId" -> {
                         val queued = episodeOneResponses.pollFirst()
                         if (queued == null) {
                             json(itemDetailJson(episodeOneId, episodeOneDefaultVersions, oldLastFileId))
@@ -849,12 +855,12 @@ class TvNextUpSelectionHandoffTest {
                             json(queued.json)
                         }
                     }
-                    "/api/v1/catalog/items/$episodeTwoId" -> {
+                    "/api/v2/catalog/items/$episodeTwoId" -> {
                         episodeTwoRequests.incrementAndGet()
                         episodeTwoGate?.await()
                         json(itemDetailJson(episodeTwoId, newVersions, newLastFileId))
                     }
-                    "/api/v1/catalog/items/$seasonTwoEpisodeId" ->
+                    "/api/v2/catalog/items/$seasonTwoEpisodeId" ->
                         json(itemDetailJson(seasonTwoEpisodeId, newVersions, newLastFileId))
                     "/api/v1/watched/$episodeOneId" -> {
                         episodeOneWatchGate?.await()
@@ -865,8 +871,8 @@ class TvNextUpSelectionHandoffTest {
                         episodeTwoWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
                     }
-                    "/api/v1/profiles" -> json(
-                        """{"profiles":[{"id":"profile-1","name":"Profile"}]}""",
+                    "/api/v2/profiles" -> json(
+                        """{"items":[{"id":"profile-1","name":"Profile","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}""",
                     )
                     else -> respond(
                         content = """{"error":"not_found","message":"not found"}""",
@@ -880,7 +886,7 @@ class TvNextUpSelectionHandoffTest {
         }
 
         private fun episodesJson(): String =
-            """{"episodes":[
+            """{"items":[
                 {"content_id":"$episodeOneId","season_number":1,"episode_number":1,"title":"One","user_data":{"played":$episodeOneWatched}},
                 {"content_id":"$episodeTwoId","season_number":1,"episode_number":2,"title":"Two","user_data":{"played":$episodeTwoWatched}}
             ]}""".trimIndent()
@@ -1016,12 +1022,12 @@ class TvNextUpSelectionHandoffTest {
             versions: List<VersionFixture>,
             lastFileId: Int? = null,
         ): String =
-            """{"content_id":"$contentId","type":"episode","title":"Episode","user_data":{"last_file_id":$lastFileId},"versions":[${versions.joinToString(",", transform = ::versionJson)}]}"""
+            """{"content_id":"$contentId","type":"episode","title":"Episode","cast":[],"crew":[],"subtitles":[],"user_data":{"last_file_id":${lastFileId?.let { "\"$it\"" } ?: "null"}},"versions":[${versions.joinToString(",", transform = ::versionJson)}]}"""
 
         private fun jsonString(value: String?): String = value?.let { "\"$it\"" } ?: "null"
 
         private fun versionJson(version: VersionFixture): String =
-            """{"file_id":${version.fileId},"resolution":"${version.resolution}","codec_video":${jsonString(version.codec)},"container":${jsonString(version.container)},"subtitle_tracks":[${version.subtitles.joinToString(",", transform = ::subtitleJson)}],"audio_tracks":[${version.audio.joinToString(",", transform = ::audioJson)}]}"""
+            """{"file_id":"${version.fileId}","resolution":"${version.resolution}","codec_video":${jsonString(version.codec)},"container":${jsonString(version.container)},"subtitle_tracks":[${version.subtitles.joinToString(",", transform = ::subtitleJson)}],"audio_tracks":[${version.audio.joinToString(",", transform = ::audioJson)}]}"""
 
         private fun subtitleJson(track: SubtitleTrack): String =
             """{"index":${track.index},"codec":"${track.codec}","language":"${track.language}","title":${track.title?.let { "\"$it\"" } ?: "null"},"forced":${track.forced},"external":${track.external}}"""
