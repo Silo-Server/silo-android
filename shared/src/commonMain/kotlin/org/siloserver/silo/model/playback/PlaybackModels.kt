@@ -70,6 +70,8 @@ data class PlayerSubtitleInfo(
     @SerialName("server_track_id") val serverTrackId: String? = null,
     /** Protocol-v3 representation: `sidecar` or `burn_in_only`. */
     @SerialName("server_delivery") val serverDelivery: String? = null,
+    /** Exact original-container track ID selected by a v3 embedded decision. */
+    @SerialName("native_container_track_id") val nativeContainerTrackId: String? = null,
 )
 
 /**
@@ -449,7 +451,17 @@ data class DeliveryCapability(
 )
 
 @Serializable
+data class NativeEmbeddedSubtitleCapability(
+    val container: String,
+    val codecs: List<String>,
+    @SerialName("track_identity") val trackIdentity: String,
+    @SerialName("ass_styling") val assStyling: Boolean = false,
+    @SerialName("font_attachments") val fontAttachments: Boolean = false,
+)
+
+@Serializable
 data class DeliverySubtitleCapabilities(
+    @SerialName("native_embedded") val nativeEmbedded: List<NativeEmbeddedSubtitleCapability> = emptyList(),
     @SerialName("embedded_text") val embeddedText: Boolean = true,
     @SerialName("sidecar_text") val sidecarText: Boolean = true,
     @SerialName("ass_styling") val assStyling: Boolean = false,

@@ -16,6 +16,8 @@ sealed interface SubtitleIdentity {
     data class Embedded(
         val serverIndex: Int,
         val media: SubtitleMediaIdentity,
+        /** Exact server-probed container identity; never permit metadata fallback. */
+        val containerTrackId: String? = null,
     ) : SubtitleIdentity
 
     data class Downloaded(

@@ -434,35 +434,13 @@ class TvPlayerSubtitleIntegrationPolicyTest {
         )
     }
 
-    // ---- Already-mounted picks must never replan ---------------------------
-    //
-    // Regression: protocol v3 types EVERY non-burn-in inventory row
-    // `delivery = sidecar`, including the row that merely describes a track
-    // muxed into a direct-play stream. The launch auto-pick of an embedded PGS
-    // track therefore resolved to a ServerSidecar identity, which the mount
-    // resolver matches by its authored `silo-subtitle:N` id alone — so the
-    // adapter was told the track on screen was not mounted and staged a server
-    // replan for it: new session, media-item swap, seconds of rebuffering, and
-    // a duplicate of the same PGS track re-extracted as a sidecar.
-
     @Test
-    fun `a v3 row for a muxed track is a sidecar identity that still resolves in place`() {
+    fun `v3 sidecar rows do not infer native selection from matching metadata`() {
         val row = planEmbeddedPgsRow()
         val track = embeddedPgsTrack()
-
-        // The identity is genuinely ServerSidecar — this is the shape the HUD,
-        // persistence and the adapter all carry, and it is not being changed.
         val identity = assertIs<SubtitleIdentity.ServerSidecar>(tvSubtitleIdentity(row))
-        assertEquals(identity, tvMountedSubtitleIdentity(track, listOf(track), listOf(row)))
-
-        assertEquals(
-            track.index,
-            tvResolveMountedSubtitleTrack(
-                identity = identity,
-                subtitleRows = listOf(row),
-                mounted = listOf(track.toMountedTvSubtitleTrack()),
-            )?.index,
-        )
+        assertIs<SubtitleIdentity.LocalMedia3>(tvMountedSubtitleIdentity(track, listOf(track), listOf(row)))
+        assertEquals(null, tvResolveMountedSubtitleTrack(identity, listOf(row), listOf(track.toMountedTvSubtitleTrack())))
     }
 
     @Test
@@ -480,56 +458,22 @@ class TvPlayerSubtitleIntegrationPolicyTest {
     }
 
     @Test
-    fun `english always commits an already-mounted PGS track in place`() = runTest {
+    fun `server sidecar PGS choice negotiates despite a similar mounted track`() = runTest {
         val row = planEmbeddedPgsRow()
-        val track = embeddedPgsTrack()
-        val identity = tvSubtitleIdentity(row)
-        val harness = harness(backgroundScope, rows = listOf(row), mounted = listOf(track))
-
-        harness.adapter.selectAuto(identity)
+        val harness = harness(backgroundScope, rows = listOf(row), mounted = listOf(embeddedPgsTrack()))
+        harness.adapter.selectAuto(tvSubtitleIdentity(row))
         runCurrent()
+        assertEquals(listOf(row.index), harness.staged.map { it.subtitleTrackIndex })
+        assertEquals(null, harness.adapter.snapshot.localMountIdentity)
+    }
 
-        assertTrue(
-            harness.staged.isEmpty(),
-            "an already-mounted track must not ask the server to replan",
-        )
-        assertEquals(identity, harness.adapter.snapshot.localMountIdentity)
-
-        // The mount the adapter armed resolves onto the muxed ordinal…
-        val remount = SubtitleRemountReselection()
-        remount.arm(identity, generation = 1L)
-        val event = assertIs<TvSubtitleRemountEvent.Select>(
-            remount.consume(
-                subtitleTracks = listOf(track),
-                subtitleRows = listOf(row),
-                snapshotKey = "mounted",
-                settled = true,
-            ),
-        )
-        assertEquals(track.index, event.trackIndex)
-
-        // …and acknowledging it commits the identity the HUD ticks.
-        harness.adapter.reportMountedSelection(
-            identity = identity,
-            selected = true,
-            snapshotKey = "mounted",
-            settled = true,
-        )
-        runCurrent()
-
-        assertEquals(identity, harness.adapter.snapshot.committedIdentity)
-        assertTrue(harness.staged.isEmpty())
-        val presentation = buildTvSubtitleHudPresentation(
-            options = buildTvSubtitleHudOptions(
-                subtitleUrls = listOf(row),
-                subtitleTracks = listOf(track),
-            ),
-            committedIdentity = harness.adapter.snapshot.committedIdentity,
-            pendingIdentity = harness.adapter.snapshot.pendingIdentity,
-            hudOpen = true,
-            focusedStableId = null,
-        )
-        assertEquals(identity, presentation.rows.single { it.checked }.identity)
+    @Test
+    fun `native MP4 decision resolves exact container ID despite duplicate metadata`() {
+        val row = planEmbeddedPgsRow().copy(codec = "mov_text", nativeContainerTrackId = "19")
+        val track = embeddedPgsTrack().copy(trackId = "0:19")
+        val identity = assertIs<SubtitleIdentity.Embedded>(tvSubtitleIdentity(row))
+        assertEquals(track.index, tvResolveMountedSubtitleTrack(identity, listOf(row), listOf(track.toMountedTvSubtitleTrack()))?.index)
+        assertEquals(null, tvResolveMountedSubtitleTrack(identity, listOf(row), listOf(track.copy(trackId = "2").toMountedTvSubtitleTrack())))
     }
 
     @Test

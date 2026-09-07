@@ -92,13 +92,9 @@ class VideoPlayerSubtitleMountTest {
         )
     }
 
-    // Protocol v3 types a row describing a track MUXED into the file as
-    // `delivery = sidecar` too. On the untouched original that track is already
-    // in the stream, so a caller that can select it in place must not have the
-    // server-extracted duplicate attached (it stalls the mount and paints the
-    // cue backlog past the resume point).
+    // Sidecar inventory is fallback delivery, not permission to guess a native track.
     @Test
-    fun v3MuxedEmbeddedRowMountsNothingOnDirectPlayWhenMuxedTracksPreferred() {
+    fun v3SidecarRowMountsSidecarWithoutAnExplicitNativeDecision() {
         val rows = listOf(serverRow(index = 3), embeddedPgsRow(index = 8))
 
         val mounted = subtitlesForVideoMediaMount(
@@ -108,7 +104,7 @@ class VideoPlayerSubtitleMountTest {
             preferMuxedTracks = true,
         )
 
-        assertEquals(emptyList(), mounted)
+        assertEquals(listOf(8), mounted.map(PlayerSubtitleInfo::index))
     }
 
     @Test

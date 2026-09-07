@@ -36,6 +36,9 @@ fun playbackSubtitleIdentity(subtitle: PlayerSubtitleInfo): SubtitleIdentity {
         ).takeIf { it },
     )
 
+    subtitle.nativeContainerTrackId?.let {
+        return SubtitleIdentity.Embedded(subtitle.index, media, containerTrackId = it)
+    }
     when (subtitle.serverDelivery) {
         SUBTITLE_DELIVERY_BURN_IN_ONLY ->
             return SubtitleIdentity.ServerBurnIn(subtitle.index, media)

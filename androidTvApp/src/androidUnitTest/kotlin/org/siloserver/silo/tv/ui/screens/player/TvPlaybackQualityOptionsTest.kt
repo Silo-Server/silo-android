@@ -8,6 +8,20 @@ import kotlin.test.assertTrue
 
 class TvPlaybackQualityOptionsTest {
     @Test
+    fun displayNamesDoNotChangeSelectionIds() {
+        val options = authoritativePlaybackQualityOptions(
+            listOf(
+                PlaybackAvailableQualityV3("1080p-medium", displayName = "1080p Medium"),
+                PlaybackAvailableQualityV3("original", displayName = " "),
+            ),
+            selectedLabel = "1080p-medium",
+        )
+        assertEquals(listOf("1080p-medium", "original"), options.map { it.id })
+        assertEquals(listOf("1080p Medium", "original"), options.map { it.label })
+        assertTrue(options.first().isSelected)
+    }
+
+    @Test
     fun authoritativeMenuPreservesServerMembershipOrderAndLabels() {
         val options = authoritativePlaybackQualityOptions(
             available = listOf(

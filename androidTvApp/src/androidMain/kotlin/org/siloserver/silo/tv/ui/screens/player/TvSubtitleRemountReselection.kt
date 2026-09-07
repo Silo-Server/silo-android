@@ -84,6 +84,8 @@ internal sealed interface TvSubtitleRemountEvent {
         val trackIndex: Int,
     ) : TvSubtitleRemountEvent
 
+    data class Confirmed(override val owner: TvSubtitleRemountOwner) : TvSubtitleRemountEvent
+
     data class Failed(
         override val owner: TvSubtitleRemountOwner,
         val reason: TvSubtitleRemountFailure,
@@ -105,7 +107,8 @@ internal class SubtitleRemountReselection(
      * survive until the mount is acknowledged, so a resolved owner keeps
      * defending its claim.
      *
-     * Released by [acknowledgeResolved] on mount success/failure, and by
+     * Released by a selected snapshot on success, [acknowledgeResolved] on
+     * failure, and by
      * [releaseResolved] when the acknowledgement can no longer arrive (backend
      * swap, mount deadline) — without which a dropped acknowledgement would
      * wedge subtitle mounting for the rest of the session.
@@ -113,7 +116,7 @@ internal class SubtitleRemountReselection(
     private var resolvedOwner: TvSubtitleRemountOwner? = null
 
     val hasPendingOwner: Boolean
-        get() = pendingOwner != null
+        get() = pendingOwner != null || resolvedOwner != null
 
     fun requiresRemount(identity: SubtitleIdentity): Boolean = when (identity) {
         SubtitleIdentity.Off,
@@ -129,9 +132,14 @@ internal class SubtitleRemountReselection(
     val pendingPriority: TvSubtitleMountPriority?
         get() = pendingOwner?.priority ?: resolvedOwner?.priority
 
-    /** Clears the resolved claim once its mount has been acknowledged. */
-    fun acknowledgeResolved(generation: Long) {
-        if (resolvedOwner?.generation == generation) resolvedOwner = null
+    fun ownsResolved(generation: Long): Boolean =
+        pendingOwner == null && resolvedOwner?.generation == generation
+
+    /** Clears the resolved claim once its mount has failed or been cancelled. */
+    fun acknowledgeResolved(generation: Long): Boolean {
+        if (!ownsResolved(generation)) return false
+        resolvedOwner = null
+        return true
     }
 
     /**
@@ -144,6 +152,15 @@ internal class SubtitleRemountReselection(
      */
     fun releaseResolved() {
         resolvedOwner = null
+    }
+
+    /** Release an ended adapter mount without cancelling a newer transport mount. */
+    fun cancelOwned(generation: Long): Boolean {
+        val pending = pendingOwner?.generation == generation
+        val resolved = resolvedOwner?.generation == generation
+        if (pending) clear()
+        if (resolved) releaseResolved()
+        return pending || resolved
     }
 
     fun arm(
@@ -167,6 +184,7 @@ internal class SubtitleRemountReselection(
             return
         }
         SubDiag.log("REMOUNT arm $identity gen=$generation prio=$priority")
+        resolvedOwner = null
         pendingOwner = if (requiresRemount(identity)) {
             TvSubtitleRemountOwner(identity, generation, priority)
         } else {
@@ -187,9 +205,19 @@ internal class SubtitleRemountReselection(
         subtitleRows: List<PlayerSubtitleInfo> = emptyList(),
         snapshotKey: String?,
         settled: Boolean,
+        transportMounted: Boolean = true,
     ): TvSubtitleRemountEvent? {
-        val owner = pendingOwner ?: return null
+        // The old MediaItem can already contain this exact native track. Its
+        // group cannot satisfy a replacement item's selection.
+        if (!transportMounted) return null
+        val awaitingConfirmation = pendingOwner == null
+        val owner = pendingOwner ?: resolvedOwner ?: return null
         if (owner.identity == SubtitleIdentity.Off) {
+            if (awaitingConfirmation) {
+                if (subtitleTracks.any { it.isSelected }) return null
+                resolvedOwner = null
+                return TvSubtitleRemountEvent.Confirmed(owner)
+            }
             // Disabling the text renderer needs no track to exist, so this
             // deliberately resolves without inspecting the snapshot. A stale
             // Off owner reaching here at all is an OWNERSHIP failure, fixed by
@@ -204,18 +232,14 @@ internal class SubtitleRemountReselection(
         val mounted = subtitleTracks.map(PlayerTrackEntry::toMountedTvSubtitleTrack)
         val exactTrackId = owner.identity.exactTvMountTrackId()
         val matchIndex = exactTrackId?.let { expected ->
-            // Every candidate here denotes the SAME authored artifact id, so
-            // multiple hits are the one sidecar merged more than once (Media3
-            // prefixes each with its MergingMediaSource child index, e.g.
-            // "1:silo-subtitle:3" and "2:silo-subtitle:3"). That is not the
-            // ambiguity this guard exists for — it cannot select the wrong
-            // language — so refusing on it left the mount unresolved until the
-            // deadline blew and the transaction rolled back to Off. Ambiguity
-            // between genuinely different tracks is still caught by the
-            // metadata path below and by hasAmbiguousTvLabel.
-            mounted.filter { trackIdDenotes(it.trackId, expected) }
-                .minByOrNull { it.index }
-                ?.index
+            // Authored sidecars may be merged more than once; choose the first
+            // copy. A native container identity must resolve to one track.
+            val matches = mounted.filter { trackIdDenotes(it.trackId, expected) }
+            if (owner.identity is SubtitleIdentity.Embedded && owner.identity.containerTrackId != null) {
+                matches.singleOrNull()?.index
+            } else {
+                matches.minByOrNull { it.index }?.index
+            }
         } ?: when {
             // An identity carrying a REAL Media3 id stays exact-only: falling
             // back to metadata could mount a different track that merely looks
@@ -233,10 +257,19 @@ internal class SubtitleRemountReselection(
         }
         SubDiag.log("REMOUNT consume id=${owner.identity} exact=$exactTrackId mounted=${mounted.map { it.trackId }} settled=$settled match=$matchIndex")
         if (matchIndex != null) {
+            if (awaitingConfirmation) {
+                if (subtitleTracks.none { it.index == matchIndex && it.isSelected }) return null
+                resolvedOwner = null
+                return TvSubtitleRemountEvent.Confirmed(owner)
+            }
             clear()
             resolvedOwner = owner
             return TvSubtitleRemountEvent.Select(owner, matchIndex)
         }
+
+        // Command acceptance is not evidence that Media3 selected the group.
+        // Keep ownership until a selected snapshot or the existing deadline.
+        if (awaitingConfirmation) return null
 
         val meaningfulKey = snapshotKey?.takeIf { subtitleTracks.isNotEmpty() }
         if (meaningfulKey != null) meaningfulSnapshotKeys += meaningfulKey
@@ -267,7 +300,7 @@ internal class SubtitleRemountReselection(
 private fun SubtitleIdentity.exactTvMountTrackId(): String? = when (this) {
     is SubtitleIdentity.ServerSidecar -> subtitleArtifactTrackId(serverIndex)
     is SubtitleIdentity.Downloaded -> downloadedSubtitleArtifactTrackId(downloadId)
-    is SubtitleIdentity.Embedded -> media.trackId?.trim()?.takeIf(String::isNotEmpty)
+    is SubtitleIdentity.Embedded -> containerTrackId ?: media.trackId?.trim()?.takeIf(String::isNotEmpty)
     is SubtitleIdentity.LocalMedia3 -> media.trackId?.trim()?.takeIf(String::isNotEmpty)
     SubtitleIdentity.Off,
     is SubtitleIdentity.ServerBurnIn,

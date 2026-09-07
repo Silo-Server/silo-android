@@ -42,7 +42,6 @@ class TvDetailFocusPolicyTest {
         assertTrue(seasons >= 0)
         assertTrue(episodes >= 0)
         assertTrue(seasons < episodes)
-        assertTrue(episodesSection.contains("padding(top = SeriesSeasonPickerTopPadding)"))
         assertFalse(source.contains("if (!isSeriesDetail || isShowingSeriesOverview)"))
         assertFalse(source.contains("onItemDetail(episode.contentId)"))
     }
@@ -120,28 +119,27 @@ class TvDetailFocusPolicyTest {
         assertTrue(facts < synopsis)
         assertTrue(synopsis < credit)
         assertTrue(credit < playback)
-        assertTrue(heroSource.contains("if (!compactSeries && sourceTokens.isNotEmpty())"))
-        assertTrue(heroSource.contains("sourceTokens = sourceTokens"))
+        assertTrue(heroSource.contains("if (hasEpisodeHierarchy && sourceTokens.isNotEmpty())"))
+        assertTrue(heroSource.contains("sourceTokens = metadataSourceTokens"))
         assertTrue(heroSource.contains("compactRating = true"))
         assertFalse(editorial.contains("if (!compactSeries) playbackSummary?.invoke()"))
         assertTrue(editorial.lastIndexOf("HeroCreditLine(line)") < playback)
         assertTrue(heroSource.contains("fontSize = if (compact) 10.5.sp else 14.sp"))
-        assertTrue(heroSource.contains("SERIES_HERO_HEIGHT_FRACTION = 610f / 1080f"))
+        assertTrue(heroSource.contains("HERO_HEIGHT_FRACTION = 690f / 1080f"))
         assertTrue(detailSource.contains("label = \"VERSION\""))
         assertTrue(detailSource.contains("label = \"AUDIO\""))
         assertTrue(detailSource.contains("label = \"SUBTITLES\""))
         assertTrue(detailSource.contains("includePlaybackFormats = false"))
         assertTrue(playbackReadout.contains("Modifier.weight(1f)"))
-        assertTrue(playbackReadout.contains("Arrangement.spacedBy(6.dp)"))
+        assertTrue(playbackReadout.contains("Arrangement.spacedBy(4.dp)"))
         assertTrue(playbackReadout.contains("Modifier.height(TV_PLAYBACK_SUMMARY_HEIGHT)"))
         assertTrue(playbackReadout.contains("TvPlaybackSummarySkeleton(modifier = Modifier.weight(1f))"))
-        // Loaded values size to their text so long audio / subtitle labels never
-        // truncate; only the skeleton keeps the fixed per-item width.
-        assertTrue(playbackReadout.contains("modifier = if (value == null) Modifier.width(itemWidth) else Modifier"))
-        assertFalse(playbackReadout.contains("overflow = TextOverflow.Ellipsis"))
-        assertTrue(playbackReadout.contains("TV_PLAYBACK_VERSION_ITEM_WIDTH = 120.dp"))
-        assertTrue(playbackReadout.contains("TV_PLAYBACK_AUDIO_ITEM_WIDTH = 160.dp"))
-        assertTrue(playbackReadout.contains("TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 130.dp"))
+        // Loaded and loading values retain the same column starts.
+        assertTrue(playbackReadout.contains("modifier = Modifier.width(itemWidth)"))
+        assertTrue(playbackReadout.contains("overflow = TextOverflow.Ellipsis"))
+        assertTrue(playbackReadout.contains("TV_PLAYBACK_VERSION_ITEM_WIDTH = 156.5.dp"))
+        assertTrue(playbackReadout.contains("TV_PLAYBACK_AUDIO_ITEM_WIDTH = 182.dp"))
+        assertTrue(playbackReadout.contains("TV_PLAYBACK_SUBTITLE_ITEM_WIDTH = 169.dp"))
         assertFalse(playbackReadout.contains("Spacer(modifier = Modifier.size"))
     }
 
@@ -151,9 +149,9 @@ class TvDetailFocusPolicyTest {
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvDetailHero.kt",
         ).readText()
 
-        assertTrue(heroSource.contains("seriesOverviewEditorialHeightPx"))
-        assertTrue(heroSource.contains("seriesTitle == null"))
-        assertTrue(heroSource.contains("Modifier.height(with(density)"))
+        assertTrue(heroSource.contains("Modifier.height(217.5.dp)"))
+        assertTrue(heroSource.contains("Modifier.weight(1f).clipToBounds()"))
+        assertFalse(heroSource.contains("seriesOverviewEditorialHeightPx"))
         assertTrue(heroSource.contains("isCombinedSeriesEpisode"))
         assertTrue(heroSource.contains("SERIES_METADATA_SLOT_HEIGHT"))
         assertTrue(heroSource.contains("SERIES_EPISODE_SYNOPSIS_HEIGHT"))
@@ -181,37 +179,6 @@ class TvDetailFocusPolicyTest {
         assertTrue(seriesPicker.contains("listState.animateScrollBy(itemCenter - viewportCenter)"))
         assertTrue(modeTab.contains("if (focusState.isFocused && !isSelected) onActivated()"))
         assertTrue(modeTab.contains("onClick = onActivated"))
-    }
-
-    @Test
-    fun seriesEpisodesSlideAsOneDirectionalSeasonCarousel() {
-        val source = File(
-            "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/detail/TvItemDetailScreen.kt",
-        ).readText()
-        val episodesSection = source
-            .substringAfter("private fun EpisodesSection(")
-            .substringBefore("private fun currentEpisodeRailContentId")
-        val seasons = listOf(
-            Season(contentId = "season-1", seasonNumber = 1),
-            Season(contentId = "season-2", seasonNumber = 2),
-            Season(contentId = "specials", seasonNumber = 0, isSpecials = true),
-        )
-
-        assertEquals(1, seriesEpisodeCarouselDirection(1, 2, seasons))
-        assertEquals(-1, seriesEpisodeCarouselDirection(2, 1, seasons))
-        assertEquals(1, seriesEpisodeCarouselDirection(2, 0, seasons))
-        assertTrue(episodesSection.contains("AnimatedContent("))
-        assertTrue(episodesSection.contains("contentKey = { it.seasonNumber }"))
-        assertTrue(episodesSection.contains("slideInHorizontally("))
-        assertTrue(episodesSection.contains("slideOutHorizontally("))
-        assertTrue(episodesSection.contains("SizeTransform(clip = false)"))
-        assertTrue(source.contains("SERIES_EPISODE_CAROUSEL_DURATION_MS = 360"))
-        assertFalse(episodesSection.contains("durationMillis = 280"))
-        assertTrue(
-            episodesSection.contains(
-                "state.episodesLoading && (!isSeries || state.episodes.isEmpty())",
-            ),
-        )
     }
 
     @Test

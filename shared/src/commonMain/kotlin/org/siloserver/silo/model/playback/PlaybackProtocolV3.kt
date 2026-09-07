@@ -20,6 +20,7 @@ const val CLIENT_VIDEO_TRANSFORMATIONS_FEATURE = "client_video_transformations_v
 const val DEVICE_QUIRKS_V3_FEATURE = "device_quirks_v1"
 const val SEEK_REANCHOR_V3_FEATURE = "seek_reanchor_v1"
 const val DIRECT_STREAM_RESUME_V1_FEATURE = "direct_stream_resume_v1"
+const val EMBEDDED_SUBTITLES_V1_FEATURE = "embedded_subtitles_v1"
 const val NATIVE_HLS_PLAYBACK_V1_FEATURE = "native_hls_playback_v1"
 
 /**
@@ -108,6 +109,9 @@ val PLAYBACK_START_CLIENT_FEATURES_V3 = listOf(
  */
 fun playbackClientFeaturesV3(context: ClientPlaybackContext): List<String> = buildList {
     addAll(PLAYBACK_START_CLIENT_FEATURES_V3)
+    if (!context.deliveries[DELIVERY_CLASS_ORIGINAL_HTTP]?.subtitles?.nativeEmbedded.isNullOrEmpty()) {
+        add(EMBEDDED_SUBTITLES_V1_FEATURE)
+    }
     if (!context.output.audioPassthrough?.entries.isNullOrEmpty()) {
         add(LAYOUT_AWARE_PASSTHROUGH_FEATURE)
     }
@@ -234,6 +238,7 @@ data class PlaybackAvailableQualityV3(
     val height: Int = 0,
     @SerialName("bitrate_kbps") val bitrateKbps: Int = 0,
     @SerialName("preserves_source") val preservesSource: Boolean = false,
+    @SerialName("display_name") val displayName: String? = null,
 )
 
 /**
@@ -333,10 +338,17 @@ data class PlaybackSubtitleArtifactV3(
 )
 
 @Serializable
+data class PlaybackEmbeddedSubtitleV3(
+    @SerialName("stream_index") val streamIndex: Int,
+    @SerialName("container_track_id") val containerTrackId: String? = null,
+)
+
+@Serializable
 data class PlaybackSubtitleDecisionV3(
     val mode: PlaybackSubtitleModeV3 = PlaybackSubtitleModeV3.OFF,
     @SerialName("track_id") val trackId: String? = null,
     val artifact: PlaybackSubtitleArtifactV3? = null,
+    val embedded: PlaybackEmbeddedSubtitleV3? = null,
     /**
      * The complete, gap-free combined-ordinal subtitle list for the effective
      * source. Authoritative: select a track by echoing an entry's
@@ -543,6 +555,16 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
             plan,
             resolvedSessionId,
         )
+    }
+    plan.subtitle.embedded?.let { native ->
+        val nativeId = native.containerTrackId?.toLongOrNull()
+        if (plan.delivery != PlaybackDelivery.ORIGINAL_HTTP || plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER ||
+            plan.subtitle.artifact != null || native.streamIndex < 0 ||
+            nativeId == null || nativeId !in 1..Int.MAX_VALUE.toLong() || native.containerTrackId != nativeId.toString() ||
+            selectedSubtitle?.source != "embedded" || selectedSubtitle.codec != "mov_text" ||
+            plan.source.container?.lowercase() !in setOf("mp4", "mov", "m4v") ||
+            plan.subtitle.trackId != plan.selectedTracks.subtitle?.id
+        ) return PlaybackV3Validation.ReplanRequired("subtitle_embedded_failed", plan, resolvedSessionId)
     }
     if (plan.stream.url.isBlank()) {
         return PlaybackV3Validation.Terminal("invalid_playback_plan", "The server returned an empty stream URL.", false)

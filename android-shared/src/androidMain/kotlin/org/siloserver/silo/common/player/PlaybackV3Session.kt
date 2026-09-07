@@ -106,6 +106,9 @@ internal fun PlaybackPlanV3.toSessionResponse(
                 catalogLabel = item.label,
                 catalogSource = item.source,
                 isDefault = item.isDefault,
+                nativeContainerTrackId = subtitle.embedded?.containerTrackId.takeIf {
+                    item.trackId == subtitle.trackId && item.combinedIndex == selectedSubtitleIndex
+                },
                 serverTrackId = item.trackId,
                 serverDelivery = item.delivery.takeIf {
                     it == SUBTITLE_DELIVERY_SIDECAR ||

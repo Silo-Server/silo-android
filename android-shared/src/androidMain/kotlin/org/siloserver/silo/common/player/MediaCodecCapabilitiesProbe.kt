@@ -26,6 +26,13 @@ object MediaCodecCapabilitiesProbe {
         val hdr: HdrCapabilities,
         val maxResolution: String,
         val supportsDvProfile7: Boolean,
+        /**
+         * A hardware HEVC decoder reported `HEVCProfileMain10HDR10` (or
+         * HDR10+). [hdr] aggregates HDR10 across HEVC and AV1, so a route that
+         * hands a PQ HEVC base layer to the HEVC decoder must check this
+         * rather than the aggregate.
+         */
+        val hevcHdr10Decoder: Boolean = false,
     )
 
     // Decoder/HDR support is static for the process lifetime; the MediaCodecList
@@ -36,6 +43,11 @@ object MediaCodecCapabilitiesProbe {
 
     fun probe(): ProbeResult =
         cached ?: synchronized(this) { cached ?: computeProbe().also { cached = it } }
+
+    /** Drops the cached probe so a test can re-run it against a shadowed codec list. */
+    internal fun resetCacheForTest() {
+        synchronized(this) { cached = null }
+    }
 
     /** Returns an immutable copy for diagnostics without reconfiguring or opening any codec. */
     fun diagnosticsSnapshot(): ProbeResult {
@@ -194,6 +206,7 @@ object MediaCodecCapabilitiesProbe {
             ),
             maxResolution = claimedBucket,
             supportsDvProfile7 = dvP7Supported,
+            hevcHdr10Decoder = hevcHdrCapable && "hevc" in advertisedVideo,
         )
     }
 

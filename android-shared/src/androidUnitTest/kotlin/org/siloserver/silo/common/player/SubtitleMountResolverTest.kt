@@ -636,7 +636,7 @@ class SubtitleMountResolverTest {
     // (url present) but the direct-play stream carries the track, so it must
     // resolve onto the untitled Media3 track — not to nothing.
     @Test
-    fun untitledPlaceholderLabelledRowResolvesToTheUntitledSiblingNotSdhOrForced() {
+    fun v3SidecarRowDoesNotInferAnUntitledNativeSibling() {
         val tracks = listOf(
             track(index = 0, trackId = "2", label = "Forced", language = "en", codec = "application/x-subrip", forced = true, hearingImpaired = false),
             // The TV synthesises "EN" for a track Media3 exposes without a label.
@@ -655,7 +655,7 @@ class SubtitleMountResolverTest {
             url = "/stream/s/subtitles/8.srt",
         )
 
-        assertEquals(1, resolveMountedSubtitle(row, tracks)?.track?.index)
+        assertNull(resolveMountedSubtitle(row, tracks))
     }
 
     @Test

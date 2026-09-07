@@ -29,25 +29,9 @@ internal fun tvMountedSubtitleIdentity(
         ?: tvSubtitleIdentity(track)
 
 /**
- * Resolves a typed identity onto the Media3 text track that ALREADY carries it,
- * or null when the player exposes no such track.
- *
- * [resolveMountedSubtitle] on its own is not enough for a SERVER-ROW identity.
- * Protocol v3 types every non-burn-in inventory row `delivery = sidecar`,
- * including a row that merely DESCRIBES a track muxed into a direct-play
- * stream — so an embedded PGS track plainly mounted by Media3 maps to
- * [SubtitleIdentity.ServerSidecar], and a sidecar identity is matched by its
- * authored `silo-subtitle:N` id alone, which a muxed track can never carry.
- * The answer came back "not mounted" for the very track on screen, and the
- * selection was routed to a server replan that re-extracted the same subtitle
- * as a sidecar: new session, media-item swap, rebuffer, restore seek.
- *
- * The inventory row is the missing evidence: matching through it is the same
- * mapping [tvMountedSubtitleIdentity] used to mint the identity in the first
- * place, so the two directions can no longer disagree. Only an identity that is
- * exactly some row's identity gets that fallback, and the row match still has
- * to find a mounted track — a catalog-only row, a sidecar the player has not
- * loaded and a burn-in row all still answer null and go on replanning.
+ * Server-native decisions resolve by their exact container track ID; sidecars
+ * resolve by their authored artifact ID. Only local/catalog rows without a v3
+ * delivery can use the metadata fallback below.
  */
 internal fun tvResolveMountedSubtitleTrack(
     identity: SubtitleIdentity,
@@ -56,6 +40,7 @@ internal fun tvResolveMountedSubtitleTrack(
 ): MountedSubtitleTrack? {
     resolveMountedSubtitle(identity = identity, tracks = mounted)?.let { return it.track }
     val row = identity.tvInventoryRow(subtitleRows) ?: return null
+    if (row.serverDelivery != null) return null
     return resolveMountedSubtitle(subtitle = row, tracks = mounted)?.track
 }
 

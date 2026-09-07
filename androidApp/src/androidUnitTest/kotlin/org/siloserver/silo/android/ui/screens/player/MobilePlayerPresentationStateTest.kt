@@ -8,6 +8,14 @@ import kotlin.test.assertTrue
 
 class MobilePlayerPresentationStateTest {
     @Test
+    fun subtitleRefreshCannotAcceptThePreviousItemsTrackSnapshot() {
+        val refreshed = MobileSubtitleMount(2, 1)
+        assertFalse(isCurrentMobileSubtitleMount(MobileSubtitleMount(2, 0), refreshed, null, false))
+        assertFalse(isCurrentMobileSubtitleMount(null, refreshed, null, false))
+        assertTrue(isCurrentMobileSubtitleMount(refreshed, refreshed, null, false))
+    }
+
+    @Test
     fun clockOnlyUpdatesLeaveStructuralStateEqual() {
         val first = PlayerViewModel.PlayerUiState(
             contentId = "movie-1",
