@@ -160,7 +160,7 @@ internal suspend fun resolveOwnedTvFreshSubtitleRestore(
             // Hydration returns the full merged set, not downloads alone.
             // Prefer its rebased rows and deduplicate by the server index used
             // by picker identities and replans.
-            val rows = (downloaded + retained).distinctBy(PlayerSubtitleInfo::index)
+            val rows = (downloaded.filter { it.url.isNotBlank() } + retained).distinctBy(PlayerSubtitleInfo::index)
             TvFreshSubtitleRestoreResult(
                 rows = rows,
                 resolution = resolveTvFreshSubtitlePreference(

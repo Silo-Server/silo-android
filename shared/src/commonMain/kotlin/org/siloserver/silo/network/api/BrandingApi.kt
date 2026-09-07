@@ -17,9 +17,7 @@ data class BrandingStatus(
 
 open class BrandingApi(private val client: HttpClient) {
     open suspend fun getBranding(): ApiResult<BrandingStatus> {
-        val result = safeApiV2Call<BrandingStatus>(org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted) { request("/api/v2/theme/branding") }
-        return if (result is ApiResult.Error && result.code == 404)
-            safeApiCall { request("/api/v1/theme/branding") } else result
+        return safeApiV2Call<BrandingStatus>(org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted) { request("/api/v2/theme/branding") }
     }
 
     private suspend fun request(path: String) = client.get(path) {

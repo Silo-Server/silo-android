@@ -95,14 +95,14 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
-    @Test fun absentFeaturePreservesTemporaryLegacyAndProbeErrorsNeverDowngrade() = runTest {
+    @Test fun absentFeatureReportsUnavailableAndProbeErrorsNeverDowngrade() = runTest {
         val identity = Identity().apply { temporary = true }
         val store = Store()
         var status = HttpStatusCode.OK
         val c = client { reply(if (status == HttpStatusCode.OK) caps("") else "{}", status) }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
-            assertNull(runtime.start(request()))
+            assertEquals("playback_unavailable", assertIs<ApiResult.Error>(runtime.start(request())).error)
             status = HttpStatusCode.Unauthorized
             assertEquals(401, assertIs<ApiResult.Error>(runtime.start(request())).code)
             assertTrue(store.entries.isEmpty())
@@ -143,7 +143,7 @@ class SequencedPlaybackTest {
     }
     @Test fun lostProgressReplyRetriesExactSampleThenBackwardPositionUsesHigherSequence() = runTest {
         val identity = Identity(); val store = Store(); val samples = mutableListOf<PlaybackProgressV2>()
-        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"session-1","delivery":"original_http","stream":{"url":"/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
+        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
@@ -208,7 +208,7 @@ class SequencedPlaybackTest {
         val identity = Identity()
         val store = Store().apply { entries = listOf(entry().copy(sessionId = null)); failStop = true }
         var starts = 0; var deletes = 0
-        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","session_id":"session-1","delivery":"original_http","stream":{"url":"/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct"}}"""
+        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct"}}"""
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
@@ -233,6 +233,98 @@ class SequencedPlaybackTest {
             assertEquals(1, starts); assertEquals(1, deletes)
             assertTrue(store.entries.single().terminal); assertTrue(runtime.pending.value.isEmpty())
         } finally { c.close() }
+    }
+
+    private fun replanRequest() = PlaybackReplanRequestV3(
+        clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3, operation = "seek_reanchor",
+        playbackAttemptId = "attempt-1", replanRequestId = "replan-0001", failedPlanId = "plan-0001",
+        planAttemptId = "plan-attempt-0001", planAttemptKey = "plan-key-0001", attemptedPlanKeys = emptyList(),
+        attemptCount = 1, positionSeconds = 42.0, selectedTracks = SelectedPlaybackTracksV3(),
+        capabilities = ClientCodecCapabilities(), clientPlaybackContext = request().clientPlaybackContext,
+    )
+    private val adoptedDecision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan-0001","plan_attempt_key":"plan-key-0001","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
+
+    @Test fun uncertainReplanIsDurableAndCannotReplayOrRebase() = runTest {
+        val identity = Identity(); val store = Store(); var replans = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/replan" -> {
+                replans++
+                assertTrue(req.attributes[SingleAttemptAttributeKey])
+                assertEquals(store.entries.single().replans.single().body.toString(), req.body.toByteArray().decodeToString())
+                throw IllegalStateException("lost response")
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            assertIs<ApiResult.NetworkError>(runtime.replan("session-1", replanRequest()))
+            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest())).error)
+            assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(positionSeconds = 9.0))).error)
+            assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(replanRequestId = "replan-0002"))).error)
+            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(restarted.replan("session-1", replanRequest())).error)
+            assertEquals(1, replans)
+            assertNull(store.entries.single().replans.single().response)
+        } finally { c.close() }
+    }
+
+    @Test fun replanCachesExactDecisionAndRejectsNewBodyAndChangedOwner() = runTest {
+        val identity = Identity(); val store = Store(); var replans = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            else -> { replans++; reply(adoptedDecision) }
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest()))
+            assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest()))
+            assertEquals(1, replans)
+            assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(positionSeconds = 7.0))).error)
+            identity.scope = identity.scope.copy(identityGeneration = 2)
+            assertNull(runtime.controlOwner("session-1"))
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest())).error)
+            assertEquals(1, replans)
+        } finally { c.close() }
+    }
+
+    @Test fun routeEventPersistsBeforeSendAndRejectsWrongSessionAndReceipt() = runTest {
+        val identity = Identity(); val store = Store(); var events = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/route-events" -> {
+                events++
+                assertTrue(req.attributes[SingleAttemptAttributeKey])
+                assertEquals(store.entries.single().routeEvents.single().toString(), req.body.toByteArray().decodeToString())
+                reply("""{"event_id":"wrong","outcome":"accepted"}""", HttpStatusCode.Accepted)
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+            val event = PlaybackRouteEventV3(playbackAttemptId = "attempt-1", sessionId = "session-1", event = "first_frame")
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.routeEvent(event.copy(sessionId = "wrong"))).error)
+            assertEquals(0, events)
+            assertEquals("invalid_receipt", assertIs<ApiResult.Error>(runtime.routeEvent(event)).error)
+            assertEquals(1, store.entries.single().routeEvents.size)
+            identity.scope = identity.scope.copy(identityGeneration = 2)
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.routeEvent(event)).error)
+            assertEquals(1, events)
+        } finally { c.close() }
+    }
+
+    @Test fun v2DecisionCannotSelectImplicitLegacyStreamMount() {
+        val body = SiloJson.parseToJsonElement(adoptedDecision.replace("/api/v2/stream/", "/stream/")).jsonObject
+        assertFailsWith<IllegalArgumentException> { decodePlaybackDecisionV2(body) }
     }
 
 }

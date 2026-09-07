@@ -7,6 +7,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
+import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
+import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.network.*
 
 const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
@@ -63,6 +65,19 @@ fun PlaybackStartRequestV3.v2Body(installationId: String): JsonObject = JsonObje
     ),
 )
 
+fun PlaybackReplanRequestV3.v2Body(installationId: String): JsonObject = JsonObject(
+    SiloJson.encodeToJsonElement(this).jsonObject + ("installation_id" to JsonPrimitive(installationId)),
+)
+
+fun PlaybackRouteEventV3.v2Body(installationId: String, eventId: String): JsonObject = JsonObject(
+    SiloJson.encodeToJsonElement(this).jsonObject + mapOf(
+        "installation_id" to JsonPrimitive(installationId), "event_id" to JsonPrimitive(eventId),
+    ),
+)
+
+@Serializable
+data class PlaybackRouteEventReceiptV2(@SerialName("event_id") val eventId: String, val outcome: String)
+
 class PlaybackV2Api(private val client: HttpClient) {
     suspend fun capabilities(scope: AuthScopeSnapshot): ApiResult<PlaybackCapabilitiesV2> =
         safeApiV2Call(ApiV2Gate.Unrestricted) {
@@ -80,6 +95,23 @@ class PlaybackV2Api(private val client: HttpClient) {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
             }.also { check(!it.status.isSuccess() || it.status.value == 201) }
+        }
+
+    suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject): ApiResult<JsonObject> =
+        safeApiV2Call(ApiV2Gate.Unrestricted) {
+            client.post {
+                url { path("api", "v2", "playback", sessionId, "replan") }
+                authScope(scope); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json); setBody(body)
+            }.also { check(!it.status.isSuccess() || it.status.value == 200) }
+        }
+
+    suspend fun routeEvent(scope: AuthScopeSnapshot, body: JsonObject): ApiResult<PlaybackRouteEventReceiptV2> =
+        safeApiV2Call(ApiV2Gate.Unrestricted) {
+            client.post("/api/v2/playback/route-events") {
+                authScope(scope); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json); setBody(body)
+            }.also { check(!it.status.isSuccess() || it.status.value == 202) }
         }
 
     suspend fun progress(scope: AuthScopeSnapshot, sessionId: String,

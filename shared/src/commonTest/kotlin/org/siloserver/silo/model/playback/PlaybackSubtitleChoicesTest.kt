@@ -158,4 +158,10 @@ class PlaybackSubtitleChoicesTest {
         assertEquals(listOf(1), authoritative.map(PlayerSubtitleInfo::index))
         assertEquals("Signs", authoritative.single().catalogLabel)
     }
+    @Test fun v2SubtitleArtifactsCannotBeRetargetedToAnotherSession() {
+        val url = "https://example.invalid/api/v2/stream/session-a/subtitles/2.vtt?st=opaque"
+        assertEquals(url, rebaseDownloadedSubtitleUrl(url, "session-a"))
+        assertEquals("", rebaseDownloadedSubtitleUrl(url, "session-b"))
+    }
+
 }

@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
+import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
+import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
 
@@ -17,6 +19,14 @@ interface PlaybackJournalStore {
     suspend fun read(): List<PlaybackJournalEntry>
     suspend fun write(entries: List<PlaybackJournalEntry>)
 }
+
+@Serializable
+data class PlaybackReplanIntent(
+    val body: JsonObject,
+    val response: JsonObject? = null,
+    val rejectedCode: Int? = null,
+    val rejectedMessage: String? = null,
+)
 
 @Serializable
 data class PlaybackJournalEntry(
@@ -33,6 +43,8 @@ data class PlaybackJournalEntry(
     val progress: PlaybackProgressV2? = null,
     val stop: PlaybackStopV2? = null,
     val terminal: Boolean = false,
+    val replans: List<PlaybackReplanIntent> = emptyList(),
+    val routeEvents: List<JsonObject> = emptyList(),
 )
 
 /** One shared coordinator covers local, cast, candidate and orphan cleanup callers. */
@@ -56,9 +68,12 @@ class SequencedPlayback(
         if (entries == null) { entries = store.read(); publish() }
         return requireNotNull(entries)
     }
+    private fun PlaybackJournalEntry.needsRecovery(): Boolean = !terminal &&
+        (stop != null || attemptId !in adopted || replans.any { it.response == null && it.rejectedCode == null })
+
     private fun publish() {
         _sessions.value = entries.orEmpty().mapNotNull { it.sessionId }.toSet()
-        _pending.value = entries.orEmpty().filter { !it.terminal && (it.stop != null || it.attemptId !in adopted) }
+        _pending.value = entries.orEmpty().filter { it.needsRecovery() }
             .map { it.attemptId }
     }
     private suspend fun save(entry: PlaybackJournalEntry) {
@@ -78,7 +93,7 @@ class SequencedPlayback(
         }
     }
 
-    /** Null alone means no advertised feature: caller may use the unchanged legacy transport. */
+    /** Admission requires v2; unavailable capabilities never select a legacy transport. */
     suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3>? = mutex.withLock {
         suspend fun accepted() = tokens.acceptsMetadataOwner(expectedMetadataOwner, request.profileId)
         fun changed() = failure("identity_changed", "The metadata viewer changed before playback admission.")
@@ -86,7 +101,7 @@ class SequencedPlayback(
         val current = tokens.snapshotCurrentScope()
             ?: return@withLock failure("identity_unavailable", "Playback needs an authenticated profile.")
         if (expectedMetadataOwner != null && !expectedMetadataOwner.matchesMetadataOwner(current)) return@withLock changed()
-        // Probe before requiring durable credentials so feature-absent temporary playback stays legacy.
+        // Probe availability before admission; retained intents still fence new attempts.
         val capabilityResult = api.capabilities(current)
         if (!accepted()) return@withLock changed()
         val capability = when (capabilityResult) {
@@ -98,11 +113,12 @@ class SequencedPlayback(
             return@withLock failure("identity_changed", "The active viewer changed.")
         val live = authorities.snapshotDurableLoginAuthority()
         if (!accepted()) return@withLock changed()
-        val unresolved = load().any { !it.terminal && it.loginId == live?.loginId &&
-            it.serverId == current.serverId && it.profileId == current.profileId && (it.attemptId !in adopted || it.stop != null) }
+        val unresolved = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
+            it.serverId == current.serverId && it.profileId == current.profileId }
         if (!accepted()) return@withLock changed()
         if (unresolved) return@withLock failure("playback_pending", "A previous playback request needs recovery before starting again.")
-        if (capability == null || SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withLock null
+        if (capability == null) return@withLock failure("server_update_required", "Update the server to use v2 playback.")
+        if (SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withLock failure("playback_unavailable", "V2 playback is unavailable on this server.")
         if (!capability.allowed || capability.state != "available" || capability.installationId.isNullOrBlank() ||
             3 !in capability.protocolVersions)
             return@withLock failure("playback_unavailable", "Sequenced playback is unavailable for this profile.")
@@ -153,6 +169,83 @@ class SequencedPlayback(
             // Preserve uncertain starts, including validation responses until pre-admission is proven.
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
+        }
+    }
+
+    /** Socket authority comes only from the admitted session, never from a fresh capability probe. */
+    suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String>? = mutex.withLock {
+        val entry = load().find { it.sessionId == sessionId && !it.terminal && it.stop == null } ?: return@withLock null
+        val captured = scope(entry) ?: return@withLock null
+        captured to entry.installationId
+    }
+
+    suspend fun replan(sessionId: String, request: PlaybackReplanRequestV3): ApiResult<PlaybackDecisionResponseV3> = mutex.withLock {
+        var entry = load().find { it.sessionId == sessionId }
+            ?: return@withLock failure("playback_unavailable", "This session has no v2 playback authority. Start playback again.")
+        val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
+        if (request.playbackAttemptId != entry.attemptId) return@withLock failure("identity_changed", "The playback attempt changed.")
+        val body = request.v2Body(entry.installationId)
+        val previous = entry.replans.find { it.body["replan_request_id"] == body["replan_request_id"] }
+        if (previous != null) {
+            if (previous.body != body) return@withLock failure("replan_conflict", "A replan identity cannot be reused with a different request.")
+            previous.response?.let {
+                if (previous !== entry.replans.last()) return@withLock failure("stale_replan", "A newer replan superseded this decision.")
+                return@withLock ApiResult.Success(decodePlaybackDecisionV2(it))
+            }
+            previous.rejectedCode?.let { return@withLock ApiResult.Error(it, "replan_rejected", previous.rejectedMessage ?: "Replan is unavailable.") }
+            return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
+        }
+        if (entry.replans.any { it.response == null && it.rejectedCode == null })
+            return@withLock failure("replan_pending", "The previous replan outcome is uncertain. Stop this session before starting again.")
+        if (entry.replans.size >= 8) return@withLock failure("replan_limit", "This playback session has reached its replan limit.")
+        val intent = PlaybackReplanIntent(body)
+        entry = entry.copy(replans = entry.replans + intent)
+        save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.
+        if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+        when (val result = api.replan(captured, sessionId, body)) {
+            is ApiResult.Success -> {
+                val decision = decodePlaybackDecisionV2(result.data)
+                if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
+                    return@withLock failure("invalid_decision", "The replacement plan belongs to another session.")
+                save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
+                if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+                ApiResult.Success(decision)
+            }
+            is ApiResult.Error -> {
+                // A documented unsupported operation is pre-admission. Other errors remain uncertain.
+                if (result.code == 501) save(entry.copy(replans = entry.replans.dropLast(1) +
+                    intent.copy(rejectedCode = result.code, rejectedMessage = result.message)))
+                result
+            }
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    suspend fun routeEvent(request: PlaybackRouteEventV3): ApiResult<Unit> = mutex.withLock {
+        val entry = load().find { it.attemptId == request.playbackAttemptId }
+            ?: return@withLock failure("playback_unavailable", "Route telemetry has no v2 playback authority.")
+        if (request.sessionId != null && request.sessionId != entry.sessionId)
+            return@withLock failure("identity_changed", "The route event belongs to another session.")
+        val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
+        val eventId = newId()
+        val body = request.v2Body(entry.installationId, eventId)
+        val saved = entry.copy(routeEvents = entry.routeEvents + body)
+        save(saved)
+        if (scope(saved) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+        when (val result = api.routeEvent(captured, body)) {
+            is ApiResult.Success -> {
+                if (result.data.eventId != eventId || result.data.outcome != "accepted")
+                    return@withLock failure("invalid_receipt", "The route event receipt did not match the request.")
+                save(saved.copy(routeEvents = entry.routeEvents))
+                ApiResult.Success(Unit)
+            }
+            is ApiResult.Error -> {
+                if (result.code == 429) save(saved.copy(routeEvents = entry.routeEvents)) // Contract says drop.
+                result
+            }
+            is ApiResult.NetworkError -> result // Retained, never automatically replayed with new authority.
         }
     }
 
@@ -221,7 +314,7 @@ class SequencedPlayback(
 
     suspend fun pendingForCurrentViewer(): Int = mutex.withLock {
         val live = authorities.snapshotDurableLoginAuthority() ?: return@withLock 0
-        load().count { !it.terminal && (it.stop != null || it.attemptId !in adopted) &&
+        load().count { it.needsRecovery() &&
             it.loginId == live.loginId && it.serverId == live.scope.serverId &&
             it.origin == live.scope.serverUrl && it.profileId == live.scope.profileId }
     }
@@ -241,7 +334,7 @@ class SequencedPlayback(
             is ApiResult.NetworkError -> return@withLock result
         }
         if (live != authorities.snapshotDurableLoginAuthority()) return@withLock failure("identity_changed", "The active viewer changed.")
-        for (entry in load().filter { !it.terminal && (it.stop != null || it.attemptId !in adopted) }) {
+        for (entry in load().filter { it.needsRecovery() }) {
             if (entry.loginId != live.loginId || entry.serverId != live.scope.serverId || entry.origin != live.scope.serverUrl ||
                 entry.profileId != live.scope.profileId || entry.accountId != account.id || entry.installationId != capability.installationId) continue
             // Existing process attempts remain fenced after any identity transition.
@@ -273,6 +366,19 @@ internal fun decodePlaybackDecisionV2(body: JsonObject): PlaybackDecisionRespons
         return JsonPrimitive(id)
     }
     val plan = body["playback_plan"]?.jsonObject ?: return SiloJson.decodeFromJsonElement(body)
+    fun validateUrl(element: JsonElement?) {
+        val url = (element as? JsonPrimitive)?.contentOrNull ?: return
+        if (url.isEmpty()) return
+        require(!url.startsWith("/api/v1/") && !url.contains("/api/v1/")) { "V2 decision contains a legacy delivery URL" }
+        require(url.startsWith("/api/v2/") || url.startsWith("https://") || url.startsWith("http://")) {
+            "V2 decision omitted the delivery URL mount"
+        }
+    }
+    plan["stream"]?.jsonObject?.get("url")?.let(::validateUrl)
+    plan["subtitle"]?.jsonObject?.let { subtitle ->
+        subtitle["artifact"]?.takeIf { it is JsonObject }?.jsonObject?.get("url")?.let(::validateUrl)
+        (subtitle["inventory"] as? JsonArray)?.forEach { row -> validateUrl(row.jsonObject["url"]) }
+    }
     val fields = plan.toMutableMap()
     for (key in listOf("requested_media_file_id", "effective_media_file_id")) fields[key]?.let { fields[key] = rendererId(it) }
     fields["source"]?.jsonObject?.let { source ->

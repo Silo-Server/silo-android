@@ -733,8 +733,8 @@ class SiloPlayerFactory(
  *
  * Already-absolute URLs (`http`/`https`) and local offline URIs
  * (`file`/`content`) are returned unchanged. API-relative URLs are only
- * prefixed with the server base URL; stream-relative paths are prefixed with
- * the server base URL and the `/api/v1` mount.
+ * prefixed with the server base URL. Other relative paths are rejected: the
+ * v2 decision owns the delivery mount, so the client must not infer one.
  *
  * Shared by [SiloPlayerFactory] (video) and the audiobook player so both
  * resolve identically. Players that hand a relative URI straight to Media3 hit
@@ -749,7 +749,7 @@ fun resolvePlaybackStreamUrl(serverUrl: String, streamUrl: String): String {
             streamUrl.startsWith("file://") ||
             streamUrl.startsWith("content://") -> streamUrl // Already absolute / local offline: nothing to prefix.
         streamUrl.startsWith("/api/") -> "$base$streamUrl"
-        else -> "$base/api/v1$streamUrl"
+        else -> throw IllegalArgumentException("The server returned a playback URL without an API mount.")
     }
 }
 

@@ -157,7 +157,7 @@ val repositoryModule = module {
     }
 
     // Per-session playback control socket (admin remote control). Parallel to
-    // the watch-together realtime client — same HttpClient + query-param auth.
+    // the watch-together realtime client; v2 uses a single-use owner-bound ticket.
     // FACTORY, not single: the client holds one mutable socket session, so each
     // player-screen controller must get its own instance (mirrors how the WT
     // repository mints a fresh client per connect) — a shared singleton would
@@ -166,6 +166,7 @@ val repositoryModule = module {
         org.siloserver.silo.network.DefaultPlaybackRealtimeClient(
             client = get(),
             tokenManager = get(),
+            ownerProvider = get<PlaybackRepository>()::controlOwner,
         )
     }
 

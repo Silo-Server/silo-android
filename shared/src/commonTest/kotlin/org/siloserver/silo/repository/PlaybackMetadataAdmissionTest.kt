@@ -30,7 +30,7 @@ class PlaybackMetadataAdmissionTest {
         fileId = 42, profileId = "profile", playbackAttemptId = id, subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
         capabilities = ClientCodecCapabilities(), clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"))
     private val caps = """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["direct"]}"""
-    private val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"session-1","delivery":"original_http","stream":{"url":"/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
+    private val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
     private val account = """{"id":"account","username":"test","email":"","role":"user"}"""
     private fun TestScope.client(handler: suspend MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData) =
         HttpClient(MockEngine(MockEngineConfig().apply { dispatcher = StandardTestDispatcher(testScheduler); addHandler(handler) })) { install(ContentNegotiation) { json(SiloJson) } }
@@ -81,7 +81,7 @@ class PlaybackMetadataAdmissionTest {
             } finally { client.close() }
         }
     }
-    @Test fun temporaryAbsentFeaturePinsLegacyAndHandoffReplacementCannotSend() = runTest {
+    @Test fun temporaryAbsentFeatureNeverAdmitsLegacyAndHandoffReplacementCannotSend() = runTest {
         val identity = Identity(); identity.owner = identity.owner.copy(credentialGenerationId = "temporary")
         val original = identity.owner; val store = Store(); var legacy = 0; var afterAbsence = false; var replace = false
         val client = client { req ->
@@ -93,7 +93,7 @@ class PlaybackMetadataAdmissionTest {
             val sequenced = SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }
             val repo = PlaybackRepository(PlaybackApi(client), sequenced, identity)
             repo.startPlaybackV3(request(), original)
-            assertEquals(1, legacy); assertTrue(store.rows.isEmpty())
+            assertEquals(0, legacy); assertTrue(store.rows.isEmpty())
             // Change at the repository's post-absence authority snapshot, after
             // all sequenced checks. Count from the returning durable lookup.
             var captures = 0
@@ -102,7 +102,7 @@ class PlaybackMetadataAdmissionTest {
             }
             afterAbsence = false; replace = true
             assertIs<ApiResult.Error>(repo.startPlaybackV3(request("second"), original))
-            assertEquals(1, legacy); assertTrue(store.rows.isEmpty())
+            assertEquals(0, legacy); assertTrue(store.rows.isEmpty())
         } finally { client.close() }
     }
     @Test fun changeDuringSaveRetainsOriginalUnsentAttemptAndNoLegacyReplay() = runTest {
@@ -137,8 +137,8 @@ class PlaybackMetadataAdmissionTest {
             assertEquals("session-1", store.rows.single().sessionId)
         } finally { client.close() }
     }
-    @Test fun realAuthPluginUsesCapturedProfilePinAndLiveCredentialSlotForBothBranches() = runTest {
-        for (sequencedBranch in listOf(false, true)) {
+    @Test fun realAuthPluginUsesCapturedProfilePinAndLiveCredentialSlotForV2() = runTest {
+        for (sequencedBranch in listOf(true)) {
             val identity = Identity()
             if (!sequencedBranch) identity.owner = identity.owner.copy(credentialGenerationId = "temporary")
             val expected = identity.owner

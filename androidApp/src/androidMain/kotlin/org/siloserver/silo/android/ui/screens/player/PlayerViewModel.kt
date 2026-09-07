@@ -1790,7 +1790,7 @@ class PlayerViewModel(
                         } else {
                             emptyList()
                         }
-                        val recoveredSubtitles = authoritativeSubtitles + downloaded
+                        val recoveredSubtitles = authoritativeSubtitles + downloaded.filter { it.url.isNotBlank() }
                         val returnedSubtitleOrdinal = returnedSubtitleIndex?.let { serverIndex ->
                             recoveredSubtitles.indexOfFirst { it.index == serverIndex }.takeIf { it >= 0 }
                         } ?: -1
