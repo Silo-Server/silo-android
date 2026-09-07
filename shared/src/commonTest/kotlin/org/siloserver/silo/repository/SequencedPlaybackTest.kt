@@ -57,6 +57,143 @@ class SequencedPlaybackTest {
         return JsonObject(base + ("progress_timeline" to SiloJson.encodeToJsonElement(manifest.select(file)))).toString()
     }
 
+    private val timelineRefusal = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"adaptation_unavailable","terminal":{"reason":"client_timeline_changed","message":"Open the book again to use its updated timeline.","retryable":false}}"""
+
+    @Test fun definitiveTimelineRefusalRequiresExplicitFreshDiscoveryAndNewAttempt() = runTest {
+        val identity = Identity(); val store = Store(); var discoveries = 0
+        val updatedManifest = manifest.copy(timelineId = "b".repeat(64))
+        val bodies = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/timelines/43" -> {
+                discoveries++
+                reply(SiloJson.encodeToString(if (discoveries == 1) manifest else updatedManifest))
+            }
+            "/api/v2/playback/start" -> {
+                bodies += req.body.toByteArray().decodeToString()
+                assertEquals(identity.scope, req.attributes[AuthScopeAttributeKey])
+                reply(if (bodies.size == 1) timelineRefusal else
+                    boundDecision(43, "session-new").replace(manifest.timelineId, updatedManifest.timelineId), HttpStatusCode.Created)
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.discoverTimeline(43, "book", identity.scope))
+            val rejected = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(boundRequest(43, "rejected"), identity.scope))
+            assertEquals("client_timeline_changed", rejected.data.terminal?.reason)
+            assertIs<PlaybackV3Validation.Terminal>(rejected.data.validateForMedia3())
+            val retained = store.entries.single()
+            assertTrue(retained.terminal); assertNull(retained.sessionId)
+            assertEquals(SiloJson.parseToJsonElement(timelineRefusal).jsonObject, retained.rejectedStartDecision)
+            assertEquals(SiloJson.parseToJsonElement(bodies.single()), retained.start)
+            assertEquals("playback_rejected", assertIs<ApiResult.Error>(runtime.routeEvent(
+                PlaybackRouteEventV3(playbackAttemptId = "rejected", event = "terminal"))).error)
+            assertEquals(retained, store.entries.single())
+            assertTrue(runtime.pending.value.isEmpty()); assertEquals(1, discoveries)
+            assertEquals("timeline_unavailable", assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "new-intent"), identity.scope)).error)
+            assertEquals(1, bodies.size)
+            assertIs<ApiResult.Success<*>>(runtime.discoverTimeline(43, "book", identity.scope))
+            assertEquals("attempt_exists", assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "rejected").copy(timelineId = updatedManifest.timelineId), identity.scope)).error)
+            assertIs<ApiResult.Success<*>>(runtime.start(boundRequest(43, "new-intent").copy(timelineId = updatedManifest.timelineId), identity.scope))
+            assertEquals(updatedManifest.timelineId, SiloJson.parseToJsonElement(bodies.last()).jsonObject["timeline_id"]?.jsonPrimitive?.content)
+            assertEquals(2, discoveries); assertEquals(2, bodies.size)
+            assertEquals(retained, store.entries.first())
+        } finally { c.close() }
+    }
+
+    @Test fun ambiguousStatusesAndMalformedTimelineRefusalsNeverSettle() = runTest {
+        val variants = listOf(
+            HttpStatusCode.Conflict to timelineRefusal,
+            HttpStatusCode.Conflict to """{"code":"timeline_changed"}""",
+            HttpStatusCode.ServiceUnavailable to timelineRefusal,
+            HttpStatusCode.OK to timelineRefusal,
+            HttpStatusCode.Created to timelineRefusal.replace("\"retryable\":false", "\"retryable\":true"),
+            HttpStatusCode.Created to timelineRefusal.replace(",\"retryable\":false", ""),
+            HttpStatusCode.Created to timelineRefusal.replace("\"reason\":", "\"reason_code\":"),
+            HttpStatusCode.Created to timelineRefusal.replace("\"outcome\":", "\"session_id\":\"unexpected\",\"outcome\":"),
+            HttpStatusCode.Created to timelineRefusal.replace("\"outcome\":", "\"playback_plan\":{},\"outcome\":"),
+        )
+        for ((status, response) in variants) {
+            val identity = Identity(); val store = Store(); var starts = 0
+            val c = client { req -> when (req.url.encodedPath) {
+                "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+                "/api/v2/account/me" -> reply(account)
+                "/api/v2/playback/timelines/43" -> reply(SiloJson.encodeToString(manifest))
+                "/api/v2/playback/start" -> { starts++; reply(response, status) }
+                else -> error("Unexpected transport")
+            } }
+            try {
+                val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+                runtime.discoverTimeline(43, "book", identity.scope)
+                assertFalse(runtime.start(boundRequest(43, "original"), identity.scope) is ApiResult.Success)
+                assertFalse(store.entries.single().terminal, "$status $response")
+                assertNull(store.entries.single().rejectedStartDecision)
+                assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "replacement"), identity.scope)).error)
+                assertEquals(1, starts)
+            } finally { c.close() }
+        }
+    }
+
+    @Test fun lostTerminalPublicationResolvesOnlyByExactReplayAfterRestart() = runTest {
+        val identity = Identity(); val store = Store(); var discoveries = 0
+        val bodies = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/timelines/43" -> { discoveries++; reply(SiloJson.encodeToString(manifest)) }
+            "/api/v2/playback/start" -> {
+                bodies += req.body.toByteArray().decodeToString()
+                if (bodies.size == 1) throw IllegalStateException("lost terminal publication response")
+                if (bodies.size == 2) reply("{}", HttpStatusCode.ServiceUnavailable)
+                else reply(timelineRefusal, HttpStatusCode.Created)
+            }
+            else -> error("Recovery must not create a session or perform catalog lookup")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            runtime.discoverTimeline(43, "book", identity.scope)
+            assertIs<ApiResult.NetworkError>(runtime.start(boundRequest(43, "original"), identity.scope))
+            val retained = store.entries.single()
+            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            assertEquals("playback_pending", assertIs<ApiResult.Error>(restarted.start(boundRequest(43, "replacement"), identity.scope)).error)
+            identity.login = "other-login"
+            assertIs<ApiResult.Success<*>>(restarted.recover())
+            assertEquals(1, bodies.size); assertEquals(retained, store.entries.single())
+            identity.login = "login-1"
+            assertEquals(503, assertIs<ApiResult.Error>(restarted.recover()).code)
+            assertEquals(retained, store.entries.single())
+            assertIs<ApiResult.Success<*>>(restarted.recover())
+            assertEquals(List(3) { bodies.first() }, bodies)
+            assertEquals(1, discoveries); assertTrue(store.entries.single().terminal)
+            assertEquals(retained.start, store.entries.single().start)
+            val settled = store.entries.single()
+            assertIs<ApiResult.Success<*>>(SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }.recover())
+            assertEquals(settled, store.entries.single()); assertEquals(3, bodies.size)
+        } finally { c.close() }
+    }
+
+    @Test fun terminalRefusalCannotSettleAfterInFlightIdentityChange() = runTest {
+        val identity = Identity(); val store = Store()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps("\"sequenced_progress_v1\",\"bound_client_timeline\""))
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/timelines/43" -> reply(SiloJson.encodeToString(manifest))
+            "/api/v2/playback/start" -> {
+                identity.scope = identity.scope.copy(identityGeneration = 2)
+                reply(timelineRefusal, HttpStatusCode.Created)
+            }
+            else -> error("Unexpected transport")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            runtime.discoverTimeline(43, "book", identity.scope)
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.start(boundRequest(43, "original"), identity.scope)).error)
+            assertFalse(store.entries.single().terminal); assertNull(store.entries.single().rejectedStartDecision)
+        } finally { c.close() }
+    }
+
     @Test fun unboundJournalAndCommandsDoNotGainTimelineFields() {
         val legacy = entry().copy(progress = PlaybackProgressV2(installation, 1, 30.0, false),
             stop = PlaybackStopV2(installation, stopId))

@@ -47,6 +47,7 @@ data class PlaybackJournalEntry(
     val routeEvents: List<JsonObject> = emptyList(),
     val manifest: PlaybackManifestV2? = null,
     val acceptedBoundSample: PlaybackSampleV2? = null,
+    val rejectedStartDecision: JsonObject? = null,
 )
 
 /** One shared coordinator covers local, cast, candidate and orphan cleanup callers. */
@@ -212,6 +213,16 @@ class SequencedPlayback(
             return failure("identity_changed", "The active viewer changed.")
         return when (val result = api.start(captured, entry.start)) {
             is ApiResult.Success -> {
+                // Only the durable HTTP 201 terminal contract proves this bound attempt never activated.
+                // The API enforces 201; generic conflicts/errors never reach this settlement path.
+                val refusal = timelineRefusal(entry, result.data)
+                if (refusal != null) {
+                    if (scope(entry) == null || !tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
+                        return failure("identity_changed", "The viewer changed before playback refusal settlement.")
+                    save(entry.copy(terminal = true, rejectedStartDecision = result.data))
+                    discovered.remove(entry.manifest?.timelineId)
+                    return ApiResult.Success(refusal)
+                }
                 // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
                 val session = result.data["session_id"]?.jsonPrimitive?.contentOrNull
                 if (session.isNullOrBlank()) return failure("invalid_decision", "Playback returned no recoverable session.")
@@ -236,6 +247,21 @@ class SequencedPlayback(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    private fun timelineRefusal(entry: PlaybackJournalEntry, body: JsonObject): PlaybackDecisionResponseV3? {
+        if (entry.manifest == null || entry.sessionId != null || entry.stop != null || entry.progress != null ||
+            entry.start["progress_persistence"] != JsonPrimitive("client_bound")) return null
+        if (body["protocol_version"] != JsonPrimitive(3) ||
+            body["outcome"] != JsonPrimitive("adaptation_unavailable")) return null
+        // Check raw fields: tolerant plan decoding or default retryable=false must not prove rejection.
+        if (listOf("session_id", "playback_plan", "route", "route_id", "activation").any {
+                body[it] != null && body[it] != JsonNull
+            }) return null
+        val terminal = body["terminal"] as? JsonObject ?: return null
+        if (terminal["reason"] != JsonPrimitive("client_timeline_changed") ||
+            terminal["retryable"] != JsonPrimitive(false)) return null
+        return runCatching { SiloJson.decodeFromJsonElement<PlaybackDecisionResponseV3>(body) }.getOrNull()
     }
 
     /** Socket authority comes only from the admitted session, never from a fresh capability probe. */
@@ -298,6 +324,8 @@ class SequencedPlayback(
         if (request.sessionId != null && request.sessionId != entry.sessionId)
             return@withLock failure("identity_changed", "The route event belongs to another session.")
         val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        if (entry.rejectedStartDecision != null)
+            return@withLock failure("playback_rejected", "The rejected attempt has no playback route.")
         if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
         val eventId = newId()
         val body = request.v2Body(entry.installationId, eventId)
