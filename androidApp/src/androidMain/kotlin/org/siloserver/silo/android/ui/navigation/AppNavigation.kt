@@ -25,6 +25,7 @@ import org.siloserver.silo.android.ui.screens.auth.DevicePairingUnknownServerScr
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -110,6 +111,7 @@ import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
+private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
 private const val PageFadeDurationMs = 200
 private const val DetailCardOpenDurationMs = 600
 private const val DetailCardCloseDurationMs = 440
@@ -247,8 +249,8 @@ fun AppNavigation(
                         currentDestinationRoute = navController.currentBackStackEntry
                             ?.destination?.route,
                         currentContentId = navController.currentBackStackEntry
-                            ?.arguments
-                            ?.getString("contentId"),
+                            ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
+                            ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
                         targetRoute = route,
                     )
                     navController.navigate(route) {
@@ -988,6 +990,13 @@ fun AppNavigation(
             var resolvedSeason by rememberSaveable(pageContentId) { mutableStateOf<Int?>(null) }
             var resolvedEpisodeId by rememberSaveable(pageContentId) { mutableStateOf<String?>(null) }
             val resolvedContentId = resolvedSeriesId ?: pageContentId
+            SideEffect {
+                if (page == detailPagerState.currentPage) {
+                    // A redirected episode now displays Series. External links
+                    // must compare against this identity, not the original args.
+                    backStackEntry.savedStateHandle[DisplayedDetailContentIdKey] = resolvedContentId
+                }
+            }
             val detailViewModel: ItemDetailViewModel = if (page == initialPage && resolvedSeriesId == null) {
                 koinViewModel()
             } else {
