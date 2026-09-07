@@ -23,6 +23,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -49,6 +52,7 @@ import org.siloserver.silo.android.ui.components.rememberSwipeDownDismissState
 import org.siloserver.silo.android.ui.components.swipeBackToDismiss
 import org.siloserver.silo.android.ui.components.swipeDownToDismiss
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
+import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
 import org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel
@@ -107,6 +111,10 @@ fun ItemDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val siloCastController: SiloCastController = koinInject()
+    val siloCastState by siloCastController.state.collectAsState()
+    var showRemoteTargetPicker by remember { mutableStateOf(false) }
+    var remoteMenuExpanded by remember { mutableStateOf(false) }
     val swipeDownDismissState = rememberSwipeDownDismissState()
     val requestDismiss: () -> Unit = {
         swipeDownDismissState.dismiss(onBackClick)
@@ -969,6 +977,13 @@ fun ItemDetailScreen(
             )
         }
 
+        if (showRemoteTargetPicker) {
+            SiloCastTargetPickerSheet(
+                onDismiss = { showRemoteTargetPicker = false },
+                controller = siloCastController,
+            )
+        }
+
         pendingSiloCastLaunchRequest?.let { request ->
             SiloCastTargetPickerSheet(
                 launchRequest = request,
@@ -1019,22 +1034,65 @@ fun ItemDetailScreen(
                 tint = Color.White,
             )
         }
-        IconButton(
-            onClick = onOpenCastRemote,
+        Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
-                .padding(horizontal = 28.dp, vertical = 18.dp)
-                .size(42.dp)
-                .clip(CircleShape)
-                .background(SiloDetailActionControlActive.copy(alpha = 0.38f))
-                .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
+                .padding(horizontal = 28.dp, vertical = 18.dp),
         ) {
-            Icon(
-                imageVector = Icons.Outlined.SettingsRemote,
-                contentDescription = "Remote Control",
-                tint = Color.White,
-            )
+            IconButton(
+                onClick = {
+                    if (siloCastState.hasActiveSession) {
+                        remoteMenuExpanded = true
+                    } else {
+                        showRemoteTargetPicker = true
+                    }
+                },
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(
+                        SiloDetailActionControlActive.copy(
+                            alpha = if (siloCastState.hasActiveSession) 1f else 0.38f,
+                        ),
+                    )
+                    .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.SettingsRemote,
+                    contentDescription = "Remote Control",
+                    tint = Color.White,
+                )
+            }
+            DropdownMenu(
+                expanded = remoteMenuExpanded,
+                onDismissRequest = { remoteMenuExpanded = false },
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Remote Control") },
+                    onClick = {
+                        remoteMenuExpanded = false
+                        onOpenCastRemote()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Choose TV") },
+                    onClick = {
+                        remoteMenuExpanded = false
+                        showRemoteTargetPicker = true
+                    },
+                )
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
+                    },
+                    onClick = {
+                        remoteMenuExpanded = false
+                        siloCastController.disconnect()
+                    },
+                )
+            }
         }
     }
 }
