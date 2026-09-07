@@ -491,7 +491,7 @@ private fun TvDetailEpisodeCard(
         }
 
         // Series keeps the compact tvOS-style single caption line:
-        // "EPISODE 1 · Episode name". Other episode rails retain their richer
+        // "S1 · E1 · Episode name". Other episode rails retain their richer
         // title/metadata/synopsis hierarchy.
         if (caption.showsTitle) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -509,7 +509,7 @@ private fun TvDetailEpisodeCard(
                         maxLines = 1,
                     )
                     if (hidesEpisodeTitle) {
-                        episode.title?.takeIf { it.isNotBlank() }?.let { inlineTitle ->
+                        episode.title?.trim()?.takeIf { it.isNotEmpty() }?.let { inlineTitle ->
                             Text(
                                 text = "·",
                                 fontSize = eyebrowFontSize,
@@ -536,7 +536,8 @@ private fun TvDetailEpisodeCard(
 
                 if (!hidesEpisodeTitle) {
                     Text(
-                        text = episode.title ?: "Episode ${episode.episodeNumber}",
+                        text = episode.title?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: "Episode ${episode.episodeNumber}",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = when {

@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.AudioFile
-import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.HighQuality
@@ -26,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.mutableStateOf
@@ -79,7 +79,6 @@ fun MovieDetailContent(
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onSeriesClick: (() -> Unit)? = null,
-    onSeasonClick: (() -> Unit)? = null,
     // Episode pages only: the parent series' seasons + the selected
     // season's siblings, for the in-page season/episode selector.
     seasons: List<Season> = emptyList(),
@@ -92,9 +91,7 @@ fun MovieDetailContent(
     onEpisodeWatchedChange: (String, Boolean) -> Unit = { _, _ -> },
     isDownloaded: Boolean = false,
     downloadProgress: Float? = null,
-    playOnDeviceLabel: String = "Play on device",
     onDownloadTapped: (() -> Unit)? = null,
-    onPlayOnDevice: (() -> Unit)? = null,
     onWatchTogether: (() -> Unit)? = null,
     onSuggestToRoom: (() -> Unit)? = null,
     translation: (@Composable () -> Unit)? = null,
@@ -114,8 +111,7 @@ fun MovieDetailContent(
     val audioTracks = selectedVersion?.audioTracks.orEmpty()
     val subtitleTracks = selectedVersion?.subtitleTracks.orEmpty()
     val hasTrackSelectors = detail.versions.isNotEmpty()
-    val hasOverflow = onPlayOnDevice != null ||
-        onSeriesClick != null || onSeasonClick != null || onWatchTogether != null ||
+    val hasOverflow = onSeriesClick != null || onWatchTogether != null ||
         onSuggestToRoom != null
 
     val eyebrow = if (detail.type == "episode") {
@@ -201,27 +197,6 @@ fun MovieDetailContent(
                     onToggleWatched = onToggleWatched,
                     overflow = if (hasOverflow) {
                         { dismiss ->
-                            if (onPlayOnDevice != null) {
-                                DropdownMenuItem(
-                                    text = { Text(playOnDeviceLabel) },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Cast, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onPlayOnDevice()
-                                    },
-                                )
-                            }
-                            if (onSeasonClick != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Go to Season") },
-                                    onClick = {
-                                        dismiss()
-                                        onSeasonClick()
-                                    },
-                                )
-                            }
                             if (onSeriesClick != null) {
                                 DropdownMenuItem(
                                     text = { Text("Go to Series") },
@@ -411,17 +386,19 @@ internal fun DownloadCircleButton(
     isDownloaded: Boolean,
     progress: Float?,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     val isInFlight = progress != null && !isDownloaded
     Box(
         modifier = Modifier
             .size(42.dp)
+            .alpha(if (enabled) 1f else 0.45f)
             .clip(CircleShape)
             .background(
                 if (isDownloaded) SiloDetailActionControlActive
                 else SiloDetailActionControl
             )
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (isInFlight) {
