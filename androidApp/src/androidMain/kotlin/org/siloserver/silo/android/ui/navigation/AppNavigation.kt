@@ -30,11 +30,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.DEFAULT_ARGS_KEY
+import androidx.lifecycle.viewmodel.MutableCreationExtras
+import androidx.core.os.bundleOf
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -977,19 +982,32 @@ fun AppNavigation(
                 modifier = Modifier.fillMaxSize(),
             ) { page ->
             val pageContentId = browseContentIds[page]
-            val detailViewModel = if (page == initialPage) {
-                koinViewModel<ItemDetailViewModel>()
+            // Replace only this page's content, preserving the browse deck and
+            // its Back destination. Save the resolution across recreation.
+            var resolvedSeriesId by rememberSaveable(pageContentId) { mutableStateOf<String?>(null) }
+            var resolvedSeason by rememberSaveable(pageContentId) { mutableStateOf<Int?>(null) }
+            var resolvedEpisodeId by rememberSaveable(pageContentId) { mutableStateOf<String?>(null) }
+            val resolvedContentId = resolvedSeriesId ?: pageContentId
+            val detailViewModel: ItemDetailViewModel = if (page == initialPage && resolvedSeriesId == null) {
+                koinViewModel()
             } else {
                 koinViewModel(
-                    key = "detail-deck-${backStackEntry.id}-$pageContentId",
-                    parameters = {
-                        parametersOf(SavedStateHandle(mapOf("contentId" to pageContentId)))
+                    key = "detail-deck-${backStackEntry.id}-$page-$resolvedContentId",
+                    extras = MutableCreationExtras(backStackEntry.defaultViewModelCreationExtras).apply {
+                        // Koin supplies SavedStateHandle from creation extras
+                        // ahead of explicit parameters, so replace its route args.
+                        set(DEFAULT_ARGS_KEY, bundleOf(
+                            "contentId" to resolvedContentId,
+                            "seasonNumber" to resolvedSeason?.toString(),
+                            "episodeContentId" to resolvedEpisodeId,
+                        ))
                     },
                 )
             }
             CompositionLocalProvider(
                 LocalHeroSourceHandoff provides if (page == initialPage) heroSourceHandoff else null,
             ) {
+            key(resolvedContentId) {
             ItemDetailScreen(
                 openingArtworkUrl = openingArtworkUrl.takeIf { page == initialPage },
                 openingArtworkThumbhash = openingArtworkThumbhash.takeIf { page == initialPage },
@@ -1025,8 +1043,10 @@ fun AppNavigation(
                 onSeriesClick = { seriesId ->
                     navController.navigate(Route.ItemDetail(seriesId).route)
                 },
-                onSeasonClick = { seriesId, seasonNumber ->
-                    navController.navigate(Route.ItemDetail(seriesId, seasonNumber).route)
+                onSeriesDetailReplace = { seriesId, seasonNumber, episodeId ->
+                    resolvedSeason = seasonNumber
+                    resolvedEpisodeId = episodeId
+                    resolvedSeriesId = seriesId
                 },
                 onPersonClick = { personId ->
                     personId.toLongOrNull()?.let { id ->
@@ -1047,6 +1067,7 @@ fun AppNavigation(
                 },
                 viewModel = detailViewModel,
             )
+            }
             if (page == detailPagerState.currentPage) wtTarget?.let { (cid, fid) ->
                 WatchTogetherEntrySheet(
                     contentId = cid,

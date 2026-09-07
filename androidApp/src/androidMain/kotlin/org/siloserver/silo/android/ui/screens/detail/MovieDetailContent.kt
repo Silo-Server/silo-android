@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.AudioFile
-import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.HighQuality
@@ -79,7 +78,6 @@ fun MovieDetailContent(
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onSeriesClick: (() -> Unit)? = null,
-    onSeasonClick: (() -> Unit)? = null,
     // Episode pages only: the parent series' seasons + the selected
     // season's siblings, for the in-page season/episode selector.
     seasons: List<Season> = emptyList(),
@@ -92,9 +90,7 @@ fun MovieDetailContent(
     onEpisodeWatchedChange: (String, Boolean) -> Unit = { _, _ -> },
     isDownloaded: Boolean = false,
     downloadProgress: Float? = null,
-    playOnDeviceLabel: String = "Play on device",
     onDownloadTapped: (() -> Unit)? = null,
-    onPlayOnDevice: (() -> Unit)? = null,
     onWatchTogether: (() -> Unit)? = null,
     onSuggestToRoom: (() -> Unit)? = null,
     translation: (@Composable () -> Unit)? = null,
@@ -114,8 +110,7 @@ fun MovieDetailContent(
     val audioTracks = selectedVersion?.audioTracks.orEmpty()
     val subtitleTracks = selectedVersion?.subtitleTracks.orEmpty()
     val hasTrackSelectors = detail.versions.isNotEmpty()
-    val hasOverflow = onPlayOnDevice != null ||
-        onSeriesClick != null || onSeasonClick != null || onWatchTogether != null ||
+    val hasOverflow = onSeriesClick != null || onWatchTogether != null ||
         onSuggestToRoom != null
 
     val eyebrow = if (detail.type == "episode") {
@@ -201,27 +196,6 @@ fun MovieDetailContent(
                     onToggleWatched = onToggleWatched,
                     overflow = if (hasOverflow) {
                         { dismiss ->
-                            if (onPlayOnDevice != null) {
-                                DropdownMenuItem(
-                                    text = { Text(playOnDeviceLabel) },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Cast, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onPlayOnDevice()
-                                    },
-                                )
-                            }
-                            if (onSeasonClick != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Go to Season") },
-                                    onClick = {
-                                        dismiss()
-                                        onSeasonClick()
-                                    },
-                                )
-                            }
                             if (onSeriesClick != null) {
                                 DropdownMenuItem(
                                     text = { Text("Go to Series") },

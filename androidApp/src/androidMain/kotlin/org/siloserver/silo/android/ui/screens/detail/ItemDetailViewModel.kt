@@ -212,6 +212,7 @@ class ItemDetailViewModel(
         displayTitle: String,
         forceRedownloadMissingLocal: Boolean = false,
         downloadQuality: DownloadQuality? = null,
+        downloadContentId: String = contentId,
     ) {
         val existing = downloadRecordFor(version)
         when (
@@ -233,11 +234,11 @@ class ItemDetailViewModel(
             DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
                 val staleRecord = existing
                 if (staleRecord == null || downloadsRepository.delete(staleRecord.id) is ApiResult.Success) {
-                    startDownload(version, displayTitle, downloadQuality)
+                    startDownload(version, displayTitle, downloadQuality, downloadContentId)
                 }
             }
             DetailDownloadTapAction.Start -> viewModelScope.launch {
-                startDownload(version, displayTitle, downloadQuality)
+                startDownload(version, displayTitle, downloadQuality, downloadContentId)
             }
         }
     }
@@ -250,12 +251,13 @@ class ItemDetailViewModel(
     private suspend fun startDownload(
         version: FileVersion,
         displayTitle: String,
-        downloadQuality: DownloadQuality? = null,
+        downloadQuality: DownloadQuality?,
+        downloadContentId: String,
     ) {
         // wifiOnly read from per-profile PlayerSettingsStore inside
         // DownloadEnqueuer.start; default true.
         val result = downloadEnqueuer.start(
-            contentId = contentId,
+            contentId = downloadContentId,
             fileId = version.fileId,
             displayTitle = displayTitle,
             downloadQualityOverride = downloadQuality,
@@ -279,6 +281,17 @@ class ItemDetailViewModel(
         if (contentId.isNotBlank()) {
             loadDetail()
             loadUserState()
+        }
+    }
+
+    suspend fun hasSeriesDetailForRedirect(seriesContentId: String): Boolean {
+        fun ItemDetail?.matchesParent(): Boolean =
+            this != null && contentId == seriesContentId && type.equals("series", ignoreCase = true)
+
+        if (catalogRepository.getCachedItemDetail(seriesContentId).matchesParent()) return true
+        return when (val result = catalogRepository.getItemDetail(seriesContentId)) {
+            is ApiResult.Success -> result.data.matchesParent()
+            else -> false
         }
     }
 

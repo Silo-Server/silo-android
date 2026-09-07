@@ -987,7 +987,7 @@ fun CircleOverflowButton(
     modifier: Modifier = Modifier,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
+    Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
         Column(
             modifier = Modifier.clickable { expanded = true },
             horizontalAlignment = Alignment.CenterHorizontally,

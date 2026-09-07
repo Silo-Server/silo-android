@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -10,11 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.HighQuality
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -73,11 +74,11 @@ fun SeriesDetailContent(
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onSeriesDownloadClick: (() -> Unit)? = null,
+    onEpisodeDownloadClick: (() -> Unit)? = null,
+    episodeDownloadState: DetailDownloadState = DetailDownloadState(),
     /** Series-level roll-up across ALL seasons: isDownloaded when every episode
      *  is downloaded, progress = downloaded/total fraction while partial. */
     seriesDownloadState: DetailDownloadState = DetailDownloadState(),
-    playOnDeviceLabel: String = "Play on device",
-    onPlayOnDevice: (() -> Unit)? = null,
     onWatchTogether: (() -> Unit)? = null,
     onSuggestToRoom: (() -> Unit)? = null,
     translation: (@Composable () -> Unit)? = null,
@@ -258,22 +259,9 @@ fun SeriesDetailContent(
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
                     overflow = if (
-                        onWatchTogether != null || onPlayOnDevice != null ||
-                        onSuggestToRoom != null
+                        onWatchTogether != null || onSuggestToRoom != null
                     ) {
                         { dismiss ->
-                            if (onPlayOnDevice != null) {
-                                DropdownMenuItem(
-                                    text = { Text(playOnDeviceLabel) },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Cast, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onPlayOnDevice()
-                                    },
-                                )
-                            }
                             if (onSuggestToRoom != null) {
                                 DropdownMenuItem(
                                     text = { Text("Suggest to Watch Together") },
@@ -302,14 +290,59 @@ fun SeriesDetailContent(
                     } else {
                         null
                     },
-                    downloadSlot = onSeriesDownloadClick?.let { click ->
+                    downloadSlot = if (onSeriesDownloadClick != null || onEpisodeDownloadClick != null) {
                         {
-                            DownloadCircleButton(
-                                isDownloaded = seriesDownloadState.isDownloaded,
-                                progress = seriesDownloadState.progress,
-                                onClick = click,
-                            )
+                            var showDownloadMenu by remember { mutableStateOf(false) }
+                            val downloadState = if (onEpisodeDownloadClick != null) {
+                                episodeDownloadState
+                            } else {
+                                seriesDownloadState
+                            }
+                            Box {
+                                DownloadCircleButton(
+                                    isDownloaded = downloadState.isDownloaded,
+                                    progress = downloadState.progress,
+                                    onClick = {
+                                        if (onEpisodeDownloadClick != null && onSeriesDownloadClick != null) {
+                                            showDownloadMenu = true
+                                        } else {
+                                            (onEpisodeDownloadClick ?: onSeriesDownloadClick)?.invoke()
+                                        }
+                                    },
+                                )
+                                DropdownMenu(
+                                    expanded = showDownloadMenu,
+                                    onDismissRequest = { showDownloadMenu = false },
+                                ) {
+                                    if (onEpisodeDownloadClick != null) {
+                                        DropdownMenuItem(
+                                            text = { Text(when {
+                                                episodeDownloadState.isDownloaded -> "Episode downloaded"
+                                                episodeDownloadState.progress != null -> "Cancel episode download"
+                                                else -> "Download episode"
+                                            }) },
+                                            enabled = !episodeDownloadState.isDownloaded,
+                                            onClick = {
+                                                showDownloadMenu = false
+                                                onEpisodeDownloadClick()
+                                            },
+                                        )
+                                    }
+                                    if (onSeriesDownloadClick != null) {
+                                        DropdownMenuItem(
+                                            text = { Text(if (seriesDownloadState.isDownloaded) "Series downloaded" else "Download series") },
+                                            enabled = !seriesDownloadState.isDownloaded,
+                                            onClick = {
+                                                showDownloadMenu = false
+                                                onSeriesDownloadClick()
+                                            },
+                                        )
+                                    }
+                                }
+                            }
                         }
+                    } else {
+                        null
                     },
                 )
             }
