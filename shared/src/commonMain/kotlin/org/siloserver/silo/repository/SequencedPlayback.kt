@@ -48,6 +48,9 @@ data class PlaybackJournalEntry(
     val manifest: PlaybackManifestV2? = null,
     val acceptedBoundSample: PlaybackSampleV2? = null,
     val rejectedStartDecision: JsonObject? = null,
+    val ownerLoss: PlaybackOwnerLossV2? = null,
+    val ownerLossPendingResponse: String? = null,
+    val ownerLossTerminalResponse: String? = null,
 )
 
 /** One shared coordinator covers local, cast, candidate and orphan cleanup callers. */
@@ -86,7 +89,7 @@ class SequencedPlayback(
         val next = load().filterNot { it.attemptId == entry.attemptId } + entry
         store.write(next)
         entries = next
-        if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
+        if (entry.terminal || entry.stop != null || entry.ownerLoss != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
     }
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
@@ -217,22 +220,34 @@ class SequencedPlayback(
         var sentHeaders: Map<String, String> = emptyMap()
         return when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
             is ApiResult.Success -> {
+                result.data.recovery?.let { recovery ->
+                    val settled = retainOwnerLoss(entry, captured, recovery, result.data.rawBody)
+                    when (settled) {
+                        is ApiResult.Error -> return settled
+                        is ApiResult.NetworkError -> return settled
+                        is ApiResult.Success -> Unit
+                    }
+                    if (recovery.state == "draining") return failure("playback_pending", "The server is still draining the lost playback owner.")
+                    return ApiResult.Success(SiloJson.decodeFromJsonElement(result.data.body))
+                }
+
+                if (entry.ownerLoss != null) return failure("invalid_recovery", "The retained recovery cannot become playable.")
                 // Only the durable HTTP 201 terminal contract proves this bound attempt never activated.
                 // The API enforces 201; generic conflicts/errors never reach this settlement path.
-                val refusal = timelineRefusal(entry, result.data)
+                val refusal = timelineRefusal(entry, result.data.body)
                 if (refusal != null) {
                     if (scope(entry) == null || !tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
                         return failure("identity_changed", "The viewer changed before playback refusal settlement.")
-                    save(entry.copy(terminal = true, rejectedStartDecision = result.data))
+                    save(entry.copy(terminal = true, rejectedStartDecision = result.data.body))
                     discovered.remove(entry.manifest?.timelineId)
                     return ApiResult.Success(refusal)
                 }
                 // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
-                val session = result.data["session_id"]?.jsonPrimitive?.contentOrNull
+                val session = result.data.body["session_id"]?.jsonPrimitive?.contentOrNull
                 if (session.isNullOrBlank()) return failure("invalid_decision", "Playback returned no recoverable session.")
                 save(entry.copy(sessionId = session))
                 try {
-                    val decision = decodePlaybackDecisionV2(result.data)
+                    val decision = decodePlaybackDecisionV2(result.data.body)
                     val expectedTimeline = boundTimeline(entry)
                     if (decision.progressTimeline != expectedTimeline || (expectedTimeline != null &&
                         decision.playbackPlan?.effectiveMediaFileId?.toString() != expectedTimeline.fileId))
@@ -242,7 +257,7 @@ class SequencedPlayback(
                     if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
                     if (!tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
                         return failure("identity_changed", "The metadata viewer changed after playback admission.")
-                    val ready = withAuxiliaryAuthority(decision, entry, captured, sentHeaders)
+                    val ready = if (adoptForPlayer) withAuxiliaryAuthority(decision, entry, captured, sentHeaders) else decision
                     if (adoptForPlayer) adopted += entry.attemptId
                     publish()
                     ApiResult.Success(ready)
@@ -252,6 +267,37 @@ class SequencedPlayback(
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    /** Retain abandonment separately; neither pending progress nor the StopID was acknowledged. */
+    private suspend fun retainOwnerLoss(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot,
+        recovery: PlaybackOwnerLossV2, rawBody: String): ApiResult<Unit> {
+        if (scope(entry) != captured) return failure("identity_changed", "Playback recovery authority changed.")
+        val previous = entry.ownerLoss
+        if (recovery.playbackAttemptId != entry.attemptId ||
+            (entry.sessionId != null && recovery.sessionId != entry.sessionId) ||
+            (previous != null && (previous.recoveryId != recovery.recoveryId || previous.sessionId != recovery.sessionId ||
+                previous.playbackAttemptId != recovery.playbackAttemptId || previous.state == "aborted")))
+            return failure("invalid_recovery", "Playback recovery identity did not match the retained attempt.")
+        val accepted = recovery.accepted
+        val timeline = boundTimeline(entry)
+        if (entry.start["progress_persistence"] == JsonPrimitive("client_bound") &&
+            (timeline == null || entry.start["timeline_id"] != JsonPrimitive(timeline.timelineId) ||
+                entry.manifest?.installationId != entry.installationId))
+            return failure("invalid_recovery", "Playback recovery has no retained timeline authority.")
+        if (accepted != null && ((timeline != null && !timeline.accepts(accepted)) ||
+            (timeline == null && (accepted.timelineId != null || accepted.itemPosition != null))))
+            return failure("invalid_recovery", "The server's last sample did not match the retained timeline.")
+        val terminal = recovery.state == "aborted"
+        save(entry.copy(ownerLoss = recovery, terminal = terminal,
+            ownerLossPendingResponse = if (!terminal) entry.ownerLossPendingResponse ?: rawBody else entry.ownerLossPendingResponse,
+            ownerLossTerminalResponse = if (terminal) rawBody else null,
+            acceptedBoundSample = if (terminal && timeline != null) accepted else entry.acceptedBoundSample))
+        // Preserve every original intent, including an uncommitted final sample. Nothing is replayed as a new intent.
+        adopted.remove(entry.attemptId)
+        discovered.remove(entry.manifest?.timelineId)
+        publish()
+        return ApiResult.Success(Unit)
     }
 
     private fun withAuxiliaryAuthority(
@@ -274,7 +320,7 @@ class SequencedPlayback(
                 val live = authorities.snapshotDurableLoginAuthority()
                 live?.loginId == entry.loginId && live.scope == captured &&
                     auxiliaryGenerations[entry.attemptId] == generation &&
-                    entries?.any { it.attemptId == entry.attemptId && !it.terminal && it.stop == null } == true
+                    entries?.any { it.attemptId == entry.attemptId && !it.terminal && it.stop == null && it.ownerLoss == null } == true
             }
         }
         auxiliaryHeaders[entry.attemptId] = ephemeral
@@ -298,7 +344,7 @@ class SequencedPlayback(
 
     /** Socket authority comes only from the admitted session, never from a fresh capability probe. */
     suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String>? = mutex.withLock {
-        val entry = load().find { it.sessionId == sessionId && !it.terminal && it.stop == null } ?: return@withLock null
+        val entry = load().find { it.sessionId == sessionId && !it.terminal && it.stop == null && it.ownerLoss == null && it.attemptId in adopted } ?: return@withLock null
         val captured = scope(entry) ?: return@withLock null
         captured to entry.installationId
     }
@@ -307,7 +353,7 @@ class SequencedPlayback(
         var entry = load().find { it.sessionId == sessionId }
             ?: return@withLock failure("playback_unavailable", "This session has no v2 playback authority. Start playback again.")
         val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
-        if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
+        if (entry.terminal || entry.stop != null || entry.ownerLoss != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (request.playbackAttemptId != entry.attemptId) return@withLock failure("identity_changed", "The playback attempt changed.")
         val body = request.v2Body(entry.installationId)
         val previous = entry.replans.find { it.body["replan_request_id"] == body["replan_request_id"] }
@@ -367,7 +413,7 @@ class SequencedPlayback(
         if (request.sessionId != null && request.sessionId != entry.sessionId)
             return@withLock failure("identity_changed", "The route event belongs to another session.")
         val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
-        if (entry.rejectedStartDecision != null)
+        if (entry.rejectedStartDecision != null || entry.ownerLoss != null)
             return@withLock failure("playback_rejected", "The rejected attempt has no playback route.")
         if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
         val eventId = newId()
@@ -393,7 +439,7 @@ class SequencedPlayback(
     suspend fun progress(sessionId: String, position: Double, paused: Boolean): ApiResult<Unit>? = mutex.withLock {
         var entry = load().find { it.sessionId == sessionId } ?: return@withLock null
         val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
-        if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
+        if (entry.terminal || entry.stop != null || entry.ownerLoss != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (!position.isFinite() || position < 0) return@withLock failure("invalid_position", "Invalid playback position.")
         // A lost reply is retried verbatim before allocating the next logical sample.
         if (entry.progress != null) {
@@ -436,6 +482,7 @@ class SequencedPlayback(
         stopEntry(entry)
     }
     private suspend fun stopEntry(original: PlaybackJournalEntry): ApiResult<Unit> {
+        if (original.ownerLoss?.state == "aborted") return failure(PLAYBACK_OWNER_LOST, PLAYBACK_OWNER_LOST_MESSAGE)
         if (original.terminal) return ApiResult.Success(Unit)
         var entry = original
         if (entry.stop == null) {
@@ -448,16 +495,25 @@ class SequencedPlayback(
         repeat(3) { attempt ->
             if (scope(entry) == null) return failure("identity_changed", "Playback authority changed; stop remains pending.")
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
-                is ApiResult.Success -> if (result.data.terminal) {
-                    val timeline = boundTimeline(entry)
-                    val accepted = result.data.receipt.accepted
-                    if (timeline != null && ((entry.stop?.sequence != null && accepted == null) ||
-                        (accepted != null && (!timeline.accepts(accepted) || accepted.sequence < (entry.stop?.sequence ?: entry.acceptedBoundSample?.sequence ?: 0) ||
-                            (accepted.sequence == entry.stop?.sequence && (accepted.position != entry.stop.position || accepted.isPaused != entry.stop.isPaused))))))
-                        return failure("invalid_stop_receipt", "Stop did not confirm the captured timeline sample.")
-                    save(entry.copy(terminal = true, progress = null,
-                        acceptedBoundSample = if (timeline != null) accepted ?: entry.acceptedBoundSample else entry.acceptedBoundSample))
-                    return ApiResult.Success(Unit)
+                is ApiResult.Success -> {
+                    result.data.recovery?.let { recovery ->
+                        val retained = retainOwnerLoss(entry, captured, recovery, result.data.rawBody)
+                        if (retained !is ApiResult.Success) return retained
+                        // A later observation must use the just-persisted stable recovery binding.
+                        entry = load().first { it.attemptId == entry.attemptId }
+                        if (recovery.state == "aborted") return failure(PLAYBACK_OWNER_LOST, PLAYBACK_OWNER_LOST_MESSAGE)
+                    }
+                    if (result.data.terminal) {
+                        val timeline = boundTimeline(entry)
+                        val accepted = result.data.receipt.accepted
+                        if (timeline != null && ((entry.stop?.sequence != null && accepted == null) ||
+                            (accepted != null && (!timeline.accepts(accepted) || accepted.sequence < (entry.stop?.sequence ?: entry.acceptedBoundSample?.sequence ?: 0) ||
+                                (accepted.sequence == entry.stop?.sequence && (accepted.position != entry.stop.position || accepted.isPaused != entry.stop.isPaused))))))
+                            return failure("invalid_stop_receipt", "Stop did not confirm the captured timeline sample.")
+                        save(entry.copy(terminal = true, progress = null, ownerLoss = null,
+                            acceptedBoundSample = if (timeline != null) accepted ?: entry.acceptedBoundSample else entry.acceptedBoundSample))
+                        return ApiResult.Success(Unit)
+                    }
                 }
                 is ApiResult.Error -> if (result.code != 503) return result
                 is ApiResult.NetworkError -> Unit
@@ -505,7 +561,8 @@ class SequencedPlayback(
                 }
             }
             val result = stopEntry(load().first { it.attemptId == entry.attemptId })
-            if (result !is ApiResult.Success) return@withLock result
+            if (result !is ApiResult.Success && !(result is ApiResult.Error && result.error == PLAYBACK_OWNER_LOST &&
+                    load().first { it.attemptId == entry.attemptId }.ownerLoss?.state == "aborted")) return@withLock result
         }
         ApiResult.Success(Unit)
     }

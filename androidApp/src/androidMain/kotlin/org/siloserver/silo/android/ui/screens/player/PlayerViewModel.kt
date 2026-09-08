@@ -3161,7 +3161,8 @@ class PlayerViewModel(
     private suspend fun recoverFromSubtitleAdoptionFailure(detail: String) {
         val state = _uiState.value
         showVersionSwitchMessage("Couldn't finish the subtitle change — restarting playback.")
-        sessionLifecycle.stop()
+        val outgoingSession = retainedOwnedSessionId ?: state.sessionId
+        if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return
         loadContent(
             contentId = state.contentId,
             preferredFileId = state.mediaFileId,
@@ -3844,7 +3845,8 @@ class PlayerViewModel(
         upNextCountdownJob = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(contentId = contentId)
         }
     }
@@ -4059,7 +4061,8 @@ class PlayerViewModel(
         val nextContentId = _uiState.value.nextEpisode?.contentId ?: return
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(
                 contentId = nextContentId,
                 resumePositionOverride = 0.0,
@@ -4186,7 +4189,8 @@ class PlayerViewModel(
                 )
             }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(
                 contentId = state.contentId,
                 preferredFileId = version.fileId,

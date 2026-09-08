@@ -5231,12 +5231,12 @@ class TvPlayerViewModel(
     }
 
     /** Ordered path used by auto-advance before the singleton lifecycle starts the next item. */
-    suspend fun stopSessionForExit() {
+    suspend fun stopSessionForExit(): Boolean {
         subtitleTransactions.invalidateAndAwaitSettlement()
         playbackMutationFence.invalidateAll()
         prepareSessionExit()
         subtitleTransactions.persistCommittedSelectionAndFlush()
-        lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)
+        return lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)
     }
 
     /** Ordinary Back/remote-stop path: snapshot locally and return to detail immediately. */

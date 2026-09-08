@@ -3,6 +3,7 @@ package org.siloserver.silo.network.apiv2
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.http.*
+import io.ktor.client.statement.bodyAsText
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
@@ -57,7 +58,10 @@ data class PlaybackMutationV2(
     @SerialName("history_id") val historyId: String? = null,
 )
 
-data class PlaybackStopReplyV2(val status: Int, val receipt: PlaybackMutationV2) {
+data class PlaybackStartReplyV2(val body: JsonObject, val rawBody: String, val recovery: PlaybackOwnerLossV2?)
+
+data class PlaybackStopReplyV2(val status: Int, val receipt: PlaybackMutationV2,
+    val recovery: PlaybackOwnerLossV2? = null, val rawBody: String = "") {
     val terminal: Boolean get() = status == 200 && receipt.outcome in setOf("stopped", "replayed")
 }
 
@@ -102,16 +106,30 @@ class PlaybackV2Api(private val client: HttpClient) {
         client.get("/api/v2/account/me") { authScope(scope); requireSiloAuth() }
     }
 
-    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
-        safeApiV2Call(ApiV2Gate.Unrestricted) {
+    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<PlaybackStartReplyV2> {
+        var status = 0
+        var raw = ""
+        val result = safeApiV2Call<JsonObject>(ApiV2Gate.Unrestricted) {
             client.post("/api/v2/playback/start") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
             }.also {
                 captureHeaders(it.call.request.headers.entries().filter { entry -> entry.key.equals("Authorization", true) || entry.key.equals("X-Profile-Id", true) }.associate { entry -> entry.key to entry.value.single() })
-                check(!it.status.isSuccess() || it.status.value == 201)
+                status = it.status.value
+                check(!it.status.isSuccess() || status in setOf(201, 202))
+                if (it.status.isSuccess()) raw = it.bodyAsText()
             }
         }
+        return when (result) {
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+            is ApiResult.Success -> try {
+                val recovery = decodeOwnerLoss(result.data, status, start = true)
+                require(status == 201 || recovery != null)
+                ApiResult.Success(PlaybackStartReplyV2(result.data, raw, recovery))
+            } catch (e: Exception) { ApiResult.NetworkError(e) }
+        }
+    }
 
     suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
         safeApiV2Call(ApiV2Gate.Unrestricted) {
@@ -144,7 +162,8 @@ class PlaybackV2Api(private val client: HttpClient) {
 
     suspend fun stop(scope: AuthScopeSnapshot, sessionId: String, body: PlaybackStopV2): ApiResult<PlaybackStopReplyV2> {
         var status = 0
-        val result = safeApiV2Call<PlaybackMutationV2>(ApiV2Gate.Unrestricted) {
+        var raw = ""
+        val result = safeApiV2Call<JsonObject>(ApiV2Gate.Unrestricted) {
             client.delete {
                 url { path("", "api", "v2", "playback", sessionId) }
                 authScope(scope); requireSiloAuth(); singleAttempt()
@@ -152,18 +171,23 @@ class PlaybackV2Api(private val client: HttpClient) {
             }.also {
                 status = it.status.value
                 check(!it.status.isSuccess() || status in setOf(200, 202))
+                if (it.status.isSuccess()) raw = it.bodyAsText()
             }
         }
         return when (result) {
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
             is ApiResult.Success -> {
-            val receipt = result.data
-            if (receipt.stopId != body.stopId ||
-                (status == 202 && receipt.outcome != "draining") ||
-                (status == 200 && receipt.outcome !in setOf("stopped", "replayed")))
-                ApiResult.Error(0, "invalid_receipt", "The playback stop receipt did not match the request.")
-            else ApiResult.Success(PlaybackStopReplyV2(status, receipt))
+                try {
+                    val recovery = decodeOwnerLoss(result.data, status, start = false)
+                    val receipt = SiloJson.decodeFromJsonElement<PlaybackMutationV2>(result.data)
+                    if (recovery == null) require(receipt.stopId == body.stopId &&
+                        ((status == 202 && receipt.outcome == "draining") ||
+                            (status == 200 && receipt.outcome in setOf("stopped", "replayed"))))
+                    ApiResult.Success(PlaybackStopReplyV2(status, receipt, recovery, raw))
+                } catch (_: Exception) {
+                    ApiResult.Error(0, "invalid_receipt", "The playback stop receipt did not match the request.")
+                }
             }
         }
     }

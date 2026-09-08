@@ -40,7 +40,43 @@ Generic errors, including HTTP 409, 422 and 503, do not prove that an earlier
 allocation is absent. They retain uncertain START requests. Recovery may replay
 the exact retained attempt under its original validated authority; it must not
 rebase the request, allocate a replacement attempt or fall back to v1. The
-specific retained HTTP 201 terminal decision described below is the exception.
+specific retained terminal decisions described below are the exceptions.
+
+## Lost server owner recovery
+
+Exact retained START and STOP requests may return an additive owner-loss union.
+HTTP 202 `outcome: "draining"` retains the request and binds the nested recovery
+identity. The required fields are `recovery_id`, `playback_attempt_id`,
+`session_id`, `state` and `reason: "owner_lost"`. The recovery ID and original
+attempt/session must remain stable across observations and journal reloads. A
+pending START learns its session only inside this recovery binding; it does not
+acquire an active session or renderer authority.
+
+A completed START uses HTTP 201, `outcome: "adaptation_unavailable"`,
+`terminal.reason: "playback_owner_lost"`, `terminal.retryable: false` and
+`recovery.state: "aborted"`. It carries no playable plan, top-level session or
+progress timeline. A completed STOP uses HTTP 200, `outcome: "aborted"` and the
+same terminal recovery object, without a top-level `stop_id`, `accepted` or
+`history_id`. A real matching ordinary StopID receipt keeps its existing meaning
+and takes precedence. Mixed, malformed or wrong-status unions are uncertain.
+
+The journal records terminal abandonment separately from ordinary STOP success,
+retaining original requests and raw recovery responses. Optional
+`recovery.accepted` is only the server's captured Last sample; no Last means no
+accepted sample. Its sequence must be positive, position finite and nonnegative,
+and paused state explicit. Bound samples must match the original saved timeline
+and its exact part-local/global mapping. The queued final sample remains
+unapplied, even if its sequence is newer than the server's Last.
+
+Abandonment releases the journal recovery blocker but returns a distinct terminal
+owner-loss error to normal STOP callers, including subsequent calls for that
+binding. The native lifecycle and navigation barriers halt audiobook part changes
+and next-item playback, with an ended-playback message instead of a Retry STOP
+prompt. Explicit recovery may retire the binding; a later explicit user action
+may create a new attempt. Recovery never starts a renderer, restores media rights,
+automatically starts another item, or changes an old request's authority.
+Reservations without captured activation and source withdrawal remain uncertain.
+This contract adds no feature token, owner takeover or runtime activation.
 
 ## Bound audiobook timelines
 

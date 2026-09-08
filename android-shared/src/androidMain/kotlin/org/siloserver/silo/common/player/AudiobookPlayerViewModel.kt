@@ -560,7 +560,14 @@ class AudiobookPlayerViewModel(
                 _uiState.update { it.copy(isPaused = true) }
                 partStopPending = outgoingState.sessionId != null
                 if (!retireActiveSession(outgoingLocal, outgoingState.positionSeconds, outgoingState.durationSeconds)) {
-                    _uiState.update { it.copy(error = "Playback stop is pending. Press Play to retry the same part transition.", isPaused = true) }
+                    val abandoned = outgoingState.sessionId?.let(playbackSessionLifecycle::wasAbandoned) == true
+                    if (abandoned) {
+                        partStopPending = false
+                        pendingPartTarget = null
+                    }
+                    _uiState.update { it.copy(error = if (abandoned)
+                        org.siloserver.silo.network.apiv2.PLAYBACK_OWNER_LOST_MESSAGE
+                    else "Playback stop is pending. Press Play to retry the same part transition.", isPaused = true) }
                     return@transition
                 }
                 partStopPending = false
