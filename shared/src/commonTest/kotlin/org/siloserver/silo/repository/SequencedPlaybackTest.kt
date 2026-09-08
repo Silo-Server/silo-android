@@ -198,7 +198,7 @@ class SequencedPlaybackTest {
 
     @Test fun proxyAuxiliaryUsesActualRequestHeadersOnlyEphemerallyAndFencesIdentity() = runTest {
         val identity = Identity(); val store = Store()
-        val wire = adoptedDecision.replace("/api/v2/stream/session-1", "https://proxy.example/stream/v3/session-1")
+        val wire = adoptedDecision.replace("/api/v2/stream/session-1", "https://proxy.example/stream/direct/opaque-signed-reference")
             .replace("\"decision_reason\":", "\"subtitle\":{\"mode\":\"render\",\"artifact\":{\"url\":\"https://proxy.example/stream/v3/session-1/subtitles/0.ass?file_id=42&embedded_stream_index=0\",\"mime_type\":\"text/x-ssa\",\"format\":\"ass\"}},\"decision_reason\":")
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())

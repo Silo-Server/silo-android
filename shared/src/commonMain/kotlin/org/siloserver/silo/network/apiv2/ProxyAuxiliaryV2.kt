@@ -24,15 +24,20 @@ fun capturedProxyAuxiliaryHeaders(headers: Map<String, String>): Map<String, Str
 }
 
 /** Validate without rebuilding the issued URL or its immutable query pins. Fonts have no native caller. */
-fun validateProxySubtitleUrl(raw: String, streamUrl: String) {
+fun validateProxySubtitleUrl(raw: String, streamUrl: String, sessionId: String) {
     require(raw.startsWith("https://") || raw.startsWith("http://"))
     val url = Url(raw)
     val stream = Url(streamUrl)
     require(url.user == null && url.password == null && url.fragment.isEmpty())
     require(isSameHttpOrigin(raw, streamUrl))
     val subtitle = requireNotNull(proxySubtitlePath.matchEntire(url.encodedPath))
-    val session = requireNotNull(proxySessionPath.matchEntire(stream.encodedPath))
-    require(subtitle.groupValues[1] == session.groupValues[1])
+    require(sessionId.matches(Regex("[A-Za-z0-9_-]+")))
+    require(subtitle.groupValues[1] == sessionId)
+    // A signed primary is opaque. Only a header-auth primary path carries a session to cross-check.
+    if (stream.encodedPath.startsWith("/stream/v3/")) {
+        val primarySession = requireNotNull(proxySessionPath.matchEntire(stream.encodedPath))
+        require(primarySession.groupValues[1] == sessionId)
+    }
     require(url.parameters.names().all { it in auxiliaryQueryKeys })
     require(url.parameters.getAll("file_id")?.all { it.toLongOrNull()?.let { id -> id > 0 && id.toString() == it } == true } == true)
     // Keep duplicate pins and PGS options byte-for-byte; the producer owns their authoritative rejection.
@@ -41,10 +46,11 @@ fun validateProxySubtitleUrl(raw: String, streamUrl: String) {
 /** Ephemeral only: passed through native mount state, never serialized into a wire plan or journal. */
 class ProxyAuxiliaryRequestHeaders(
     val streamUrl: String,
+    val sessionId: String,
     val references: Set<String>,
     headers: Map<String, String>,
     val isCurrent: suspend () -> Boolean,
 ) : Map<String, String> by capturedProxyAuxiliaryHeaders(headers) {
-    init { references.forEach { validateProxySubtitleUrl(it, streamUrl) } }
+    init { references.forEach { validateProxySubtitleUrl(it, streamUrl, sessionId) } }
     override fun toString(): String = "ProxyAuxiliaryRequestHeaders(<redacted>)"
 }

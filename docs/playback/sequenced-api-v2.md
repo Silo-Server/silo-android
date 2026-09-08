@@ -132,7 +132,11 @@ an absolute credential-free URL:
 suffixes are `ass`, `ssa`, `srt`, `vtt` and `sup`; renderer support still determines
 which artifacts can be mounted. Preserve the issued `file_id` and immutable
 `embedded_stream_index`, `external_subtitle_key` or `downloaded_subtitle_id`
-selectors, including their encoded bytes. PGS `windowed`, `position` and
+selectors, including their encoded bytes. The matching explicit response and
+plan `session_id` bind auxiliary references to the playback session. A signed
+primary stream supplies the issued origin; its opaque path is never parsed to
+recover identity. Captured auxiliary headers are not attached to that signed
+primary or to unissued sibling routes. PGS `windowed`, `position` and
 `duration` options remain unchanged. Duplicate pins are preserved for the
 producer's authoritative rejection. Do not append an access token or substitute
 `source_file_id` for `file_id`.

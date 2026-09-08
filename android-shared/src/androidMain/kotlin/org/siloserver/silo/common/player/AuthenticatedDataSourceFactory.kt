@@ -477,11 +477,12 @@ internal fun scopedProxyRequestHeaders(
     if (!isSameHttpOrigin(requestUrl, captured.streamUrl)) return emptyMap()
     val issued = Uri.parse(captured.streamUrl)
     val target = Uri.parse(requestUrl)
-    val session = issued.path.orEmpty().removePrefix("/stream/v3/").substringBefore('/')
-    val root = "/stream/v3/$session"
-    val permitted = requestUrl in captured.references || requestUrl == captured.streamUrl ||
-        target.encodedPath == "$root/master.m3u8" ||
-        Regex("${Regex.escape(root)}/segment/[A-Za-z0-9_.-]+").matches(target.encodedPath.orEmpty())
+    val root = "/stream/v3/${captured.sessionId}"
+    val headerPrimary = issued.encodedPath == root || issued.encodedPath.orEmpty().startsWith("$root/")
+    val permitted = requestUrl in captured.references || (headerPrimary && (
+        requestUrl == captured.streamUrl || target.encodedPath == "$root/master.m3u8" ||
+            Regex("${Regex.escape(root)}/segment/[A-Za-z0-9_.-]+").matches(target.encodedPath.orEmpty())
+        ))
     if (!permitted) return emptyMap()
     if (!runBlocking { captured.isCurrent() }) throw IOException("Playback request authority changed")
     return captured

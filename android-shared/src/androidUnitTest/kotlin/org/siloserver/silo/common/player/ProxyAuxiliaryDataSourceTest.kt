@@ -23,7 +23,7 @@ class ProxyAuxiliaryDataSourceTest {
             val stream = server.url("/stream/v3/session-1").toString()
             val url = "$stream/subtitles/0.ass?file_id=42&external_subtitle_key=a%2Fb"
             var current = true
-            val captured = ProxyAuxiliaryRequestHeaders(stream, setOf(url), mapOf("Authorization" to "Bearer original", "X-Profile-Id" to "original-profile")) { current }
+            val captured = ProxyAuxiliaryRequestHeaders(stream, "session-1", setOf(url), mapOf("Authorization" to "Bearer original", "X-Profile-Id" to "original-profile")) { current }
             val tokens = TokenManagerImpl()
             runBlocking { tokens.setServerUrl(server.url("/").toString()) }
             val transport = OkHttpDataSource.Factory(auxiliaryAwareCallFactory(client))
@@ -49,10 +49,29 @@ class ProxyAuxiliaryDataSourceTest {
         } finally { client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll(); server.shutdown() }
     }
 
+    @Test fun signedPrimaryUsesExplicitSessionWithoutGrantingHeadersToSignedOrUnissuedRoutes() {
+        val auxiliary = "https://proxy.example/stream/v3/session-1/subtitles/0.ass?file_id=42&external_subtitle_key=a%2Fb"
+        for (stream in listOf("https://proxy.example/stream/direct/opaque-reference", "https://proxy.example/stream/transcode/opaque-reference/master.m3u8")) {
+            val captured = ProxyAuxiliaryRequestHeaders(stream, "session-1", setOf(auxiliary),
+                mapOf("Authorization" to "Bearer captured", "X-Profile-Id" to "profile")) { true }
+            assertSame(captured, scopedProxyRequestHeaders(auxiliary, captured))
+            assertEquals(stream, captured.streamUrl)
+            for (unissued in listOf(stream, "https://proxy.example/stream/v3/session-1/master.m3u8",
+                auxiliary.replace("session-1", "foreign-session"), auxiliary.replace("proxy.example", "foreign.example"),
+                auxiliary.replace("file_id=42", "file_id=43"), auxiliary + "&windowed=true")) {
+                assertTrue(scopedProxyRequestHeaders(unissued, captured).isEmpty(), unissued)
+            }
+            assertFailsWith<IllegalArgumentException> {
+                ProxyAuxiliaryRequestHeaders(stream, "foreign-session", setOf(auxiliary),
+                    mapOf("Authorization" to "Bearer captured", "X-Profile-Id" to "profile")) { true }
+            }
+        }
+    }
+
     @Test fun scopeDeniesChangedPinsSessionOriginAndUnissuedFonts() {
         val stream = "https://proxy.example/stream/v3/session-1"
         val url = "$stream/subtitles/0.ass?file_id=42&embedded_stream_index=0"
-        val captured = ProxyAuxiliaryRequestHeaders(stream, setOf(url), mapOf("Authorization" to "Bearer original", "X-Profile-Id" to "profile")) { true }
+        val captured = ProxyAuxiliaryRequestHeaders(stream, "session-1", setOf(url), mapOf("Authorization" to "Bearer original", "X-Profile-Id" to "profile")) { true }
         assertSame(captured, scopedProxyRequestHeaders(url, captured))
         for (target in listOf(url.replace("file_id=42", "file_id=43"), url.replace("session-1", "session-2"), url.replace("proxy.example", "other.example"), "$stream/subtitles/0.ass/fonts?file_id=42", "https://proxy.example/private")) {
             assertTrue(scopedProxyRequestHeaders(target, captured).isEmpty(), target)

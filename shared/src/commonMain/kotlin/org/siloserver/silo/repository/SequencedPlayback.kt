@@ -267,7 +267,9 @@ class SequencedPlayback(
         if (references.isEmpty()) return decision
         val headers = capturedProxyAuxiliaryHeaders(sentHeaders)
         require(headers["X-Profile-Id"] == entry.profileId)
-        val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, references, headers) {
+        val sessionId = requireNotNull(decision.sessionId)
+        require(plan.sessionId == sessionId)
+        val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, sessionId, references, headers) {
             mutex.withLock {
                 val live = authorities.snapshotDurableLoginAuthority()
                 live?.loginId == entry.loginId && live.scope == captured &&
@@ -533,7 +535,9 @@ internal fun decodePlaybackDecisionV2(body: JsonObject): PlaybackDecisionRespons
         val raw = (element as? JsonPrimitive)?.contentOrNull ?: return
         if (isProxyAuxiliaryUrl(raw)) {
             val stream = requireNotNull(plan["stream"] as? JsonObject)
-            validateProxySubtitleUrl(raw, stream.getValue("url").jsonPrimitive.content)
+            val session = requireNotNull((body["session_id"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull)
+            require(plan["session_id"] == JsonPrimitive(session)) { "Auxiliary plan and response sessions differ" }
+            validateProxySubtitleUrl(raw, stream.getValue("url").jsonPrimitive.content, session)
         }
     }
     plan["subtitle"]?.jsonObject?.let { subtitle ->
