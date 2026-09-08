@@ -791,6 +791,12 @@ class PlayerViewModel(
      */
     private val lifecycleTeardown = PlaybackTeardownGate(sessionLifecycle)
     private var finalPositionScope: PlaybackWriteScope? = null
+    // Last Ready (contentId, fileId). publishLoadingState retargets contentId
+    // immediately but leaves position/versions on the previous item until the
+    // next Ready lands, so onExit must attribute progress to this identity
+    // while a load is still pending.
+    private var lastStableProgressContentId: String? = null
+    private var lastStableProgressFileId: Int? = null
     private val initialPlayerLoadGate = InitialPlayerLoadGate()
 
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
@@ -1361,6 +1367,10 @@ class PlayerViewModel(
                 preferredTextLanguage = playbackState.preferredTextLanguage,
                 )
             }
+            rememberStableProgressIdentity(
+                contentId = playbackState.contentId,
+                fileId = versions.getOrNull(versionIndex)?.fileId,
+            )
 
             val mountedState = _uiState.value
             val committedIdentity = mountedState.subtitleTracks
@@ -2220,6 +2230,11 @@ class PlayerViewModel(
 
     private fun currentFileId(): Int? =
         _uiState.value.versions.getOrNull(_uiState.value.selectedVersionIndex)?.fileId
+
+    private fun rememberStableProgressIdentity(contentId: String, fileId: Int?) {
+        lastStableProgressContentId = contentId.takeIf { it.isNotBlank() }
+        lastStableProgressFileId = fileId
+    }
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
@@ -4258,6 +4273,9 @@ class PlayerViewModel(
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
         routeIntentState.clear()
+        // Capture before resetPlaybackRecoveryState(): that helper always arms
+        // the pending-load flag, which would make every exit look in-flight.
+        val pendingLoad = positionReportsBlockedForPendingLoad
         resetPlaybackRecoveryState()
         loadOwners.invalidate()
         loadJob?.cancel()
@@ -4288,8 +4306,16 @@ class PlayerViewModel(
             ownedSessionId?.let { lifecycleTeardown.stopOrdered(expectedSessionId = it) }
         }
         val state = _uiState.value
-        val cid = state.contentId.takeIf { it.isNotBlank() }
-        val fid = currentFileId()
+        // In-place reload (auto-advance, On Deck, version switch) retargets
+        // contentId in publishLoadingState while position/versions still belong
+        // to the previous item. Attribute this durable write to the last Ready
+        // identity until the new item is actually applied.
+        val cid = if (pendingLoad) {
+            lastStableProgressContentId
+        } else {
+            state.contentId.takeIf { it.isNotBlank() }
+        }
+        val fid = if (pendingLoad) lastStableProgressFileId else currentFileId()
         val scope = finalPositionScope
         if (scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
@@ -4475,6 +4501,7 @@ class PlayerViewModel(
                 subtitleRefreshNonce = 0,
                 )
             }
+            rememberStableProgressIdentity(contentId = contentId, fileId = fileId)
             Log.i(
                 TAG,
                 "tryLocalPlayback: serving ${media.displayName} (${media.sizeBytes}B) for content=$contentId (sidecar id=${sidecar.record.id})",
