@@ -8,9 +8,19 @@ import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.personal.*
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.ImageSizeSelector
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.imageSizeParameter
 
-class PersonalDataApi(private val client: HttpClient) {
+/**
+ * [imageSize] applies to the three paginated list endpoints that return
+ * artwork-bearing [CatalogResponse] grids (favorites, watchlist, history).
+ * The membership checks and mutations below carry no images and never send it.
+ */
+class PersonalDataApi(
+    private val client: HttpClient,
+    private val imageSize: ImageSizeSelector? = null,
+) {
 
     // --- User Libraries ---
 
@@ -24,7 +34,9 @@ class PersonalDataApi(private val client: HttpClient) {
         offset: Int = 0,
         limit: Int = 40
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/favorites") {
+            imageSizeParameter(requestedImageSize)
             parameter("offset", offset)
             parameter("limit", limit)
         }
@@ -48,7 +60,9 @@ class PersonalDataApi(private val client: HttpClient) {
         offset: Int = 0,
         limit: Int = 40
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/watchlist") {
+            imageSizeParameter(requestedImageSize)
             parameter("offset", offset)
             parameter("limit", limit)
         }
@@ -72,7 +86,9 @@ class PersonalDataApi(private val client: HttpClient) {
         offset: Int = 0,
         limit: Int = 40
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/history") {
+            imageSizeParameter(requestedImageSize)
             parameter("offset", offset)
             parameter("limit", limit)
         }

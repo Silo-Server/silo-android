@@ -5,8 +5,18 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ImageSizeSelector
+import org.siloserver.silo.network.imageSizeParameter
 
-class CatalogApi(private val client: HttpClient) {
+/**
+ * [imageSize] is optional so the many existing constructions (tests, ad-hoc
+ * wiring) keep compiling; when absent no `image_size` parameter is ever sent
+ * and the server applies its default variants.
+ */
+class CatalogApi(
+    private val client: HttpClient,
+    private val imageSize: ImageSizeSelector? = null,
+) {
 
     suspend fun getCatalog(
         source: String? = null,
@@ -26,7 +36,9 @@ class CatalogApi(private val client: HttpClient) {
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/catalog") {
+            imageSizeParameter(requestedImageSize)
             source?.let { parameter("source", it) }
             query?.let { parameter("q", it) }
             mediaType?.let { parameter("type", it) }
@@ -86,7 +98,10 @@ class CatalogApi(private val client: HttpClient) {
     }
 
     suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/catalog/items/$id") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = safeApiCall {
@@ -94,22 +109,34 @@ class CatalogApi(private val client: HttpClient) {
     }
 
     suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id/episodes")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/catalog/items/$id/episodes") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/catalog/series/$seriesId/seasons") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getEpisodes(
         seriesId: String,
         seasonNumber: Int
     ): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
-        client.get("/api/v1/watch/$id")
+        val requestedImageSize = imageSize?.current()
+        client.get("/api/v1/watch/$id") {
+            imageSizeParameter(requestedImageSize)
+        }
     }
 
     suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = safeApiCall {
@@ -138,7 +165,9 @@ class CatalogApi(private val client: HttpClient) {
         limit: Int? = null,
         snapshotAt: String? = null,
     ): ApiResult<CatalogResponse> = safeApiCall {
+        val requestedImageSize = imageSize?.current()
         client.get("/api/v1/catalog") {
+            imageSizeParameter(requestedImageSize)
             parameter("source", "person")
             parameter("person_id", personId.toString())
             parameter("sort", "year")

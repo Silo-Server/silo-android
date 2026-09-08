@@ -4,6 +4,8 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.ImageSizeSelector
+import org.siloserver.silo.network.PreferredImageSize
 import org.siloserver.silo.network.createSiloClient
 import org.siloserver.silo.network.api.*
 import org.koin.dsl.module
@@ -15,12 +17,16 @@ val networkModule = module {
     single { AuthApi(get()) }
     single { OnboardingApi(get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get()) }
-    single { CatalogApi(get()) }
+    single { ImagesApi(get()) }
+    // No PreferredImageSize registered (the phone app) means no image_size
+    // parameter is ever sent, which is the server's default behaviour.
+    single { ImageSizeSelector(get(), getOrNull<PreferredImageSize>()) }
+    single { CatalogApi(get(), get()) }
     single { PlaybackApi(get()) }
-    single { PersonalDataApi(get()) }
+    single { PersonalDataApi(get(), get()) }
     single { CollectionApi(get()) }
     single { ProfileApi(get()) }
-    single { SectionApi(get()) }
+    single { SectionApi(get(), get()) }
     single { RecommendationApi(get()) }
     single<RequestsApi> { DefaultRequestsApi(get()) }
     single<org.siloserver.silo.network.api.MetadataAiApi> { org.siloserver.silo.network.api.DefaultMetadataAiApi(get()) }
