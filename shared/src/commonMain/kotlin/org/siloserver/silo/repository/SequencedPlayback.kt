@@ -496,6 +496,9 @@ class SequencedPlayback(
             if (scope(entry) == null) return failure("identity_changed", "Playback authority changed; stop remains pending.")
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
                 is ApiResult.Success -> {
+                    // AbortID is committed before recovery202. An ordinary receipt cannot supersede that binding.
+                    if (entry.ownerLoss != null && result.data.recovery == null)
+                        return failure("invalid_recovery", "The retained owner-loss recovery cannot become an ordinary stop.")
                     result.data.recovery?.let { recovery ->
                         val retained = retainOwnerLoss(entry, captured, recovery, result.data.rawBody)
                         if (retained !is ApiResult.Success) return retained
@@ -510,7 +513,7 @@ class SequencedPlayback(
                             (accepted != null && (!timeline.accepts(accepted) || accepted.sequence < (entry.stop?.sequence ?: entry.acceptedBoundSample?.sequence ?: 0) ||
                                 (accepted.sequence == entry.stop?.sequence && (accepted.position != entry.stop.position || accepted.isPaused != entry.stop.isPaused))))))
                             return failure("invalid_stop_receipt", "Stop did not confirm the captured timeline sample.")
-                        save(entry.copy(terminal = true, progress = null, ownerLoss = null,
+                        save(entry.copy(terminal = true, progress = null,
                             acceptedBoundSample = if (timeline != null) accepted ?: entry.acceptedBoundSample else entry.acceptedBoundSample))
                         return ApiResult.Success(Unit)
                     }

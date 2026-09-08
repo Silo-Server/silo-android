@@ -26,7 +26,11 @@ data class PlaybackOwnerLossV2(
 
 /** Validate the wire union before ordinary START/STOP mandatory fields. Identity is checked by the journal. */
 internal fun decodeOwnerLoss(body: JsonObject, status: Int, start: Boolean): PlaybackOwnerLossV2? {
-    if ("recovery" !in body) return null
+    if ("recovery" !in body) {
+        // This discriminator is reserved for the validated recovery union, never a generic decision.
+        require((body["terminal"] as? JsonObject)?.get("reason") != JsonPrimitive(PLAYBACK_OWNER_LOST))
+        return null
+    }
     val raw = body["recovery"] as? JsonObject ?: error("Invalid recovery object")
     val envelopeFields = if (start && status == 201) setOf("protocol_version", "server_features", "outcome", "terminal", "recovery")
         else setOf("outcome", "recovery")

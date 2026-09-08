@@ -17,7 +17,7 @@ import kotlin.test.*
 /** Actual journal -> repository -> native manager -> lifecycle/ordered navigation barrier. */
 class PlaybackOwnerLossTransitionTest {
     @Test fun ownerLossRetiresJournalButNeverOpensPartOrNextItemContinuation() = runTest {
-        for (ordered in listOf(false, true)) {
+        for (ordered in listOf(false, true)) for (ordinarySwitch in listOf(false, true)) {
             val identity = object : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
                 val owner = AuthScopeSnapshot("server", "profile", "https://fixture.example", "proof",
                     identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
@@ -46,7 +46,9 @@ class PlaybackOwnerLossTransitionTest {
                         assertEquals(HttpMethod.Delete, req.method)
                         assertEquals(SiloJson.encodeToString(original.stop), req.body.toByteArray().decodeToString())
                         val state = if (terminal) "aborted" else "draining"
-                        (if (terminal) HttpStatusCode.OK else HttpStatusCode.Accepted) to
+                        if (terminal && ordinarySwitch) HttpStatusCode.OK to
+                            """{"outcome":"replayed","stop_id":"stop","accepted":{"sequence":9,"position":35.0,"is_paused":true,"timeline_id":"${manifest.timelineId}","item_position":83.0}}"""
+                        else (if (terminal) HttpStatusCode.OK else HttpStatusCode.Accepted) to
                             """{"outcome":"$state","recovery":{"recovery_id":"44444444-4444-4444-8444-444444444444","playback_attempt_id":"attempt","session_id":"session","state":"$state","reason":"owner_lost"}}"""
                     }
                     else -> error("Unexpected start/progress/legacy transport: ${req.url.encodedPath}")
@@ -56,6 +58,7 @@ class PlaybackOwnerLossTransitionTest {
             try {
                 val journal = SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "unused" }
                 assertIs<ApiResult.Error>(journal.recover()) // Captured explicit recovery; no player/media rights.
+                val draining = store.entries.single()
                 val repository = PlaybackRepository(PlaybackApi(client), sequenced = journal)
                 val manager = PlaybackSessionManager(repository, identity)
                 val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
@@ -72,18 +75,26 @@ class PlaybackOwnerLossTransitionTest {
                 }
                 transition(); transition()
                 assertEquals(0, nextStarts)
-                assertTrue(lifecycle.wasAbandoned("session"))
-                assertEquals(PLAYBACK_OWNER_LOST_MESSAGE, assertIs<SessionState.Failed>(lifecycle.state.value).message)
-                assertEquals(4, mutations) // Three bounded drains, then one terminal abort; no orphan retry.
-                assertEquals("aborted", store.entries.single().ownerLoss?.state)
-                assertTrue(store.entries.single().terminal)
-                assertEquals(original.stop, store.entries.single().stop)
-                assertEquals(original.progress, store.entries.single().progress)
-                assertNull(store.entries.single().acceptedBoundSample)
-                assertEquals(0, journal.pendingForCurrentViewer())
-                assertIs<ApiResult.Success<*>>(journal.recover())
-                assertEquals(PLAYBACK_OWNER_LOST, assertIs<ApiResult.Error>(manager.stopSession("session")).error)
-                assertEquals(4, mutations)
+                if (ordinarySwitch) {
+                    assertFalse(lifecycle.wasAbandoned("session"))
+                    assertEquals(draining, store.entries.single())
+                    assertEquals(1, journal.pendingForCurrentViewer())
+                    assertEquals("Playback stop is pending. Retry from playback recovery.", assertIs<SessionState.Failed>(lifecycle.state.value).message)
+                } else {
+                    assertTrue(lifecycle.wasAbandoned("session"))
+                    assertEquals(PLAYBACK_OWNER_LOST_MESSAGE, assertIs<SessionState.Failed>(lifecycle.state.value).message)
+                    assertEquals(4, mutations) // Three bounded drains, then one terminal abort; no orphan retry.
+                    assertEquals("aborted", store.entries.single().ownerLoss?.state)
+                    assertTrue(store.entries.single().terminal)
+                    assertEquals(original.stop, store.entries.single().stop)
+                    assertEquals(original.progress, store.entries.single().progress)
+                    assertNull(store.entries.single().acceptedBoundSample)
+                    assertEquals(0, journal.pendingForCurrentViewer())
+                    assertIs<ApiResult.Success<*>>(journal.recover())
+                    assertEquals(PLAYBACK_OWNER_LOST, assertIs<ApiResult.Error>(manager.stopSession("session")).error)
+                    assertEquals(4, mutations)
+                }
+
             } finally { client.close() }
         }
     }

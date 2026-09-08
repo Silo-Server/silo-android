@@ -58,7 +58,12 @@ A completed START uses HTTP 201, `outcome: "adaptation_unavailable"`,
 progress timeline. A completed STOP uses HTTP 200, `outcome: "aborted"` and the
 same terminal recovery object, without a top-level `stop_id`, `accepted` or
 `history_id`. A real matching ordinary StopID receipt keeps its existing meaning
-and takes precedence. Mixed, malformed or wrong-status unions are uncertain.
+when no owner-loss recovery has been observed. A validated recovery response
+binds the committed AbortID: subsequent replies must retain that recovery union,
+including after reload. An ordinary receipt cannot supersede the binding.
+The `playback_owner_lost` terminal reason requires complete recovery proof and
+cannot enter ordinary START decoding. Mixed, malformed or wrong-status unions
+are uncertain.
 
 The journal records terminal abandonment separately from ordinary STOP success,
 retaining original requests and raw recovery responses. Optional

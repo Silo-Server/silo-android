@@ -223,15 +223,78 @@ class PlaybackOwnerLossRecoveryTest {
         }
     }
 
-    @Test fun ordinaryOriginalStopReceiptStillWinsWithoutAbandonment() = runTest {
+    @Test fun ordinaryOriginalStopReceiptWinsOnlyBeforeRecoveryObservation() = runTest {
         val original = entry(); val h = Harness(Store(original))
-        h.exchange = { HttpStatusCode.Accepted to response(false, pending = true).toString() }
+        h.exchange = { HttpStatusCode.OK to """{"outcome":"replayed","stop_id":"original-stop"}""" }
         try {
-            assertIs<ApiResult.Error>(h.runtime().recover())
-            h.exchange = { HttpStatusCode.OK to """{"outcome":"replayed","stop_id":"original-stop"}""" }
             val runtime = h.runtime(); assertIs<ApiResult.Success<*>>(runtime.recover())
             assertTrue(h.store.entries.single().terminal); assertNull(h.store.entries.single().ownerLoss)
             assertNull(h.store.entries.single().progress); assertIs<ApiResult.Success<*>>(runtime.stop(session))
+        } finally { h.client.close() }
+    }
+
+    @Test fun observedRecoveryRejectsOrdinaryStopInSameExchangeAndAfterReload() = runTest {
+        for (reload in listOf(false, true)) for (outcome in listOf("stopped", "replayed", "draining")) {
+            val original = entry(bound = true).copy(acceptedBoundSample = SiloJson.decodeFromJsonElement(sample(true)))
+            val h = Harness(Store(original))
+            val pending = response(false, pending = true).toString()
+            var retained: PlaybackJournalEntry? = null
+            h.exchange = { n ->
+                if (n == 1 || (reload && n <= 3)) HttpStatusCode.Accepted to pending
+                else {
+                    retained = retained ?: h.store.entries.single()
+                    (if (outcome == "draining") HttpStatusCode.Accepted else HttpStatusCode.OK) to
+                        """{"outcome":"$outcome","stop_id":"original-stop","accepted":{"sequence":9,"position":35.0,"is_paused":true,"timeline_id":"${manifest.timelineId}","item_position":83.0}}"""
+                }
+            }
+            try {
+                val runtime = h.runtime()
+                assertIs<ApiResult.Error>(runtime.recover())
+                if (reload) {
+                    retained = h.store.entries.single()
+                    assertIs<ApiResult.Error>(h.runtime().recover())
+                }
+                assertNotNull(retained)
+                assertEquals(retained, h.store.entries.single())
+                assertEquals("draining", h.store.entries.single().ownerLoss?.state)
+                assertFalse(h.store.entries.single().terminal)
+                assertEquals(original.acceptedBoundSample, h.store.entries.single().acceptedBoundSample)
+                assertTrue(h.bodies.all { it == SiloJson.encodeToString(original.stop) })
+                assertEquals(1, h.runtime().pendingForCurrentViewer())
+            } finally { h.client.close() }
+        }
+    }
+
+    @Test fun ownerLossReasonWithoutProofCannotAdoptOrChangeBoundOrUnboundJournal() = runTest {
+        val negotiatedFeatures = JsonArray(listOf(PLAYBACK_PLAN_V3_FEATURE, NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE, SEQUENCED_PROGRESS_FEATURE).map(::JsonPrimitive))
+        val otherwiseValidTerminal = JsonObject(response(true) + ("server_features" to negotiatedFeatures))
+        for (bound in listOf(false, true)) for (attachedSession in listOf(false, true)) for (proof in listOf<JsonElement?>(null, JsonNull, buildJsonObject {})) {
+            val original = entry(start = true, bound = bound); val h = Harness(Store(original))
+            val malformed = JsonObject((otherwiseValidTerminal - "recovery") + buildMap {
+                if (attachedSession) put("session_id", JsonPrimitive(session))
+                if (proof != null) put("recovery", proof)
+            })
+            h.exchange = { HttpStatusCode.Created to malformed.toString() }
+            try {
+                val runtime = h.runtime()
+                assertFalse(runtime.recover() is ApiResult.Success)
+                assertEquals(original, h.store.entries.single())
+                assertFalse(runtime.owns(session)); assertNull(runtime.controlOwner(session))
+                assertIs<ApiResult.Error>(runtime.start(request("new")))
+                assertEquals(1, h.bodies.size)
+                assertEquals(1, runtime.pendingForCurrentViewer())
+            } finally { h.client.close() }
+        }
+        // Fresh unbound START exercises the normal adoptForPlayer=true path too.
+        val h = Harness(Store(entry(start = true)).apply { entries = emptyList() })
+        val malformed = JsonObject((otherwiseValidTerminal - "recovery") + ("session_id" to JsonPrimitive(session)))
+        h.exchange = { HttpStatusCode.Created to malformed.toString() }
+        try {
+            val runtime = h.runtime()
+            assertFalse(runtime.start(request()) is ApiResult.Success)
+            assertNull(h.store.entries.single().sessionId); assertNull(h.store.entries.single().ownerLoss)
+            assertFalse(runtime.owns(session)); assertNull(runtime.controlOwner(session))
+            assertIs<ApiResult.Error>(runtime.start(request("new"))); assertEquals(1, h.bodies.size)
         } finally { h.client.close() }
     }
 
