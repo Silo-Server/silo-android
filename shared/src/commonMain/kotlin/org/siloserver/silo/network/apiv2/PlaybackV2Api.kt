@@ -116,7 +116,7 @@ class PlaybackV2Api(private val client: HttpClient) {
     suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
         safeApiV2Call(ApiV2Gate.Unrestricted) {
             client.post {
-                url { path("api", "v2", "playback", sessionId, "replan") }
+                url { path("", "api", "v2", "playback", sessionId, "replan") }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
             }.also {
@@ -136,7 +136,7 @@ class PlaybackV2Api(private val client: HttpClient) {
     suspend fun progress(scope: AuthScopeSnapshot, sessionId: String,
         body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> = safeApiV2Call(ApiV2Gate.Unrestricted) {
         client.post {
-            url { path("api", "v2", "playback", sessionId, "progress") }
+            url { path("", "api", "v2", "playback", sessionId, "progress") }
             authScope(scope); requireSiloAuth(); singleAttempt()
             contentType(ContentType.Application.Json); setBody(body)
         }.also { check(!it.status.isSuccess() || it.status.value == 200) }
@@ -146,7 +146,7 @@ class PlaybackV2Api(private val client: HttpClient) {
         var status = 0
         val result = safeApiV2Call<PlaybackMutationV2>(ApiV2Gate.Unrestricted) {
             client.delete {
-                url { path("api", "v2", "playback", sessionId) }
+                url { path("", "api", "v2", "playback", sessionId) }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
             }.also {
