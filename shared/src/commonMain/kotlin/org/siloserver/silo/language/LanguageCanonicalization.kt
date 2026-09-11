@@ -5,6 +5,7 @@ private val aliases = mapOf(
     "portuguese" to "pt", "arabic" to "ar", "japanese" to "ja", "korean" to "ko", "chinese" to "zh",
     "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de", "deu" to "de",
     "ita" to "it", "por" to "pt", "ara" to "ar", "jpn" to "ja", "kor" to "ko", "chi" to "zh", "zho" to "zh",
+    "dut" to "nl", "nld" to "nl", "dan" to "da",
 )
 
 /** Canonical BCP 47 value for API wires, including known legacy names. */

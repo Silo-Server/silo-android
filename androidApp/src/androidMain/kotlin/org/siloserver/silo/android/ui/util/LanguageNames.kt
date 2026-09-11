@@ -54,11 +54,9 @@ object LanguageNames {
         return twoLetter[lower] ?: threeLetter[lower] ?: lower.uppercase()
     }
 
-    /**
-     * Normalizes a profile/track language code to a 2-letter code the
-     * subtitle APIs accept. Unmappable codes default to "en" (web default).
-     */
+    /** Normalizes a profile/track language code to a canonical API value. */
     fun searchCode(code: String?): String =
-        org.siloserver.silo.language.canonicalLanguageTag(code).orEmpty()
+        org.siloserver.silo.language.canonicalLanguageTag(code)
+            ?: dropdownOptions.firstOrNull()?.first.orEmpty()
 
 }

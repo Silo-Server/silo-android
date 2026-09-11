@@ -58,8 +58,9 @@ class LanguageNamesTest {
 
     @Test
     fun searchCodeDoesNotTurnUnknownValuesIntoEnglish() {
-        assertEquals("", LanguageNames.searchCode(null))
-        assertEquals("", LanguageNames.searchCode(""))
+        val fallback = LanguageNames.dropdownOptions.first().first
+        assertEquals(fallback, LanguageNames.searchCode(null))
+        assertEquals(fallback, LanguageNames.searchCode(""))
         assertEquals("zz", LanguageNames.searchCode("zz"))
     }
 }
