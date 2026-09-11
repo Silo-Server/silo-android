@@ -58,11 +58,7 @@ object LanguageNames {
      * Normalizes a profile/track language code to a 2-letter code the
      * subtitle APIs accept. Unmappable codes default to "en" (web default).
      */
-    fun searchCode(code: String?): String {
-        val lower = code?.trim()?.lowercase().orEmpty()
-        if (lower.isEmpty()) return "en"
-        if (lower in twoLetter) return lower
-        val name = threeLetter[lower] ?: return "en"
-        return twoLetter.entries.firstOrNull { it.value == name }?.key ?: "en"
-    }
+    fun searchCode(code: String?): String =
+        org.siloserver.silo.language.canonicalLanguageTag(code).orEmpty()
+
 }

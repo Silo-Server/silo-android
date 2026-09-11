@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.settings
 
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
+import org.siloserver.silo.language.canonicalLanguageTag
 
 /** Platform CLDR/ICU display name for a valid BCP 47 tag. */
 internal expect fun localizedLanguageName(tag: String): String
@@ -29,7 +30,7 @@ object LanguageOptions {
         val indexByLanguage = mutableMapOf<String, Int>()
 
         fun add(rawValue: String, replaceAlias: Boolean) {
-            val value = rawValue.trim()
+            val value = canonicalLanguageTag(rawValue) ?: return
             if (!isPreservableTag(value)) return
             val identity = canonicalLanguageIdentity(value)
             val existing = indexByLanguage[identity]
@@ -70,10 +71,10 @@ object LanguageOptions {
      * This compatibility map is not a picker catalog; new choices come only
      * from the generated contract and server response.
      */
-    fun migrateLegacyValue(stored: String?): String = when {
-        stored.isNullOrBlank() -> UNSET
-        isPreservableTag(stored) -> stored
-        else -> legacyEnglishLabels[stored] ?: UNSET
+    fun migrateLegacyValue(stored: String?): String {
+        if (stored.isNullOrBlank()) return UNSET
+        if (stored.equals("Off", ignoreCase = true) || stored.equals("Default", ignoreCase = true)) return UNSET
+        return canonicalLanguageTag(stored) ?: legacyEnglishLabels[stored.trim()] ?: UNSET
     }
 
     private fun unsetLabel(key: String): String =
@@ -84,7 +85,7 @@ object LanguageOptions {
             !value.equals("Off", ignoreCase = true) &&
             !value.equals("Default", ignoreCase = true) &&
             Regex("^[a-zA-Z]{2,3}([-_][a-zA-Z0-9]{1,8})*$").matches(value) &&
-            canonicalSubtitleLanguage(value) != null
+            canonicalLanguageTag(value) != null
 
     private val legacyEnglishLabels = mapOf(
         "English" to "en",

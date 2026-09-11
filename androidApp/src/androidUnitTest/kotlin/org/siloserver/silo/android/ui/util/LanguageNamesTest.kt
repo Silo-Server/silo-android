@@ -51,12 +51,15 @@ class LanguageNamesTest {
         assertEquals("en", LanguageNames.searchCode("en"))
         assertEquals("de", LanguageNames.searchCode("ger"))
         assertEquals("en", LanguageNames.searchCode("eng"))
+        assertEquals("ar", LanguageNames.searchCode("Arabic"))
+        assertEquals("pt-BR", LanguageNames.searchCode("pt_BR"))
+        assertEquals("zh-Hant", LanguageNames.searchCode("zh-Hant"))
     }
 
     @Test
-    fun searchCodeDefaultsToEnglish() {
-        assertEquals("en", LanguageNames.searchCode(null))
-        assertEquals("en", LanguageNames.searchCode(""))
-        assertEquals("en", LanguageNames.searchCode("zz"))
+    fun searchCodeDoesNotTurnUnknownValuesIntoEnglish() {
+        assertEquals("", LanguageNames.searchCode(null))
+        assertEquals("", LanguageNames.searchCode(""))
+        assertEquals("zz", LanguageNames.searchCode("zz"))
     }
 }

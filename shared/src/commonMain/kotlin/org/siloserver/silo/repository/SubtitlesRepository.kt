@@ -1,6 +1,7 @@
 // shared/src/commonMain/kotlin/org/siloserver/silo/repository/SubtitlesRepository.kt
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.language.canonicalLanguageTag
 import org.siloserver.silo.model.subtitles.DownloadedSubtitlesResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiJobResponse
@@ -42,10 +43,10 @@ class SubtitlesRepository(private val api: SubtitlesApi) {
     }
 
     suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> =
-        api.search(request)
+        api.search(request.copy(languages = request.languages.map { canonicalLanguageTag(it) ?: it }))
 
     suspend fun download(request: SubtitleDownloadRequest): ApiResult<SubtitleDownloadResponse> =
-        api.download(request)
+        api.download(request.copy(language = canonicalLanguageTag(request.language) ?: request.language))
 
     suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse> =
         api.list(mediaFileId)
@@ -55,7 +56,12 @@ class SubtitlesRepository(private val api: SubtitlesApi) {
     suspend fun aiQuota(): ApiResult<SubtitleAiQuota> = api.aiQuota()
 
     suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse> =
-        api.translate(request)
+        api.translate(
+            request.copy(
+                sourceLanguage = request.sourceLanguage?.let { canonicalLanguageTag(it) ?: it },
+                targetLanguage = request.targetLanguage?.let { canonicalLanguageTag(it) ?: it },
+            ),
+        )
 
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         api.listJobs(mediaFileId)

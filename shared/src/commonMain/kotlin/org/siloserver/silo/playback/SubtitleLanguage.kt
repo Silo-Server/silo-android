@@ -21,22 +21,5 @@ package org.siloserver.silo.playback
  */
 fun String?.orNullIfBlank(): String? = this?.takeIf { it.isNotBlank() }
 
-fun canonicalSubtitleLanguage(language: String?): String? {
-    val primary = language
-        ?.trim()
-        ?.takeUnless { it.isBlank() || it.equals("und", ignoreCase = true) }
-        ?.lowercase()
-        ?.replace('_', '-')
-        ?.substringBefore('-')
-        ?: return null
-    return when (primary) {
-        "eng" -> "en"
-        "spa" -> "es"
-        "fre", "fra" -> "fr"
-        "ger", "deu" -> "de"
-        "dut", "nld" -> "nl"
-        "jpn" -> "ja"
-        "dan" -> "da"
-        else -> primary
-    }
-}
+fun canonicalSubtitleLanguage(language: String?): String? =
+    org.siloserver.silo.language.primaryLanguage(language)?.takeUnless { it == "und" || it == "x" }

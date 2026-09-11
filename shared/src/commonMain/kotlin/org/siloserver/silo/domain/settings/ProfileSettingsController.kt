@@ -1,4 +1,5 @@
 package org.siloserver.silo.domain.settings
+import org.siloserver.silo.language.canonicalLanguageTag
 
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingKeys
@@ -155,7 +156,7 @@ class ProfileSettingsController(
         // spells it as no row at all (the server's language_tag validator
         // refuses ""). Clearing rather than writing null keeps the two the
         // same statement and matches how the server mirrors the legacy column.
-        return if (tag.isEmpty()) repository.clearProfileValue(key) else write(key, JsonPrimitive(tag))
+        return if (tag.isEmpty()) repository.clearProfileValue(key) else write(key, JsonPrimitive(canonicalLanguageTag(tag) ?: tag))
     }
 
     private suspend fun write(key: String, value: JsonElement): ApiResult<Unit> =
@@ -167,12 +168,12 @@ class ProfileSettingsController(
 
     private fun snapshotOf(effective: Map<String, EffectiveSettingValue>): Snapshot =
         Snapshot(
-            subtitleLanguage = effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE),
+            subtitleLanguage = canonicalLanguageTag(effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE)).orEmpty(),
             subtitleMode = normalizeSubtitleMode(
                 effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_MODE),
             ),
             showForcedSubtitles = effective.boolOr(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, true),
-            metadataLanguage = effective.stringOrEmpty(SettingKeys.CATALOG_METADATA_LANGUAGE),
+            metadataLanguage = canonicalLanguageTag(effective.stringOrEmpty(SettingKeys.CATALOG_METADATA_LANGUAGE)).orEmpty(),
             audioLanguageSuggestions =
                 effective[SettingKeys.PLAYBACK_AUDIO_LANGUAGE]?.suggestedValues.orEmpty(),
             subtitleLanguageSuggestions =

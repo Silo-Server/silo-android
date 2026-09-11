@@ -41,8 +41,8 @@ class LanguageOptionsTest {
             currentValue = "eng",
         ).map { it.first }
 
-        assertTrue("eng" in values)
-        assertFalse("en" in values)
+        assertTrue("en" in values)
+        assertFalse("eng" in values)
     }
 
     @Test
@@ -86,7 +86,7 @@ class LanguageOptionsTest {
         assertEquals("ja", LanguageOptions.migrateLegacyValue("Japanese"))
         assertEquals("pt-BR", LanguageOptions.migrateLegacyValue("pt-BR"))
         assertEquals("zh-Hant", LanguageOptions.migrateLegacyValue("zh-Hant"))
-        assertEquals("eng", LanguageOptions.migrateLegacyValue("eng"))
+        assertEquals("en", LanguageOptions.migrateLegacyValue("eng"))
         assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Klingon"))
         assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Off"))
         assertEquals(LanguageOptions.UNSET, LanguageOptions.migrateLegacyValue("Default"))
