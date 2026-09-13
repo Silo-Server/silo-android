@@ -2,6 +2,9 @@ package org.siloserver.silo.common.diagnostics
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -25,6 +28,61 @@ import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
 class HostedDiagnosticsTest {
+    @Test
+    fun captureCapabilitiesCoalesceAndExpireButUploadsAlwaysRefresh() = runTest {
+        var now = 0L
+        var calls = 0
+        val defaults = HostedDiagnosticsCapabilitiesRepository(
+            InMemoryCapabilitiesStore(), RecordingOfflineHostedApi(),
+        ).local()
+        val api = object : HostedDiagnosticsApi by RecordingOfflineHostedApi() {
+            override suspend fun capabilities(): HostedDiagnosticsApiResult<HostedDiagnosticsCapabilities> {
+                calls++
+                delay(10)
+                return HostedDiagnosticsApiResult.Success(defaults.copy(consentNoticeVersion = calls))
+            }
+        }
+        val repository = HostedDiagnosticsCapabilitiesRepository(InMemoryCapabilitiesStore(defaults), api) { now }
+        val results = List(20) { async { repository.refresh(requireFresh = false) } }.awaitAll()
+        assertEquals(1, calls, "persisted metadata must first be attested, and concurrent capture checks share it")
+        assertTrue(results.all { it == HostedDiagnosticsApiResult.Success(defaults) })
+        now = 299_999
+        repository.refresh(requireFresh = false)
+        assertEquals(1, calls)
+        now = 300_000
+        repository.refresh(requireFresh = false)
+        assertEquals(2, calls)
+        val upload = repository.refresh()
+        assertEquals(HostedDiagnosticsApiResult.Success(defaults.copy(consentNoticeVersion = 3)), upload)
+        assertEquals(3, calls)
+    }
+
+    @Test
+    fun failedFreshCapabilitiesInvalidateCaptureCache() = runTest {
+        var calls = 0
+        var invalid = false
+        val defaults = HostedDiagnosticsCapabilitiesRepository(
+            InMemoryCapabilitiesStore(), RecordingOfflineHostedApi(),
+        ).local()
+        val api = object : HostedDiagnosticsApi by RecordingOfflineHostedApi() {
+            override suspend fun capabilities(): HostedDiagnosticsApiResult<HostedDiagnosticsCapabilities> {
+                calls++
+                return HostedDiagnosticsApiResult.Success(
+                    if (invalid) defaults.copy(acceptedSchemaVersions = listOf(2)) else defaults,
+                )
+            }
+        }
+        val repository = HostedDiagnosticsCapabilitiesRepository(InMemoryCapabilitiesStore(), api)
+        repository.refresh(requireFresh = false)
+        invalid = true
+        assertTrue(repository.refresh() is HostedDiagnosticsApiResult.Failure)
+        assertTrue(repository.refresh(requireFresh = false) is HostedDiagnosticsApiResult.Failure)
+        assertEquals(3, calls, "a failed fresh check must not revive previously cached capabilities")
+        invalid = false
+        assertTrue(repository.refresh(requireFresh = false) is HostedDiagnosticsApiResult.Success)
+        assertEquals(4, calls)
+    }
+
     @Test
     fun cachedCapabilitiesMustIncludeHostedSchemaV1() = runTest {
         val v2Only = HostedDiagnosticsCapabilities(

@@ -46,22 +46,40 @@ interface HostedDiagnosticsBindingOwnerStore {
 class HostedDiagnosticsCapabilitiesRepository(
     private val store: HostedDiagnosticsCapabilitiesStore,
     private val api: HostedDiagnosticsApi,
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
+    private val refreshMutex = Mutex()
+    private var cached: HostedDiagnosticsCapabilities? = null
+    private var cachedAtMs: Long = 0
+
     suspend fun local(): HostedDiagnosticsCapabilities =
         store.load()?.takeIf { it.isUsable() } ?: conservativeDefaults()
 
-    suspend fun refresh(): HostedDiagnosticsApiResult<HostedDiagnosticsCapabilities> =
-        when (val result = api.capabilities()) {
-            is HostedDiagnosticsApiResult.Success -> {
-                if (!result.value.isUsable()) {
-                    HostedDiagnosticsApiResult.Failure(502, "invalid_capabilities", "Invalid collector capabilities")
-                } else {
-                    runCatching { store.save(result.value) }
-                    result
+    // Capture/status checks may reuse public metadata for five minutes. Uploads use the fresh default.
+    suspend fun refresh(requireFresh: Boolean = true): HostedDiagnosticsApiResult<HostedDiagnosticsCapabilities> =
+        refreshMutex.withLock {
+            val ageMs = nowMs() - cachedAtMs
+            cached?.let {
+                if (!requireFresh && ageMs in 0 until 5 * 60 * 1_000L) {
+                    return@withLock HostedDiagnosticsApiResult.Success(it)
                 }
             }
-            is HostedDiagnosticsApiResult.Failure -> result
-            is HostedDiagnosticsApiResult.NetworkError -> result
+            // A failed fresh check must not leave an older success usable.
+            cached = null
+            when (val result = api.capabilities()) {
+                is HostedDiagnosticsApiResult.Success -> {
+                    if (!result.value.isUsable()) {
+                        HostedDiagnosticsApiResult.Failure(502, "invalid_capabilities", "Invalid collector capabilities")
+                    } else {
+                        runCatching { store.save(result.value) }
+                        cached = result.value
+                        cachedAtMs = nowMs()
+                        result
+                    }
+                }
+                is HostedDiagnosticsApiResult.Failure -> result
+                is HostedDiagnosticsApiResult.NetworkError -> result
+            }
         }
 
     private fun conservativeDefaults() = HostedDiagnosticsCapabilities(
@@ -287,7 +305,7 @@ class HostedDiagnosticsIdentityResolver(
     }
 
     override suspend fun resolveForCapture(requirePersistentCapture: Boolean): DiagnosticsCaptureContext? {
-        val liveCapabilities = when (val result = capabilities.refresh()) {
+        val liveCapabilities = when (val result = capabilities.refresh(requireFresh = false)) {
             is HostedDiagnosticsApiResult.Success -> result.value
             is HostedDiagnosticsApiResult.Failure,
             is HostedDiagnosticsApiResult.NetworkError,
