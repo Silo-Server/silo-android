@@ -77,7 +77,7 @@ class SiloAuthPluginPinTest {
         }
 
         assertFailsWith<CleartextOriginNotApprovedException> {
-            client.get("ws://silo.lan/api/v1/watch-together/rooms/r/ws?room_token=secret")
+            client.get("ws://silo.lan/api/v2/watch-together/rooms/r/ws")
         }
         assertEquals(false, engineCalled)
         client.close()

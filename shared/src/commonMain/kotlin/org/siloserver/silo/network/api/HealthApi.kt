@@ -20,7 +20,7 @@ data class HealthStatus(
 open class HealthApi(private val client: HttpClient) {
 
     open suspend fun checkHealth(): ApiResult<HealthStatus> = safeApiCall {
-        client.get("/api/v1/health") {
+        client.get("/health") {
             // Public: never send credentials, so a dead session cannot make a
             // reachability check fail. Matches the explicit-server variants of
             // the other public endpoints.

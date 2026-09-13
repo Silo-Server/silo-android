@@ -71,8 +71,10 @@ class WatchTogetherRealtimeWebSocketTest {
                 webSocket.close(code, reason)
             }
         }
-        serverA.enqueue(MockResponse().withWebSocketUpgrade(socketListener))
-        serverB.enqueue(MockResponse().withWebSocketUpgrade(socketListener))
+        serverA.enqueue(ticketResponse())
+        serverA.enqueue(roomUpgrade(socketListener))
+        serverB.enqueue(ticketResponse())
+        serverB.enqueue(roomUpgrade(socketListener))
         serverA.start()
         serverB.start()
 
@@ -99,14 +101,18 @@ class WatchTogetherRealtimeWebSocketTest {
             }
 
             assertIs<RoomRealtimeEvent.Opened>(withTimeout(5_000) { events.receive() })
-            val requestA = assertNotNull(serverA.takeRequest(1, TimeUnit.SECONDS))
+            val ticketA = assertNotNull(serverA.takeRequest(1, TimeUnit.SECONDS))
+            val upgradeA = assertNotNull(serverA.takeRequest(1, TimeUnit.SECONDS))
             assertEquals(0, serverB.requestCount)
-            assertEquals("ROOM_A", requestA.requestUrl?.queryParameter("room_token"))
-            assertEquals("profile-a", requestA.requestUrl?.queryParameter("profile_id"))
-            assertEquals("PROFILE_A", requestA.requestUrl?.queryParameter("profile_token"))
-            assertEquals("Bearer ACCESS_A", requestA.getHeader("Authorization"))
-            assertEquals("profile-a", requestA.getHeader("X-Profile-Id"))
-            assertEquals("PROFILE_A", requestA.getHeader("X-Profile-Token"))
+            assertEquals("/api/v2/watch-together/rooms/room-a/ws-ticket", ticketA.requestUrl?.encodedPath)
+            assertEquals("ROOM_A", ticketA.getHeader("X-Room-Token"))
+            assertEquals("Bearer ACCESS_A", ticketA.getHeader("Authorization"))
+            assertEquals("profile-a", ticketA.getHeader("X-Profile-Id"))
+            assertEquals("PROFILE_A", ticketA.getHeader("X-Profile-Token"))
+            assertEquals("/api/v2/watch-together/rooms/room-a/ws", upgradeA.requestUrl?.encodedPath)
+            assertNull(upgradeA.getHeader("Authorization"))
+            assertNull(upgradeA.getHeader("X-Profile-Id"))
+            assertEquals("silo.room.v2, silo.ticket.opaque-proof", upgradeA.getHeader("Sec-WebSocket-Protocol"))
         } finally {
             collection?.cancelAndJoin()
             httpClient.close()
@@ -120,8 +126,9 @@ class WatchTogetherRealtimeWebSocketTest {
         val server = MockWebServer()
         val outbound = Channel<String>(Channel.UNLIMITED)
         val serverSocket = CompletableDeferred<WebSocket>()
+        server.enqueue(ticketResponse())
         server.enqueue(
-            MockResponse().withWebSocketUpgrade(
+            roomUpgrade(
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         serverSocket.complete(webSocket)
@@ -165,18 +172,26 @@ class WatchTogetherRealtimeWebSocketTest {
                 ).map { SiloJson.parseToJsonElement(it).jsonObject.getValue("type").jsonPrimitive.content },
             )
 
+            val ticket = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
+            assertEquals(
+                "/api/v2/watch-together/rooms/room%2Fsegment%20%3F%23/ws-ticket",
+                ticket.requestUrl?.encodedPath,
+            )
+            assertEquals("ROOM_SECRET", ticket.getHeader("X-Room-Token"))
+            assertEquals("Bearer ACCESS_SECRET", ticket.getHeader("Authorization"))
+            assertEquals("profile-1", ticket.getHeader("X-Profile-Id"))
+            assertEquals("PROFILE_SECRET", ticket.getHeader("X-Profile-Token"))
             val request = assertNotNull(server.takeRequest(5, TimeUnit.SECONDS))
             assertEquals(
-                "/api/v1/watch-together/rooms/room%2Fsegment%20%3F%23/ws",
+                "/api/v2/watch-together/rooms/room%2Fsegment%20%3F%23/ws",
                 request.requestUrl?.encodedPath,
             )
-            assertNull(request.requestUrl?.queryParameter("token"))
-            assertEquals("ROOM_SECRET", request.requestUrl?.queryParameter("room_token"))
-            assertEquals("profile-1", request.requestUrl?.queryParameter("profile_id"))
-            assertEquals("PROFILE_SECRET", request.requestUrl?.queryParameter("profile_token"))
-            assertEquals("Bearer ACCESS_SECRET", request.getHeader("Authorization"))
-            assertEquals("profile-1", request.getHeader("X-Profile-Id"))
-            assertEquals("PROFILE_SECRET", request.getHeader("X-Profile-Token"))
+            assertEquals("", request.requestUrl?.encodedQuery.orEmpty())
+            assertNull(request.getHeader("Authorization"))
+            assertNull(request.getHeader("X-Profile-Id"))
+            assertNull(request.getHeader("X-Profile-Token"))
+            assertNull(request.getHeader("X-Room-Token"))
+            assertEquals("silo.room.v2, silo.ticket.opaque-proof", request.getHeader("Sec-WebSocket-Protocol"))
 
             assertTrue(serverSocket.await().close(1000, "physical EOF"))
             val terminated = assertIs<RoomRealtimeEvent.TransportTerminated>(
@@ -194,8 +209,9 @@ class WatchTogetherRealtimeWebSocketTest {
     fun `real socket cancellation is silent`() = runBlocking {
         val server = MockWebServer()
         val serverClosed = CompletableDeferred<Unit>()
+        server.enqueue(ticketResponse())
         server.enqueue(
-            MockResponse().withWebSocketUpgrade(
+            roomUpgrade(
                 object : WebSocketListener() {
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                         webSocket.close(code, reason)
@@ -277,6 +293,15 @@ class WatchTogetherRealtimeWebSocketTest {
             accessToken = "ACCESS_SECRET",
         )
     }
+
+    private fun ticketResponse(): MockResponse =
+        MockResponse()
+            .setResponseCode(200)
+            .addHeader("Content-Type", "application/json")
+            .setBody("""{"ticket":"opaque-proof","expires_in":20,"max_connection_seconds":300,"protocol":"silo.room.v2"}""")
+
+    private fun roomUpgrade(listener: WebSocketListener): MockResponse =
+        MockResponse().withWebSocketUpgrade(listener).addHeader("Sec-WebSocket-Protocol", "silo.room.v2")
 
     private fun approvedConsent(server: MockWebServer): CleartextOriginConsent {
         val approvedOrigin = canonicalHttpOrigin(server.url("/").toString())

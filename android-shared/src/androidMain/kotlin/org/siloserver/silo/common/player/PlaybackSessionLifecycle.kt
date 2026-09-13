@@ -37,7 +37,7 @@ import kotlinx.coroutines.withContext
 /**
  * Wraps [PlaybackSessionManager] with a unified state machine that handles
  * both 404-session-missing recovery (consolidated from duplicate VM code)
- * and server-outage recovery via `/api/v1/health` probes with exponential
+ * and server-outage recovery via `/health` probes with exponential
  * backoff (1s -> 8s, 90s timeout — mirrors iOS `PlayerViewModel`).
  *
  * Phone and TV ViewModels were each open-coding the same 404 recovery flow

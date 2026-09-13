@@ -23,7 +23,8 @@ class WatchTogetherRealtimeClientTest {
     @Test
     fun `socket request string never exposes query credentials or profile token`() {
         val request = WatchTogetherSocketRequest(
-            url = "/rooms/room-1/ws?room_token=room-secret&profile_token=profile-secret",
+            roomId = "room-1",
+            roomToken = "room-secret",
             authScope = AuthScopeSnapshot(
                 serverId = "aHR0cHM6Ly9wcml2YXRlLXNpbG8uZXhhbXBsZQ",
                 profileId = "private-profile-id",
@@ -37,6 +38,7 @@ class WatchTogetherRealtimeClientTest {
 
         val rendered = request.toString()
 
+        assertFalse(rendered.contains("room-1"))
         assertFalse(rendered.contains("room-secret"))
         assertFalse(rendered.contains("profile-secret"))
         assertFalse(rendered.contains("aHR0cHM6Ly9wcml2YXRlLXNpbG8uZXhhbXBsZQ"))
@@ -241,7 +243,7 @@ class WatchTogetherRealtimeClientTest {
     }
 
     @Test
-    fun `connection URL encodes room path and excludes access JWT`() = runTest {
+    fun `connection request carries room identity and captured scope only`() = runTest {
         val connection = FakeConnection()
         val connector = FakeConnector(connection)
         val client = client(
@@ -259,13 +261,9 @@ class WatchTogetherRealtimeClientTest {
         opened.await()
 
         val request = connector.requests.single()
-        val url = request.url
-        assertTrue(url.startsWith("/api/v1/watch-together/rooms/room%2Fwith%20%3F%23/ws?"))
-        assertFalse(url.contains("ACCESS_SECRET"))
-        assertFalse(url.contains("token=ACCESS_SECRET"))
-        assertTrue(url.contains("room_token=room%26secret"))
-        assertTrue(url.contains("profile_id=profile%20id"))
-        assertTrue(url.contains("profile_token=profile%26secret"))
+        assertEquals("room/with ?#", request.roomId)
+        assertEquals("room&secret", request.roomToken)
+        assertFalse(request.toString().contains("ACCESS_SECRET"))
         assertEquals("profile id", request.authScope.profileId)
         assertEquals("profile&secret", request.authScope.profileToken)
 
@@ -335,10 +333,9 @@ class WatchTogetherRealtimeClientTest {
         assertEquals(0, snapshotReads)
         val request = connector.requests.single()
         assertEquals(scopeA, request.authScope)
-        assertTrue(request.url.contains("profile_id=profile-a"))
-        assertTrue(request.url.contains("profile_token=PROFILE_A"))
-        assertFalse(request.url.contains("profile-b"))
-        assertFalse(request.url.contains("PROFILE_B"))
+        assertEquals("ROOM_A", request.roomToken)
+        assertEquals("profile-a", request.authScope.profileId)
+        assertEquals("PROFILE_A", request.authScope.profileToken)
     }
 
     private suspend fun client(
