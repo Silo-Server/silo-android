@@ -86,6 +86,7 @@ class SequencedPlayback(
         publish()
     }
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
+    private fun authorityChanged() = failure("identity_changed", "Playback authority changed.")
     private suspend fun scope(entry: PlaybackJournalEntry): AuthScopeSnapshot? {
         val live = authorities.snapshotDurableLoginAuthority() ?: return null
         val captured = scopes[entry.attemptId] ?: return null // Restart requires explicit recovery.
@@ -227,7 +228,7 @@ class SequencedPlayback(
     suspend fun replan(sessionId: String, request: PlaybackReplanRequestV3): ApiResult<PlaybackDecisionResponseV3> = mutex.withLock {
         var entry = load().find { it.sessionId == sessionId }
             ?: return@withLock failure("playback_unavailable", "This session has no v2 playback authority. Start playback again.")
-        val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (request.playbackAttemptId != entry.attemptId) return@withLock failure("identity_changed", "The playback attempt changed.")
         val body = request.v2Body(entry.installationId)
@@ -257,7 +258,7 @@ class SequencedPlayback(
         val intent = PlaybackReplanIntent(body)
         entry = entry.copy(replans = entry.replans + intent)
         save(entry) // A crash or lost response leaves this exact intent pending; never rebase it.
-        if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+        if (scope(entry) == null) return@withLock authorityChanged()
         var sentHeaders: Map<String, String> = emptyMap()
         when (val result = api.replan(captured, sessionId, body) { sentHeaders = it }) {
             is ApiResult.Success -> {
@@ -265,7 +266,7 @@ class SequencedPlayback(
                 if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
                     return@withLock failure("invalid_decision", "The replacement plan belongs to another session.")
                 save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
-                if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+                if (scope(entry) == null) return@withLock authorityChanged()
                 ApiResult.Success(withAuxiliaryAuthority(decision, entry, captured, sentHeaders))
             }
             is ApiResult.Error -> {
@@ -283,13 +284,13 @@ class SequencedPlayback(
             ?: return@withLock failure("playback_unavailable", "Route telemetry has no v2 playback authority.")
         if (request.sessionId != null && request.sessionId != entry.sessionId)
             return@withLock failure("identity_changed", "The route event belongs to another session.")
-        val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
         val eventId = newId()
         val body = request.v2Body(entry.installationId, eventId)
         val saved = entry.copy(routeEvents = entry.routeEvents + body)
         save(saved)
-        if (scope(saved) == null) return@withLock failure("identity_changed", "Playback authority changed.")
+        if (scope(saved) == null) return@withLock authorityChanged()
         when (val result = api.routeEvent(captured, body)) {
             is ApiResult.Success -> {
                 save(saved.copy(routeEvents = entry.routeEvents))
@@ -305,7 +306,7 @@ class SequencedPlayback(
 
     suspend fun progress(sessionId: String, position: Double, paused: Boolean): ApiResult<Unit>? = mutex.withLock {
         var entry = load().find { it.sessionId == sessionId } ?: return@withLock null
-        val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
+        val captured = scope(entry) ?: return@withLock authorityChanged()
         if (entry.terminal || entry.stop != null) return@withLock failure("playback_stopping", "Playback is stopping.")
         if (!position.isFinite() || position < 0) return@withLock failure("invalid_position", "Invalid playback position.")
         // A lost reply is retried verbatim before allocating the next logical sample.
@@ -321,7 +322,7 @@ class SequencedPlayback(
         sendProgress(entry, captured)
     }
     private suspend fun sendProgress(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot): ApiResult<Unit> {
-        if (scope(entry) == null) return failure("identity_changed", "Playback authority changed.")
+        if (scope(entry) == null) return authorityChanged()
         return when (val result = api.progress(captured, requireNotNull(entry.sessionId), requireNotNull(entry.progress))) {
             is ApiResult.Success -> {
                 val accepted = result.data.accepted

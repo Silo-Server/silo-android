@@ -2,12 +2,12 @@ package org.siloserver.silo.repository
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.siloserver.silo.model.personal.ProgressListResponse
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.apiv2.HistoryContinuationV2
 import org.siloserver.silo.network.apiv2.HistoryPageV2
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.PersonalDataApi
@@ -68,10 +68,6 @@ open class PersonalDataRepository(
 
     // -- Progress --
 
-    /** Lists all in-progress items for the current user. */
-    suspend fun listProgress(): ApiResult<ProgressListResponse> =
-        personalDataApi.listProgress()
-
     /** Legacy sessionless convenience path: admitted playback uses sequenced v2 progress. */
     open suspend fun syncProgress(items: List<SyncProgressItem>): ApiResult<Unit> =
         ApiResult.Error(0, "playback_unavailable", "Progress needs an admitted v2 playback session. Start playback again.")
@@ -112,7 +108,7 @@ open class PersonalDataRepository(
 
     suspend fun performPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent): ApiResult<Unit> {
         if (intent.identityGeneration != identityTransitions.generation.value)
-            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+            return identityChanged()
         val admitted = personalDispatchMutex.withLock { consumedPersonalIntents.add(intent.sequence) }
         if (!admitted) return ApiResult.Error(0, "personal_write_consumed", "This action was already submitted. Its outcome will not be replayed.")
         return dispatchPersonalWrite(intent)
@@ -124,10 +120,10 @@ open class PersonalDataRepository(
         val handle = userItemStatePort.beginPersonalWrite(command)
             ?: return ApiResult.Error(0, "personal_write_pending", "This item needs an active saved account with no unresolved personal-data writes.")
         if (intent.identityGeneration != identityTransitions.generation.value)
-            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+            return identityChanged()
         val result = personalDataApi.writePersonal(handle)
         if (intent.identityGeneration != identityTransitions.generation.value)
-            return ApiResult.Error(0, "identity_changed", "The initiating viewer changed.")
+            return identityChanged()
         if (result is ApiResult.Success) userItemStatePort.completePersonalWrite(handle)
         return result
     }

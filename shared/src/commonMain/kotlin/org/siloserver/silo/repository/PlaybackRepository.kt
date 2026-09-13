@@ -4,7 +4,6 @@ import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.model.playback.PlaybackStartRequestV3
-import org.siloserver.silo.model.playback.ProgressRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.siloserver.silo.network.ApiResult

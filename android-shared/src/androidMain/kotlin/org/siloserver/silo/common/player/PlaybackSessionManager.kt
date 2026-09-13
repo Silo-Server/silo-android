@@ -2574,12 +2574,12 @@ open class PlaybackSessionManager(
             "The server returned a playback route this client cannot execute."
     }
 
+    open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
+
     /**
      * Reports the current playback position to the server.
      * Called periodically (every ~10 seconds) during active playback.
      */
-    open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
-
     open suspend fun reportProgress(
         sessionId: String,
         position: Double,

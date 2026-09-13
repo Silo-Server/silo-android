@@ -1,10 +1,8 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.settings.EffectiveSettingValue
-import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.StoredSettingValue
-import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.OverlayConfigResponse
 import org.siloserver.silo.network.api.SettingsApi
@@ -46,73 +44,34 @@ class SettingsRepository(
      * Write one profile-scoped value (`scope=profile`) — the household
      * preference that applies on every device until a device overrides it.
      *
-     * API v2 converges desired state without mutation-ID receipt replay.
      * Picker callers surface failure and let the user make a new decision.
      */
-    suspend fun setProfileValue(
-        key: String,
-        value: JsonElement,
-        mutationId: String = newSettingMutationId(),
-    ): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(
-            key = key,
-            scope = SettingScopeIdentity.profile(),
-            value = value,
-            mutationId = mutationId,
-        )
+    suspend fun setProfileValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profile(), value, newSettingMutationId())
 
-    /**
-     * Clear the profile-scoped value so the setting inherits again. 404 means
-     * nothing was stored there, which is the state the caller asked for, so it
-     * reports success rather than an error the UI would have to special-case.
-     */
+    /** Clear the profile-scoped value so the setting inherits again. */
     suspend fun clearProfileValue(key: String): ApiResult<Unit> =
-        when (val result = settingsApi.deleteValue(key, SettingScopeIdentity.profile())) {
-            is ApiResult.Error ->
-                if (result.code == 404) ApiResult.Success(Unit) else result
-            else -> result
-        }
+        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profile()))
 
     /**
      * Write one like-client value (`scope=profile_client`) — the preference
      * that roams among this profile's devices of the same client family. The
      * family half of the identity rides the `X-Silo-Client-Family` header the
-     * auth interceptor attaches; see [setProfileValue] for the mutation-id
-     * contract.
+     * auth interceptor attaches.
      */
-    suspend fun setProfileClientValue(
-        key: String,
-        value: JsonElement,
-        mutationId: String = newSettingMutationId(),
-    ): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(
-            key = key,
-            scope = SettingScopeIdentity.profileClient(),
-            value = value,
-            mutationId = mutationId,
-        )
+    suspend fun setProfileClientValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profileClient(), value, newSettingMutationId())
 
     suspend fun clearProfileClientValue(key: String): ApiResult<Unit> =
-        treatMissingAsCleared(
-            settingsApi.deleteValue(key, SettingScopeIdentity.profileClient()),
-        )
+        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileClient()))
 
     /**
      * Write one device-override value (`scope=profile_device`) — this profile
      * on this device only. The device half of the identity rides the
      * `X-Silo-Device-Id` header.
      */
-    suspend fun setProfileDeviceValue(
-        key: String,
-        value: JsonElement,
-        mutationId: String = newSettingMutationId(),
-    ): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(
-            key = key,
-            scope = SettingScopeIdentity.profileDevice(),
-            value = value,
-            mutationId = mutationId,
-        )
+    suspend fun setProfileDeviceValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, newSettingMutationId())
 
     suspend fun setMigrationDeviceValue(key: String, value: JsonElement, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<StoredSettingValue> =
         settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, newSettingMutationId(), authority.profileId, authority)
@@ -121,9 +80,7 @@ class SettingsRepository(
         settingsApi.getMigrationEffectiveValues(keys, authority).map { result -> result.settings.associateBy { it.key } }
 
     suspend fun clearProfileDeviceValue(key: String): ApiResult<Unit> =
-        treatMissingAsCleared(
-            settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()),
-        )
+        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()))
 
     /**
      * 404 on a DELETE means nothing was stored there, which is the state the
@@ -136,16 +93,4 @@ class SettingsRepository(
                 if (result.code == 404) ApiResult.Success(Unit) else result
             else -> result
         }
-
-    suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
-        settingsApi.getEffectiveSubtitleAppearance()
-
-    suspend fun setDeviceSubtitleAppearanceOverride(
-        appearance: SubtitleAppearance,
-        profileId: String? = null,
-    ): ApiResult<Unit> =
-        settingsApi.setDeviceSubtitleAppearanceOverride(appearance, profileId)
-
-    suspend fun deleteDeviceSubtitleAppearanceOverride(): ApiResult<Unit> =
-        settingsApi.deleteDeviceSubtitleAppearanceOverride()
 }

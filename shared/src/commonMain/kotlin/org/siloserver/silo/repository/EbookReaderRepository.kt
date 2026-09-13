@@ -3,7 +3,6 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.ebook.EbookAnnotation
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.apiv2.EbookReaderV2Api
-import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.EbookReaderApi
@@ -19,9 +18,6 @@ class EbookReaderRepository(private val api: EbookReaderApi, private val annotat
 
     fun readPath(contentId: String, fileId: Int): String =
         api.readPath(contentId, fileId)
-
-    suspend fun getConversionCapability() =
-        api.getConversionCapability()
 
     suspend fun isKindleConversionAvailable(): Boolean {
         cachedKindleConversion?.let { return it }
@@ -48,9 +44,6 @@ class EbookReaderRepository(private val api: EbookReaderApi, private val annotat
 
     suspend fun createBookmark(contentId: String, id: String, location: String, scope: AuthScopeSnapshot) =
         annotations.createBookmark(contentId, id, location, scope)
-
-    suspend fun updateAnnotation(contentId: String, annotation: EbookAnnotation, patch: JsonObject, scope: AuthScopeSnapshot) =
-        annotations.patch(contentId, annotation, patch, scope)
 
     suspend fun deleteAnnotation(contentId: String, annotation: EbookAnnotation, scope: AuthScopeSnapshot) =
         annotations.delete(contentId, annotation, scope)
