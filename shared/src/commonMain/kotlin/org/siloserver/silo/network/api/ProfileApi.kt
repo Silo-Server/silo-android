@@ -10,6 +10,9 @@ import org.siloserver.silo.network.*
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.identityChanged
+import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.MaxPlaybackQuality
 import org.siloserver.silo.network.apiv2.Patch
 import org.siloserver.silo.network.apiv2.ProfileUpdate
@@ -20,7 +23,7 @@ import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 class ProfileApi(
     private val client: HttpClient,
-    private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val apiV2Gate: ApiV2Gate,
     private val tokens: TokenManager? = null,
 ) {
 
@@ -33,19 +36,16 @@ class ProfileApi(
     ): ApiResult<T> {
         val scope = tokens?.snapshotCurrentScope()
         if (tokens != null && scope == null) return identityChanged()
-        val result = safeApiV2Call<T>(apiV2Gate) {
+        return ownedV2Call<T, T>(apiV2Gate, tokens, scope, OwnerPolicy.IDENTITY, status, { owner ->
             client.request(path) {
                 this.method = method
-                scope?.let { authScope(it) }
+                owner?.let { authScope(it) }
                 requireSiloAuth()
                 if (nonRetryable) singleAttempt()
                 configure()
-            }.also { check(!it.status.isSuccess() || it.status == status) }
-        }
-        return if (scope != null && !scope.isSameIdentityAs(tokens?.snapshotCurrentScope())) identityChanged() else result
+            }
+        }) { it }
     }
-
-    private fun identityChanged() = ApiResult.Error(0, "identity_changed", "The profile account or selection changed.")
 
     suspend fun listProfiles(): ApiResult<ProfilesResponse> =
         exchange<ProfileCollectionV2>("/api/v2/profiles", HttpMethod.Get, HttpStatusCode.OK)

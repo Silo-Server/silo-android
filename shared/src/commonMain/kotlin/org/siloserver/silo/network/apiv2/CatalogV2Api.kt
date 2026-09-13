@@ -5,8 +5,6 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.request.*
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -24,7 +22,7 @@ import org.siloserver.silo.network.*
 /** Bounded native browse reads. A refused cursor never falls back to page one. */
 class CatalogV2Api(
     private val client: HttpClient,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
     private val tokenManager: TokenManager? = null,
 ) {
     suspend fun browse(
@@ -36,8 +34,8 @@ class CatalogV2Api(
         val usePost = query.groups.isNotEmpty()
         val key = "${if (usePost) "POST" else "GET"}/catalog:$imageSize:${SiloJson.encodeToString(query)}"
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
-        validate(key, continuation, scope)?.let { return it }
-        val result = safeApiV2Call<CatalogPageWireV2>(gate) {
+        if (continuation != null && continuation.requestKey != key) return invalid("The query changed. Reload from the first page.")
+        val result = ownedV2Call<CatalogPageWireV2, CatalogPageWireV2>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { _ ->
             if (usePost) client.post("/api/v2/catalog/query") {
                 scope?.let { authScope(it) }
                 imageSize?.let { parameter("image_size", it) }
@@ -65,9 +63,7 @@ class CatalogV2Api(
                 query.sort?.let { parameter("sort", if (query.order == "desc") "-$it" else it) }
                 continuation?.let { parameter("cursor", it.cursor) }
             }
-        }
-        currentCoroutineContext().ensureActive()
-        validate(key, continuation, scope)?.let { return it }
+        }) { it }
         return when (result) {
             is ApiResult.Success -> {
                 val body = result.data
@@ -93,16 +89,14 @@ class CatalogV2Api(
             "q" to q, "limit" to limit.toString(), "skip_total" to skipTotal.toString())
         val key = "GET/catalog/audiobook-groups:${SiloJson.encodeToString(params)}"
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
-        validate(key, continuation, scope)?.let { return it }
-        val result = safeApiV2Call<AudiobookGroupsWireV2>(gate) {
+        if (continuation != null && continuation.requestKey != key) return invalid("The query changed. Reload from the first page.")
+        val result = ownedV2Call<AudiobookGroupsWireV2, AudiobookGroupsWireV2>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { _ ->
             client.get("/api/v2/catalog/audiobook-groups") {
                 scope?.let { authScope(it) }
                 params.forEach { (name, value) -> parameter(name, value) }
                 continuation?.let { parameter("cursor", it.cursor) }
             }
-        }
-        currentCoroutineContext().ensureActive()
-        validate(key, continuation, scope)?.let { return it }
+        }) { it }
         return when (result) {
             is ApiResult.Success -> next(key, result.data.page, continuation, scope).map {
                 CatalogPageV2(result.data.items, result.data.total, result.data.totalExact, it)
@@ -113,7 +107,7 @@ class CatalogV2Api(
     }
 
     suspend fun filters(libraryId: String? = null, source: String? = null, collectionId: String? = null,
-        skipTechnical: Boolean = false): ApiResult<CatalogFiltersV2> = read { scope ->
+        skipTechnical: Boolean = false): ApiResult<CatalogFiltersV2> = read<CatalogFiltersV2, CatalogFiltersV2>({ scope ->
         client.get("/api/v2/catalog/filters") {
             scope?.let { authScope(it) }
             parameter("library_id", libraryId)
@@ -121,9 +115,9 @@ class CatalogV2Api(
             parameter("collection_id", collectionId)
             parameter("skip_technical", skipTechnical)
         }
-    }
+    }) { it }
 
-    suspend fun searchFacet(scope: CatalogFacetScopeV2, facet: String, prefix: String): ApiResult<CatalogFacetMatchesV2> = read { viewer ->
+    suspend fun searchFacet(scope: CatalogFacetScopeV2, facet: String, prefix: String): ApiResult<CatalogFacetMatchesV2> = read<CatalogFacetMatchesV2, CatalogFacetMatchesV2>({ viewer ->
         client.get("/api/v2/catalog/filters/search") {
             viewer?.let { authScope(it) }
             parameter("library_id", scope.libraryId)
@@ -133,55 +127,55 @@ class CatalogV2Api(
             parameter("q", prefix)
             parameter("limit", 100)
         }
-    }
+    }) { it }
 
-    suspend fun searchCapabilities(): ApiResult<CatalogSearchCapabilitiesV2> = read { scope ->
+    suspend fun searchCapabilities(): ApiResult<CatalogSearchCapabilitiesV2> = read<CatalogSearchCapabilitiesV2, CatalogSearchCapabilitiesV2>({ scope ->
         client.get("/api/v2/catalog/search/capabilities") { scope?.let { authScope(it) } }
-    }
+    }) { it }
 
-    suspend fun libraryCollections(libraryId: String): ApiResult<LibraryCollectionTabV2> = read { scope ->
+    suspend fun libraryCollections(libraryId: String): ApiResult<LibraryCollectionTabV2> = read<LibraryCollectionTabV2, LibraryCollectionTabV2>({ scope ->
         client.get("/api/v2/library/$libraryId/collections") { scope?.let { authScope(it) } }
-    }
+    }) { it }
 
     suspend fun itemDetail(id: String): ApiResult<ItemDetail> =
-        read<ItemDetailReadV2> { scope ->
+        read<ItemDetailReadV2, ItemDetail>({ scope ->
             client.get("/api/v2/catalog/items/$id") { scope?.let { authScope(it) } }
-        }.project { it.toDomain() }
+        }) { it.toDomain() }
 
     suspend fun seriesSeasons(id: String): ApiResult<SeasonsResponse> =
-        read<DetailCollectionReadV2<Season>> { scope ->
+        read<DetailCollectionReadV2<Season>, SeasonsResponse>({ scope ->
             client.get("/api/v2/catalog/series/$id/seasons") { scope?.let { authScope(it) } }
-        }.project { it.requireComplete(); SeasonsResponse(it.items) }
+        }) { it.requireComplete(); SeasonsResponse(it.items) }
 
     suspend fun seasonEpisodes(id: String, number: Int): ApiResult<EpisodesResponse> =
-        read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->
+        read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
             client.get("/api/v2/catalog/series/$id/seasons/$number/episodes") { scope?.let { authScope(it) } }
-        }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+        }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
     suspend fun itemVersions(id: String): ApiResult<List<FileVersion>> =
-        read<DetailCollectionReadV2<FileVersionReadV2>> { scope ->
+        read<DetailCollectionReadV2<FileVersionReadV2>, List<FileVersion>>({ scope ->
             client.get("/api/v2/catalog/items/$id/versions") { scope?.let { authScope(it) } }
-        }.project { it.requireComplete(); it.items.map { row -> row.toDomain() } }
+        }) { it.requireComplete(); it.items.map { row -> row.toDomain() } }
 
     suspend fun itemEpisodes(id: String): ApiResult<EpisodesResponse> =
-        read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->
+        read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
             client.get("/api/v2/catalog/items/$id/episodes") { scope?.let { authScope(it) } }
-        }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+        }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
     suspend fun person(id: Long): ApiResult<Person> =
-        read<PersonReadV2> { scope ->
+        read<PersonReadV2, Person>({ scope ->
             client.get("/api/v2/catalog/people/$id") { scope?.let { authScope(it) } }
-        }.project { it.toDomain() }
+        }) { it.toDomain() }
 
     suspend fun people(query: String?, limit: Int = 20): ApiResult<List<Person>> {
         if (limit !in 1..100) return ApiResult.Error(0, "validation_failed", "People search limit must be between 1 and 100.")
-        return read<DetailCollectionReadV2<PersonReadV2>> { scope ->
+        return read<DetailCollectionReadV2<PersonReadV2>, List<Person>>({ scope ->
             client.get("/api/v2/catalog/people") {
                 scope?.let { authScope(it) }
                 parameter("q", query)
                 parameter("limit", limit)
             }
-        }.project { it.requireComplete(); it.items.map { person -> person.toDomain() } }
+        }) { it.requireComplete(); it.items.map { person -> person.toDomain() } }
     }
 
     // These operations currently accept no cursor. Refuse an unexpected partial
@@ -190,28 +184,9 @@ class CatalogV2Api(
         require(page?.hasMore != true && page?.nextCursor.isNullOrBlank()) { "The server returned an unsupported continuation." }
     }
 
-    private inline fun <T, R> ApiResult<T>.project(convert: (T) -> R): ApiResult<R> = when (this) {
-        is ApiResult.Success -> try { ApiResult.Success(convert(data)) } catch (error: IllegalArgumentException) {
-            ApiResult.Error(0, "invalid_response", error.message ?: "The detail response could not be represented.")
-        }
-        is ApiResult.Error -> this
-        is ApiResult.NetworkError -> this
-    }
-
-    private suspend inline fun <reified T> read(block: (AuthScopeSnapshot?) -> HttpResponse): ApiResult<T> {
-        val scope = tokenManager?.snapshotCurrentScope()
-        val result = safeApiV2Call<T>(gate) { block(scope) }
-        currentCoroutineContext().ensureActive()
-        validate("", null, scope)?.let { return it }
-        return result
-    }
-
-    private suspend fun validate(key: String, previous: CatalogContinuationV2?, scope: AuthScopeSnapshot?): ApiResult.Error? {
-        if (previous != null && previous.requestKey != key) return invalid("The query changed. Reload from the first page.")
-        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload from the first page.")
-        return null
-    }
+    private suspend inline fun <reified T, R> read(
+        crossinline block: suspend (AuthScopeSnapshot?) -> HttpResponse, crossinline convert: (T) -> R,
+    ): ApiResult<R> = ownedV2Call<T, R>(gate, tokenManager, tokenManager?.snapshotCurrentScope(), OwnerPolicy.IDENTITY, null, block, convert)
 
     private fun next(key: String, page: PageInfo, previous: CatalogContinuationV2?, scope: AuthScopeSnapshot?): ApiResult<CatalogContinuationV2?> {
         if (!page.hasMore) return ApiResult.Success(null)

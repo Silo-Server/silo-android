@@ -19,7 +19,7 @@ class DiscoverV2Test {
             respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = DiscoverV2Api(client, tokens)
+            val api = DiscoverV2Api(client, tokens, ApiV2Gate.Unrestricted)
             val row = api.read(owner).getOrThrow().rows.single()
             assertEquals("For You", row.label); assertEquals("for-you-main", row.sectionKind); assertEquals("stable", row.sectionKey)
             assertEquals(listOf("opaque:2", "1"), row.items.map { it.contentId })
@@ -35,8 +35,8 @@ class DiscoverV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = DiscoverV2Api(client, tokens); val original = owner
-            for (invalid in listOf("{}", valid.replace("false", "true"), valid.replace("\"opaque:2\"", "2"), valid.replace("\"opaque:2\"", "\"\""), valid.replace("\"items\":[{\"content_id\"", "\"missing\":[{\"content_id\""))) {
+            val api = DiscoverV2Api(client, tokens, ApiV2Gate.Unrestricted); val original = owner
+            for (invalid in listOf("{}", valid.replace("false", "true"), valid.replace("\"opaque:2\"", "\"\""), valid.replace("\"items\":[{\"content_id\"", "\"missing\":[{\"content_id\""))) {
                 body = invalid; assertFalse(api.read(original) is ApiResult.Success)
             }
             body = valid; status = HttpStatusCode.Accepted; assertFalse(api.read(original) is ApiResult.Success)

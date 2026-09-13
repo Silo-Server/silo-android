@@ -17,7 +17,7 @@ class CatalogDetailReadV2Test {
     @Test fun detailProjectsStringIdsAndCatalogMarkers() = runTest {
         val client = client(detail("\"42\""))
         try {
-            val result = assertIs<ApiResult.Success<*>>(CatalogV2Api(client).itemDetail("m1")).data as org.siloserver.silo.model.catalog.ItemDetail
+            val result = assertIs<ApiResult.Success<*>>(CatalogV2Api(client, ApiV2Gate.Unrestricted).itemDetail("m1")).data as org.siloserver.silo.model.catalog.ItemDetail
             assertEquals(42, result.versions.single().fileId)
             assertEquals(42, result.userData?.lastFileId)
             assertEquals(1.5, result.intro?.start)
@@ -28,7 +28,7 @@ class CatalogDetailReadV2Test {
     @Test fun fileIdsRejectOverflowFractionSignsAndNumericWireValues() = runTest {
         for (id in listOf("\"2147483648\"", "\"9223372036854775808\"", "\"1.5\"", "\"+42\"", "\"-1\"", "\"opaque\"", "42")) {
             val client = client(detail(id))
-            try { assertFalse(CatalogV2Api(client).itemDetail("m1") is ApiResult.Success, "Unexpected accepted ID: $id") }
+            try { assertFalse(CatalogV2Api(client, ApiV2Gate.Unrestricted).itemDetail("m1") is ApiResult.Success, "Unexpected accepted ID: $id") }
             finally { client.close() }
         }
     }
@@ -40,7 +40,7 @@ class CatalogDetailReadV2Test {
             """{"items":[],"page":{"has_more":true,"next_cursor":"next"}}""" to false,
         )) {
             val client = client(body)
-            try { assertEquals(valid, CatalogV2Api(client).seriesSeasons("series") is ApiResult.Success) }
+            try { assertEquals(valid, CatalogV2Api(client, ApiV2Gate.Unrestricted).seriesSeasons("series") is ApiResult.Success) }
             finally { client.close() }
         }
     }
@@ -61,7 +61,7 @@ class CatalogDetailReadV2Test {
             respond(body, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = CatalogV2Api(client)
+            val api = CatalogV2Api(client, ApiV2Gate.Unrestricted)
             val episodes = assertIs<ApiResult.Success<org.siloserver.silo.model.catalog.EpisodesResponse>>(api.seasonEpisodes("series", 0)).data
             assertEquals(Int.MAX_VALUE, episodes.episodes.single().files.single().fileId)
             assertEquals(7, episodes.episodes.single().userData?.lastFileId)
@@ -81,7 +81,7 @@ class CatalogDetailReadV2Test {
             respond(detail("\"42\""), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val result = CatalogV2Api(client, tokenManager = tokens).itemDetail("m1")
+            val result = CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens).itemDetail("m1")
             assertEquals("identity_changed", assertIs<ApiResult.Error>(result).error)
         } finally { client.close() }
     }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -147,7 +149,7 @@ class ProfileSelectionAdminGateTest {
         }
         val tokenManager = TokenManagerImpl(DefaultIdentityTransitionBarrier())
         return AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
         )
     }
@@ -170,7 +172,7 @@ class ProfileSelectionAdminGateTest {
         }
         val tokenManager = TokenManagerImpl(DefaultIdentityTransitionBarrier())
         return ProfileRepository(
-            profileApi = ProfileApi(client),
+            profileApi = ProfileApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
         )
     }

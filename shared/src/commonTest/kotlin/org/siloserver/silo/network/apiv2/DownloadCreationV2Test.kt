@@ -18,7 +18,7 @@ class DownloadCreationV2Test {
     private val row = """{"id":"entry","content_id":"movie","media_file_id":"42","device_id":"device","file_size":100,"bytes_sent":0,"kind":"queued","status":"ready","quality":"original","effective_quality":"original","delivery_format":"original","target_bitrate_kbps":0,"revision":7,"created_at":"2026-01-01T00:00:00Z"}"""
     private fun client(handler: suspend MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData) =
         HttpClient(MockEngine(handler)) { install(ContentNegotiation) { json(SiloJson) } }
-    private fun api(c: HttpClient) = DownloadCreationV2Api(c,tokens,devices,DownloadRegistryV2Api(c,tokens,devices))
+    private fun api(c: HttpClient) = DownloadCreationV2Api(c,tokens,devices,DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted), ApiV2Gate.Unrestricted)
     private fun MockRequestHandleScope.json(body: String, status: HttpStatusCode = HttpStatusCode.OK) = respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))
 
     @Test fun createSendsExactlyOneDeviceIdHeaderThroughTheAuthPlugin() = runTest {
@@ -38,7 +38,7 @@ class DownloadCreationV2Test {
             install(SiloAuthPlugin) { tokenManager = authenticated; deviceMetadataProvider = devices }
         }
         try {
-            val api = DownloadCreationV2Api(c,authenticated,devices,DownloadRegistryV2Api(c,authenticated,devices))
+            val api = DownloadCreationV2Api(c,authenticated,devices,DownloadRegistryV2Api(c,authenticated,devices, ApiV2Gate.Unrestricted), ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42),scope))
             assertEquals(listOf("device"),deviceValues)
         } finally { c.close() }

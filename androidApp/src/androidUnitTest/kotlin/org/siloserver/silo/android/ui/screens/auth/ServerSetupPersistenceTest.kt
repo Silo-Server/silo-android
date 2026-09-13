@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -67,8 +69,7 @@ class ServerSetupPersistenceTest {
                     }
                     install(ContentNegotiation) { json(SiloJson) }
                     install(SiloAuthPlugin) { this.tokenManager = tokenManager }
-                },
-            ),
+                }, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
         )
         val viewModel = ServerSetupViewModel(repository, FakeCleartextConsentStore())
@@ -216,8 +217,7 @@ class ServerSetupPersistenceTest {
                     HttpClient(MockEngine { throw IOException("Unexpected network request") }) {
                         install(ContentNegotiation) { json(SiloJson) }
                         install(SiloAuthPlugin) { this.tokenManager = tokenManager }
-                    },
-                ),
+                    }, ApiV2Gate.Unrestricted),
                 tokenManager = tokenManager,
                 serverRegistry = registry,
             ),
@@ -261,8 +261,7 @@ class ServerSetupPersistenceTest {
             HttpClient(MockEngine { throw IOException("Unexpected network request") }) {
                 install(ContentNegotiation) { json(SiloJson) }
                 install(SiloAuthPlugin) { this.tokenManager = tokenManager }
-            },
-        ),
+            }, ApiV2Gate.Unrestricted),
         tokenManager = tokenManager,
     )
 

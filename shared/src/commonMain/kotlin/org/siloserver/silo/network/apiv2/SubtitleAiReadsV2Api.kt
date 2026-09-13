@@ -26,15 +26,11 @@ internal data class AiJobV2(
 ) {
     fun project(): SubtitleAiJob {
         val job = id.toLongOrNull()
-        val file = mediaFileId.toIntOrNull()
-        val result = resultSubtitleId?.toIntOrNull()
         require(job != null && job > 0 && job.toString() == id)
-        require(file != null && file > 0 && file.toString() == mediaFileId)
-        require(resultSubtitleId == null || (result != null && result > 0 && result.toString() == resultSubtitleId))
         require(kind in setOf(SubtitleAiJobKind.Translate, SubtitleAiJobKind.Transcribe, SubtitleAiJobKind.TranscribeTranslate))
         require(progress.isFinite() && progress in 0.0..1.0)
-        return SubtitleAiJob(job, file, kind, sourceIndex, sourceLanguage, targetLanguage, engine, model,
-            status, progress, progressMessage, result, errorMessage, createdAt, updatedAt)
+        return SubtitleAiJob(job, checkedPositiveId(mediaFileId), kind, sourceIndex, sourceLanguage, targetLanguage, engine, model,
+            status, progress, progressMessage, resultSubtitleId?.let(::checkedPositiveId), errorMessage, createdAt, updatedAt)
     }
 }
 @Serializable private data class AiJobEnvelope(val job: AiJobV2)
@@ -42,50 +38,34 @@ internal data class AiJobV2(
 @Serializable private data class AiQuotaV2(val limited: Boolean, val limit: Int, val used: Int, val remaining: Int, val period: String)
 
 /** Quota, job reads and job cancellation. Cancellation acknowledges a request; job polling determines the terminal outcome. */
-class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
+class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     /** Sends [block] bound to [scope] (or the current scope) and discards the reply if the identity moved meanwhile. */
-    private suspend inline fun <reified T> bound(scope: AuthScopeSnapshot?,
-        block: (AuthScopeSnapshot) -> HttpResponse): ApiResult<T> {
-        val captured = scope ?: tokens.snapshotCurrentScope() ?: return changed()
-        if (!current(captured)) return changed()
-        val result = safeApiV2Call<T>(gate) { block(captured) }
-        return if (current(captured)) result else changed()
+    private suspend inline fun <reified T, R> bound(scope: AuthScopeSnapshot?, expected: HttpStatusCode,
+        crossinline block: suspend (AuthScopeSnapshot) -> HttpResponse, crossinline project: (T) -> R): ApiResult<R> {
+        val captured = scope ?: tokens.snapshotCurrentScope() ?: return identityChanged()
+        return ownedV2Call<T, R>(gate, tokens, captured, OwnerPolicy.PROFILE, expected, { block(captured) }, project)
     }
-    private suspend fun current(scope: AuthScopeSnapshot): Boolean {
-        val now = tokens.snapshotCurrentScope()
-        return scope.isSameIdentityAs(now) && scope.profileId == now?.profileId && scope.profileToken == now?.profileToken
-    }
-    private suspend inline fun <reified T> read(path: String, scope: AuthScopeSnapshot?,
-        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> = bound(scope) { captured ->
-        client.get(path) { authScope(captured); requireSiloAuth(); configure() }
-    }
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The subtitle job's account or profile changed.")
-    private inline fun <T, R> project(result: ApiResult<T>, block: (T) -> R): ApiResult<R> = when (result) {
-        is ApiResult.Success -> try { ApiResult.Success(block(result.data)) }
-            catch (_: IllegalArgumentException) { ApiResult.Error(0, "invalid_subtitle_job", "The server returned an unsupported subtitle job identity.") }
-        is ApiResult.Error -> result
-        is ApiResult.NetworkError -> result
-    }
-    suspend fun quota(): ApiResult<SubtitleAiQuota> = project(read<AiQuotaV2>("/api/v2/subtitles/ai/quota", null)) {
+    private suspend inline fun <reified T, R> read(path: String, scope: AuthScopeSnapshot?,
+        noinline configure: HttpRequestBuilder.() -> Unit = {}, crossinline project: (T) -> R): ApiResult<R> =
+        bound<T, R>(scope, HttpStatusCode.OK, { captured -> client.get(path) { authScope(captured); requireSiloAuth(); configure() } }, project)
+    suspend fun quota(): ApiResult<SubtitleAiQuota> = read<AiQuotaV2, SubtitleAiQuota>("/api/v2/subtitles/ai/quota", null) {
         SubtitleAiQuota(it.limited, it.limit, it.used, it.remaining, it.period)
     }
     suspend fun job(id: Long, scope: AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> =
-        project(read<AiJobEnvelope>("/api/v2/subtitles/ai/jobs/$id", scope)) {
+        read<AiJobEnvelope, SubtitleAiJobResponse>("/api/v2/subtitles/ai/jobs/$id", scope) {
             val job = it.job.project(); require(job.id == id); SubtitleAiJobResponse(job)
         }
     suspend fun jobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
-        project(read<AiJobsEnvelope>("/api/v2/subtitles/ai/jobs", null) { parameter("media_file_id", mediaFileId.toString()) }) {
+        read<AiJobsEnvelope, SubtitleAiJobsResponse>("/api/v2/subtitles/ai/jobs", null, { parameter("media_file_id", mediaFileId.toString()) }) {
             val jobs = it.jobs.map { wire -> wire.project() }
             require(jobs.all { job -> job.mediaFileId == mediaFileId } && jobs.map { job -> job.id }.distinct().size == jobs.size)
             SubtitleAiJobsResponse(jobs)
         }
     suspend fun cancel(id: Long, scope: AuthScopeSnapshot? = null): ApiResult<Unit> {
         if (id <= 0) return ApiResult.Error(0, "invalid_subtitle_job", "A positive job identifier is required.")
-        return bound(scope) { captured ->
+        return bound<Unit, Unit>(scope, HttpStatusCode.NoContent, { captured ->
             // Declared natural-idempotent for this exact immutable job ID.
             client.post("/api/v2/subtitles/ai/jobs/$id/cancel") { authScope(captured); requireSiloAuth() }
-                .also { check(!it.status.isSuccess() || it.status == HttpStatusCode.NoContent) }
-        }
+        }) { }
     }
 }

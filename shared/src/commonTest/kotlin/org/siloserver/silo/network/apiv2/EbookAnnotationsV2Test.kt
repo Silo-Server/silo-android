@@ -35,7 +35,7 @@ class EbookAnnotationsV2Test {
             }
         }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertEquals(listOf("one", "two"), assertIs<ApiResult.Success<EbookAnnotationListResponse>>(api.list("book", scope)).data.items.map { it.id })
             repeated = true
             assertIs<ApiResult.Error>(api.list("book", scope))
@@ -53,7 +53,7 @@ class EbookAnnotationsV2Test {
             else reply(row("retained").replace("page:2", "page:9"))
         }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.createBookmark("book", "retained", "page:2", scope))
             val result = assertIs<ApiResult.Success<EbookAnnotation>>(api.createBookmark("book", "retained", "page:2", scope))
             assertEquals("page:9", result.data.location)
@@ -75,7 +75,7 @@ class EbookAnnotationsV2Test {
             } else reply("", if (calls == 2) HttpStatusCode.OK else HttpStatusCode.NoContent)
         }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val annotation = EbookAnnotation(id = "one", contentId = "book", kind = "bookmark", etag = "old")
             assertEquals("new", assertIs<ApiResult.Success<EbookAnnotation>>(api.patch("book", annotation, buildJsonObject { put("note", JsonNull) }, scope)).data.etag)
             assertFalse(api.delete("book", annotation, scope) is ApiResult.Success)
@@ -93,7 +93,7 @@ class EbookAnnotationsV2Test {
             reply("""{"items":[${row(content = if (changed) "book" else "other")}],"page":{"has_more":false}}""")
         }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.list("book", captured))
             changed = true
             assertIs<ApiResult.Error>(api.list("book", captured))

@@ -42,10 +42,10 @@ private open class FakeDownloadsApi(
     private val initialList: List<DownloadRecord> = emptyList(),
     private val createResult: ((DownloadRequest) -> ApiResult<DownloadRecord>)? = null,
 ) : org.siloserver.silo.network.api.DownloadsApi(
-    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices),
+    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     tokens = org.siloserver.silo.network.TokenManagerImpl(),
     creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices,
-        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices)),
+        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
 ) {
 
     var listCalls = 0

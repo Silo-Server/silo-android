@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -29,7 +31,7 @@ class InvitationV2Test {
             install(ContentNegotiation) { json(SiloJson) }
             install(SiloAuthPlugin) { tokenManager = tokens }
         }
-        assertIs<ApiResult.Error>(AuthApi(client).acceptInvitation("https://invite.example.test", "a/b?c", "password"))
+        assertIs<ApiResult.Error>(AuthApi(client, ApiV2Gate.Unrestricted).acceptInvitation("https://invite.example.test", "a/b?c", "password"))
         assertEquals(1, calls)
         assertEquals("existing-access", tokens.getAccessToken())
         client.close()
@@ -50,7 +52,7 @@ class InvitationV2Test {
             val client = HttpClient(MockEngine { respond(body, status, headersOf(HttpHeaders.ContentType, "application/json")) }) {
                 install(ContentNegotiation) { json(SiloJson) }
             }
-            assertEquals(succeeds, AuthApi(client).acceptInvitation("https://invite.example.test", "token", "password") is ApiResult.Success)
+            assertEquals(succeeds, AuthApi(client, ApiV2Gate.Unrestricted).acceptInvitation("https://invite.example.test", "token", "password") is ApiResult.Success)
             client.close()
         }
     }

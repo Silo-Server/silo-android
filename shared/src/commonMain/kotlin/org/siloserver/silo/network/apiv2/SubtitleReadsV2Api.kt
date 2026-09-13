@@ -22,27 +22,17 @@ import org.siloserver.silo.network.*
 }
 @Serializable private data class SearchResultsV2(val results: List<SearchResultV2>, val warnings: List<String>)
 
-class SubtitleReadsV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
-    private suspend inline fun <reified T> read(path: String, method: HttpMethod = HttpMethod.Get,
-        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
-        val scope = tokens.snapshotCurrentScope() ?: return changed()
-        val result = safeApiV2Call<T>(gate) {
-            client.request(path) { this.method = method; authScope(scope); requireSiloAuth(); configure() }
-                .also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
-        }
-        return if (scope.isSameIdentityAs(tokens.snapshotCurrentScope())) result else changed()
-    }
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The subtitle account or profile changed.")
-    private inline fun <T,R> project(result: ApiResult<T>, block: (T) -> R): ApiResult<R> = when(result) {
-        is ApiResult.Success -> try { ApiResult.Success(block(result.data)) }
-            catch (_: IllegalArgumentException) { ApiResult.Error(0,"invalid_subtitles","The server returned unsupported subtitle identities.") }
-        is ApiResult.Error -> result
-        is ApiResult.NetworkError -> result
+class SubtitleReadsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
+    private suspend inline fun <reified T, R> read(path: String, method: HttpMethod = HttpMethod.Get,
+        noinline configure: HttpRequestBuilder.() -> Unit = {}, crossinline project: (T) -> R): ApiResult<R> {
+        val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
+        return ownedV2Call<T, R>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.request(path) { this.method = method; authScope(owner!!); requireSiloAuth(); configure() }
+        }, project)
     }
     suspend fun list(file: Int): ApiResult<DownloadedSubtitlesResponse> {
         if (file <= 0) return ApiResult.Error(0,"invalid_file","A media file is required.")
-        return project(read<StoredListV2>("/api/v2/subtitles/$file")) { value ->
+        return read<StoredListV2, DownloadedSubtitlesResponse>("/api/v2/subtitles/$file") { value ->
             val rows = value.subtitles.map { it.project(file) }
             require(rows.map { it.id }.toSet().size == rows.size)
             DownloadedSubtitlesResponse(rows)
@@ -50,10 +40,10 @@ class SubtitleReadsV2Api(private val client: HttpClient, private val tokens: Tok
     }
     suspend fun search(request: SubtitleSearchRequest): ApiResult<SubtitleSearchResponse> {
         if (request.mediaFileId <= 0 || request.languages.size > 100) return ApiResult.Error(0,"invalid_search","The subtitle search is invalid.")
-        return project(read<SearchResultsV2>("/api/v2/subtitles/search", HttpMethod.Post) {
+        return read<SearchResultsV2, SubtitleSearchResponse>("/api/v2/subtitles/search", HttpMethod.Post, {
             contentType(ContentType.Application.Json)
             setBody(SearchBodyV2(request.mediaFileId.toString(),request.languages))
         }) { SubtitleSearchResponse(it.results.map { row -> row.project() },it.warnings) }
     }
-    suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = read("/api/v2/subtitles/ai/status")
+    suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = read<SubtitleAiStatus, SubtitleAiStatus>("/api/v2/subtitles/ai/status") { it }
 }

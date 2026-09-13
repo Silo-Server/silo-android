@@ -18,7 +18,7 @@ import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 class AuthApi(
     private val client: HttpClient,
-    private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val apiV2Gate: ApiV2Gate,
 ) {
 
     suspend fun login(request: LoginRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {

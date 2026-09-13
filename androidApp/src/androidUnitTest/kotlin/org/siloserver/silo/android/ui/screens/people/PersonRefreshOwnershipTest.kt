@@ -35,7 +35,7 @@ class PersonRefreshOwnershipTest {
         }
         respond(body,if(path.endsWith("/refresh")) {if(refusal) HttpStatusCode.ServiceUnavailable else HttpStatusCode.Accepted} else HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
     } } )) }
-    private fun vm()=PersonDetailViewModel(CatalogRepository(CatalogApi(client,CatalogV2Api(client,tokenManager=tokens),PersonRefreshV2Api(client,tokens))),SavedStateHandle(mapOf("personId" to 7)),tokens)
+    private fun vm()=PersonDetailViewModel(CatalogRepository(CatalogApi(client,CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens),PersonRefreshV2Api(client, tokens, ApiV2Gate.Unrestricted))),SavedStateHandle(mapOf("personId" to 7)),tokens)
     private fun scenario(block:suspend TestScope.(PersonDetailViewModel)->Unit)=runTest {
         engineDispatcher=StandardTestDispatcher(testScheduler)
         Dispatchers.setMain(engineDispatcher)

@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -243,7 +245,7 @@ class DiagnosticsApiTest {
         val result = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(1_000) {
                 transitions.withCurrentGeneration(transitions.generation.value) {
-                    DefaultDiagnosticsApi(client).upload(
+                    DefaultDiagnosticsApi(client, gate = ApiV2Gate.Unrestricted).upload(
                         byteArrayOf(1),
                         byteArrayOf(2),
                         capturedProfileId = "captured-profile",
@@ -281,7 +283,7 @@ class DiagnosticsApiTest {
         val result = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeout(1_000) {
                 transitions.withCurrentGeneration(transitions.generation.value) {
-                    DefaultDiagnosticsApi(client).upload(
+                    DefaultDiagnosticsApi(client, gate = ApiV2Gate.Unrestricted).upload(
                         byteArrayOf(1),
                         byteArrayOf(2),
                         capturedProfileId = null,
@@ -360,7 +362,7 @@ class DiagnosticsApiTest {
             install(ContentNegotiation) { json(SiloJson) }
             install(SiloAuthPlugin) { this.tokenManager = tokenManager }
         }
-        val api = DefaultDiagnosticsApi(client, nowMs = { NOW_MS })
+        val api = DefaultDiagnosticsApi(client, nowMs = { NOW_MS }, gate = ApiV2Gate.Unrestricted)
         return Fixture(
             api = api,
             requestProvider = { capturedRequest },

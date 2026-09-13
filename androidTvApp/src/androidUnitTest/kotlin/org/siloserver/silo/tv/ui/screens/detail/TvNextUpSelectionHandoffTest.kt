@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
@@ -730,7 +732,7 @@ class TvNextUpSelectionHandoffTest {
             override suspend fun snapshotCurrentScope() = tokenManager.currentScope()
         }
         val catalogRepository = CatalogRepository(
-            catalogApi = CatalogApi(client, CatalogV2Api(client, tokenManager = tokenManager)),
+            catalogApi = CatalogApi(client, CatalogV2Api(client, ApiV2Gate.Unrestricted, tokenManager)),
             identityTransitions = identityTransitions,
         )
         val personalDataRepository = PersonalDataRepository(
@@ -739,7 +741,7 @@ class TvNextUpSelectionHandoffTest {
             identityTransitions = identityTransitions,
         )
         val profileRepository = ProfileRepository(
-            profileApi = ProfileApi(client, tokens = tokenManager),
+            profileApi = ProfileApi(client, ApiV2Gate.Unrestricted, tokenManager),
             tokenManager = tokenManager,
             identityTransitions = identityTransitions,
         )
@@ -751,7 +753,7 @@ class TvNextUpSelectionHandoffTest {
             },
             profileRepository = profileRepository,
             profileSettings = ProfileSettingsController(SettingsRepository(UnavailableSettingsApi())),
-            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client)),
+            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
             contentId = scenario.seriesId,
             userItemState = userState,
             tokenManager = tokenManager,
@@ -983,7 +985,7 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private class UnavailableSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
+    private class UnavailableSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
             SettingsCapabilitiesResult.ServerUpgradeRequired
     }

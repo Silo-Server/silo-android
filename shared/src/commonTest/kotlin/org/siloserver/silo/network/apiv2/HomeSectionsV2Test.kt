@@ -26,9 +26,9 @@ class HomeSectionsV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = HomeSectionsV2Api(client, tokens); val original = owner
+            val api = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted); val original = owner
             assertEquals(listOf("second", "first"), api.list(owner).getOrThrow().sections.map { it.id })
-            for (bad in listOf("{}", good.replace("\"items\"", "\"missing\""), good.replace("\"movie:2\"", "2"))) {
+            for (bad in listOf("{}", good.replace("\"items\"", "\"missing\""), good.replace("\"movie:2\"", "\"\""))) {
                 body = bad; assertFalse(api.list(owner) is ApiResult.Success)
             }
             body = good; status = HttpStatusCode.Accepted; assertFalse(api.list(owner) is ApiResult.Success)
@@ -42,7 +42,7 @@ class HomeSectionsV2Test {
         val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
         val client = HttpClient(MockEngine { sends++; respond(good, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) })
         try {
-            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens)))
+            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
             captureHook = { if (sends == 1 && ++checks == 2) { entered.complete(Unit); release.await() } }
             val task = async { repository.loadScopedHomeSections(owner, { run == 1 }) { published = true } }
             entered.await(); run = 2; release.complete(Unit); task.await()

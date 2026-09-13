@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -45,7 +47,7 @@ class AuthRepositoryAccountReplacementTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val repository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
             serverRegistry = registry,
         )

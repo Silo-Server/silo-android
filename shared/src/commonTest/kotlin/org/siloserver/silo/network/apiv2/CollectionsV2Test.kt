@@ -22,7 +22,7 @@ class CollectionsV2Test {
             assertEquals("/api/v2/collections", request.url.encodedPath)
             respond("""{"items":[{"id":"c1","name":"Films"}],"groups":[]}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        assertEquals("c1", assertIs<ApiResult.Success<org.siloserver.silo.model.personal.CollectionsResponse>>(CollectionApi(client).listCollections()).data.collections.single().id)
+        assertEquals("c1", assertIs<ApiResult.Success<org.siloserver.silo.model.personal.CollectionsResponse>>(CollectionApi(client, ApiV2Gate.Unrestricted).listCollections()).data.collections.single().id)
         client.close()
     }
 
@@ -39,7 +39,7 @@ class CollectionsV2Test {
                 respond("""{"type":"https://siloserver.org/docs/api/v2/problems/precondition_failed","title":"Changed","status":412,"instance":"urn:test","code":"precondition_failed","detail":"Changed"}""", HttpStatusCode.PreconditionFailed, headersOf(HttpHeaders.ETag to listOf("\"new\""), HttpHeaders.ContentType to listOf("application/problem+json")))
             }
         })
-        val api = CollectionApi(client)
+        val api = CollectionApi(client, ApiV2Gate.Unrestricted)
         val editor = assertIs<ApiResult.Success<CollectionEditor<Collection>>>(api.getCollection("c1")).data
         assertEquals(412, assertIs<ApiResult.Error>(api.deleteCollection("c1", editor)).code)
         assertEquals("\"original\"", editor.etag)
@@ -62,7 +62,7 @@ class CollectionsV2Test {
                 respond("", HttpStatusCode.NoContent)
             }
         }) { install(ContentNegotiation) { json(SiloJson) } }
-        val api = CollectionApi(client)
+        val api = CollectionApi(client, ApiV2Gate.Unrestricted)
         val editor = CollectionEditor(Collection("c1", name = "Films"), "\"tag\"", null)
         assertIs<ApiResult.Success<*>>(api.moveCollectionToGroup("c1", null, editor))
         assertIs<ApiResult.Success<Unit>>(api.addItem("c1", "m1"))
@@ -76,7 +76,7 @@ class CollectionsV2Test {
             calls++
             respond("""{"id":"c1","name":"Films"}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val api = CollectionApi(client)
+        val api = CollectionApi(client, ApiV2Gate.Unrestricted)
         assertEquals("missing_etag", assertIs<ApiResult.Error>(api.getCollection("c1")).error)
         assertIs<ApiResult.NetworkError>(api.reorderItems("c1", emptyList(), CollectionEditor(CollectionOrder(emptyList(), hasMore = true), "\"tag\"", null)))
         assertEquals(1, calls)
@@ -87,14 +87,14 @@ class CollectionsV2Test {
         val client = HttpClient(MockEngine { calls++; respond("", HttpStatusCode.NoContent) })
         val scope = org.siloserver.silo.network.AuthScopeSnapshot("server", "profile", "https://example.invalid", null)
         val editor = CollectionEditor(Collection("c1", name = "Films"), "\"tag\"", scope)
-        assertEquals("identity_changed", assertIs<ApiResult.Error>(CollectionApi(client).deleteCollection("c1", editor)).error)
+        assertEquals("identity_changed", assertIs<ApiResult.Error>(CollectionApi(client, ApiV2Gate.Unrestricted).deleteCollection("c1", editor)).error)
         assertEquals(0, calls)
         client.close()
     }
 
     @Test fun malformedListDoesNotBecomeEmptySuccess() = runTest {
         val client = HttpClient(MockEngine { respond("{}", headers = headersOf(HttpHeaders.ContentType, "application/json")) })
-        assertIs<ApiResult.NetworkError>(CollectionApi(client).listCollections())
+        assertIs<ApiResult.NetworkError>(CollectionApi(client, ApiV2Gate.Unrestricted).listCollections())
         client.close()
     }
 
@@ -111,7 +111,7 @@ class CollectionsV2Test {
             respond(if (calls == 1) """{"items":[],"page":{"has_more":true,"next_cursor":"opaque"},"total":2}"""
                 else """{"items":[],"page":{"has_more":false},"total":2}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val api = CollectionApi(client)
+        val api = CollectionApi(client, ApiV2Gate.Unrestricted)
         val first = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1")).data
         assertTrue(first.catalog.hasMore)
         val second = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1", first.continuation)).data
@@ -126,7 +126,7 @@ class CollectionsV2Test {
             calls++
             respond("""{"type":"https://siloserver.org/docs/api/v2/problems/invalid_cursor","title":"Invalid cursor","status":400,"instance":"urn:test","code":"invalid_cursor","detail":"Expired"}""", HttpStatusCode.BadRequest, headersOf(HttpHeaders.ContentType, "application/problem+json"))
         })
-        val result = CollectionApi(client).getCollectionItems("c1", org.siloserver.silo.network.api.CollectionContinuation("old", "c1", 40, null))
+        val result = CollectionApi(client, ApiV2Gate.Unrestricted).getCollectionItems("c1", org.siloserver.silo.network.api.CollectionContinuation("old", "c1", 40, null))
         assertEquals("invalid_cursor", assertIs<ApiResult.Error>(result).error)
         assertEquals(1, calls)
         client.close()

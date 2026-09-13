@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModelStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
@@ -58,7 +60,7 @@ class HomeScreenV2Test {
         }))
         val store = ViewModelStore()
         try {
-            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens)))
+            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
             val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))), cache, local)
             store.put("home", vm); block(vm)
         } finally { store.clear(); client.close(); Dispatchers.resetMain() }

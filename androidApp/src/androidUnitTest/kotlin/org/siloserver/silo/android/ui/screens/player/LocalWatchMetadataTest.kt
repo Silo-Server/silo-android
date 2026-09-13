@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
@@ -26,7 +28,7 @@ class LocalWatchMetadataTest {
             hook()
             respond(body, code, headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        try { block(CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens)))) } finally { client.close() }
+        try { block(CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted)))) } finally { client.close() }
     }
     private suspend fun read(repo: CatalogRepository, original: AuthScopeSnapshot? = owner, server: String = "s") =
         loadLocalWatchMetadata(repo, original, server, "p", "movie:a/b") { current }

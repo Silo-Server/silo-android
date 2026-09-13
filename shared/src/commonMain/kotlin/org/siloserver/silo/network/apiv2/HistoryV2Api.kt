@@ -2,14 +2,12 @@ package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import org.siloserver.silo.network.*
 
 /** One server history page per request; empty pages can still have continuation. */
 class HistoryV2Api(
     private val client: HttpClient,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
     private val tokenManager: TokenManager? = null,
 ) {
     suspend fun page(limit: Int = 40, imageSize: String? = null,
@@ -18,17 +16,14 @@ class HistoryV2Api(
         if (continuation != null && (continuation.limit != limit || continuation.imageSize != imageSize))
             return invalidCursor("The history request changed. Reload history.")
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
-        changedViewer(scope)?.let { return it }
-        val result = safeApiV2Call<HistoryPageWireV2>(gate) {
+        val result = ownedV2Call<HistoryPageWireV2, HistoryPageWireV2>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { owner ->
             client.get("/api/v2/history") {
-                scope?.let { authScope(it) }
+                owner?.let { authScope(it) }
                 parameter("limit", limit)
                 imageSize?.let { parameter("image_size", it) }
                 continuation?.let { parameter("cursor", it.cursor) }
             }
-        }
-        currentCoroutineContext().ensureActive()
-        changedViewer(scope)?.let { return it }
+        }) { it }
         return when (result) {
             is ApiResult.Success -> {
                 val page = result.data.page
@@ -48,10 +43,6 @@ class HistoryV2Api(
             is ApiResult.NetworkError -> result
         }
     }
-
-    private suspend fun changedViewer(scope: AuthScopeSnapshot?): ApiResult.Error? =
-        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload history.") else null
 
     private fun invalidCursor(message: String) = ApiResult.Error(0, "invalid_cursor", message)
 }

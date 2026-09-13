@@ -24,7 +24,7 @@ private data class InboxReadThroughV2(val through: String)
 class NotificationsV2Api(
     private val client: HttpClient,
     private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
     private val captured: AuthScopeSnapshot? = null,
 ) : NotificationsApi {
     override fun forScope(scope: AuthScopeSnapshot) = NotificationsV2Api(client, tokens, gate, scope)
@@ -32,24 +32,17 @@ class NotificationsV2Api(
     private suspend inline fun <reified T> exchange(
         method: HttpMethod, path: String, noinline configure: HttpRequestBuilder.() -> Unit = {},
     ): ApiResult<T> {
-        val scope = captured ?: tokens.snapshotCurrentScope()
-            ?: return ApiResult.Error(0, "identity_unavailable", "Notifications need an authenticated profile.")
-        if (!scope.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
-        val result = safeApiV2Call<T>(gate) {
+        val scope = captured ?: tokens.snapshotCurrentScope() ?: return identityChanged()
+        return ownedV2Call<T, T>(gate, tokens, scope, OwnerPolicy.IDENTITY,
+            if (T::class == Unit::class) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
             client.request(path) {
                 this.method = method
-                authScope(scope); requireSiloAuth()
+                authScope(owner!!); requireSiloAuth()
                 if (method != HttpMethod.Get) singleAttempt()
                 configure()
-            }.also { response ->
-                val expected = if (T::class == Unit::class) 204 else 200
-                check(!response.status.isSuccess() || response.status.value == expected)
             }
-        }
-        if (!scope.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
-        return result
+        }) { it }
     }
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The active notification viewer changed.")
 
     override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?): ApiResult<NotificationListResponse> =
         exchange<InboxPageV2>(HttpMethod.Get, "/api/v2/notifications") {

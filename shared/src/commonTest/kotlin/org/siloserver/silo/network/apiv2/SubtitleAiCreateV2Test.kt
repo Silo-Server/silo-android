@@ -39,7 +39,7 @@ class SubtitleAiCreateV2Test {
             receipt()
         }
         try {
-            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c,tokens), SubtitleDownloadV2Api(c,tokens), SubtitleAiReadsV2Api(c,tokens), SubtitleAiCreateV2Api(c,tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted))
             val result = assertIs<ApiResult.Success<SubtitleAiJobResponse>>(api.translate(request,owner)).data
             assertEquals(9007199254740993L,result.job.id); assertFalse(result.liveDeliveryAttached)
         } finally { c.close() }
@@ -50,7 +50,7 @@ class SubtitleAiCreateV2Test {
         val started = CompletableDeferred<Unit>()
         val c = client { sends++; started.complete(Unit); awaitCancellation() }
         try {
-            val api = SubtitleAiCreateV2Api(c,tokens)
+            val api = SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val first = launch { api.create(request,owner) }
             started.await()
             assertIs<ApiResult.Error>(api.create(request.copy(startPosition = 20.0),owner))
@@ -65,7 +65,7 @@ class SubtitleAiCreateV2Test {
         var fail = true
         val c = client { sends++; if (fail) error("lost response") else respond("",HttpStatusCode.Unauthorized) }
         try {
-            val api = SubtitleAiCreateV2Api(c,tokens)
+            val api = SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.create(request,owner))
             assertIs<ApiResult.Error>(api.create(request,owner)); assertEquals(1,sends)
             fail = false
@@ -83,12 +83,12 @@ class SubtitleAiCreateV2Test {
             for (bad in listOf("""{"job":$job}""", """{"job":${job.replace("\"42\"","42")},"live_delivery_attached":false}""",
                 """{"job":${job.replace("\"source_index\":-1","\"source_index\":0")},"live_delivery_attached":false}""")) {
                 body = bad
-                assertFalse(SubtitleAiCreateV2Api(c,tokens).create(request,owner) is ApiResult.Success)
+                assertFalse(SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted).create(request,owner) is ApiResult.Success)
             }
             body = """{"job":$job,"live_delivery_attached":true}"""
-            assertTrue(assertIs<ApiResult.Success<SubtitleAiJobResponse>>(SubtitleAiCreateV2Api(c,tokens).create(request,owner)).data.liveDeliveryAttached)
+            assertTrue(assertIs<ApiResult.Success<SubtitleAiJobResponse>>(SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted).create(request,owner)).data.liveDeliveryAttached)
             status = HttpStatusCode.OK
-            assertFalse(SubtitleAiCreateV2Api(c,tokens).create(request,owner) is ApiResult.Success)
+            assertFalse(SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted).create(request,owner) is ApiResult.Success)
         } finally { c.close() }
     }
 
@@ -97,7 +97,7 @@ class SubtitleAiCreateV2Test {
         val captured = owner
         val c = client { sends++; owner = owner.copy(profileToken = "new-proof"); receipt() }
         try {
-            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c,tokens), SubtitleDownloadV2Api(c,tokens), SubtitleAiReadsV2Api(c,tokens), SubtitleAiCreateV2Api(c,tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted))
             assertIs<ApiResult.Error>(api.translate(request,captured))
             assertIs<ApiResult.Error>(api.translate(request,captured))
             var updates = 0

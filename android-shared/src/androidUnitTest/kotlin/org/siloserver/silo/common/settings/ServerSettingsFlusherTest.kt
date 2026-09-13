@@ -518,7 +518,7 @@ class ServerSettingsFlusherTest {
  * HttpClient because we override the only methods the flusher invokes —
  * the underlying client is never touched.
  */
-private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
+private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
     data class Call(
         val kind: Kind,
         val key: String,

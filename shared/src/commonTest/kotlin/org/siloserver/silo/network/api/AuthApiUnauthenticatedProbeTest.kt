@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -30,7 +32,7 @@ class AuthApiUnauthenticatedProbeTest {
     fun candidateSetupAndSignupProbesOmitActiveAuthAndProfileHeaders() = runTest {
         val tokenManager = activeTokenManager()
         val captured = mutableListOf<CapturedRequest>()
-        val api = AuthApi(probeClient(tokenManager, captured))
+        val api = AuthApi(probeClient(tokenManager, captured), ApiV2Gate.Unrestricted)
 
         assertIs<ApiResult.Success<*>>(api.getSetupStatus("https://candidate.example/"))
         assertIs<ApiResult.Success<*>>(api.getSignupStatus("https://candidate.example/"))
@@ -58,8 +60,7 @@ class AuthApiUnauthenticatedProbeTest {
                 tokenManager = tokenManager,
                 captured = captured,
                 probeStatus = HttpStatusCode.Unauthorized,
-            ),
-        )
+            ), ApiV2Gate.Unrestricted)
 
         assertIs<ApiResult.Error>(api.getSetupStatus("https://candidate.example"))
 

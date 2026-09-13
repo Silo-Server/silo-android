@@ -7,6 +7,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.skipSiloAuth
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 @Serializable
@@ -16,8 +17,9 @@ data class BrandingStatus(
 )
 
 open class BrandingApi(private val client: HttpClient) {
+    // Public identity probe of a possibly not-yet-connected server; the active entry's verdict must not gate it.
     open suspend fun getBranding(): ApiResult<BrandingStatus> {
-        return safeApiV2Call<BrandingStatus>(org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted) { request("/api/v2/theme/branding") }
+        return safeApiV2Call<BrandingStatus>(ApiV2Gate.Unrestricted) { request("/api/v2/theme/branding") }
     }
 
     private suspend fun request(path: String) = client.get(path) {

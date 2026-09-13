@@ -19,7 +19,7 @@ class HomeSectionV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = HomeSectionsV2Api(client, tokens)
+            val api = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)
             assertEquals("row/a", api.section("row/a", owner).getOrThrow().section?.id)
             for (bad in listOf("{}", valid.replace("row/a", "wrong"), valid.replace("\"items\"", "\"missing\""))) {
                 body = bad; assertFalse(api.section("row/a", owner) is ApiResult.Success)

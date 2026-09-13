@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
@@ -50,9 +52,9 @@ class TvPersonalMutationOwnershipTest {
             catalogRepository = CatalogRepository(CatalogApi(client)),
             personalDataRepository = personal,
             playerSettingsStore = FakePlayerSettingsStore(),
-            profileRepository = ProfileRepository(ProfileApi(client), identity),
-            profileSettings = ProfileSettingsController(SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())))),
-            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client)),
+            profileRepository = ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), identity),
+            profileSettings = ProfileSettingsController(SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)))),
+            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
             contentId = "item", tokenManager = identity, identityTransitions = barrier,
         )
         suspend fun changeProfile() {

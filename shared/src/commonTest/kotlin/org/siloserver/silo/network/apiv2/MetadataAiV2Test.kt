@@ -33,7 +33,7 @@ class MetadataAiV2Test {
             reply("""{"state":"$state","revision":"opaque/revision","on_view":"$mode"}""")
         }
         try {
-            val api = DefaultMetadataAiApi(c,tokens)
+            val api = DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted)
             val unavailable = assertIs<ApiResult.Success<MetadataAiStatus>>(api.status()).data
             assertFalse(unavailable.enabled); assertEquals(MetadataAiOnView.Off,unavailable.onView)
             state = "available"; mode = "future"
@@ -59,7 +59,7 @@ class MetadataAiV2Test {
             reply(body,status)
         }
         try {
-            val api = DefaultMetadataAiApi(c,tokens)
+            val api = DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted)
             val receipt = assertIs<ApiResult.Success<MetadataTranslationJob>>(api.translateDescription(content,"nl",owner)).data
             assertEquals("9007199254740993",receipt.id); assertEquals(1,receipt.fieldsDone)
             assertEquals("2026-01-02T03:04:05.678Z",receipt.createdAt)
@@ -80,7 +80,7 @@ class MetadataAiV2Test {
         var sends = 0
         val c = client { sends++; reply(job("failed"),HttpStatusCode.Accepted) }
         try {
-            val controller = DescriptionTranslationController(MetadataAiRepository(DefaultMetadataAiApi(c,tokens))) { error("must not poll") }
+            val controller = DescriptionTranslationController(MetadataAiRepository(DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted))) { error("must not poll") }
             controller.translate("movie-1","nl", { error("must not refresh") }, { error("must not complete") })
             assertEquals(DescriptionTranslationPhase.Failed,controller.phase.value)
             assertEquals(1,sends)
@@ -103,7 +103,7 @@ class MetadataAiV2Test {
             }
         }
         try {
-            val repo = MetadataAiRepository(DefaultMetadataAiApi(c,tokens))
+            val repo = MetadataAiRepository(DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted))
             val controller = DescriptionTranslationController(repo) { }
             val first = launch {
                 controller.translate("movie-1","nl", { scope ->
@@ -122,7 +122,7 @@ class MetadataAiV2Test {
         var sends = 0
         val c = client { sends++; reply(job(),HttpStatusCode.Accepted) }
         try {
-            val repo = MetadataAiRepository(DefaultMetadataAiApi(c,tokens))
+            val repo = MetadataAiRepository(DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted))
             val controller = DescriptionTranslationController(repo) { owner = owner.copy(identityGeneration = 2) }
             controller.translate("movie-1","nl", { error("old owner must not refetch") }, { error("old owner must not complete") })
             assertEquals(1,sends)
@@ -135,7 +135,7 @@ class MetadataAiV2Test {
         val original = owner
         val c = client { sends++; owner = owner.copy(profileToken="new-proof"); reply(job(),HttpStatusCode.Accepted) }
         try {
-            val api = DefaultMetadataAiApi(c,tokens)
+            val api = DefaultMetadataAiApi(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.translateDescription("movie-1","nl",original))
             assertIs<ApiResult.Error>(api.refreshDetail("movie-1",original))
             assertEquals(1,sends)

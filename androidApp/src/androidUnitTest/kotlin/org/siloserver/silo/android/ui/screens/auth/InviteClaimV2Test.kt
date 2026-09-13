@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -37,7 +39,7 @@ class InviteClaimV2Test {
                 """{"status":"accepted","login_status":"sign_in_required","username":"u@example.test"}""" to HttpStatusCode.Created
             } else (if (request.url.encodedPath.endsWith("capabilities")) capability else lookup) to HttpStatusCode.OK
         }
-        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client), tokens), consent)
+        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), consent)
         try {
             ready(vm); vm.onClaimClick(); vm.onClaimClick(); entered.await(); release.complete(Unit)
             vm.uiState.first { it.signInRequiredUsername != null }
@@ -68,7 +70,7 @@ class InviteClaimV2Test {
             if (request.method == HttpMethod.Post) signedIn to HttpStatusCode.Created
             else (if (request.url.encodedPath.endsWith("capabilities")) capability else lookup) to HttpStatusCode.OK
         }
-        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client), tokens), consent)
+        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), consent)
         try {
             ready(vm); vm.onClaimClick(); entered.await()
             vm.load("https://other.example.test", "new-token")
@@ -96,7 +98,7 @@ class InviteClaimV2Test {
                         else -> lookup to HttpStatusCode.OK
                     }
                 }
-                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client), tokens), consent)
+                val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), consent)
                 try {
                     vm.load("https://invite.example.test", "token")
                     vm.uiState.first { !it.isLoadingInvitation }
@@ -121,7 +123,7 @@ class InviteClaimV2Test {
             if (request.method == HttpMethod.Post) { posts++; signedIn to HttpStatusCode.Created }
             else (if (request.url.encodedPath.endsWith("capabilities")) capability else lookup) to HttpStatusCode.OK
         }
-        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client), tokens), consent)
+        val vm = InviteClaimViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), consent)
         try {
             ready(vm); vm.onClaimClick()
             vm.uiState.first { it.claimSuccess }

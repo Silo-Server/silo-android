@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -79,7 +81,7 @@ class TvLoginViewModelRaceTest {
         val deviceApi = ControlledDeviceLoginApi()
         val viewModel = track(TvLoginViewModel(
             authRepository = AuthRepository(
-                authApi = AuthApi(loginClient(tokenManager, releaseCredentialLogin, credentialLoginStarted)),
+                authApi = AuthApi(loginClient(tokenManager, releaseCredentialLogin, credentialLoginStarted), ApiV2Gate.Unrestricted),
                 tokenManager = tokenManager,
             ),
             tokenManager = tokenManager,
@@ -143,7 +145,7 @@ class TvLoginViewModelRaceTest {
         val deviceApi = ControlledDeviceLoginApi()
         val client = loginClient(tokens, CompletableDeferred(Unit), CompletableDeferred())
         val viewModel = track(TvLoginViewModel(
-            AuthRepository(AuthApi(client), tokens), tokens, DeviceLoginRepository(deviceApi),
+            AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), tokens, DeviceLoginRepository(deviceApi),
         ))
         viewModel.onUsernameChanged("jim")
         viewModel.onPasswordChanged("password")

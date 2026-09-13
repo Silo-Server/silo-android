@@ -34,7 +34,7 @@ class SubtitleDownloadV2Test {
             reply("""{"subtitle":$row}""")
         }
         try {
-            val result = assertIs<ApiResult.Success<SubtitleDownloadResponse>>(SubtitleDownloadV2Api(c,tokens).download(request))
+            val result = assertIs<ApiResult.Success<SubtitleDownloadResponse>>(SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted).download(request))
             assertEquals("ass", result.data.subtitle.format); assertEquals(7, result.data.subtitle.id); assertEquals(1,calls)
         } finally { c.close() }
     }
@@ -45,7 +45,7 @@ class SubtitleDownloadV2Test {
             for (invalid in listOf(row.replace("\"42\"", "\"43\""), row.replace("\"7\"", "7"),
                 row.replace("\"7\"", "\"07\""), row.replace("\"7\"", "\"2147483648\""))) {
                 wire = invalid
-                assertFalse(SubtitleDownloadV2Api(c,tokens).download(request) is ApiResult.Success)
+                assertFalse(SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted).download(request) is ApiResult.Success)
             }
         } finally { c.close() }
     }
@@ -56,10 +56,10 @@ class SubtitleDownloadV2Test {
             scope = scope.copy(identityGeneration = scope.identityGeneration + 1)
             reply("""{"subtitle":$row}""")
         }
-        try { assertIs<ApiResult.Error>(SubtitleDownloadV2Api(c,tokens).download(request)); assertEquals(1,calls) }
+        try { assertIs<ApiResult.Error>(SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted).download(request)); assertEquals(1,calls) }
         finally { c.close() }
         val failed = client { calls++; throw IllegalStateException("lost response") }
-        try { assertIs<ApiResult.NetworkError>(SubtitleDownloadV2Api(failed,tokens).download(request)); assertEquals(2,calls) }
+        try { assertIs<ApiResult.NetworkError>(SubtitleDownloadV2Api(failed, tokens, ApiV2Gate.Unrestricted).download(request)); assertEquals(2,calls) }
         finally { failed.close() }
     }
 }

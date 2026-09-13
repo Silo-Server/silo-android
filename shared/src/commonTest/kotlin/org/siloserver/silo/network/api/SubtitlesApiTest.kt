@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.subtitles.SubtitleAiJobKind
 import org.siloserver.silo.model.subtitles.SubtitleAiJobStatus
 import org.siloserver.silo.model.subtitles.SubtitleDownloadRequest
@@ -69,10 +71,10 @@ class SubtitlesApiTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val api = DefaultSubtitlesApi(
-            SubtitleReadsV2Api(client, tokens),
-            SubtitleDownloadV2Api(client, tokens),
-            SubtitleAiReadsV2Api(client, tokens),
-            SubtitleAiCreateV2Api(client, tokens),
+            SubtitleReadsV2Api(client, tokens, ApiV2Gate.Unrestricted),
+            SubtitleDownloadV2Api(client, tokens, ApiV2Gate.Unrestricted),
+            SubtitleAiReadsV2Api(client, tokens, ApiV2Gate.Unrestricted),
+            SubtitleAiCreateV2Api(client, tokens, ApiV2Gate.Unrestricted),
         )
         return api to captured
     }

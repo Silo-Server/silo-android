@@ -11,9 +11,9 @@ import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 
 /** Home and library section reads are viewer-scoped v2 transports; DI supplies the real token manager. */
-class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val sectionItems: LibrarySectionItemsV2Api = LibrarySectionItemsV2Api(client, TokenManagerImpl()),
-    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl())) {
+class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client, ApiV2Gate.Unrestricted),
+    private val sectionItems: LibrarySectionItemsV2Api = LibrarySectionItemsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
+    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
 
     // --- Home ---
 

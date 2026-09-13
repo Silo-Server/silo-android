@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -36,7 +38,7 @@ class DeviceLoginApiCandidateServerTest {
             setProfileToken("active-profile-token")
         }
         val captured = mutableListOf<CapturedRequest>()
-        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured))
+        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured), ApiV2Gate.Unrestricted)
 
         assertIs<ApiResult.Success<*>>(
             api.startDeviceLoginAt("https://candidate.example/", "Shield", "Android TV"),
@@ -71,7 +73,7 @@ class DeviceLoginApiCandidateServerTest {
             setProfileToken("profile-token")
         }
         val captured = mutableListOf<CapturedRequest>()
-        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured))
+        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured), ApiV2Gate.Unrestricted)
 
         val scope = AuthScopeSnapshot(
             serverId = "server-1",

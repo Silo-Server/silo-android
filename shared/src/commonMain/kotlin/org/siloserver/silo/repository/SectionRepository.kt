@@ -44,7 +44,7 @@ class SectionRepository(
 
     /** Fetches a library's resolved sections (offline: last cached sections). */
     suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
-        fun changed() = ApiResult.Error(0, "library_section_authority_changed", "The initiating library identity changed.")
+        fun changed() = org.siloserver.silo.network.apiv2.identityChanged()
         if (!isLibrarySectionAuthorityCurrent(owner)) return changed()
         val result = sectionApi.getLibrarySections(libraryId, owner)
         if (!isLibrarySectionAuthorityCurrent(owner)) return changed()

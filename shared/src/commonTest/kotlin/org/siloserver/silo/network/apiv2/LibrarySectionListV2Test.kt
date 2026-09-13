@@ -23,9 +23,9 @@ class LibrarySectionListV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = LibrarySectionItemsV2Api(client, tokens)
+            val api = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)
             assertEquals(listOf("second", "first"), api.list(7, owner).getOrThrow().sections.map { it.id })
-            for (bad in listOf("{}", "not-json", good.replace("\"movie:2\"", "2"), good.replace("\"items\"", "\"missing\""))) {
+            for (bad in listOf("{}", "not-json", good.replace("\"movie:2\"", "\"\""), good.replace("\"items\"", "\"missing\""))) {
                 body = bad; assertIs<ApiResult.Error>(api.list(7, owner))
             }
             body = good; status = HttpStatusCode.Accepted; assertIs<ApiResult.Error>(api.list(7, owner))
@@ -49,7 +49,7 @@ class LibrarySectionListV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val repo = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)), cache)
+            val repo = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)), cache)
             assertIs<ApiResult.Success<*>>(repo.getLibrarySections(7, original))
             body = "not-json"; assertIs<ApiResult.Error>(repo.getLibrarySections(7, original)); assertEquals(0, cacheReads)
             status = HttpStatusCode.Forbidden; assertIs<ApiResult.Error>(repo.getLibrarySections(7, original)); assertEquals(0, cacheReads)

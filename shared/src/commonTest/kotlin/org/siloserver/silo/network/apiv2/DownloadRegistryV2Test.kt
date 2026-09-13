@@ -33,7 +33,7 @@ class DownloadRegistryV2Test {
             }
         }
         try {
-            val rows = assertIs<ApiResult.Success<DownloadsListResponse>>(DownloadRegistryV2Api(c,tokens,devices).list(scope)).data.downloads
+            val rows = assertIs<ApiResult.Success<DownloadsListResponse>>(DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted).list(scope)).data.downloads
             assertEquals(listOf("one","two"), rows.map { it.id }); assertEquals(42, rows[0].mediaFileId)
             assertEquals(1, rows[0].revision)
         } finally { c.close() }
@@ -57,7 +57,7 @@ class DownloadRegistryV2Test {
                     reply("""{"items":[$nextRow],"page":{"has_more":true,"next_cursor":"same"}}""")
                 }
             }
-            try { assertFalse(DownloadRegistryV2Api(c,tokens,devices).list(scope) is ApiResult.Success, mode) }
+            try { assertFalse(DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted).list(scope) is ApiResult.Success, mode) }
             finally { c.close() }
         }
     }
@@ -72,7 +72,7 @@ class DownloadRegistryV2Test {
             respond("", status)
         }
         try {
-            val api = DownloadRegistryV2Api(c,tokens,devices)
+            val api = DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted)
             assertFalse(api.delete("one",scope) is ApiResult.Success)
             status = HttpStatusCode.NoContent
             assertIs<ApiResult.Success<Unit>>(api.delete("one",scope))
@@ -85,7 +85,7 @@ class DownloadRegistryV2Test {
         var body = """{"revision":"rev","state":"future","enabled":true,"download_allowed":true}"""
         val c = client { reply(body) }
         try {
-            val api = DownloadRegistryV2Api(c,tokens,devices)
+            val api = DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted)
             assertFalse(assertIs<ApiResult.Success<DownloadCapability>>(api.capability(scope)).data.isUsable)
             body = """{"enabled":true,"download_allowed":true}"""
             assertIs<ApiResult.Error>(api.capability(scope))

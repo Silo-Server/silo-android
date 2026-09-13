@@ -29,7 +29,7 @@ class SubtitleAiReadsV2Test {
             reply("""{"job":$wire}""")
         }
         try {
-            val api = SubtitleAiReadsV2Api(c, tokens)
+            val api = SubtitleAiReadsV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val job = assertIs<ApiResult.Success<SubtitleAiJobResponse>>(api.job(9007199254740993L)).data.job
             assertEquals(9007199254740993L, job.id); assertNull(job.resultSubtitleId)
             assertEquals("Subtitle processing failed.", job.errorMessage)
@@ -53,7 +53,7 @@ class SubtitleAiReadsV2Test {
             }
         }
         try {
-            val api = SubtitleAiReadsV2Api(c, tokens)
+            val api = SubtitleAiReadsV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertEquals(3, assertIs<ApiResult.Success<SubtitleAiQuota>>(api.quota()).data.remaining)
             assertEquals(1, assertIs<ApiResult.Success<SubtitleAiJobsResponse>>(api.jobs(42)).data.jobs.size)
             foreign = true; assertIs<ApiResult.Error>(api.jobs(42))
@@ -69,7 +69,7 @@ class SubtitleAiReadsV2Test {
             reply("""{"job":${row()}}""")
         }
         try {
-            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c, tokens), SubtitleDownloadV2Api(c, tokens), SubtitleAiReadsV2Api(c, tokens), SubtitleAiCreateV2Api(c, tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleDownloadV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiReadsV2Api(c, tokens, ApiV2Gate.Unrestricted), SubtitleAiCreateV2Api(c, tokens, ApiV2Gate.Unrestricted))
             val repository = SubtitlesRepository(api, tokens)
             assertIs<SubtitleJobOutcome.Failed>(repository.pollJob(9007199254740993L) { updates++ })
             assertEquals(1, calls); assertEquals(0, updates)

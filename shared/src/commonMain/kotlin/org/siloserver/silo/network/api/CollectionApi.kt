@@ -5,7 +5,11 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import io.ktor.client.statement.HttpResponse
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.identityChanged
+import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.network.apiv2.stillOwns
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
@@ -62,17 +66,15 @@ internal data class CollectionCatalogResponse(
 
 class CollectionApi(
     private val client: HttpClient,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
     private val tokenManager: TokenManager? = null,
 ) {
     private suspend inline fun <reified T> readEditor(path: String): ApiResult<CollectionEditor<T>> {
         val scope = tokenManager?.snapshotCurrentScope()
         var etag: String? = null
-        val result = safeApiV2Call<T>(gate) {
-            client.get(path) { scope?.let { authScope(it) } }.also { etag = it.headers[HttpHeaders.ETag] }
-        }
-        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload the collection.")
+        val result = ownedV2Call<T, T>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { owner ->
+            client.get(path) { owner?.let { authScope(it) } }.also { etag = it.headers[HttpHeaders.ETag] }
+        }) { it }
         return when (result) {
             is ApiResult.Success -> {
                 val tag = etag
@@ -85,8 +87,7 @@ class CollectionApi(
     }
 
     private suspend inline fun <reified T> guarded(editor: CollectionEditor<*>, block: () -> HttpResponse): ApiResult<T> {
-        if (editor.scope != null && !editor.scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload the collection.")
+        if (editor.scope != null && !editor.scope.stillOwns(tokenManager, OwnerPolicy.IDENTITY)) return identityChanged()
         val result = safeApiV2Call<T>(gate, block)
         return if (result is ApiResult.Error && result.code == 412)
             result.copy(message = "This collection changed. Reload before trying again; your changes have been kept.")
@@ -166,19 +167,15 @@ class CollectionApi(
         if (continuation != null && (continuation.collectionId != id || continuation.limit != size))
             return ApiResult.Error(0, "invalid_cursor", "Reload this collection to continue.")
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
-        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload this collection.")
-        val result = safeApiV2Call<CollectionCatalogResponse>(gate) {
+        val result = ownedV2Call<CollectionCatalogResponse, CollectionCatalogResponse>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { owner ->
             client.get("/api/v2/catalog") {
-                scope?.let { authScope(it) }
+                owner?.let { authScope(it) }
                 parameter("source", "user_collection")
                 parameter("collection_id", id)
                 parameter("limit", size)
                 continuation?.let { parameter("cursor", it.cursor) }
             }
-        }
-        if (scope != null && !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope()))
-            return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload this collection.")
+        }) { it }
         return when (result) {
             is ApiResult.Success -> {
                 val body = result.data

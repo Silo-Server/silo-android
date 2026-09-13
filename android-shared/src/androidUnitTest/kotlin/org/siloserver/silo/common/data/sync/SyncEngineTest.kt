@@ -64,7 +64,7 @@ class SyncEngineTest {
     }
     private val api = PersonalDataApi(mockClient())
     private val ebookApi = org.siloserver.silo.network.api.EbookReaderApi(
-        org.siloserver.silo.network.apiv2.EbookReaderV2Api(ebookClient(), tokens),
+        org.siloserver.silo.network.apiv2.EbookReaderV2Api(ebookClient(), tokens, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     )
 
     private fun engine(batchLimit: Int = 50) = SyncEngine(

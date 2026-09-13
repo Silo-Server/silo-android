@@ -36,7 +36,7 @@ class ProfileHouseholdV2Test {
             }
         }
         try {
-            val api = ProfileApi(c, tokens = tokens)
+            val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
             assertEquals("42", assertIs<ApiResult.Success<ProfilesResponse>>(api.listProfiles()).data.profiles.single().id)
             assertEquals("identity_changed", assertIs<ApiResult.Error>(api.verifyPin("42", "1234")).error)
             assertNull(tokens.getProfileToken())
@@ -61,7 +61,7 @@ class ProfileHouseholdV2Test {
             }
         }
         try {
-            val api = ProfileApi(c, tokens = tokens)
+            val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
             assertIs<ApiResult.Success<Profile>>(api.createProfile(CreateProfileRequest("Reader", allowedLibraryIds = listOf(7))))
             assertIs<ApiResult.Success<Unit>>(api.deleteProfile("42"))
             assertEquals(2, sends)
@@ -74,7 +74,7 @@ class ProfileHouseholdV2Test {
                 HttpStatusCode.OK, headersOf(HttpHeaders.ContentType,"application/json"))
         }
         try {
-            val api = ProfileApi(c, tokens = tokens)
+            val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
             assertFalse(assertIs<ApiResult.Success<VerifyPinResponse>>(api.verifyPin("42", "wrong")).data.valid)
             assertFalse(api.deleteProfile("42") is ApiResult.Success)
         } finally { c.close() }

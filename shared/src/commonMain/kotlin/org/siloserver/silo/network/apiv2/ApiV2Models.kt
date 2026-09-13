@@ -12,8 +12,8 @@ import kotlinx.serialization.json.JsonPrimitive
  * Handwritten lenient models for the native API v2 pilot. They are decoded
  * with the production [org.siloserver.silo.network.SiloJson] instance and are
  * deliberately separate from the v1 data classes: v2 ids are opaque strings,
- * instants are RFC 3339 text (see [parseApiV2Instant]), and enums are
- * string-backed value classes with an observable unknown case.
+ * instants are RFC 3339 text, and enums are string-backed value classes that
+ * keep an unknown wire value intact.
  */
 
 /** GET /api/v2/system/info — the contract probe body. */
@@ -92,9 +92,7 @@ data class ProgressEntryV2(
     @SerialName("duration_seconds") val durationSeconds: Double,
     val completed: Boolean = false,
     @SerialName("updated_at") val updatedAt: String,
-) {
-    val updatedAtEpochMillis: Long? get() = parseApiV2Instant(updatedAt)
-}
+)
 
 @Serializable
 data class PageInfo(

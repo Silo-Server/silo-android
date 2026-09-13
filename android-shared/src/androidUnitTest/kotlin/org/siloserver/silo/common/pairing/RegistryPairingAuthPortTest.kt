@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.pairing
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
@@ -283,7 +285,7 @@ class RegistryPairingAuthPortTest {
             },
         )
         val authRepository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokens,
             serverRegistry = registry,
             apiV2Probe = ApiV2Probe(client),
@@ -330,7 +332,7 @@ class RegistryPairingAuthPortTest {
             },
         )
         val authRepository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokens,
             serverRegistry = registry,
             apiV2Probe = ApiV2Probe(client),
@@ -388,7 +390,7 @@ class RegistryPairingAuthPortTest {
             },
         )
         val authRepository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokens,
             serverRegistry = registry,
             apiV2Probe = ApiV2Probe(client),
@@ -443,7 +445,7 @@ class RegistryPairingAuthPortTest {
         )
         val background = CoroutineScope(StandardTestDispatcher(testScheduler))
         val authRepository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokens,
             serverRegistry = registry,
             apiV2Probe = ApiV2Probe(client),

@@ -186,7 +186,7 @@ class MobileDetailActionsTest {
             ebookReaderRepository = dummyEbookReaderRepository(),
             recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient())),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
-                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient()),
+                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
             ),
             savedStateHandle = SavedStateHandle(),
         )
@@ -287,17 +287,17 @@ class MobileDetailActionsTest {
     }
 
     private class EmptyDownloadsApi : DownloadsApi(
-        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices),
+        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
         tokens = org.siloserver.silo.network.TokenManagerImpl(),
         creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
-            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices)),
+            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     ) {
         override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
             ApiResult.Success(DownloadsListResponse())
     }
 
     private fun dummyEbookReaderRepository(): EbookReaderRepository {
-        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl())
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)
         return EbookReaderRepository(EbookReaderApi(v2), v2)
     }
 

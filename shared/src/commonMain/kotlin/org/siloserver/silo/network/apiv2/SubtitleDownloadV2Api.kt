@@ -29,34 +29,24 @@ internal data class StoredSubtitleV2(
     @SerialName("created_at") val createdAt: String,
 ) {
     fun project(expectedFile: Int): DownloadedSubtitle {
-        val handle = id.toIntOrNull()
-        require(handle != null && handle > 0 && handle.toString() == id && mediaFileId == expectedFile.toString())
-        return DownloadedSubtitle(handle, expectedFile, provider, language, format, releaseName, score, hearingImpaired, createdAt)
+        require(mediaFileId == expectedFile.toString())
+        return DownloadedSubtitle(checkedPositiveId(id), expectedFile, provider, language, format, releaseName, score, hearingImpaired, createdAt)
     }
 }
 @Serializable private data class DownloadEnvelopeV2(val subtitle: StoredSubtitleV2)
 
 /** A provider request is sent once; content deduplication is not a replay receipt. */
-class SubtitleDownloadV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
+class SubtitleDownloadV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun download(request: SubtitleDownloadRequest): ApiResult<SubtitleDownloadResponse> {
-        val scope = tokens.snapshotCurrentScope() ?: return changed()
+        val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
         if (request.mediaFileId <= 0) return ApiResult.Error(0, "invalid_file", "A media file is required.")
-        val response = safeApiV2Call<DownloadEnvelopeV2>(gate) {
+        return ownedV2Call<DownloadEnvelopeV2, SubtitleDownloadResponse>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
             client.post("/api/v2/subtitles/download") {
-                authScope(scope); requireSiloAuth(); singleAttempt()
+                authScope(owner!!); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json)
                 setBody(ProviderDownloadBody(request.mediaFileId.toString(), request.provider, request.subtitleId,
                     request.language, request.releaseName, request.score, request.hearingImpaired))
-            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
-        }
-        if (!scope.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
-        return when (response) {
-            is ApiResult.Success -> try { ApiResult.Success(SubtitleDownloadResponse(response.data.subtitle.project(request.mediaFileId))) }
-                catch (_: IllegalArgumentException) { ApiResult.Error(0, "invalid_subtitle", "The server returned an unsupported subtitle identity.") }
-            is ApiResult.Error -> response
-            is ApiResult.NetworkError -> response
-        }
+            }
+        }) { SubtitleDownloadResponse(it.subtitle.project(request.mediaFileId)) }
     }
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The subtitle account or profile changed.")
 }

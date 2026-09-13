@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -72,7 +74,7 @@ class TvAuthSingleFlightTest {
         val recorder = AuthRequestRecorder("/api/v2/auth/login", release)
         val tokenManager = SingleFlightTokenManager()
         val viewModel = track(TvLoginViewModel(
-            authRepository = AuthRepository(AuthApi(recorder.client(tokenManager)), tokenManager),
+            authRepository = AuthRepository(AuthApi(recorder.client(tokenManager), ApiV2Gate.Unrestricted), tokenManager),
             tokenManager = tokenManager,
             deviceLogin = DeviceLoginRepository(NeverCompletingDeviceLoginApi),
         ))
@@ -94,7 +96,7 @@ class TvAuthSingleFlightTest {
         val release = CompletableDeferred<Unit>()
         val recorder = AuthRequestRecorder("/api/v2/auth/setup", release)
         val viewModel = track(TvSetupViewModel(
-            AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager())), SingleFlightTokenManager()),
+            AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager()), ApiV2Gate.Unrestricted), SingleFlightTokenManager()),
         ))
 
         viewModel.onUsernameChanged("jim")
@@ -114,7 +116,7 @@ class TvAuthSingleFlightTest {
         val release = CompletableDeferred<Unit>()
         val recorder = AuthRequestRecorder("/api/v2/auth/signup", release)
         val viewModel = track(TvSignupViewModel(
-            AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager())), SingleFlightTokenManager()),
+            AuthRepository(AuthApi(recorder.client(SingleFlightTokenManager()), ApiV2Gate.Unrestricted), SingleFlightTokenManager()),
         ))
 
         viewModel.onUsernameChanged("jim")

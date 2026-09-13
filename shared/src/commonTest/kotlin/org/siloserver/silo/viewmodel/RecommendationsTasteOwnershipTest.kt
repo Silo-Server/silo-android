@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModelStore
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
@@ -40,7 +42,7 @@ class RecommendationsTasteOwnershipTest {
         }))
         val store=ViewModelStore()
         try {
-            val vm=RecommendationsViewModel(RecommendationRepository(RecommendationApi(c,taste=TasteProfileV2Api(c,tokens),discover=DiscoverV2Api(c,tokens))))
+            val vm=RecommendationsViewModel(RecommendationRepository(RecommendationApi(c,taste=TasteProfileV2Api(c, tokens, ApiV2Gate.Unrestricted),discover=DiscoverV2Api(c, tokens, ApiV2Gate.Unrestricted))))
             store.put("recommendations",vm);block(vm)
         } finally {store.clear();c.close();Dispatchers.resetMain()}
     }

@@ -22,12 +22,13 @@ class DownloadCreationV2Api(
     private val tokens: TokenManager,
     private val devices: DeviceMetadataProvider,
     private val registry: DownloadRegistryV2Api,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) {
-    private fun changed() = ApiResult.Error(0,"identity_changed","The download account, profile or device changed.")
+    private fun changed() = identityChanged()
     private fun invalid() = ApiResult.Error(0,"invalid_download_creation","The server returned an incomplete download creation receipt. Refresh downloads before trying again.")
+    /** Identity plus the intentional extra device check: a download belongs to one installation. */
     private suspend fun current(scope: AuthScopeSnapshot, device: String): Boolean =
-        !scope.profileId.isNullOrBlank() && scope.isSameIdentityAs(tokens.snapshotCurrentScope()) && devices.current()?.id == device
+        !scope.profileId.isNullOrBlank() && scope.stillOwns(tokens, OwnerPolicy.IDENTITY) && devices.current()?.id == device
 
     private fun body(request: DownloadRequest) = buildJsonObject {
         put("content_id", request.contentId)
@@ -39,17 +40,17 @@ class DownloadCreationV2Api(
 
     private suspend fun send(scope: AuthScopeSnapshot, device: String, body: JsonObject, cursor: String? = null): ApiResult<CreatedDownloadsV2> {
         if (!current(scope,device)) return changed()
-        val result = safeApiV2Call<CreatedDownloadsV2>(gate) {
+        val result = ownedV2Call<CreatedDownloadsV2, CreatedDownloadsV2>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.Accepted, { owner ->
             client.post("/api/v2/downloads") {
-                authScope(scope); requireSiloAuth(); singleAttempt()
+                authScope(owner!!); requireSiloAuth(); singleAttempt()
                 // The auth plugin attaches X-Silo-Device-Id for the current device;
                 // adding it here too sends two values, which the server stores as
                 // "id,id" and the receipt guard then rejects. `device` is only the
                 // identity the reply is checked against.
                 parameter("limit",100); cursor?.let { parameter("cursor",it) }
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.Accepted) }
-        }
+            }
+        }) { it }
         return if (current(scope,device)) result else changed()
     }
 

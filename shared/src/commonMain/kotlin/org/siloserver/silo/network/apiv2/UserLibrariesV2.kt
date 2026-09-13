@@ -10,11 +10,7 @@ internal data class UserLibrariesV2(val items: List<UserLibraryV2>, val page: Pa
     fun project(): List<UserLibrary> {
         require(page?.hasMore != true && page?.nextCursor.isNullOrBlank())
         require(items.map { it.id }.distinct().size == items.size)
-        return items.map { row ->
-            val id = row.id.toIntOrNull()
-            require(id != null && id > 0 && id.toString() == row.id)
-            UserLibrary(id, row.name, row.type, row.sortOrder, row.posterUrl)
-        }
+        return items.map { row -> UserLibrary(checkedPositiveId(row.id), row.name, row.type, row.sortOrder, row.posterUrl) }
     }
 }
 

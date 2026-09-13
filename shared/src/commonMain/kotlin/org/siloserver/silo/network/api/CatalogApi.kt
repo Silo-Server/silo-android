@@ -10,9 +10,9 @@ import org.siloserver.silo.network.apiv2.*
 import kotlinx.serialization.json.*
 
 /** Catalog reads on v2; the scoped delegates default to an unauthenticated token manager outside DI. */
-class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val personRefresh: PersonRefreshV2Api = PersonRefreshV2Api(client, TokenManagerImpl()),
-    private val watchDetail: WatchDetailV2Api = WatchDetailV2Api(client, TokenManagerImpl())) {
+class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client, ApiV2Gate.Unrestricted),
+    private val personRefresh: PersonRefreshV2Api = PersonRefreshV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
+    private val watchDetail: WatchDetailV2Api = WatchDetailV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
 
     suspend fun getCatalog(
         source: String? = null, query: String? = null, mediaType: String? = null,
@@ -81,7 +81,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     /** Unscoped read for callers without an owner; the current viewer is captured at call time. */
     suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> {
         val owner = watchDetail.capture()
-            ?: return ApiResult.Error(0, "identity_unavailable", "Watch metadata needs an authenticated profile.")
+            ?: return identityChanged()
         return watchDetail.detail(id, owner)
     }
 

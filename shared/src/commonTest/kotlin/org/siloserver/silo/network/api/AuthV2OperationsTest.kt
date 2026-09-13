@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -33,8 +35,8 @@ class AuthV2OperationsTest {
             install(SiloAuthPlugin) { tokenManager = tokens }
         }
         try {
-            assertEquals(401, assertIs<ApiResult.Error>(AuthApi(client).login(LoginRequest("u", "p"))).code)
-            val api = DefaultDeviceLoginApi(client)
+            assertEquals(401, assertIs<ApiResult.Error>(AuthApi(client, ApiV2Gate.Unrestricted).login(LoginRequest("u", "p"))).code)
+            val api = DefaultDeviceLoginApi(client, ApiV2Gate.Unrestricted)
             assertEquals(401, assertIs<ApiResult.Error>(api.startDeviceLogin(null, null)).code)
             assertEquals(401, assertIs<ApiResult.Error>(api.pollDeviceLogin("dev")).code)
             assertEquals(listOf("/api/v2/auth/login", "/api/v2/auth/device/start", "/api/v2/auth/device/poll"), paths)
@@ -48,7 +50,7 @@ class AuthV2OperationsTest {
                 install(ContentNegotiation) { json(SiloJson) }
             }
             try {
-                assertEquals(succeeds, AuthApi(client).login(LoginRequest("u", "p")) is ApiResult.Success)
+                assertEquals(succeeds, AuthApi(client, ApiV2Gate.Unrestricted).login(LoginRequest("u", "p")) is ApiResult.Success)
             } finally { client.close() }
         }
     }
@@ -61,7 +63,7 @@ class AuthV2OperationsTest {
             respond(body, if (isStart) HttpStatusCode.Created else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val repo = DeviceLoginRepository(DefaultDeviceLoginApi(client))
+            val repo = DeviceLoginRepository(DefaultDeviceLoginApi(client, ApiV2Gate.Unrestricted))
             repo.beginAt("https://example.test", null, null)
             val approved = assertIs<DeviceLoginRepository.DeviceLoginState.Approved>(repo.state.value)
             assertEquals("acc", approved.response.accessToken); assertEquals("1", approved.response.user?.id)
@@ -76,7 +78,7 @@ class AuthV2OperationsTest {
             else { polls++; respond("{}", HttpStatusCode.ServiceUnavailable) }
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val repo = DeviceLoginRepository(DefaultDeviceLoginApi(client))
+            val repo = DeviceLoginRepository(DefaultDeviceLoginApi(client, ApiV2Gate.Unrestricted))
             repo.beginAt("https://example.test", null, null)
             assertEquals(DeviceLoginRepository.FailureReason.PollUncertain, assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(repo.state.value).reason)
             assertEquals(1, polls)
@@ -90,7 +92,7 @@ class AuthV2OperationsTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         try {
-            val response = assertIs<ApiResult.Success<org.siloserver.silo.model.auth.LoginResponse>>(AuthApi(client).login(LoginRequest("u", "p")))
+            val response = assertIs<ApiResult.Success<org.siloserver.silo.model.auth.LoginResponse>>(AuthApi(client, ApiV2Gate.Unrestricted).login(LoginRequest("u", "p")))
             assertEquals("account-opaque", response.data.user.id)
             assertEquals("actor-opaque", response.data.user.impersonation?.impersonatorUserId)
         } finally { client.close() }

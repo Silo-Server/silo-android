@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
@@ -51,7 +53,7 @@ class SectionRepositoryCacheTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)), cache)
+        return SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)), cache)
     }
 
     private fun section(id: String) = ResolvedSection(id = id, sectionType = id, title = id)
@@ -101,7 +103,7 @@ class SectionRepositoryCacheTest {
         val cache = FakeCache(preset = null)
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val repository = SectionRepository(
-            sectionApi = SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)),
+            sectionApi = SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
             catalogCache = cache,
             identityTransitions = identityTransitions,
         )

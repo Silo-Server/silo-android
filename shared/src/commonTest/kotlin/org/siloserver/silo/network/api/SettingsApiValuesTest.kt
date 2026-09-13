@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -98,7 +100,7 @@ class SettingsApiValuesTest {
         captured: Captured = Captured(),
     ): Pair<SettingsApi, Captured> {
         val c = client({ status }, { responseBody }, responseContentType, captured)
-        return SettingsApi(SettingsV2Api(c, tokens)) to captured
+        return SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted)) to captured
     }
 
     private fun problem(code: String, detail: String) =
@@ -238,7 +240,7 @@ class SettingsApiValuesTest {
         val result = api.getEffectiveValues(listOf("k"))
 
         assertIs<ApiResult.Error>(result)
-        assertEquals("invalid_settings", result.error)
+        assertEquals("invalid_response", result.error)
     }
 
     @Test
@@ -248,7 +250,7 @@ class SettingsApiValuesTest {
         val c = client({ HttpStatusCode.OK }, { """{"items":[{"key":"one","value":false,"source":"default"}],"revision":12}""" }, captured = captured) {
             scope = scope.copy(profileToken = "replacement")
         }
-        val api = SettingsApi(SettingsV2Api(c, tokens))
+        val api = SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         assertIs<ApiResult.Error>(api.getMigrationEffectiveValues(listOf("one"), original))
         assertEquals(original, captured.pinned)
@@ -265,7 +267,7 @@ class SettingsApiValuesTest {
         val c = client({ HttpStatusCode.OK }, { """{"enabled":false}""" }, captured = captured) {
             if (replace) scope = scope.copy(identityGeneration = 2)
         }
-        val api = SettingsApi(SettingsV2Api(c, tokens))
+        val api = SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         assertEquals("/api/v2/settings/overlay-config".also { api.overlayConfig() }, captured.path)
         assertFalse(assertIs<ApiResult.Success<OverlayConfigResponse>>(api.overlayConfig()).data.enabled)
@@ -375,7 +377,7 @@ class SettingsApiValuesTest {
         val c = client({ HttpStatusCode.OK }, {
             """{"key":"ui.theme","scope":"$settingScope","profile_id":"p1",$receiptIdentity,"value":"dark","revision":1}"""
         }, captured = Captured())
-        val api = SettingsV2Api(c, tokens)
+        val api = SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted)
 
         assertIs<ApiResult.Success<*>>(api.put("ui.theme", SettingScopeIdentity.profileDevice(), JsonPrimitive("dark"), null, scope))
         receiptIdentity = "\"device_id\":\"foreign\""
@@ -432,7 +434,7 @@ class SettingsApiValuesTest {
         val c = client({ status }, { "" }, captured = captured) {
             if (change) scope = scope.copy(profileToken = "replacement")
         }
-        val api = SettingsV2Api(c, tokens)
+        val api = SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted)
 
         assertFalse(api.delete("ui.theme", SettingScopeIdentity.profile(), null, original) is ApiResult.Success)
         status = HttpStatusCode.NoContent
@@ -454,7 +456,7 @@ class SettingsApiValuesTest {
                 "device_value":"{\"fontSize\":\"xxlarge\"}","effective_value":"{\"fontSize\":\"xxlarge\"}",
                 "has_device_override":true,"device_id":"device","updated_at":"2026-01-02T03:04:05Z"}"""
         }, captured = captured)
-        val api = SettingsApi(SettingsV2Api(c, tokens))
+        val api = SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         val effective = assertIs<ApiResult.Success<org.siloserver.silo.model.settings.EffectiveSubtitleAppearance>>(api.getEffectiveSubtitleAppearance()).data
         assertEquals("/api/v2/settings/subtitle-appearance/effective", captured.path)
@@ -465,7 +467,7 @@ class SettingsApiValuesTest {
         assertEquals("device", effective.deviceId)
 
         profile = "other"
-        assertEquals("invalid_settings", assertIs<ApiResult.Error>(api.getEffectiveSubtitleAppearance()).error)
+        assertEquals("invalid_response", assertIs<ApiResult.Error>(api.getEffectiveSubtitleAppearance()).error)
     }
 
     @Test
@@ -504,7 +506,7 @@ class SettingsApiValuesTest {
         var body = """{"items":[$prefRow]}"""
         val captured = Captured()
         val c = client({ HttpStatusCode.OK }, { body }, captured = captured)
-        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens))
+        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         val pref = assertIs<ApiResult.Success<org.siloserver.silo.model.settings.LibraryPlaybackPrefsResponse>>(api.list()).data.preferences.single()
         assertEquals("/api/v2/library-playback-prefs", captured.path)
@@ -522,7 +524,7 @@ class SettingsApiValuesTest {
     fun `library set patches every member explicitly so nulls clear`() = runTest {
         val captured = Captured()
         val c = client({ HttpStatusCode.NoContent }, { "" }, captured = captured)
-        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens))
+        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         val result = api.set(7, LibraryPlaybackPrefRequest(audioLanguage = "en", subtitleMode = "always"))
 
@@ -541,7 +543,7 @@ class SettingsApiValuesTest {
         var status = HttpStatusCode.OK
         val captured = Captured()
         val c = client({ status }, { "" }, captured = captured)
-        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens))
+        val api = LibraryPlaybackPrefsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
         assertFalse(api.delete(7) is ApiResult.Success)
         status = HttpStatusCode.NoContent

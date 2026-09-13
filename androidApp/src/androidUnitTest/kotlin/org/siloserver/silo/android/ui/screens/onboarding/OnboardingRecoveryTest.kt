@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.onboarding
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import android.app.Application
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
@@ -60,7 +62,7 @@ class OnboardingRecoveryTest {
             val cache = OnboardingTourLocalCache(context)
             val settings = java.lang.reflect.Proxy.newProxyInstance(PlayerSettingsStore::class.java.classLoader,
                 arrayOf(PlayerSettingsStore::class.java)) { _, method, _ -> error("Unexpected setting call ${method.name}") } as PlayerSettingsStore
-            val vm = OnboardingTourViewModel(OnboardingRepository(OnboardingApi(c,tokens)),ProfileRepository(ProfileApi(c),tokens),settings,tokens,cache)
+            val vm = OnboardingTourViewModel(OnboardingRepository(OnboardingApi(c, tokens, ApiV2Gate.Unrestricted)),ProfileRepository(ProfileApi(c, ApiV2Gate.Unrestricted),tokens),settings,tokens,cache)
             vm.load(); vm.uiState.first { !it.isLoading }
             vm.onAdvance(); intermediateSent.await()
             assertEquals(listOf("read","write1"),events)

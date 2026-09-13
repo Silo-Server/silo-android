@@ -15,22 +15,11 @@ import org.siloserver.silo.network.*
     @SerialName("updated_at") val updated: String? = null,
 )
 
-class TasteProfileV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
+class TasteProfileV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture(): AuthScopeSnapshot? = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
-    suspend fun current(owner: AuthScopeSnapshot): Boolean {
-        val now=capture()
-        return owner.isSameIdentityAs(now) && owner.serverUrl==now?.serverUrl && owner.profileId==now?.profileId &&
-            owner.profileToken==now?.profileToken && owner.credentialGenerationId==now?.credentialGenerationId
-    }
-    suspend fun read(owner: AuthScopeSnapshot): ApiResult<TasteProfile> {
-        if(!current(owner)) return changed()
-        val result=safeApiV2Call<TasteSummary>(gate) {
-            client.get("/api/v2/recommendations/taste-profile") { authScope(owner); requireSiloAuth() }
-                .also { check(!it.status.isSuccess() || it.status==HttpStatusCode.OK) }
-        }
-        if(!current(owner)) return changed()
-        return result.map { TasteProfile(it.genres,it.directors,it.counts,it.updated) }
-    }
-    private fun changed()=ApiResult.Error(0,"taste_authority_changed","The initiating taste-profile identity changed.")
+    suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
+    suspend fun read(owner: AuthScopeSnapshot): ApiResult<TasteProfile> =
+        ownedV2Call<TasteSummary, TasteProfile>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
+            client.get("/api/v2/recommendations/taste-profile") { authScope(scope!!); requireSiloAuth() }
+        }) { TasteProfile(it.genres, it.directors, it.counts, it.updated) }
 }
