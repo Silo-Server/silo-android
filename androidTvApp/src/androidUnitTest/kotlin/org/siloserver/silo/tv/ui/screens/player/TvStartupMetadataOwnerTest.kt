@@ -52,6 +52,7 @@ class TvStartupMetadataOwnerTest {
             dispatcher = StandardTestDispatcher(testScheduler)
             addHandler { req ->
                 val path = req.url.encodedPath
+                var status = HttpStatusCode.OK
                 val body = when {
                     path == "/api/v2/watch/item" -> {
                         reads++
@@ -59,24 +60,28 @@ class TvStartupMetadataOwnerTest {
                         if (stage == "watch") tokens.metadataOwner = original.copy(profileToken = "new")
                         """{"content_id":"item","type":"movie","title":"Title","versions":[{"file_id":"41","duration_seconds":120}]}"""
                     }
-                    path == "/api/v1/playback/start" -> {
+                    path == "/api/v2/playback/start" -> {
                         starts++
+                        status = HttpStatusCode.Created
                         assertEquals(original, req.attributes[AuthScopeAttributeKey])
                         val session = if (stage == "predecessor" && starts == 1) "predecessor" else "allocated"
-                        """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1"],"outcome":"playable","session_id":"$session","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"$session","delivery":"original_http","stream":{"url":"https://silo.test/stream/$session","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":41,"effective_media_file_id":41}}"""
+                        """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1"],"outcome":"playable","session_id":"$session","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"$session","delivery":"original_http","stream":{"url":"https://silo.test/stream/$session","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"41","effective_media_file_id":"41"}}"""
                     }
-                    path == "/api/v1/playback/route-events" -> "{}"
-                    req.method == HttpMethod.Delete && path == "/api/v1/playback/allocated" -> {
+                    path == "/api/v2/playback/route-events" -> {
+                        status = HttpStatusCode.Accepted
+                        """{"event_id":"event","outcome":"accepted"}"""
+                    }
+                    req.method == HttpMethod.Delete && path == "/api/v2/playback/allocated" -> {
                         stops += "allocated"
-                        "{}"
+                        """{"stop_id":"stop","outcome":"stopped"}"""
                     }
                     else -> error("Unexpected transport $path")
                 }
-                respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
             }
         })) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val manager = PlaybackSessionManager(PlaybackRepository(PlaybackApi(client), tokens = tokens), tokens)
+            val manager = PlaybackSessionManager(PlaybackRepository(tokens = tokens), tokens)
             val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
             fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
                 it.isAccessible = true; it.get(lifecycle)

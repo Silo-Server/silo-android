@@ -8,7 +8,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.playback.*
 import org.siloserver.silo.network.*
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PlaybackRepository
 import kotlin.test.*
 
@@ -17,7 +16,7 @@ class PlaybackMetadataMutexTest {
         val client = HttpClient(MockEngine { error("No real dispatch") })
         try {
             val stopped = mutableListOf<String>()
-            val manager = object : PlaybackSessionManager(PlaybackRepository(PlaybackApi(client)), TokenManagerImpl()) {
+            val manager = object : PlaybackSessionManager(PlaybackRepository(), TokenManagerImpl()) {
                 override suspend fun stopSession(sessionId: String): ApiResult<Unit> { stopped += sessionId; return ApiResult.Success(Unit) }
             }
             val lifecycle = PlaybackSessionLifecycle(manager, org.siloserver.silo.network.api.HealthApi(client),
@@ -46,7 +45,7 @@ class PlaybackMetadataMutexTest {
         var network = 0
         val client = HttpClient(MockEngine { network++; respond("{}", HttpStatusCode.ServiceUnavailable) })
         try {
-            val manager = PlaybackSessionManager(PlaybackRepository(PlaybackApi(client), tokens = tokens), tokens)
+            val manager = PlaybackSessionManager(PlaybackRepository(tokens = tokens), tokens)
             val lockField = PlaybackSessionManager::class.java.getDeclaredField("contentStartMutex").apply { isAccessible = true }
             val lock = lockField.get(manager) as Mutex
             val orphanField = PlaybackSessionManager::class.java.getDeclaredField("orphanedSessionIds").apply { isAccessible = true }

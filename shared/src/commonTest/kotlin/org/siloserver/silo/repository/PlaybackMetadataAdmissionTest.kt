@@ -9,7 +9,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.test.*
 import org.siloserver.silo.model.playback.*
 import org.siloserver.silo.network.*
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.network.apiv2.*
 import kotlin.test.*
 
@@ -75,7 +74,7 @@ class PlaybackMetadataAdmissionTest {
                 }
             }
             try {
-                val repo = PlaybackRepository(PlaybackApi(client), SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
+                val repo = PlaybackRepository(SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
                 assertIs<ApiResult.Error>(repo.startPlaybackV3(request(), original))
                 assertEquals(0, starts); assertTrue(store.rows.isEmpty())
             } finally { client.close() }
@@ -87,11 +86,11 @@ class PlaybackMetadataAdmissionTest {
         val client = client { req ->
             assertEquals(original, req.attributes[AuthScopeAttributeKey])
             if (req.url.encodedPath.endsWith("capabilities")) { afterAbsence = true; reply(caps.replace("\"sequenced_progress_v1\"", "")) }
-            else { legacy++; assertEquals("/api/v1/playback/start", req.url.encodedPath); reply("{}", HttpStatusCode.ServiceUnavailable) }
+            else { legacy++; reply("{}", HttpStatusCode.ServiceUnavailable) }
         }
         try {
             val sequenced = SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }
-            val repo = PlaybackRepository(PlaybackApi(client), sequenced, identity)
+            val repo = PlaybackRepository(sequenced, identity)
             repo.startPlaybackV3(request(), original)
             assertEquals(0, legacy); assertTrue(store.rows.isEmpty())
             // Change at the repository's post-absence authority snapshot, after
@@ -114,7 +113,7 @@ class PlaybackMetadataAdmissionTest {
             else -> { starts++; reply("{}") }
         } }
         try {
-            val repo = PlaybackRepository(PlaybackApi(client), SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
+            val repo = PlaybackRepository(SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
             assertIs<ApiResult.Error>(repo.startPlaybackV3(request(), original))
             assertEquals(0, starts); assertEquals("attempt", store.rows.single().attemptId)
             assertNull(store.rows.single().sessionId); assertFalse(store.rows.single().terminal)
@@ -131,7 +130,7 @@ class PlaybackMetadataAdmissionTest {
             }
         }
         try {
-            val repo = PlaybackRepository(PlaybackApi(client), SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
+            val repo = PlaybackRepository(SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
             assertIs<ApiResult.Success<*>>(repo.startPlaybackV3(request(), original))
             assertEquals(1, starts); assertEquals("attempt", store.rows.single().attemptId)
             assertEquals("session-1", store.rows.single().sessionId)
@@ -168,10 +167,10 @@ class PlaybackMetadataAdmissionTest {
             })) { install(ContentNegotiation) { json(SiloJson) }; install(SiloAuthPlugin) { tokenManager = tokens } }
             try {
                 val runtime = if (sequencedBranch) SequencedPlayback(PlaybackV2Api(client), tokens, identity, Store()) { "stop" } else null
-                val repo = PlaybackRepository(PlaybackApi(client), runtime, tokens)
+                val repo = PlaybackRepository(runtime, tokens)
                 val result = repo.startPlaybackV3(request(), expected)
                 if (sequencedBranch) assertIs<ApiResult.Success<*>>(result) else assertIs<ApiResult.Error>(result)
-                assertTrue(urls.last().endsWith(if (sequencedBranch) "/api/v2/playback/start" else "/api/v1/playback/start"))
+                assertTrue(urls.last().endsWith("/api/v2/playback/start"))
             } finally { client.close() }
         }
     }
@@ -186,7 +185,7 @@ class PlaybackMetadataAdmissionTest {
             }
         }
         try {
-            val repo = PlaybackRepository(PlaybackApi(client), SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
+            val repo = PlaybackRepository(SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "stop" }, identity)
             assertFalse(repo.startPlaybackV3(request(), original) is ApiResult.Success)
             assertEquals(1, starts); assertEquals("attempt", store.rows.single().attemptId)
             assertEquals("session-1", store.rows.single().sessionId); assertFalse(store.rows.single().terminal)

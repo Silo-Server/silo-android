@@ -100,7 +100,6 @@ import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.DefaultSubtitlesApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -881,7 +880,7 @@ private class RecordingPlaybackSessionManager(
     client: HttpClient,
     tokenManager: TokenManager,
 ) : PlaybackSessionManager(
-    PlaybackRepository(PlaybackApi(client)),
+    PlaybackRepository(),
     tokenManager,
 ) {
     private val stopped = mutableListOf<String>()

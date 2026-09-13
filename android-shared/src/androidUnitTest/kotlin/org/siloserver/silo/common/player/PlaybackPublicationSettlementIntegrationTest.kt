@@ -45,7 +45,6 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
 import kotlin.test.Test
@@ -463,14 +462,16 @@ class PlaybackPublicationSettlementIntegrationTest {
                 val path = request.url.encodedPath
                 var responseStatus = HttpStatusCode.OK
                 val body = when {
-                    path == "/api/v1/playback/start" ->
+                    path == "/api/v2/playback/start" -> {
+                        responseStatus = HttpStatusCode.Created
                         SiloJson.encodeToString(starts[startIndex.getAndIncrement()])
+                    }
                     path.endsWith("/replan") -> {
                         replanCalls += 1
                         SiloJson.encodeToString(requireNotNull(replanResponse))
                     }
                     request.method == HttpMethod.Delete &&
-                        path.startsWith("/api/v1/playback/") -> {
+                        path.startsWith("/api/v2/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
                         val attempt = synchronized(stopAttemptCounts) {
                             val next = (stopAttemptCounts[sessionId] ?: 0) + 1
@@ -481,7 +482,7 @@ class PlaybackPublicationSettlementIntegrationTest {
                         stoppedEvents.send(sessionId)
                         stopThrowableBehavior(sessionId, attempt)?.let { throw it }
                         responseStatus = stopBehavior(sessionId, attempt)
-                        "{}"
+                        """{"stop_id":"stop","outcome":"stopped"}"""
                     }
                     else -> "{}"
                 }
@@ -495,7 +496,7 @@ class PlaybackPublicationSettlementIntegrationTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
+            playbackRepository = PlaybackRepository(),
             tokenManager = SettlementTokenManager,
         )
         val lifecycle = PlaybackSessionLifecycle(

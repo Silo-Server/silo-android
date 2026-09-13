@@ -11,7 +11,6 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
 import io.ktor.client.HttpClient
@@ -975,7 +974,7 @@ class PlaybackSessionLifecycleTest {
 // ----------------------------------------------------------------------------
 
 private open class FakeSessionManager : PlaybackSessionManager(
-    playbackRepository = PlaybackRepository(playbackApi = NoOpPlaybackApi),
+    playbackRepository = PlaybackRepository(),
     tokenManager = NoOpTokenManager,
 ) {
 
@@ -1038,7 +1037,6 @@ private class RecordingPersonalDataRepository : PersonalDataRepository(
 // ---- No-op underlying dependencies (overrides bypass them entirely) --------
 
 private val NoOpHttpClient: HttpClient = HttpClient()
-private val NoOpPlaybackApi: PlaybackApi = PlaybackApi(NoOpHttpClient)
 private val NoOpPersonalDataApi: PersonalDataApi = PersonalDataApi(NoOpHttpClient)
 
 private val NoOpTokenManager: TokenManager = object : TokenManager {

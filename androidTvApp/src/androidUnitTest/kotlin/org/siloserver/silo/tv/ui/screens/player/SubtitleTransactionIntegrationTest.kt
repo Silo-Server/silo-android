@@ -79,7 +79,6 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.PlaybackRepository
 import kotlin.test.Test
@@ -494,8 +493,10 @@ class SubtitleTransactionIntegrationTest {
         private val client = HttpClient(
             MockEngine { request ->
                 val path = request.url.encodedPath
+                var status = HttpStatusCode.OK
                 val payload = when {
-                    path == "/api/v1/playback/start" -> {
+                    path == "/api/v2/playback/start" -> {
+                        status = HttpStatusCode.Created
                         val body = SiloJson.parseToJsonElement(
                             request.body.toByteArray().decodeToString(),
                         ).jsonObject
@@ -524,7 +525,7 @@ class SubtitleTransactionIntegrationTest {
                         replanResponse(replanIndex.getAndIncrement(), body)
                     }
                     request.method == HttpMethod.Delete &&
-                        path.startsWith("/api/v1/playback/") -> {
+                        path.startsWith("/api/v2/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
                         stoppedSessions += sessionId
                         null
@@ -532,8 +533,9 @@ class SubtitleTransactionIntegrationTest {
                     else -> null
                 }
                 respond(
-                    content = payload?.let(SiloJson::encodeToString) ?: "{}",
-                    status = HttpStatusCode.OK,
+                    content = payload?.let(SiloJson::encodeToString)
+                        ?: if (request.method == HttpMethod.Delete) """{"stop_id":"stop","outcome":"stopped"}""" else "{}",
+                    status = status,
                     headers = headersOf(HttpHeaders.ContentType, "application/json"),
                 )
             },
@@ -541,7 +543,7 @@ class SubtitleTransactionIntegrationTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
+            playbackRepository = PlaybackRepository(),
             tokenManager = IntegrationTokenManager,
             committedSessionCleanupScope = committedSessionCleanupScope,
         )
