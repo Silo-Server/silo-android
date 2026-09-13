@@ -2,6 +2,7 @@ package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -40,16 +41,24 @@ internal data class AiJobV2(
 @Serializable private data class AiJobsEnvelope(val jobs: List<AiJobV2>)
 @Serializable private data class AiQuotaV2(val limited: Boolean, val limit: Int, val used: Int, val remaining: Int, val period: String)
 
+/** Quota, job reads and job cancellation. Cancellation acknowledges a request; job polling determines the terminal outcome. */
 class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: TokenManager,
     private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
-    private suspend inline fun <reified T> read(path: String, scope: AuthScopeSnapshot?,
-        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
+    /** Sends [block] bound to [scope] (or the current scope) and discards the reply if the identity moved meanwhile. */
+    private suspend inline fun <reified T> bound(scope: AuthScopeSnapshot?,
+        block: (AuthScopeSnapshot) -> HttpResponse): ApiResult<T> {
         val captured = scope ?: tokens.snapshotCurrentScope() ?: return changed()
-        if (!captured.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
-        val result = safeApiV2Call<T>(gate) {
-            client.get(path) { authScope(captured); requireSiloAuth(); configure() }
-        }
-        return if (captured.isSameIdentityAs(tokens.snapshotCurrentScope())) result else changed()
+        if (!current(captured)) return changed()
+        val result = safeApiV2Call<T>(gate) { block(captured) }
+        return if (current(captured)) result else changed()
+    }
+    private suspend fun current(scope: AuthScopeSnapshot): Boolean {
+        val now = tokens.snapshotCurrentScope()
+        return scope.isSameIdentityAs(now) && scope.profileId == now?.profileId && scope.profileToken == now?.profileToken
+    }
+    private suspend inline fun <reified T> read(path: String, scope: AuthScopeSnapshot?,
+        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> = bound(scope) { captured ->
+        client.get(path) { authScope(captured); requireSiloAuth(); configure() }
     }
     private fun changed() = ApiResult.Error(0, "identity_changed", "The subtitle job's account or profile changed.")
     private inline fun <T, R> project(result: ApiResult<T>, block: (T) -> R): ApiResult<R> = when (result) {
@@ -67,9 +76,16 @@ class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: T
         }
     suspend fun jobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         project(read<AiJobsEnvelope>("/api/v2/subtitles/ai/jobs", null) { parameter("media_file_id", mediaFileId.toString()) }) {
-            require(it.jobs.size <= 50)
             val jobs = it.jobs.map { wire -> wire.project() }
             require(jobs.all { job -> job.mediaFileId == mediaFileId } && jobs.map { job -> job.id }.distinct().size == jobs.size)
             SubtitleAiJobsResponse(jobs)
         }
+    suspend fun cancel(id: Long, scope: AuthScopeSnapshot? = null): ApiResult<Unit> {
+        if (id <= 0) return ApiResult.Error(0, "invalid_subtitle_job", "A positive job identifier is required.")
+        return bound(scope) { captured ->
+            // Declared natural-idempotent for this exact immutable job ID.
+            client.post("/api/v2/subtitles/ai/jobs/$id/cancel") { authScope(captured); requireSiloAuth() }
+                .also { check(!it.status.isSuccess() || it.status == HttpStatusCode.NoContent) }
+        }
+    }
 }

@@ -1,8 +1,10 @@
 # Android subtitle AI reads on API v2
 
-Phone and TV quota reads and job polling use the shared v2 adapter. The existing
-recent-jobs facade uses v2 too, although no current native UI calls it. Job creation,
-cancellation and other subtitle operations remain separate migration scopes.
+Phone and TV quota reads, job polling and job cancellation use the shared v2 reads
+adapter (`SubtitleAiReadsV2Api`); job creation has its own one-send adapter. The
+existing recent-jobs facade uses v2 too, although no current native UI calls it.
+`DefaultSubtitlesApi` is v2-only: every subtitle call goes through a required v2
+adapter and no v1 subtitle path remains.
 
 The wire adapter requires string job, media-file and result-subtitle IDs. It checks
 canonical positive Long job IDs and Int renderer handles before projecting to the
@@ -14,8 +16,7 @@ Each poll captures one account/profile scope. Requests and results remain bound 
 that identity, and an identity change ends polling without publishing the delayed
 job. Ordinary transport failures retain the existing retry behavior; missing jobs
 and invalid projected identities terminate with an error. V2 reads use the existing
-contract gate. Production dependency bindings select v2; legacy defaults remain as
-test seams for unchanged mutation and repository fixtures.
+contract gate.
 
 Focused tests cover IDs beyond JavaScript's safe integer range, numeric-wire and
 native-overflow refusal, requested identity matching, nullable results, quota,

@@ -69,7 +69,7 @@ class SubtitleAiReadsV2Test {
             reply("""{"job":${row()}}""")
         }
         try {
-            val api = DefaultSubtitlesApi(c, SubtitleAiReadsV2Api(c, tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c, tokens), SubtitleDownloadV2Api(c, tokens), SubtitleAiReadsV2Api(c, tokens), SubtitleAiCreateV2Api(c, tokens))
             val repository = SubtitlesRepository(api, tokens)
             assertIs<SubtitleJobOutcome.Failed>(repository.pollJob(9007199254740993L) { updates++ })
             assertEquals(1, calls); assertEquals(0, updates)

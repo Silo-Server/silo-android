@@ -369,7 +369,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     scope,
                 ),
                 sleepTimer = SleepTimerController(scope),
-                subtitlesRepository = SubtitlesRepository(DefaultSubtitlesApi(client)),
+                subtitlesRepository = SubtitlesRepository(
+                    DefaultSubtitlesApi(
+                        org.siloserver.silo.network.apiv2.SubtitleReadsV2Api(client, tokenManager),
+                        org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api(client, tokenManager),
+                        org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api(client, tokenManager),
+                        org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api(client, tokenManager),
+                    ),
+                ),
                 userItemStatePort = NoOpUserItemStatePort,
                 finalPlaybackPositionWriter = FinalPlaybackPositionWriter(
                     scope = scope,
