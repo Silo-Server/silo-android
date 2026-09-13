@@ -228,9 +228,9 @@ class TvItemDetailSubtitlePreferenceTest {
     ): HttpClient = HttpClient(
         MockEngine { request ->
             when (request.url.encodedPath) {
-                "/api/v1/profiles" -> respond(
+                "/api/v2/profiles" -> respond(
                     content = buildString {
-                        append("""{"profiles":[{"id":"$PROFILE_ID","name":"Profile"""")
+                        append("""{"items":[{"id":"$PROFILE_ID","name":"Profile","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"""")
                         subtitleLanguage?.let { append(""","subtitle_language":"$it"""") }
                         subtitleMode?.let { append(""","subtitle_mode":"$it"""") }
                         showForced?.let { append(""","show_forced_subtitles":$it""") }
@@ -239,7 +239,7 @@ class TvItemDetailSubtitlePreferenceTest {
                     status = HttpStatusCode.OK,
                     headers = JSON_HEADERS,
                 )
-                "/api/v1/catalog/items/$CONTENT_ID" -> respond(
+                "/api/v2/catalog/items/$CONTENT_ID" -> respond(
                     content = """
                         {"content_id":"$CONTENT_ID","type":"movie","title":"Detail"}
                     """.trimIndent(),

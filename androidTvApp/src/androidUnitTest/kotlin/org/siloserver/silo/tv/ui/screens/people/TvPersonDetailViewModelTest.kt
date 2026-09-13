@@ -31,7 +31,7 @@ import kotlin.test.assertTrue
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvPersonDetailViewModelTest {
     @Test
-    fun loadMoreAppendsSecondPageUsingSnapshotAndRawOffset() = runPersonTest {
+    fun loadMoreAppendsSecondPageUsingTheServerCursor() = runPersonTest {
         val queries = mutableListOf<Map<String, String?>>()
         val viewModel = createViewModel(queries)
         awaitState(viewModel) { !it.isLoading && !it.isLoadingItems && it.items.size == 59 }
@@ -45,12 +45,11 @@ class TvPersonDetailViewModelTest {
         assertEquals("movie-59", ids.last())
         assertEquals(120, viewModel.uiState.value.totalItems)
         assertTrue(viewModel.uiState.value.hasMore)
-        assertEquals("snap-1", queries.last()["snapshot"])
-        assertEquals("60", queries.last()["offset"])
+        assertEquals("snap-1", queries.last()["cursor"])
     }
 
     @Test
-    fun filterChangeResetsItemsSnapshotAndOffset() = runPersonTest {
+    fun filterChangeResetsItemsAndCursor() = runPersonTest {
         val queries = mutableListOf<Map<String, String?>>()
         val viewModel = createViewModel(queries)
         awaitState(viewModel) { !it.isLoading && !it.isLoadingItems && it.items.size == 59 }
@@ -65,8 +64,7 @@ class TvPersonDetailViewModelTest {
         }
 
         assertEquals("audiobook", queries.last()["type"])
-        assertEquals("0", queries.last()["offset"])
-        assertFalse("snapshot" in queries.last().keys)
+        assertFalse("cursor" in queries.last().keys)
     }
 
     @Test
@@ -137,10 +135,10 @@ class TvPersonDetailViewModelTest {
             MockEngine { request ->
                 queries += request.url.parameters.names().associateWith { request.url.parameters[it] }
                 when (request.url.encodedPath) {
-                    "/api/v1/people/7" -> respondJson(
-                        """{"id":7,"name":"Person","birth_date":"1972-06-16"}""",
+                    "/api/v2/catalog/people/7" -> respondJson(
+                        """{"id":"7","name":"Person","birth_date":"1972-06-16"}""",
                     )
-                    "/api/v1/catalog" -> {
+                    "/api/v2/catalog" -> {
                         val body = when (request.url.parameters["type"]) {
                             "audiobook" -> catalogBody(
                                 total = 1,
@@ -167,11 +165,11 @@ class TvPersonDetailViewModelTest {
                                 items = listOf(item("series-1", "Series 1", "series")),
                             )
                             else -> {
-                                if (request.url.parameters["snapshot"] == "snap-1") {
+                                if (request.url.parameters["cursor"] == "snap-1") {
                                     catalogBody(
                                         total = 120,
                                         hasMore = true,
-                                        snapshot = "snap-1",
+                                        snapshot = "snap-2",
                                         items = listOf(item("movie-59", "Movie 59", "movie")),
                                     )
                                 } else {
@@ -211,8 +209,9 @@ class TvPersonDetailViewModelTest {
     ): String = """
         {
           "total": $total,
-          "has_more": $hasMore,
-          "snapshot": "$snapshot",
+          "total_exact": true,
+          "window_cursor": "window",
+          "page": {"has_more": $hasMore${if (hasMore) """, "next_cursor": "$snapshot"""" else ""}},
           "items": [${items.joinToString(",")}]
         }
     """.trimIndent()

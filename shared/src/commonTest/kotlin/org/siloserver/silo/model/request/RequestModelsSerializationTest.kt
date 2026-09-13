@@ -64,7 +64,7 @@ class RequestModelsSerializationTest {
               "outcome": "active",
               "targets": [
                 {
-                  "id": 7,
+                  "id": "7",
                   "request_id": "req_1",
                   "integration_kind": "sonarr",
                   "instance_name": "Sonarr 4K",

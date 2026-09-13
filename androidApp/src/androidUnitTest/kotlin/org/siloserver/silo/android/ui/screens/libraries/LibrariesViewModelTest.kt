@@ -28,6 +28,10 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -350,18 +354,24 @@ class LibrariesViewModelTest {
             MockEngine { request ->
                 val key = when (request.url.encodedPath) {
                     "/api/v2/user/libraries" -> "libraries"
-                    "/api/v1/catalog/filters" -> "filters"
-                    "/api/v1/catalog" -> {
-                        val baseKey = "catalog:${request.url.parameters["library_id"]}:" +
-                            "${request.url.parameters["sort"]}:${request.url.parameters["order"]}"
-                        val filterSuffix = if (
-                            request.url.parameters.names().any { it.startsWith("groups[") }
-                        ) {
+                    "/api/v2/catalog/filters" -> "filters"
+                    // Unfiltered browses are GET /catalog with `sort=-field`; facet
+                    // filters switch to POST /catalog/query with the query in the body.
+                    "/api/v2/catalog", "/api/v2/catalog/query" -> {
+                        val body = (request.body as? io.ktor.http.content.TextContent)
+                            ?.let { SiloJson.parseToJsonElement(it.text).jsonObject }
+                        fun field(name: String): String? = body?.get(name)?.let { (it as? JsonPrimitive)?.contentOrNull }
+                            ?: request.url.parameters[name]
+                        val rawSort = field("sort")
+                        val sort = rawSort?.removePrefix("-")
+                        val order = field("order") ?: if (rawSort?.startsWith("-") == true) "desc" else "asc"
+                        val baseKey = "catalog:${field("library_id")}:$sort:$order"
+                        val filterSuffix = if ((body?.get("groups") as? JsonArray)?.isNotEmpty() == true) {
                             ":filtered"
                         } else {
                             ""
                         }
-                        val offsetSuffix = ":${request.url.parameters["offset"]}"
+                        val offsetSuffix = ":${field("cursor") ?: "0"}"
                         listOf(
                             baseKey + filterSuffix + offsetSuffix,
                             baseKey + filterSuffix,
@@ -418,10 +428,9 @@ class LibrariesViewModelTest {
                   {"id":"2","name":"Second","type":"movies","sort_order":1}
                 ],"page":{"has_more":false}}
             """.trimIndent()
-            key == "filters" ->
-                """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[]}"""
+            key == "filters" -> filtersBody(null)
             key.startsWith("sections:") -> """{"sections":[]}"""
-            key.startsWith("collections:") -> """{"collections":[]}"""
+            key.startsWith("collections:") -> """{"library_id":"1","collections":[],"groups":[]}"""
             key.startsWith("catalog:") -> catalogBody("immediate")
             else -> error("Unexpected request key $key")
         }
@@ -448,23 +457,30 @@ class LibrariesViewModelTest {
         private fun catalogBody(id: String) = """
             {
               "total":1,
-              "has_more":false,
+              "total_exact":true,
+              "window_cursor":"window",
+              "page":{"has_more":false},
               "items":[{"content_id":"$id","type":"movie","title":"$id"}]
             }
         """.trimIndent()
 
+        /** The second page is requested with `cursor=1`, which the fixture keys as `:1`. */
         private fun catalogPageBody(id: String, hasMore: Boolean) = """
             {
               "total":2,
-              "has_more":$hasMore,
+              "total_exact":true,
+              "window_cursor":"window",
+              "page":{"has_more":$hasMore${if (hasMore) ""","next_cursor":"1"""" else ""}},
               "items":[{"content_id":"$id","type":"movie","title":"$id"}]
             }
         """.trimIndent()
 
-        private fun filtersBody(genre: String) =
-            """{"genres":["$genre"],"studios":[],"networks":[],"countries":[],"content_ratings":[]}"""
+        private fun filtersBody(genre: String?) =
+            """{"genres":[${genre?.let { "\"$it\"" } ?: ""}],"studios":[],"networks":[],"countries":[],""" +
+                """"original_languages":[],"content_ratings":[],"authors":[],"narrators":[],"series":[]}"""
 
         private fun collectionsBody(id: String) =
-            """{"collections":[{"id":"$id","name":"$id"}]}"""
+            """{"library_id":"1","collections":[{"id":"$id","title":"$id","library_id":"1","library_ids":["1"],""" +
+                """"collection_type":"regular","poster_url":"","item_count":0,"sort_order":0}],"groups":[]}"""
     }
 }

@@ -187,10 +187,10 @@ class CatalogLetterIndexViewModelTest {
                     query = request.url.parameters.names().associateWith { request.url.parameters[it] },
                 )
                 when (request.url.encodedPath) {
-                    "/api/v1/user/libraries" -> respondJson(
-                        """[{"id":1,"name":"Books","type":"ebooks","sort_order":0}]""",
+                    "/api/v2/user/libraries" -> respondJson(
+                        """{"items":[{"id":"1","name":"Books","type":"ebooks","sort_order":0}],"page":{"has_more":false}}""",
                     )
-                    "/api/v1/library/1/sections" -> respondJson("""{"sections":[]}""")
+                    "/api/v2/library/1/sections" -> respondJson("""{"sections":[]}""")
                     "/api/v2/catalog/filters" -> respondJson(
                         """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
                     )
