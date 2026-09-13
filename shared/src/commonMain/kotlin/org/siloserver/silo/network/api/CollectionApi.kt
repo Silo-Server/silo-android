@@ -6,6 +6,7 @@ import io.ktor.http.*
 import io.ktor.client.statement.HttpResponse
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.PageInfo
 import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.safeApiV2Call
@@ -54,11 +55,9 @@ data class CollectionContinuation(val cursor: String, val collectionId: String, 
 data class CollectionItemsPage(val catalog: CatalogResponse, val continuation: CollectionContinuation?)
 
 @Serializable
-internal data class CollectionCatalogPage(@SerialName("has_more") val hasMore: Boolean, @SerialName("next_cursor") val nextCursor: String? = null)
-@Serializable
 internal data class CollectionCatalogResponse(
     val items: List<BrowseItem>,
-    val page: CollectionCatalogPage,
+    val page: PageInfo,
     val total: Int = 0,
     @SerialName("total_exact") val totalExact: Boolean? = null,
     @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,

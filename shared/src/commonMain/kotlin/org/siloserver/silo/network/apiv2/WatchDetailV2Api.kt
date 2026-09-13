@@ -18,7 +18,7 @@ class WatchDetailV2Api(private val client: HttpClient, private val tokens: Token
 }
 
 /** Adapt only fields consumed by WatchDetail; do not change the legacy model wire contract. */
-internal fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
+private fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
     val content = body["content_id"] as? JsonPrimitive
     check(content?.isString == true && content.content == id)
     fun numericId(value: JsonElement): JsonPrimitive {

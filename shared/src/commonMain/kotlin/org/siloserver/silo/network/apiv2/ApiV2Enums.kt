@@ -33,12 +33,3 @@ value class SubtitleMode(val wire: String)
 @Serializable
 @JvmInline
 value class MaxPlaybackQuality(val wire: String)
-
-@Serializable
-@JvmInline
-value class ProgressStatus(val wire: String) {
-    companion object {
-        val IN_PROGRESS = ProgressStatus("in_progress")
-        val COMPLETED = ProgressStatus("completed")
-    }
-}

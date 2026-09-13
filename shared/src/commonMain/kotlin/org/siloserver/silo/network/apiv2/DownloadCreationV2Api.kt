@@ -24,7 +24,6 @@ class DownloadCreationV2Api(
     private val registry: DownloadRegistryV2Api,
     private val gate: ApiV2Gate,
 ) {
-    private fun changed() = identityChanged()
     private fun invalid() = ApiResult.Error(0,"invalid_download_creation","The server returned an incomplete download creation receipt. Refresh downloads before trying again.")
     /** Identity plus the intentional extra device check: a download belongs to one installation. */
     private suspend fun current(scope: AuthScopeSnapshot, device: String): Boolean =
@@ -35,11 +34,10 @@ class DownloadCreationV2Api(
         request.episodeId?.let { put("episode_id",it) }
         request.fileId?.let { put("media_file_id",it.toString()) }
         put("quality", request.quality ?: "original")
-        // target_bitrate_kbps is a legacy hint; v2 derives it from quality.
     }.toMutableMap()
 
     private suspend fun send(scope: AuthScopeSnapshot, device: String, body: JsonObject, cursor: String? = null): ApiResult<CreatedDownloadsV2> {
-        if (!current(scope,device)) return changed()
+        if (!current(scope,device)) return identityChanged()
         val result = ownedV2Call<CreatedDownloadsV2, CreatedDownloadsV2>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.Accepted, { owner ->
             client.post("/api/v2/downloads") {
                 authScope(owner!!); requireSiloAuth(); singleAttempt()
@@ -51,12 +49,12 @@ class DownloadCreationV2Api(
                 contentType(ContentType.Application.Json); setBody(body)
             }
         }) { it }
-        return if (current(scope,device)) result else changed()
+        return if (current(scope,device)) result else identityChanged()
     }
 
     suspend fun create(request: DownloadRequest, scope: AuthScopeSnapshot): ApiResult<DownloadRecord> {
-        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return changed()
-        if (!current(scope,device)) return changed()
+        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
+        if (!current(scope,device)) return identityChanged()
         if (request.series || request.fileId == null || request.fileId <= 0) return invalid()
         // Reconcile first. A confirmed usable entry with the requested quality
         // can be downloaded without resetting its bytes/status/batch on the server.
@@ -66,7 +64,7 @@ class DownloadCreationV2Api(
             is ApiResult.NetworkError -> listed
             else -> invalid()
         }
-        if (!current(scope,device)) return changed()
+        if (!current(scope,device)) return identityChanged()
         val matches = listed.data.downloads.filter {
             it.mediaFileId == request.fileId ||
                 (request.episodeId != null && it.episodeId == request.episodeId) ||
@@ -95,8 +93,8 @@ class DownloadCreationV2Api(
 
     @OptIn(ExperimentalUuidApi::class)
     suspend fun createBatch(request: DownloadRequest, scope: AuthScopeSnapshot): ApiResult<DownloadsListResponse> {
-        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return changed()
-        if (!current(scope,device)) return changed()
+        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
+        if (!current(scope,device)) return identityChanged()
         if (!request.series || request.fileId != null || request.episodeId != null) return invalid()
         val batch = Uuid.random().toString()
         val fields = body(request)

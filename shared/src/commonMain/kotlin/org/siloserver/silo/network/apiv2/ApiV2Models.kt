@@ -146,7 +146,7 @@ sealed class Patch<out T> {
     data class Set<T>(val value: T) : Patch<T>()
 
     companion object {
-        /** v1-style convenience: null means "leave unchanged", never "clear". */
+        /** Null means "leave unchanged", never "clear". */
         fun <T : Any> ofOptional(value: T?): Patch<T> = if (value == null) Omit else Set(value)
     }
 }

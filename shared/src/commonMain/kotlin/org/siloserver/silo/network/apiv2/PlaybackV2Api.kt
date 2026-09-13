@@ -2,6 +2,7 @@ package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -16,9 +17,6 @@ const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
 /** `PlaybackCapabilities.state` on the wire. */
 object PlaybackCapabilityStateV2 {
     const val AVAILABLE = "available"
-    const val DISABLED = "disabled"
-    const val NOT_CONFIGURED = "not_configured"
-    const val UNSUPPORTED = "unsupported"
 }
 
 /** `PlaybackMutation.outcome` on the wire for progress and stop receipts. */
@@ -30,9 +28,6 @@ object PlaybackMutationOutcomeV2 {
     val PROGRESS = setOf(APPLIED, REPLAYED, STALE_SAMPLE)
     val STOP = setOf(STOPPED, REPLAYED)
 }
-
-/** `PlaybackRouteEventReceipt.outcome` on the wire. */
-const val PLAYBACK_ROUTE_EVENT_ACCEPTED = "accepted"
 
 /** `revision` and `deliveries` are served but never read by Android. */
 @Serializable
@@ -69,7 +64,6 @@ data class PlaybackMutationV2(
     val outcome: String,
     val accepted: PlaybackSampleV2? = null,
     @SerialName("stop_id") val stopId: String? = null,
-    @SerialName("history_id") val historyId: String? = null,
 )
 
 /** Exact serialized body is retained by the journal before this single exchange. */
@@ -91,10 +85,15 @@ fun PlaybackRouteEventV3.v2Body(installationId: String, eventId: String): JsonOb
 )
 
 class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate) {
+    private fun HttpResponse.expect(status: Int): HttpResponse = also { check(!it.status.isSuccess() || it.status.value == status) }
+
+    private fun HttpResponse.identityHeaders(): Map<String, String> = call.request.headers.entries()
+        .filter { it.key.equals("Authorization", true) || it.key.equals("X-Profile-Id", true) }
+        .associate { it.key to it.value.single() }
+
     suspend fun capabilities(scope: AuthScopeSnapshot): ApiResult<PlaybackCapabilitiesV2> =
         safeApiV2Call(gate) {
-            client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }
-                .also { check(!it.status.isSuccess() || it.status.value == 200) }
+            client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }.expect(200)
         }
 
     suspend fun account(scope: AuthScopeSnapshot): ApiResult<Account> = safeApiV2Call(gate) {
@@ -107,10 +106,7 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
             client.post("/api/v2/playback/start") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also {
-                captureHeaders(it.call.request.headers.entries().filter { entry -> entry.key.equals("Authorization", true) || entry.key.equals("X-Profile-Id", true) }.associate { entry -> entry.key to entry.value.single() })
-                check(!it.status.isSuccess() || it.status.value == 201)
-            }
+            }.also { captureHeaders(it.identityHeaders()) }.expect(201)
         }
 
     suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
@@ -119,10 +115,7 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
                 url { path("", "api", "v2", "playback", sessionId, "replan") }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also {
-                captureHeaders(it.call.request.headers.entries().filter { entry -> entry.key.equals("Authorization", true) || entry.key.equals("X-Profile-Id", true) }.associate { entry -> entry.key to entry.value.single() })
-                check(!it.status.isSuccess() || it.status.value == 200)
-            }
+            }.also { captureHeaders(it.identityHeaders()) }.expect(200)
         }
 
     /** HTTP 202 `{event_id, outcome: "accepted"}`; the receipt must echo the sent `event_id`. */
@@ -131,12 +124,12 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
             client.post("/api/v2/playback/route-events") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { check(!it.status.isSuccess() || it.status.value == 202) }
+            }.expect(202)
         }) {
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
             is ApiResult.Success ->
-                if (result.data["event_id"] == body["event_id"] && result.data["outcome"] == JsonPrimitive(PLAYBACK_ROUTE_EVENT_ACCEPTED))
+                if (result.data["event_id"] == body["event_id"] && result.data["outcome"] == JsonPrimitive("accepted"))
                     ApiResult.Success(Unit)
                 else ApiResult.Error(0, "invalid_receipt", "The route event receipt did not match the request.")
         }
@@ -147,7 +140,7 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
             url { path("", "api", "v2", "playback", sessionId, "progress") }
             authScope(scope); requireSiloAuth(); singleAttempt()
             contentType(ContentType.Application.Json); setBody(body)
-        }.also { check(!it.status.isSuccess() || it.status.value == 200) }
+        }.expect(200)
     }
 
     /** Only an HTTP 200 stopped or replayed receipt carrying the sent stop_id confirms the stop. */
@@ -157,7 +150,7 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
                 url { path("", "api", "v2", "playback", sessionId) }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { check(!it.status.isSuccess() || it.status.value == 200) }
+            }.expect(200)
         }) {
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result

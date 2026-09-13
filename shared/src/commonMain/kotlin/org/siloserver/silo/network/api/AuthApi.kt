@@ -123,36 +123,6 @@ class AuthApi(
 }
 
 /**
- * Checks membership endpoints that return HTTP 204 (present) / 404 (absent) with no body.
- *
- * - 2xx  → [ApiResult.Success]`(true)`
- * - 404  → [ApiResult.Success]`(false)`
- * - other HTTP errors → [ApiResult.Error]
- * - network failures  → [ApiResult.NetworkError]
- */
-internal suspend fun safeStatusCall(
-    block: suspend () -> HttpResponse
-): ApiResult<Boolean> {
-    return try {
-        val response = block()
-        when {
-            response.status.isSuccess() -> ApiResult.Success(true)
-            response.status == HttpStatusCode.NotFound -> ApiResult.Success(false)
-            else -> {
-                val error = try {
-                    response.body<ApiErrorBody>()
-                } catch (_: Exception) {
-                    ApiErrorBody()
-                }
-                ApiResult.Error(response.status.value, error.error, error.message)
-            }
-        }
-    } catch (e: Exception) {
-        ApiResult.NetworkError(e)
-    }
-}
-
-/**
  * Wraps an HTTP call in error handling, returning a typed [ApiResult].
  *
  * On success (2xx), deserializes the response body to [T].

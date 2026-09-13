@@ -16,7 +16,7 @@ import org.siloserver.silo.network.TokenManager
  * Wraps one v2 exchange: a 2xx body decodes to [T] with the production
  * [SiloJson]; a non-2xx body is read as a [Problem] and surfaced as
  * [ApiResult.Error] (`error` = the problem code, `message` = its detail).
- * Nothing here retries, and nothing here knows a v1 path.
+ * Nothing here retries.
  */
 internal suspend inline fun <reified T> safeApiV2Call(
     gate: ApiV2Gate,
@@ -75,15 +75,12 @@ internal suspend fun AuthScopeSnapshot.stillOwns(tokens: TokenManager?, policy: 
     }
 }
 
-internal const val IDENTITY_CHANGED = "identity_changed"
-internal const val INVALID_RESPONSE = "invalid_response"
-
 /** The one error every v2 call returns when its owning identity moved before or during the exchange. */
 internal fun identityChanged(): ApiResult.Error =
-    ApiResult.Error(0, IDENTITY_CHANGED, "The acting account or profile changed.")
+    ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
 
 internal fun invalidResponse(detail: String? = null): ApiResult.Error =
-    ApiResult.Error(0, INVALID_RESPONSE, detail?.takeIf { it.isNotBlank() } ?: "The server returned an unsupported response.")
+    ApiResult.Error(0, "invalid_response", detail?.takeIf { it.isNotBlank() } ?: "The server returned an unsupported response.")
 
 /**
  * One identity-guarded v2 exchange: gate, pre-guard [owner], call [block],
