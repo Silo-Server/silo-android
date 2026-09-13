@@ -7,13 +7,12 @@ import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.NotificationSyncResponse
 import org.siloserver.silo.model.notifications.UnreadCountResponse
-import org.siloserver.silo.model.notifications.WsTicketResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 
 /**
- * Profile-scoped notifications inbox, preferences, capability, and the
- * websocket handshake ticket. Behind an interface so the repository and its
+ * Profile-scoped notifications inbox, preferences, and capability. Behind an
+ * interface so the repository and its
  * tests can fake the transport (matching CalendarApi/SubtitlesApi). Production
  * binds [org.siloserver.silo.network.apiv2.NotificationsV2Api].
  *

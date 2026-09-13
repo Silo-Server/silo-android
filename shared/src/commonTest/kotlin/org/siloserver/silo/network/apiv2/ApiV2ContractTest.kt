@@ -68,8 +68,7 @@ class ApiV2ContractTest {
         assertEquals("1", account.id)
         assertEquals("laura", account.username)
         assertEquals("laura@example.test", account.email)
-        assertEquals(AccountRole.USER, account.role)
-        assertEquals(listOf("marker_edit"), account.permissions)
+        assertEquals("user", account.role.wire)
         assertTrue(account.downloadAllowed)
         assertNull(account.impersonation, "impersonation is absent outside an impersonation session")
     }
@@ -100,10 +99,9 @@ class ApiV2ContractTest {
             Account.serializer(),
             """{"id":"7","username":"u","email":"e","role":"admin"}""",
         )
-        assertEquals(emptyList(), account.permissions)
         assertFalse(account.downloadAllowed)
         assertNull(account.impersonation)
-        assertEquals(AccountRole.ADMIN, account.role)
+        assertEquals("admin", account.role.wire)
     }
 
     // --- updateProfile ---

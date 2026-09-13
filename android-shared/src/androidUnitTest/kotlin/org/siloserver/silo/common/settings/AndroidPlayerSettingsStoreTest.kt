@@ -926,19 +926,6 @@ private class FakeSettingsApi(
         return ApiResult.Success(EffectiveSettingValuesResponse(settings = entries, revision = 1))
     }
 
-    override suspend fun setDeviceSubtitleAppearanceOverride(appearance: SubtitleAppearance, profileId: String?) =
-        ApiResult.Success(Unit)
-
-    override suspend fun deleteDeviceSubtitleAppearanceOverride() = ApiResult.Success(Unit)
-
-    override suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
-        ApiResult.Success(
-            EffectiveSubtitleAppearance(
-                key = PlaybackSettingsKeys.SubtitleAppearance,
-                globalValue = SubtitleAppearance.DEFAULT.toJsonString(),
-                effectiveValue = SubtitleAppearance.DEFAULT.toJsonString(),
-            ),
-        )
 }
 
 /**

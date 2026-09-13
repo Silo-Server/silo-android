@@ -11,12 +11,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 @JvmInline
-value class AccountRole(val wire: String) {
-    companion object {
-        val ADMIN = AccountRole("admin")
-        val USER = AccountRole("user")
-    }
-}
+value class AccountRole(val wire: String)
 
 @Serializable
 @JvmInline

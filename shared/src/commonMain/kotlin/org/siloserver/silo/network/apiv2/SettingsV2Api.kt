@@ -11,8 +11,7 @@ import org.siloserver.silo.network.api.OverlayConfigResponse
 
 /**
  * Settings transport on API v2: configuration reads, the canonical
- * `/settings/values` scope writes, the device subtitle-appearance override,
- * and per-library playback preferences. Every call is pinned to the acting
+ * `/settings/values` scope writes, and per-library playback preferences. Every call is pinned to the acting
  * identity captured before the request and rejected when that identity
  * changed while the request was in flight. Writes are naturally idempotent
  * desired-state writes; there is no mutation-ID receipt replay.
@@ -72,13 +71,6 @@ class SettingsV2Api(
             client.get("/api/v2/settings/contract/capabilities") { authScope(owner); requireSiloAuth() }
         }) { capabilities, _ -> capabilities }
 
-    /** GET /api/v2/settings/subtitle-appearance/effective for the acting profile on this device. */
-    suspend fun effectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
-        read("/api/v2/settings/subtitle-appearance/effective") { body, scope ->
-            require(stringID(requireNotNull(body["profile_id"])) == scope.profileId)
-            SiloJson.decodeFromJsonElement(EffectiveSubtitleAppearance.serializer(), body)
-        }
-
     // ---- canonical scope writes ----
 
     suspend fun put(
@@ -131,28 +123,6 @@ class SettingsV2Api(
             scope.seriesId?.let { parameters.append("series_id", it) }
         }
     }
-
-    // ---- device subtitle-appearance override ----
-
-    /**
-     * PUT /api/v2/settings/device/subtitle-appearance (200): the override for
-     * the acting profile on this device. An explicit [profileId] replaces the
-     * session's `X-Profile-Id` so a parent can act for a child profile.
-     */
-    suspend fun putDeviceSubtitleAppearance(appearance: SubtitleAppearance, profileId: String? = null): ApiResult<Unit> =
-        exchange<Unit, Unit>(block = { owner ->
-            client.put("/api/v2/settings/device/subtitle-appearance") {
-                authScope(owner); requireSiloAuth()
-                if (!profileId.isNullOrBlank()) header("X-Profile-Id", profileId)
-                contentType(ContentType.Application.Json)
-                setBody(SubtitleAppearanceDeviceOverride(appearance.toJsonString()))
-            }
-        }) { _, _ -> }
-
-    /** DELETE /api/v2/settings/device/subtitle-appearance (204). */
-    suspend fun deleteDeviceSubtitleAppearance(): ApiResult<Unit> = exchange<Unit, Unit>(status = HttpStatusCode.NoContent, block = { owner ->
-        client.delete("/api/v2/settings/device/subtitle-appearance") { authScope(owner); requireSiloAuth() }
-    }) { _, _ -> }
 
     // ---- per-library playback preferences ----
 

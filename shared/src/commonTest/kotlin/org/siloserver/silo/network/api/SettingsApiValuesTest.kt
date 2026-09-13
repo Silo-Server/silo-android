@@ -440,58 +440,6 @@ class SettingsApiValuesTest {
         assertEquals(3, captured.sends)
     }
 
-    // ---- device subtitle appearance ----
-
-    @Test
-    fun `getEffectiveSubtitleAppearance reads the v2 path and rejects a foreign profile`() = runTest {
-        var profile = "p1"
-        val captured = Captured()
-        val c = client({ HttpStatusCode.OK }, {
-            """{"key":"subtitle_appearance","profile_id":"$profile","global_value":"{\"fontSize\":\"large\"}",
-                "device_value":"{\"fontSize\":\"xxlarge\"}","effective_value":"{\"fontSize\":\"xxlarge\"}",
-                "has_device_override":true,"device_id":"device","updated_at":"2026-01-02T03:04:05Z"}"""
-        }, captured = captured)
-        val api = SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
-
-        val effective = assertIs<ApiResult.Success<org.siloserver.silo.model.settings.EffectiveSubtitleAppearance>>(api.getEffectiveSubtitleAppearance()).data
-        assertEquals("/api/v2/settings/subtitle-appearance/effective", captured.path)
-        assertTrue(captured.requiresAuth)
-        assertEquals("p1", effective.profileId)
-        assertTrue(effective.hasDeviceOverride)
-        assertEquals("{\"fontSize\":\"xxlarge\"}", effective.effectiveValue)
-        assertEquals("device", effective.deviceId)
-
-        profile = "other"
-        assertEquals("invalid_response", assertIs<ApiResult.Error>(api.getEffectiveSubtitleAppearance()).error)
-    }
-
-    @Test
-    fun `setDeviceSubtitleAppearanceOverride puts the appearance document and honours a target profile`() = runTest {
-        val (api, captured) = api(responseBody = """{"key":"subtitle_appearance","profile_id":"child","value":"{}"}""")
-        val appearance = SubtitleAppearance(fontSize = SubtitleFontSizePreset.XXLarge)
-
-        val result = api.setDeviceSubtitleAppearanceOverride(appearance, profileId = "child")
-
-        assertEquals(HttpMethod.Put, captured.method)
-        assertEquals("/api/v2/settings/device/subtitle-appearance", captured.path)
-        assertEquals("child", captured.headers["X-Profile-Id"])
-        val body = SiloJson.parseToJsonElement(captured.body).jsonObject
-        assertEquals(appearance.toJsonString(), body.getValue("value").jsonPrimitive.content)
-        assertIs<ApiResult.Success<Unit>>(result)
-    }
-
-    @Test
-    fun `deleteDeviceSubtitleAppearanceOverride deletes the v2 path and maps 204 to success`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-
-        val result = api.deleteDeviceSubtitleAppearanceOverride()
-
-        assertEquals(HttpMethod.Delete, captured.method)
-        assertEquals("/api/v2/settings/device/subtitle-appearance", captured.path)
-        assertNull(captured.headers["X-Profile-Id"])
-        assertIs<ApiResult.Success<Unit>>(result)
-    }
-
     // ---- library playback prefs ----
 
     private val prefRow = """{"profile_id":"p1","library_id":"7","show_forced_subtitles":false,"updated_at":"2026-01-01T00:00:00Z"}"""

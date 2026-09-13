@@ -12,12 +12,9 @@ import org.siloserver.silo.network.ServerRegistry
  */
 class ApiV2Gate(private val registry: ServerRegistry? = null) {
 
-    val contract: ServerContract
-        get() = registry?.activeEntry?.value?.contract ?: ServerContract.UNKNOWN
-
     /** The error to return instead of calling the server, or null when the call may proceed. */
     fun blocked(): ApiResult.Error? =
-        if (contract == ServerContract.UPDATE_REQUIRED) {
+        if (registry?.activeEntry?.value?.contract == ServerContract.UPDATE_REQUIRED) {
             ApiResult.Error(
                 code = 0, // no HTTP exchange happened; distinguishes the gate from any server status
                 error = UPDATE_REQUIRED_ERROR,

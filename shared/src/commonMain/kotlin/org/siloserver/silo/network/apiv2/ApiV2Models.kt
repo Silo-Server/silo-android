@@ -65,7 +65,6 @@ data class Account(
     val username: String,
     val email: String,
     val role: AccountRole,
-    val permissions: List<String> = emptyList(),
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     /** Present only inside an admin impersonation session. */
     val impersonation: Impersonation? = null,

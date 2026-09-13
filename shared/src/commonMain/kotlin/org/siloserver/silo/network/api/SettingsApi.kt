@@ -1,11 +1,9 @@
 package org.siloserver.silo.network.api
 
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
-import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
-import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.apiv2.SettingsV2Api
@@ -63,17 +61,6 @@ open class SettingsApi(
 ) {
 
     open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = v2.overlayConfig()
-
-    open suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
-        v2.effectiveSubtitleAppearance()
-
-    open suspend fun setDeviceSubtitleAppearanceOverride(
-        appearance: SubtitleAppearance,
-        profileId: String? = null,
-    ): ApiResult<Unit> = v2.putDeviceSubtitleAppearance(appearance, profileId)
-
-    open suspend fun deleteDeviceSubtitleAppearanceOverride(): ApiResult<Unit> =
-        v2.deleteDeviceSubtitleAppearance()
 
     /**
      * What the connected server's settings contract supports, or
