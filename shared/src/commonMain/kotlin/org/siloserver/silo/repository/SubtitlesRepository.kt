@@ -62,8 +62,6 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         api.listJobs(mediaFileId)
 
-    suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> = api.getJob(jobId, scope)
-
     suspend fun captureJobAuthority(): org.siloserver.silo.network.AuthScopeSnapshot? = tokens?.snapshotCurrentScope()
 
     suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<Unit> = api.cancelJob(jobId, scope)
@@ -80,13 +78,12 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
         expectedScope: org.siloserver.silo.network.AuthScopeSnapshot? = null,
         onUpdate: (SubtitleAiJob) -> Unit = {},
     ): SubtitleJobOutcome {
+        val ownerChanged = SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
         val scope = expectedScope ?: tokens?.snapshotCurrentScope()
-        if (tokens != null && scope == null) return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
+        if (tokens != null && scope == null) return ownerChanged
+        suspend fun ownerLost() = tokens != null && scope != null && !scope.stillOwns(tokens, OwnerPolicy.PROFILE)
         while (true) {
-            if (tokens != null && scope != null) {
-                if (!scope.stillOwns(tokens, OwnerPolicy.PROFILE))
-                    return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
-            }
+            if (ownerLost()) return ownerChanged
             try {
                 val job = when (val r = api.getJob(jobId, scope)) {
                     is ApiResult.Success -> r.data.job
@@ -108,10 +105,7 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
                     }
                 }
 
-                if (tokens != null && scope != null) {
-                    if (!scope.stillOwns(tokens, OwnerPolicy.PROFILE))
-                        return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
-                }
+                if (ownerLost()) return ownerChanged
                 onUpdate(job)
 
                 when (job.status) {

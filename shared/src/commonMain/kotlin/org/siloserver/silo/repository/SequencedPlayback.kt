@@ -350,9 +350,10 @@ class SequencedPlayback(
             entry = entry.copy(stop = PlaybackStopV2(entry.installationId, newId(), sample?.sequence, sample?.position, sample?.isPaused))
             save(entry)
         }
-        val captured = scope(entry) ?: return failure("identity_changed", "Playback authority changed; stop remains pending.")
+        fun stopPending() = failure("identity_changed", "Playback authority changed; stop remains pending.")
+        val captured = scope(entry) ?: return stopPending()
         repeat(3) { attempt ->
-            if (scope(entry) == null) return failure("identity_changed", "Playback authority changed; stop remains pending.")
+            if (scope(entry) == null) return stopPending()
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
                 is ApiResult.Success -> {
                     save(entry.copy(terminal = true, progress = null))

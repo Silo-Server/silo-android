@@ -21,14 +21,12 @@ class RecommendationRepository(
 
     suspend fun captureSimilarAuthority() = recommendationApi.captureSimilarAuthority()
     suspend fun isSimilarAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isSimilarAuthorityCurrent(owner)
-    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<List<org.siloserver.silo.model.catalog.BrowseItem>> =
-        recommendationApi.getSimilar(contentId, limit, owner)
     /** The synchronous run fence is evaluated after each suspended authority lookup. */
     suspend fun loadSimilarCards(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot,
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.catalog.BrowseItem>) -> Unit) {
         if (!currentCoroutineContext().isActive || !stillCurrent()) return
         // getSimilar guards the owner before and after the exchange.
-        val result = getSimilar(contentId, 12, owner)
+        val result = recommendationApi.getSimilar(contentId, 12, owner)
         if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
         publish((result as? ApiResult.Success)?.data.orEmpty())
     }
