@@ -3,6 +3,9 @@
 The phone reader uses v2 ordered progress and guarded reader configuration.
 Ebooks remain excluded from Android TV navigation; its shared data bindings
 compile with the same transport. Binary reads and annotations use their v2 routes.
+`EbookReaderApi` and `EbookReaderRepository` delegate only to `EbookReaderV2Api`
+(capability, progress, reader config and annotations in one class); there is no
+v1 fallback. Downloads likewise go only through the v2 registry and creation APIs.
 
 Page and locator changes capture the event time before asynchronous work starts.
 The existing Room transaction stores that time with the saved login incarnation,

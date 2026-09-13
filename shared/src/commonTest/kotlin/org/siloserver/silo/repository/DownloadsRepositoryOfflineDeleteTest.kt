@@ -39,13 +39,22 @@ private class FakeDeletionPort : DownloadDeletionPort {
     }
 }
 
+private object OfflineDeleteNoDevices : org.siloserver.silo.network.DeviceMetadataProvider {
+    override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
+}
+
 private class FakeApi(
     var serverList: List<DownloadRecord> = emptyList(),
     var deleteResult: (String) -> ApiResult<Unit> = { ApiResult.Success(Unit) },
-) : org.siloserver.silo.network.api.DownloadsApi(client = HttpClient()) {
+) : org.siloserver.silo.network.api.DownloadsApi(
+    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices),
+    tokens = org.siloserver.silo.network.TokenManagerImpl(),
+    creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices,
+        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices)),
+) {
     val deleteCalls = mutableListOf<String>()
-    override suspend fun list(): ApiResult<DownloadsListResponse> = ApiResult.Success(DownloadsListResponse(serverList))
-    override suspend fun delete(id: String): ApiResult<Unit> {
+    override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> = ApiResult.Success(DownloadsListResponse(serverList))
+    override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
         deleteCalls += id
         return deleteResult(id)
     }

@@ -183,7 +183,7 @@ class MobileDetailActionsTest {
             personalDataRepository = personalDataRepository,
             downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
             downloadEnqueuer = unsafeInstance(),
-            ebookReaderRepository = EbookReaderRepository(EbookReaderApi(dummyHttpClient())),
+            ebookReaderRepository = dummyEbookReaderRepository(),
             recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient())),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
                 org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient()),
@@ -282,9 +282,23 @@ class MobileDetailActionsTest {
         }
     }
 
-    private class EmptyDownloadsApi : DownloadsApi(dummyHttpClient()) {
-        override suspend fun list(): ApiResult<DownloadsListResponse> =
+    private object NoDevices : org.siloserver.silo.network.DeviceMetadataProvider {
+        override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
+    }
+
+    private class EmptyDownloadsApi : DownloadsApi(
+        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices),
+        tokens = org.siloserver.silo.network.TokenManagerImpl(),
+        creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
+            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices)),
+    ) {
+        override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
             ApiResult.Success(DownloadsListResponse())
+    }
+
+    private fun dummyEbookReaderRepository(): EbookReaderRepository {
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl())
+        return EbookReaderRepository(EbookReaderApi(v2), v2)
     }
 
     private inline fun <reified T : Any> unsafeInstance(): T {

@@ -12,16 +12,16 @@ class ReaderFileResolverTest {
     @Test
     fun `resolves server relative reader paths against active server url`() {
         assertEquals(
-            "https://lib.strm.cafe/api/v1/ebooks/book-1/files/7/read",
+            "https://lib.strm.cafe/api/v2/ebooks/book-1/files/7/read",
             resolveReaderRequestUrl(
-                url = "/api/v1/ebooks/book-1/files/7/read",
+                url = "/api/v2/ebooks/book-1/files/7/read",
                 serverUrl = "https://lib.strm.cafe/",
             ),
         )
         assertEquals(
-            "https://lib.strm.cafe/api/v1/ebooks/book-1/files/7/read",
+            "https://lib.strm.cafe/api/v2/ebooks/book-1/files/7/read",
             resolveReaderRequestUrl(
-                url = "api/v1/ebooks/book-1/files/7/read",
+                url = "api/v2/ebooks/book-1/files/7/read",
                 serverUrl = "https://lib.strm.cafe/",
             ),
         )
@@ -30,7 +30,7 @@ class ReaderFileResolverTest {
             isSameHttpOrigin(
                 "https://lib.strm.cafe",
                 resolveReaderRequestUrl(
-                    url = "/api/v1/ebooks/book-1/files/7/read",
+                    url = "/api/v2/ebooks/book-1/files/7/read",
                     serverUrl = "https://lib.strm.cafe/",
                 ),
             ),
@@ -76,13 +76,13 @@ class ReaderFileResolverTest {
         )
         assertEquals(
             ReaderRequestKind.Remote,
-            readerRequestKind(" /api/v1/ebooks/book-1/files/7/read ", "https://lib.strm.cafe"),
+            readerRequestKind(" /api/v2/ebooks/book-1/files/7/read ", "https://lib.strm.cafe"),
         )
     }
 
     @Test
     fun `cache filename includes resolved server url for relative reader paths`() {
-        val path = "/api/v1/ebooks/book-1/files/7/read"
+        val path = "/api/v2/ebooks/book-1/files/7/read"
 
         assertNotEquals(
             readerCacheFileName(path, "https://one.example", "epub"),

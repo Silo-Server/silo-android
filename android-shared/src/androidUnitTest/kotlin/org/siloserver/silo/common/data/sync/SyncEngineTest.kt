@@ -47,8 +47,25 @@ class SyncEngineTest {
         install(ContentNegotiation) { json(SiloJson) }
     }
 
+    // v2 ebook progress: GET returns the server position; PUT echoes the saved row.
+    private fun ebookClient() = HttpClient(
+        MockEngine { request ->
+            val body = if (request.method == io.ktor.http.HttpMethod.Put)
+                """{"progress":{"content_id":"c1","file_id":"7","location":"epubcfi(/6/4!/4)","progress":0.5,"updated_at":"2026-01-01T00:00:00Z"}}"""
+            else """{"progress":{"content_id":"c1","file_id":"7","location":"start","progress":0.0,"updated_at":"2026-01-01T00:00:00Z"}}"""
+            respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        },
+    ) {
+        install(ContentNegotiation) { json(SiloJson) }
+    }
+
+    private val tokens = object : org.siloserver.silo.network.TokenManager by org.siloserver.silo.network.TokenManagerImpl() {
+        override suspend fun snapshotCurrentScope() = snapshot
+    }
     private val api = PersonalDataApi(mockClient())
-    private val ebookApi = org.siloserver.silo.network.api.EbookReaderApi(mockClient())
+    private val ebookApi = org.siloserver.silo.network.api.EbookReaderApi(
+        org.siloserver.silo.network.apiv2.EbookReaderV2Api(ebookClient(), tokens),
+    )
 
     private fun engine(batchLimit: Int = 50) = SyncEngine(
         db = db,
@@ -104,7 +121,7 @@ class SyncEngineTest {
         val heldId = dao.insert(op(idempotencyKey = "held"))
         val before = dao.getById(heldId)
         dao.insert(op(idempotencyKey = "ebook", opKind = OutboxOperation.SET_EBOOK_PROGRESS,
-            coalesceKey = "ebook", payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5)))
+            coalesceKey = "ebook", payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5, updatedAt = "2026-01-01T00:00:00Z")))
         assertEquals(1, engine().drainOnce().synced)
         assertEquals(before, dao.getById(heldId))
     }
@@ -126,14 +143,14 @@ class SyncEngineTest {
 
     @Test
     fun ebookProgressDrainsWhenLocalAheadOfServer() = runTest {
-        // MockEngine getProgress returns "{}" → server progress 0.0; local 0.5 is
-        // ahead → saveProgress runs → 200 → synced.
+        // ebookClient GET returns server progress 0.0; local 0.5 is ahead →
+        // saveProgress runs with the retained event time → 200 → synced.
         db.dirtyOperationDao().insert(
             op(
                 coalesceKey = "s1|p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}",
                 idempotencyKey = "i1",
                 opKind = OutboxOperation.SET_EBOOK_PROGRESS,
-                payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5),
+                payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5, updatedAt = "2026-01-01T00:00:00Z"),
             ),
         )
         status = HttpStatusCode.OK
