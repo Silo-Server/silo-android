@@ -80,7 +80,7 @@ enum class DownloadQuality(
 }
 
 /**
- * POST /api/v1/downloads body. Either `episodeId` or `fileId` is set on
+ * POST /api/v2/downloads body. Either `episodeId` or `fileId` is set on
  * top of the always-required `contentId`. `series = true` requests batch
  * download of all episodes for a series content id (server expands and
  * returns one DownloadRecord per file under a shared batchId).
@@ -141,7 +141,7 @@ enum class DownloadKind(val wire: String) {
 }
 
 /**
- * `GET /api/v1/downloads/capability` response — the server's per-account
+ * `GET /api/v2/capabilities/downloads` response — the server's per-account
  * download feature gate (issue #20 §3). Fetched at detail load / profile
  * switch so the quality picker offers only [qualityPresets] and never a
  * value the server will reject (a bitrate request against a transcode-disabled

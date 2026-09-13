@@ -23,7 +23,7 @@ const val SUBTITLE_SOURCE_DOWNLOADED = "downloaded"
  *  - label is `"${release_name} (${provider})"`, codec is the stored format
  *  - the track URL mirrors the playback API's own delivery-format extension:
  *    ASS/SSA stays raw, PGS stays `.sup`, and other text subtitles are served
- *    as WebVTT. Android resolves it through the same `/api/v1` stream mount as
+ *    as WebVTT. Android resolves it through the same stream mount as
  *    server-provided subtitle URLs and injects Authorization headers through
  *    MediaAuthInterceptor.
  *

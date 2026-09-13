@@ -5,7 +5,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 
 /**
- * Blocks the pilot's v2 operations while the active server is in the
+ * Blocks every v2 operation while the active server is in the
  * [ServerContract.UPDATE_REQUIRED] state. The state comes from the registry
  * entry (set by [ApiV2Probe] on connect); nothing here ever performs a
  * request, and a blocked call is never redirected to a v1 path.

@@ -165,6 +165,7 @@ val repositoryModule = module {
         org.siloserver.silo.network.DefaultPlaybackRealtimeClient(
             client = get(),
             tokenManager = get(),
+            gate = get(),
             ownerProvider = get<PlaybackRepository>()::controlOwner,
         )
     }

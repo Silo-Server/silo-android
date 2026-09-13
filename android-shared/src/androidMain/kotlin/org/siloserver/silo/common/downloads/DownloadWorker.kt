@@ -85,7 +85,7 @@ class DownloadWorker(
     private val authorities: DurableLoginAuthorityProvider? = null,
     private val transitions: IdentityTransitionBarrier? = null,
     private val devices: DeviceMetadataProvider? = null,
-    private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
+    private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate,
 ) : CoroutineWorker(appContext, params) {
 
     private val streamClient = lazy { httpClient.config { followRedirects = false } }

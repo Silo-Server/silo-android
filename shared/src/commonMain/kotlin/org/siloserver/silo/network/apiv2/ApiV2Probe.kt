@@ -63,7 +63,7 @@ sealed class ApiV2ProbeResult {
  * - Timeouts, TLS/connect failures, 401/403, 429, 5xx, and unparseable 200
  *   bodies are each their own [ApiV2ProbeResult.Failure] kind.
  *
- * No result enables a v1 transport for a pilot operation.
+ * No result enables a v1 transport; there is none.
  */
 class ApiV2Probe(private val client: HttpClient) {
 

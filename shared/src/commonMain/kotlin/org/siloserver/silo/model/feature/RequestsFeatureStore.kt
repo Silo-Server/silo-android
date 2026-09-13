@@ -10,7 +10,7 @@ import org.siloserver.silo.repository.RequestsRepository
  * Server-gated media requests capability.
  *
  * Matches the Apple clients: entry points start hidden, a successful
- * `/api/v1/requests/status` probe controls visibility, transient failures keep
+ * `/api/v2/requests/status` probe controls visibility, transient failures keep
  * the previous value, and reset hides the surface before a server/profile switch
  * can reuse stale capability state.
  */

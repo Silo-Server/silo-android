@@ -49,8 +49,8 @@ administrative UI is added.
 Validation includes shared transport/query tests, viewer-change refusal, typed
 library group routing, phone letter-index ViewModel tests, TV library destination
 tests, and a hidden-book-page/expired-cursor/reload regression. Phone and TV debug
-APK builds are the platform gate. Live backend/device validation remains pending
-a reserved test device and an integrated backend fixture.
+APK builds are the platform gate. No live backend or device validation is claimed
+by these checks.
 
 ## Detail read adapter
 

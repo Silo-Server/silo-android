@@ -96,7 +96,7 @@ class WatchTogetherApiTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return DefaultWatchTogetherApi(client) to captured
+        return DefaultWatchTogetherApi(client, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted) to captured
     }
 
     @Test

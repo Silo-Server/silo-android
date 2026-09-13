@@ -6,8 +6,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 
 /**
- * Wire models for the canonical settings API (`/api/v1/settings/contract`
- * and the `/api/v1/settings/values` routes).
+ * Wire models for the canonical settings API (`/api/v2/settings/contract`
+ * and the `/api/v2/settings/values` routes).
  *
  * These mirror the server's `settings_values.go` handler shapes exactly. The
  * older models in [SettingsModels.kt] speak the legacy string-only endpoints;
@@ -102,7 +102,7 @@ data class SettingsContractCapabilities(
     @SerialName("supports_idempotent_writes") val supportsIdempotentWrites: Boolean = false,
 )
 
-/** Body for `PUT /api/v1/settings/values/{key}`: `{"value": …}`. */
+/** Body for `PUT /api/v2/settings/values/{key}`: `{"value": …}`. */
 @Serializable
 data class SettingValueWriteRequest(
     val value: JsonElement,
@@ -160,7 +160,7 @@ data class EffectiveSettingValue(
 }
 
 /**
- * `GET /api/v1/settings/values/effective`. [revision] names the contract
+ * `GET /api/v2/settings/values/effective`. [revision] names the contract
  * revision the resolution was computed at, so definitions, scopes and enum
  * members can be filtered against it.
  */

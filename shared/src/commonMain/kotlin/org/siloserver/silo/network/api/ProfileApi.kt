@@ -63,8 +63,7 @@ class ProfileApi(
             setBody(JsonObject(fields))
         }.map { it.toProfile() }
 
-    // Pilot v2 operation (updateProfile): PATCH v2 only, no v1 fallback and
-    // no replay of a failed mutation against another API major.
+    // PATCH v2 only; a failed mutation is never replayed.
     suspend fun updateProfile(
         id: String,
         request: UpdateProfileRequest

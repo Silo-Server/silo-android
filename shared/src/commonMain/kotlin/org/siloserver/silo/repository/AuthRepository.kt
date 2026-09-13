@@ -94,7 +94,7 @@ class AuthRepository(
      * nothing about v2, but the stored verdict can be stale — the server may
      * have been upgraded while the sign-in screen stayed open — and without
      * a fresh probe an old UPDATE_REQUIRED would keep the gate rejecting
-     * every pilot v2 call for the whole session.
+     * every v2 call for the whole session.
      *
      * Launched on [backgroundScope] so sign-in never waits on the probe: the
      * gate already passes UNKNOWN and V2, and a stale UPDATE_REQUIRED clears
@@ -443,7 +443,7 @@ class AuthRepository(
      * [ServerContract.V2] is safe to route on immediately. A stored
      * [ServerContract.UPDATE_REQUIRED] may be stale (server upgraded since)
      * and would gate the whole session; a stored [ServerContract.UNKNOWN]
-     * (every entry saved by a build before the v2 pilot) passes
+     * (every entry saved by a build before the v2 migration) passes
      * [org.siloserver.silo.network.apiv2.ApiV2Gate], so authenticated startup
      * consumers would race the background probe and could receive raw v2
      * 404s from a v1-only server before UPDATE_REQUIRED is recorded — and

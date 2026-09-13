@@ -31,6 +31,5 @@ expired cursors, explicit restart, and cancellation. Favorites/watchlist catalog
 consumers, dormant standalone wrappers, membership mutations, and watch transport
 are outside this adapter.
 
-Phone and TV debug APK builds pass. Live device/backend validation remains pending
-a reserved test device and integrated fixture; no installation is implied by the
-build checks.
+Phone and TV debug APK builds pass. No live device or backend validation is
+claimed by the build checks.

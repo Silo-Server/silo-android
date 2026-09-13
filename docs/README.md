@@ -5,10 +5,17 @@ Start with the root [README](../README.md) for architecture/build instructions a
 
 ## Current Product Truth
 
-- Android TV must not expose ebooks or Reading surfaces.
-- Requests, Admin, and Watch Together are not currently accessible in either
-  Android app. Treat old routes, repositories, tests, and design plans as inactive
-  until a product decision exposes them again.
+- Android TV must not expose ebooks or Reading surfaces; ebooks are phone-only.
+- Android mobile navigation is Home, Libraries, For You, Calendar, and Downloads
+  (when the active profile has downloads). Video, Audio, and Reading are library
+  modes under Libraries.
+- Android TV navigation is Home, media-type tabs from server libraries, For You,
+  and Calendar, plus search and profile actions.
+- Requests is live on phone and TV, server-gated by `requests_enabled`.
+- Admin surfaces, session management, and Watch Together are not exposed in
+  either Android app. Device pairing stays. Treat their old routes, repositories,
+  tests, and design plans as inactive until a product decision exposes them.
+- All server calls use API v2. See [`api-v2/android-migration-status.md`](api-v2/android-migration-status.md).
 - Phone downloads preserve original filenames/formats in public storage so other
   apps can open downloaded videos, audiobooks, and ebooks.
 - Android TV has a dedicated audiobook detail/player flow; ebooks remain
@@ -18,6 +25,16 @@ Start with the root [README](../README.md) for architecture/build instructions a
   Adult profiles can review local reports and choose consent, while child
   profiles are excluded.
   No third-party observability SDK is part of the Android implementation.
+
+## API v2
+
+- Status: [`api-v2/android-migration-status.md`](api-v2/android-migration-status.md)
+- Per domain: [auth](auth-api-v2.md), [catalog](catalog-api-v2.md),
+  [collections](collections-api-v2.md), [ebook reader](ebook-reader-api-v2.md),
+  [history](history-api-v2.md), [membership](membership-api-v2.md),
+  [notifications](notifications-api-v2.md), [requests](requests-api-v2.md),
+  [subtitle AI](subtitle-ai-api-v2.md),
+  [push registration](api-v2/android-push-registration.md)
 
 ## Folders
 

@@ -9,7 +9,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /*
- * Handwritten lenient models for the native API v2 pilot. They are decoded
+ * Handwritten lenient models for the native API v2. They are decoded
  * with the production [org.siloserver.silo.network.SiloJson] instance and are
  * deliberately separate from the v1 data classes: v2 ids are opaque strings,
  * instants are RFC 3339 text, and enums are string-backed value classes that

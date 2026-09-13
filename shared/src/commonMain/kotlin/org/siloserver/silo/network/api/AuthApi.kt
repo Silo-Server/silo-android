@@ -51,7 +51,6 @@ class AuthApi(
             }.requireAuthStatus(201)
         }.map { it.domain() }
 
-    // Pilot v2 operation (getSetupStatus): v2 only, no v1 fallback.
     suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
         safeApiV2Call<SetupStatus>(apiV2Gate) {
             // Public, exactly like the explicit-server variant below — which
@@ -114,7 +113,6 @@ class AuthApi(
             }.requireAuthStatus(201)
         }.map { it.domain() }
 
-    // Pilot v2 operation (getCurrentUser): v2 only, no v1 fallback.
     suspend fun getMe(): ApiResult<User> =
         safeApiV2Call<Account>(apiV2Gate) { client.get("/api/v2/account/me") }.map { account -> account.toUser() }
 

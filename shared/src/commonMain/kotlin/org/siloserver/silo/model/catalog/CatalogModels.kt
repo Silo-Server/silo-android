@@ -206,7 +206,7 @@ data class ItemDetail(
     val recap: TimeRange? = null,
     val preview: TimeRange? = null,
     /** Populated only when [type] is "audiobook". Forward-compat — the
-     *  server may stop returning it once a dedicated /api/v1/audiobooks
+     *  server may stop returning it once a dedicated /api/v2/audiobooks
      *  endpoint lands; until then it rides on ItemDetail. */
     val audiobook: org.siloserver.silo.model.audiobook.AudiobookMetadata? = null,
     /** Legacy fallback for older servers that emitted book-like metadata. */

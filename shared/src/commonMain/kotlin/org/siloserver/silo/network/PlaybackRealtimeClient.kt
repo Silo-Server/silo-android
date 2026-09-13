@@ -76,6 +76,7 @@ class DefaultPlaybackRealtimeClient(
     private val client: HttpClient,
     private val tokenManager: TokenManager,
     private val json: Json = SiloJson,
+    private val gate: ApiV2Gate,
     private val ownerProvider: suspend (String) -> Pair<AuthScopeSnapshot, String?>? = { null },
 ) : PlaybackRealtimeClient {
 
@@ -113,7 +114,7 @@ class DefaultPlaybackRealtimeClient(
             return@callbackFlow
         }
         val mintedAt = TimeSource.Monotonic.markNow()
-        val proof = when (val result = safeApiV2Call<WsTicketResponse>(ApiV2Gate.Unrestricted) {
+        val proof = when (val result = safeApiV2Call<WsTicketResponse>(gate) {
             client.post {
                 url { path("api", "v2", "playback", "sessions", sessionId, "control", "ws-ticket") }
                 authScope(owner.first); requireSiloAuth(); singleAttempt()
