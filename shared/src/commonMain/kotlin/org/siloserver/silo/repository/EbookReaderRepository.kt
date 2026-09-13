@@ -2,7 +2,7 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.ebook.EbookAnnotation
 import org.siloserver.silo.network.AuthScopeSnapshot
-import org.siloserver.silo.network.apiv2.EbookAnnotationsV2Api
+import org.siloserver.silo.network.apiv2.EbookReaderV2Api
 import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
 import org.siloserver.silo.network.ApiResult
@@ -10,7 +10,7 @@ import org.siloserver.silo.network.api.EbookReaderApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class EbookReaderRepository(private val api: EbookReaderApi, private val annotations: EbookAnnotationsV2Api? = null) {
+class EbookReaderRepository(private val api: EbookReaderApi, private val annotations: EbookReaderV2Api) {
     // Session-cached Kindle->EPUB capability. This repo is a DI singleton, so the
     // result is shared across the detail and reader screens and fetched at most
     // once per session. Defaults to false on any error (old server / offline).
@@ -43,17 +43,15 @@ class EbookReaderRepository(private val api: EbookReaderApi, private val annotat
     suspend fun saveProgress(contentId: String, request: SaveEbookProgressRequest) =
         api.saveProgress(contentId, request)
 
-    private fun unavailable() = ApiResult.Error(0, "annotations_unavailable", "Annotations need an active saved account.")
-
     suspend fun listAnnotations(contentId: String, scope: AuthScopeSnapshot) =
-        annotations?.list(contentId, scope) ?: unavailable()
+        annotations.list(contentId, scope)
 
     suspend fun createBookmark(contentId: String, id: String, location: String, scope: AuthScopeSnapshot) =
-        annotations?.createBookmark(contentId, id, location, scope) ?: unavailable()
+        annotations.createBookmark(contentId, id, location, scope)
 
     suspend fun updateAnnotation(contentId: String, annotation: EbookAnnotation, patch: JsonObject, scope: AuthScopeSnapshot) =
-        annotations?.patch(contentId, annotation, patch, scope) ?: unavailable()
+        annotations.patch(contentId, annotation, patch, scope)
 
     suspend fun deleteAnnotation(contentId: String, annotation: EbookAnnotation, scope: AuthScopeSnapshot) =
-        annotations?.delete(contentId, annotation, scope) ?: unavailable()
+        annotations.delete(contentId, annotation, scope)
 }

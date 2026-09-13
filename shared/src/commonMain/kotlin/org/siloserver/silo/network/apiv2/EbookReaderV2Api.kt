@@ -5,7 +5,7 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.*
 import org.siloserver.silo.model.ebook.*
 import org.siloserver.silo.network.*
 
@@ -36,10 +36,13 @@ private data class EbookConfigV2(@SerialName("content_id") val contentId: String
 
 data class GuardedEbookConfig(val value: EbookReaderConfig, val etag: String)
 
+@Serializable
+private data class AnnotationPage(val items: List<EbookAnnotation>, val page: PageInfo)
+
 class EbookReaderV2Api(private val client: HttpClient, private val tokens: TokenManager,
     private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
     private suspend inline fun <reified T> exchange(scope: AuthScopeSnapshot?, method: HttpMethod, path: String,
-        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
+        allowed: Set<Int> = setOf(200), noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
         val captured = scope ?: tokens.snapshotCurrentScope() ?: return changed()
         if (!captured.isSameIdentityAs(tokens.snapshotCurrentScope())) return changed()
         val result = safeApiV2Call<T>(gate) {
@@ -47,11 +50,15 @@ class EbookReaderV2Api(private val client: HttpClient, private val tokens: Token
                 this.method = method; authScope(captured); requireSiloAuth()
                 if (method != HttpMethod.Get) singleAttempt()
                 contentType(ContentType.Application.Json); configure()
-            }.also { check(!it.status.isSuccess() || it.status.value == 200) }
+            }.also { check(!it.status.isSuccess() || it.status.value in allowed) }
         }
         return if (captured.isSameIdentityAs(tokens.snapshotCurrentScope())) result else changed()
     }
     private fun changed() = ApiResult.Error(0, "identity_changed", "The reader's account or profile changed.")
+    private fun invalid() = ApiResult.Error(0, "invalid_annotations", "The server returned incomplete annotation state.")
+    private fun annotationsPath(contentId: String) = "/api/v2/ebooks/${contentId.encodeURLPathPart()}/annotations"
+    private fun valid(row: EbookAnnotation, contentId: String) =
+        row.contentId == contentId && row.id.isNotBlank() && !row.etag.isNullOrBlank()
     suspend fun capability(): ApiResult<EbookConversionCapability> =
         exchange<EbookCapabilityV2>(null, HttpMethod.Get, "/api/v2/capabilities/ebooks").map { EbookConversionCapability(it.kindleConversion, it.sourceFormats, it.servedFormat, it.header, it.headerFailedValue) }
 
@@ -103,5 +110,61 @@ class EbookReaderV2Api(private val client: HttpClient, private val tokens: Token
             is ApiResult.Error -> result
             is ApiResult.NetworkError -> result
         }
+    }
+
+    // Annotation writes use caller-retained identities and validators, never implicit retries.
+    suspend fun list(contentId: String, scope: AuthScopeSnapshot): ApiResult<EbookAnnotationListResponse> {
+        val rows = linkedMapOf<String, EbookAnnotation>()
+        val seen = mutableSetOf<String>()
+        var cursor: String? = null
+        repeat(100) {
+            val result = exchange<AnnotationPage>(scope, HttpMethod.Get, annotationsPath(contentId)) {
+                parameter("limit", 50); cursor?.let { parameter("cursor", it) }
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    val page = result.data
+                    if (page.items.size > 50 || page.items.any { !valid(it, contentId) }) return invalid()
+                    page.items.forEach { rows[it.id] = it }
+                    if (!page.page.hasMore) {
+                        if (!page.page.nextCursor.isNullOrBlank()) return invalid()
+                        return ApiResult.Success(EbookAnnotationListResponse(rows.values.toList()))
+                    }
+                    val next = page.page.nextCursor
+                    if (next.isNullOrBlank() || !seen.add(next) || page.items.isEmpty()) return invalid()
+                    cursor = next
+                }
+                is ApiResult.Error -> return result
+                is ApiResult.NetworkError -> return result
+            }
+        }
+        return invalid() // Do not publish a truncated bookmark list.
+    }
+
+    suspend fun createBookmark(contentId: String, id: String, location: String, scope: AuthScopeSnapshot): ApiResult<EbookAnnotation> =
+        projectAnnotation(contentId, id, exchange(scope, HttpMethod.Post, annotationsPath(contentId), setOf(200, 201)) {
+            setBody(buildJsonObject { put("id", id); put("kind", "bookmark"); put("location", location) })
+        })
+
+    suspend fun patch(contentId: String, annotation: EbookAnnotation, patch: JsonObject,
+        scope: AuthScopeSnapshot): ApiResult<EbookAnnotation> {
+        if (!valid(annotation, contentId)) return invalid()
+        return projectAnnotation(contentId, annotation.id, exchange(scope, HttpMethod.Patch,
+            "${annotationsPath(contentId)}/${annotation.id.encodeURLPathPart()}") {
+            header(HttpHeaders.IfMatch, annotation.etag); setBody(patch)
+        })
+    }
+
+    suspend fun delete(contentId: String, annotation: EbookAnnotation, scope: AuthScopeSnapshot): ApiResult<Unit> {
+        if (!valid(annotation, contentId)) return invalid()
+        return exchange(scope, HttpMethod.Delete, "${annotationsPath(contentId)}/${annotation.id.encodeURLPathPart()}", setOf(204)) {
+            header(HttpHeaders.IfMatch, annotation.etag)
+        }
+    }
+
+    private fun projectAnnotation(contentId: String, id: String, result: ApiResult<EbookAnnotation>): ApiResult<EbookAnnotation> = when (result) {
+        is ApiResult.Success -> if (valid(result.data, contentId) && result.data.id == id) result else invalid()
+        is ApiResult.Error -> result
+        is ApiResult.NetworkError -> result
     }
 }

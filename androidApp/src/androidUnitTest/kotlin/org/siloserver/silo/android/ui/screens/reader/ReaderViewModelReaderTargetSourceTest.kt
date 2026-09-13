@@ -308,8 +308,8 @@ class ReaderViewModelReaderTargetSourceTest {
             }
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val repository = EbookReaderRepository(EbookReaderApi(client),
-                org.siloserver.silo.network.apiv2.EbookAnnotationsV2Api(client, tokens))
+            val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens)
+            val repository = EbookReaderRepository(EbookReaderApi(v2), v2)
             val vm = viewModel(catalogRepository(responseBody = itemDetailJson(fileName = "book.epub", container = "epub")),
                 DownloadStorage(tmp.newFolder("annotation-downloads")), readerRepository = repository,
                 readerStore = EbookLocalStateStore(root), authorities = authorities, barrier = barrier)
@@ -408,22 +408,23 @@ class ReaderViewModelReaderTargetSourceTest {
             ),
         )
 
-    private fun ebookReaderRepository(): EbookReaderRepository =
-        EbookReaderRepository(
-            EbookReaderApi(
-                HttpClient(
-                    MockEngine {
-                        respond(
-                            content = """{"error":"not_found","message":"not found"}""",
-                            status = HttpStatusCode.NotFound,
-                            headers = jsonHeaders,
-                        )
-                    },
-                ) {
-                    install(ContentNegotiation) { json(SiloJson) }
+    private fun ebookReaderRepository(): EbookReaderRepository {
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(
+            HttpClient(
+                MockEngine {
+                    respond(
+                        content = """{"error":"not_found","message":"not found"}""",
+                        status = HttpStatusCode.NotFound,
+                        headers = jsonHeaders,
+                    )
                 },
-            ),
+            ) {
+                install(ContentNegotiation) { json(SiloJson) }
+            },
+            FakeTokenManager(),
         )
+        return EbookReaderRepository(EbookReaderApi(v2), v2)
+    }
 
     private fun itemDetailJson(fileId: Int = FILE_ID, fileName: String, container: String): String =
         """

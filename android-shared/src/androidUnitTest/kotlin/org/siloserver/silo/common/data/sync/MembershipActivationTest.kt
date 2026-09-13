@@ -120,7 +120,7 @@ class MembershipActivationTest {
         val (repository, port) = repository(client)
         val intent = repository.memberships.begin("item", MembershipPort.Kind.FAVORITE, true)
         repository.memberships.perform(intent)
-        val worker = SyncEngine(db, PersonalDataApi(client), EbookReaderApi(client), { authority.scope }, memberships = port)
+        val worker = SyncEngine(db, PersonalDataApi(client), EbookReaderApi(org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens)), { authority.scope }, memberships = port)
         assertFalse(worker.drainOnce().hasPendingWork)
         assertFalse(worker.drainOnce().hasPendingWork)
         assertEquals(listOf(HttpMethod.Put), methods)
