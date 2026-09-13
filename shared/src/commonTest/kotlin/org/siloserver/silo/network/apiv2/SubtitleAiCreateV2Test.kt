@@ -39,7 +39,7 @@ class SubtitleAiCreateV2Test {
             receipt()
         }
         try {
-            val api = DefaultSubtitlesApi(c, creation = SubtitleAiCreateV2Api(c,tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c,tokens), SubtitleDownloadV2Api(c,tokens), SubtitleAiReadsV2Api(c,tokens), SubtitleAiCreateV2Api(c,tokens))
             val result = assertIs<ApiResult.Success<SubtitleAiJobResponse>>(api.translate(request,owner)).data
             assertEquals(9007199254740993L,result.job.id); assertFalse(result.liveDeliveryAttached)
         } finally { c.close() }
@@ -97,7 +97,7 @@ class SubtitleAiCreateV2Test {
         val captured = owner
         val c = client { sends++; owner = owner.copy(profileToken = "new-proof"); receipt() }
         try {
-            val api = DefaultSubtitlesApi(c, creation = SubtitleAiCreateV2Api(c,tokens), aiReads = SubtitleAiReadsV2Api(c,tokens))
+            val api = DefaultSubtitlesApi(SubtitleReadsV2Api(c,tokens), SubtitleDownloadV2Api(c,tokens), SubtitleAiReadsV2Api(c,tokens), SubtitleAiCreateV2Api(c,tokens))
             assertIs<ApiResult.Error>(api.translate(request,captured))
             assertIs<ApiResult.Error>(api.translate(request,captured))
             var updates = 0
