@@ -70,7 +70,6 @@ import org.siloserver.silo.network.DurableLoginAuthority
 import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.network.apiv2.PlaybackV2Api
 import org.siloserver.silo.network.apiv2.SEQUENCED_PROGRESS_FEATURE
 import org.siloserver.silo.repository.PlaybackJournalEntry
@@ -1683,7 +1682,7 @@ class PlaybackSessionManagerStagedReplanTest {
             java.util.UUID.randomUUID().toString()
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client), sequenced, identity),
+            playbackRepository = PlaybackRepository(sequenced, identity),
             tokenManager = identity,
             // Unresolved publication tests settle explicitly instead of using virtual-time self healing.
             pendingPublicationSettleTimeoutMs = pendingPublicationSettleTimeoutMs,

@@ -11,10 +11,8 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.acceptsMetadataOwner
-import org.siloserver.silo.network.api.PlaybackApi
 
 class PlaybackRepository(
-    private val playbackApi: PlaybackApi,
     private val sequenced: SequencedPlayback? = null,
     private val tokens: TokenManager? = null,
 ) {

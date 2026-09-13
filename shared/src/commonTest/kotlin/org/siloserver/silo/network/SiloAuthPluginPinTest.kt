@@ -230,7 +230,7 @@ class SiloAuthPluginPinTest {
                 )
         }
 
-        client(tokenManager, captured, provider).post("/api/v1/playback/start")
+        client(tokenManager, captured, provider).post("/api/v2/playback/start")
 
         assertEquals("Silo Android TV", captured.siloClient)
         assertEquals("0.2.3", captured.siloClientVersion)

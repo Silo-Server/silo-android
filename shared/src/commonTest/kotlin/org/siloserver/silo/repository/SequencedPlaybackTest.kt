@@ -506,7 +506,7 @@ class SequencedPlaybackTest {
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
-            val repository = PlaybackRepository(org.siloserver.silo.network.api.PlaybackApi(c), runtime)
+            val repository = PlaybackRepository(runtime)
             assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
             assertEquals(0, starts)
         } finally { c.close() }
@@ -522,7 +522,7 @@ class SequencedPlaybackTest {
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
-            val repository = PlaybackRepository(org.siloserver.silo.network.api.PlaybackApi(c), runtime)
+            val repository = PlaybackRepository(runtime)
             assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
             assertEquals("playback_pending", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
             assertEquals(1, starts); assertEquals(request().v2Body(installation), store.entries.single().start)
@@ -547,7 +547,7 @@ class SequencedPlaybackTest {
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
-            val repository = PlaybackRepository(org.siloserver.silo.network.api.PlaybackApi(c), runtime)
+            val repository = PlaybackRepository(runtime)
             assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.recoverPlayback()).error)
             assertEquals(1, starts); assertEquals(0, deletes)
             assertEquals(listOf("attempt-1"), runtime.pending.value)

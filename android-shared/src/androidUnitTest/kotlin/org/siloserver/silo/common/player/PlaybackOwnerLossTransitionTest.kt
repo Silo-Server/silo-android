@@ -59,7 +59,7 @@ class PlaybackOwnerLossTransitionTest {
                 val journal = SequencedPlayback(PlaybackV2Api(client), identity, identity, store) { "unused" }
                 assertIs<ApiResult.Error>(journal.recover()) // Captured explicit recovery; no player/media rights.
                 val draining = store.entries.single()
-                val repository = PlaybackRepository(PlaybackApi(client), sequenced = journal)
+                val repository = PlaybackRepository(sequenced = journal)
                 val manager = PlaybackSessionManager(repository, identity)
                 val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
                 lifecycle.adoptActiveSession(StartParams(contentId = "item", fileId = 42, capabilities = ClientCodecCapabilities(),

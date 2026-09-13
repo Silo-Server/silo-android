@@ -54,7 +54,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PlaybackRepository
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -559,12 +558,12 @@ class PlaybackSessionManagerSeekReanchorTest {
             MockEngine { request ->
                 val path = request.url.encodedPath
                 val response = when {
-                    path == "/api/v1/playback/start" -> {
+                    path == "/api/v2/playback/start" -> {
                         startBodies += SiloJson.parseToJsonElement(
                             request.body.toByteArray().decodeToString(),
                         ).jsonObject
                         MockResponse(
-                            HttpStatusCode.OK,
+                            HttpStatusCode.Created,
                             SiloJson.encodeToString(startResponse),
                         )
                     }
@@ -575,9 +574,9 @@ class PlaybackSessionManagerSeekReanchorTest {
                         replanBodies += body
                         replanResponse(replanIndex.getAndIncrement(), body)
                     }
-                    request.method == HttpMethod.Delete && path.startsWith("/api/v1/playback/") -> {
+                    request.method == HttpMethod.Delete && path.startsWith("/api/v2/playback/") -> {
                         stoppedSessionIds += path.substringAfterLast('/')
-                        MockResponse(HttpStatusCode.OK, "{}")
+                        MockResponse(HttpStatusCode.OK, """{"stop_id":"stop","outcome":"stopped"}""")
                     }
                     else -> MockResponse(HttpStatusCode.OK, "{}")
                 }
@@ -591,7 +590,7 @@ class PlaybackSessionManagerSeekReanchorTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
+            playbackRepository = PlaybackRepository(),
             tokenManager = SeekNoOpTokenManager,
             networkEvidenceProvider = networkEvidenceProvider,
         )

@@ -1,6 +1,5 @@
 package org.siloserver.silo.di
 
-import org.siloserver.silo.domain.ManagePlaybackUseCase
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.repository.AuthRepository
@@ -70,7 +69,7 @@ val repositoryModule = module {
         )
     }
     single { CalendarRepository(get()) }
-    single { PlaybackRepository(get(), getOrNull(), get()) }
+    single { PlaybackRepository(getOrNull(), get()) }
     // `getOrNull()` picks up the Room-backed ports when the Android platform
     // module binds them (Track B local-first writes + offline read cache); falls
     // back to the network-only no-op ports in commonMain tests / when unbound.
@@ -171,6 +170,5 @@ val repositoryModule = module {
     }
 
     // Domain use cases
-    single { ManagePlaybackUseCase(get(), get()) }
     single { MediaActionsCoordinator(get()) }
 }
