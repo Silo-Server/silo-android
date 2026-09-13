@@ -79,7 +79,7 @@ class PushRegistrationApiTest {
         } finally { client.close() }
     }
     @Test fun capabilityRequiresOrderedRevisionPlatformAndStorage() = runTest {
-        var body="""{"revision":"ordered_android_v1","registration_available":true,"platforms":["android"]}"""
+        var body="""{"revision":"4bc701e0","state":"available","allowed":true,"registration_available":true,"platforms":["android"]}"""
         val client=HttpClient(MockEngine {
             assertEquals("/api/v2/notifications/push/devices/capabilities",it.url.encodedPath)
             respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))

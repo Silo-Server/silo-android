@@ -4,6 +4,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
+import kotlinx.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -75,6 +76,10 @@ internal suspend fun AuthScopeSnapshot.stillOwns(tokens: TokenManager?, policy: 
     }
 }
 
+/** The active scope when it names a profile; the owner a profile-scoped v2 read is pinned to. */
+internal suspend fun TokenManager.captureProfileScope(): AuthScopeSnapshot? =
+    snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+
 /** The one error every v2 call returns when its owning identity moved before or during the exchange. */
 internal fun identityChanged(): ApiResult.Error =
     ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
@@ -119,7 +124,8 @@ internal suspend inline fun <reified T, R> ownedV2Call(
             invalidResponse(e.message)
         }
         is ApiResult.Error -> result
-        is ApiResult.NetworkError -> if (received) invalidResponse(result.exception.message) else result
+        is ApiResult.NetworkError ->
+            if (received && result.exception !is IOException) invalidResponse(result.exception.message) else result
     }
 }
 

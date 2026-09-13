@@ -50,11 +50,10 @@ class AndroidPlayerSettingsStoreTest {
             override suspend fun getContractCapabilities() =
                 org.siloserver.silo.network.api.SettingsCapabilitiesResult.Available(
                     org.siloserver.silo.model.settings.SettingsContractCapabilities(
-                        apiVersion = 1, revision = 12, supportsBatchedEffective = true,
-                        supportsIdempotentWrites = false,
+                        apiVersion = 1, manifestRevision = 12, supportsBatchedEffective = true,
                     ),
                 )
-            override suspend fun getEffectiveValues(keys: List<String>, libraryIds: List<Int>, seriesIds: List<String>) =
+            override suspend fun getEffectiveValues(keys: List<String>, libraryIds: List<Int>, seriesIds: List<String>, authority: org.siloserver.silo.network.AuthScopeSnapshot?) =
                 org.siloserver.silo.network.ApiResult.Success(
                     org.siloserver.silo.model.settings.EffectiveSettingValuesResponse(
                         settings = listOf(org.siloserver.silo.model.settings.EffectiveSettingValue(
@@ -66,7 +65,7 @@ class AndroidPlayerSettingsStoreTest {
                 )
             override suspend fun putValue(
                 key: String, scope: org.siloserver.silo.model.settings.SettingScopeIdentity,
-                value: kotlinx.serialization.json.JsonElement, mutationId: String, profileId: String?,
+                value: kotlinx.serialization.json.JsonElement, profileId: String?,
                 authority: org.siloserver.silo.network.AuthScopeSnapshot?,
             ): org.siloserver.silo.network.ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
                 writes++
@@ -98,7 +97,7 @@ class AndroidPlayerSettingsStoreTest {
         val client = HttpClient()
         val seen = mutableListOf<org.siloserver.silo.network.AuthScopeSnapshot?>()
         val api = object : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
-            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
+            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement,
                 profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
                 seen += authority
                 assertEquals(original.profileId, profileId)
@@ -126,7 +125,7 @@ class AndroidPlayerSettingsStoreTest {
         val client = HttpClient()
         var writes = 0
         val api = object : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
-            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
+            override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement,
                 profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
                 assertEquals(owner,authority)
                 writes++
@@ -919,6 +918,7 @@ private class FakeSettingsApi(
         keys: List<String>,
         libraryIds: List<Int>,
         seriesIds: List<String>,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         requestedKeys = keys
         // Like the server: answer only the keys this contract knows.

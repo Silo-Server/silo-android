@@ -2634,7 +2634,7 @@ open class PlaybackSessionManager(
                 val active = activeVideoAttempt.get()
                 if (active?.sessionId != sessionId) break
                 if (activeVideoAttempt.compareAndSet(active, null)) {
-                    emitActiveVideoEvent(active, if (isSequenced(sessionId)) "renderer_retired" else "stopped")
+                    emitActiveVideoEvent(active, "stopped")
                     stoppedActiveSession = true
                     break
                 }

@@ -43,7 +43,7 @@ class HomeSectionsV2Test {
         val client = HttpClient(MockEngine { sends++; respond(good, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) })
         try {
             val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
-            captureHook = { if (sends == 1 && ++checks == 2) { entered.complete(Unit); release.await() } }
+            captureHook = { if (sends == 1 && ++checks == 1) { entered.complete(Unit); release.await() } }
             val task = async { repository.loadScopedHomeSections(owner, { run == 1 }) { published = true } }
             entered.await(); run = 2; release.complete(Unit); task.await()
             assertFalse(published); assertEquals(1, sends)

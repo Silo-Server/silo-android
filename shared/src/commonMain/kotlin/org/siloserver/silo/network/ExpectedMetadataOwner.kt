@@ -2,6 +2,8 @@ package org.siloserver.silo.network
 
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.stillOwns
 
 /** Native admission expectation; access tokens stay live in the captured credential slot. */
 fun AuthScopeSnapshot.matchesMetadataOwner(current: AuthScopeSnapshot?): Boolean =
@@ -12,7 +14,5 @@ suspend fun TokenManager?.acceptsMetadataOwner(owner: AuthScopeSnapshot?, profil
     currentCoroutineContext().ensureActive()
     if (owner == null) return true
     if (owner.profileId != profileId || profileId.isBlank() || this == null) return false
-    val current = snapshotCurrentScope()
-    currentCoroutineContext().ensureActive()
-    return owner.matchesMetadataOwner(current)
+    return owner.stillOwns(this, OwnerPolicy.FULL).also { currentCoroutineContext().ensureActive() }
 }

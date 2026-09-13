@@ -43,7 +43,7 @@ class ApiV2ContractTest {
                 when (entry.operationId) {
                     "getSetupStatus" -> ApiV2Fixtures.decode<SetupStatus>(body)
                     "getCurrentUser" -> ApiV2Fixtures.decode<Account>(body)
-                    "listProgress" -> ApiV2Fixtures.decode<ProgressCollection>(body)
+                    "listProgress" -> Unit // Android does not read /api/v2/progress.
                     "updateProfile" -> ApiV2Fixtures.decode<ProfileV2>(body)
                     "getSystemInfo" -> ApiV2Fixtures.decode<SystemInfo>(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
@@ -104,50 +104,6 @@ class ApiV2ContractTest {
         assertFalse(account.downloadAllowed)
         assertNull(account.impersonation)
         assertEquals(AccountRole.ADMIN, account.role)
-    }
-
-    // --- listProgress ---
-
-    @Test
-    fun progressFixtureConsumedFields() {
-        val page = ApiV2Fixtures.decode<ProgressCollection>(ApiV2Fixtures.bodyObject("list_progress_ok").plusUnknown())
-        val entry = page.items.single()
-        assertEquals("movie-8f2c1a", entry.mediaItemId)
-        assertEquals(1325.5, entry.positionSeconds)
-        assertEquals(5400.0, entry.durationSeconds)
-        assertFalse(entry.completed)
-        assertEquals("2026-01-02T03:04:05.000Z", entry.updatedAt)
-        assertTrue(page.page.hasMore)
-        assertNotNull(page.page.nextCursor)
-    }
-
-    @Test
-    fun progressPageNextCursorNullWhenNoMore() {
-        val last = ApiV2Fixtures.json.decodeFromString(
-            ProgressCollection.serializer(),
-            """{"items":[],"page":{"has_more":false}}""",
-        )
-        assertFalse(last.page.hasMore)
-        assertNull(last.page.nextCursor)
-        val explicit = ApiV2Fixtures.json.decodeFromString(
-            ProgressCollection.serializer(),
-            """{"items":[],"page":{"has_more":false,"next_cursor":null}}""",
-        )
-        assertNull(explicit.page.nextCursor)
-    }
-
-    @Test
-    fun progressDefaults() {
-        val empty = ApiV2Fixtures.json.decodeFromString(ProgressCollection.serializer(), "{}")
-        assertEquals(emptyList(), empty.items)
-        assertFalse(empty.page.hasMore)
-        assertNull(empty.page.nextCursor)
-        val entry = ApiV2Fixtures.json.decodeFromString(
-            ProgressEntryV2.serializer(),
-            """{"media_item_id":"m","position_seconds":1,"duration_seconds":2,"updated_at":"nonsense"}""",
-        )
-        assertFalse(entry.completed)
-        assertEquals("nonsense", entry.updatedAt, "instants are kept as wire text, never parsed at decode time")
     }
 
     // --- updateProfile ---

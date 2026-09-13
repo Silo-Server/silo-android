@@ -2,6 +2,8 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.subtitles.DownloadedSubtitlesResponse
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.stillOwns
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiJobResponse
 import org.siloserver.silo.model.subtitles.SubtitleAiJobsResponse
@@ -54,21 +56,17 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
 
     suspend fun aiQuota(): ApiResult<SubtitleAiQuota> = api.aiQuota()
 
-    suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse> =
-        api.translate(request)
-
-    suspend fun translate(request: SubtitleTranslateRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> =
+    suspend fun translate(request: SubtitleTranslateRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> =
         api.translate(request, scope)
 
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         api.listJobs(mediaFileId)
 
-    suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse> = api.getJob(jobId)
+    suspend fun getJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> = api.getJob(jobId, scope)
 
     suspend fun captureJobAuthority(): org.siloserver.silo.network.AuthScopeSnapshot? = tokens?.snapshotCurrentScope()
 
-    suspend fun cancelJob(jobId: Long): ApiResult<Unit> = api.cancelJob(jobId)
-    suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> = api.cancelJob(jobId, scope)
+    suspend fun cancelJob(jobId: Long, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null): ApiResult<Unit> = api.cancelJob(jobId, scope)
 
     /**
      * Polls GET /ai/jobs/{id} every [intervalMs] until the job reaches a
@@ -86,8 +84,7 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
         if (tokens != null && scope == null) return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
         while (true) {
             if (tokens != null && scope != null) {
-                val now = tokens.snapshotCurrentScope()
-                if (!scope.isSameIdentityAs(now) || scope.profileId != now?.profileId || scope.profileToken != now?.profileToken)
+                if (!scope.stillOwns(tokens, OwnerPolicy.PROFILE))
                     return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
             }
             try {
@@ -112,8 +109,7 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
                 }
 
                 if (tokens != null && scope != null) {
-                    val now = tokens.snapshotCurrentScope()
-                    if (!scope.isSameIdentityAs(now) || scope.profileId != now?.profileId || scope.profileToken != now?.profileToken)
+                    if (!scope.stillOwns(tokens, OwnerPolicy.PROFILE))
                         return SubtitleJobOutcome.Failed("The subtitle job's account or profile changed.")
                 }
                 onUpdate(job)

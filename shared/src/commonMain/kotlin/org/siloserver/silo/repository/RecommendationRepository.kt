@@ -16,8 +16,6 @@ class RecommendationRepository(
     suspend fun captureDiscoverAuthority() = recommendationApi.captureDiscoverAuthority()
     suspend fun isDiscoverAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isDiscoverAuthorityCurrent(owner)
 
-    suspend fun captureTasteAuthority() = recommendationApi.captureTasteAuthority()
-    suspend fun isTasteAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = recommendationApi.isTasteAuthorityCurrent(owner)
     suspend fun getTasteProfile(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<TasteProfile> =
         recommendationApi.getTasteProfile(owner)
 
@@ -28,7 +26,8 @@ class RecommendationRepository(
     /** The synchronous run fence is evaluated after each suspended authority lookup. */
     suspend fun loadSimilarCards(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot,
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.catalog.BrowseItem>) -> Unit) {
-        if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        if (!currentCoroutineContext().isActive || !stillCurrent()) return
+        // getSimilar guards the owner before and after the exchange.
         val result = getSimilar(contentId, 12, owner)
         if (!isSimilarAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
         publish((result as? ApiResult.Success)?.data.orEmpty())

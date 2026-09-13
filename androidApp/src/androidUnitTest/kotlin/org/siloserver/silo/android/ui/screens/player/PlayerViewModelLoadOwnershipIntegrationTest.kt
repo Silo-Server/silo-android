@@ -889,7 +889,7 @@ private class RecordingPlaybackSessionManager(
     client: HttpClient,
     tokenManager: TokenManager,
 ) : PlaybackSessionManager(
-    PlaybackRepository(),
+    PlaybackRepository(testSequencedPlayback(client, tokenManager)),
     tokenManager,
 ) {
     private val stopped = mutableListOf<String>()
@@ -1259,4 +1259,17 @@ class MobileStartupAdoptedOwnerCleanupTest {
             }
         } finally { client.close() }
     }
+}
+
+private fun testSequencedPlayback(client: HttpClient, tokens: TokenManager): org.siloserver.silo.repository.SequencedPlayback {
+    val journal = object : org.siloserver.silo.repository.PlaybackJournalStore {
+        var entries = emptyList<org.siloserver.silo.repository.PlaybackJournalEntry>()
+        override suspend fun read() = entries
+        override suspend fun write(entries: List<org.siloserver.silo.repository.PlaybackJournalEntry>) { this.entries = entries }
+    }
+    val authorities = object : org.siloserver.silo.network.DurableLoginAuthorityProvider {
+        override suspend fun snapshotDurableLoginAuthority(): org.siloserver.silo.network.DurableLoginAuthority? = null
+    }
+    return org.siloserver.silo.repository.SequencedPlayback(
+        org.siloserver.silo.network.apiv2.PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens, authorities, journal) { "stop" }
 }

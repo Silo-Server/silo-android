@@ -67,7 +67,6 @@ class ProfileRepositoryTest {
                 update: org.siloserver.silo.model.notifications.NotificationPreferencesUpdate,
             ) = error("unused in this test")
             override suspend fun capability() = error("unused in this test")
-            override suspend fun wsTicket() = error("unused in this test")
         }
         return NotificationsRepository(api = api)
     }

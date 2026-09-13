@@ -188,7 +188,6 @@ class NotificationsRepositoryTest {
         override suspend fun getPreferences() = prefsResponse
         override suspend fun updatePreferences(update: NotificationPreferencesUpdate) = prefsResponse
         override suspend fun capability() = capabilityResponse
-        override suspend fun wsTicket() = ApiResult.Success(WsTicketResponse("t", 30))
     }
 
     @Test

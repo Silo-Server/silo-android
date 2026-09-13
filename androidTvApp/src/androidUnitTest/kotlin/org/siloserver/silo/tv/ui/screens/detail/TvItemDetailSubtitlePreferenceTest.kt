@@ -191,7 +191,7 @@ class TvItemDetailSubtitlePreferenceTest {
 
     private class FakeSettingsApi(
         private val capabilities: SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(revision = 1)),
+            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(manifestRevision = 1)),
         private val effective: EffectiveSettingValuesResponse = EffectiveSettingValuesResponse(),
     ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
@@ -200,6 +200,7 @@ class TvItemDetailSubtitlePreferenceTest {
             keys: List<String>,
             libraryIds: List<Int>,
             seriesIds: List<String>,
+            authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> = ApiResult.Success(effective)
     }
 

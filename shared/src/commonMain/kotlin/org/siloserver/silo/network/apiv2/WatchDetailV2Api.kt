@@ -9,7 +9,7 @@ import org.siloserver.silo.network.*
 
 /** Optional watch metadata; callers retain their original owner across local work. */
 class WatchDetailV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
-    suspend fun capture() = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+    suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
     suspend fun detail(id: String, owner: AuthScopeSnapshot): ApiResult<WatchDetail> =
         ownedV2Call<JsonObject, WatchDetail>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->

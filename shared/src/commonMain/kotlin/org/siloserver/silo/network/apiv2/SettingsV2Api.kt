@@ -70,11 +70,7 @@ class SettingsV2Api(
     suspend fun capabilities(): ApiResult<SettingsContractCapabilities> =
         exchange<SettingsContractCapabilities, SettingsContractCapabilities>(block = { owner ->
             client.get("/api/v2/settings/contract/capabilities") { authScope(owner); requireSiloAuth() }
-        }) { capabilities, _ ->
-            // The shared server view can advertise legacy receipt support, but
-            // v2 does not declare that header. Do not expose it as a guarantee.
-            capabilities.copy(supportsIdempotentWrites = false)
-        }
+        }) { capabilities, _ -> capabilities }
 
     /** GET /api/v2/settings/subtitle-appearance/effective for the acting profile on this device. */
     suspend fun effectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =

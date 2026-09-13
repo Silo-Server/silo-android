@@ -92,20 +92,6 @@ data class ReorderCollectionGroupsRequest(
 )
 
 @Serializable
-data class ProgressEntry(
-    @SerialName("media_item_id") val mediaItemId: String,
-    @SerialName("position_seconds") val positionSeconds: Double,
-    @SerialName("duration_seconds") val durationSeconds: Double,
-    val completed: Boolean = false,
-    @SerialName("updated_at") val updatedAt: String? = null
-)
-
-@Serializable
-data class ProgressListResponse(
-    val progress: List<ProgressEntry> = emptyList()
-)
-
-@Serializable
 data class SyncProgressItem(
     @SerialName("media_item_id") val mediaItemId: String,
     val position: Double,

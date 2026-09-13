@@ -546,7 +546,7 @@ class SubtitleTransactionIntegrationTest {
             PlaybackV2Api(client, ApiV2Gate.Unrestricted), IntegrationTokenManager, IntegrationTokenManager, IntegrationPlaybackJournal(),
         ) { java.util.UUID.randomUUID().toString() }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(sequenced, IntegrationTokenManager),
+            playbackRepository = PlaybackRepository(sequenced),
             tokenManager = IntegrationTokenManager,
             committedSessionCleanupScope = committedSessionCleanupScope,
         )

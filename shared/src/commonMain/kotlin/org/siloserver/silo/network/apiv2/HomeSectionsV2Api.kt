@@ -23,7 +23,7 @@ internal fun decodeSectionsV2(body: JsonObject): SectionsResponse {
 }
 
 class HomeSectionsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
-    suspend fun capture() = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+    suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
     suspend fun dismiss(surface: String, itemId: String, anchor: String, owner: AuthScopeSnapshot): ApiResult<Unit> {
         if (surface !in setOf("continue_watching", "next_up") || itemId.isBlank() || anchor.isBlank())

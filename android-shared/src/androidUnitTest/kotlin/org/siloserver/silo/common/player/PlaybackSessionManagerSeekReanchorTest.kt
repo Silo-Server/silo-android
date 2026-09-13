@@ -621,7 +621,7 @@ class PlaybackSessionManagerSeekReanchorTest {
             java.util.UUID.randomUUID().toString()
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(sequenced, identity),
+            playbackRepository = PlaybackRepository(sequenced),
             tokenManager = identity,
             networkEvidenceProvider = networkEvidenceProvider,
         )

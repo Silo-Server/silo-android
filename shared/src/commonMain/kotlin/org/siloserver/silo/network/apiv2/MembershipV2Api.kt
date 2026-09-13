@@ -14,13 +14,6 @@ data class MembershipEntryV2(
     @SerialName("added_at") val addedAt: String,
 )
 
-/** Confirmed response belongs to this captured authority, even if the UI has moved. */
-data class MembershipAcknowledgementV2 internal constructor(
-    val itemId: String,
-    val present: Boolean,
-    val scope: AuthScopeSnapshot?,
-)
-
 class MembershipV2Api(
     private val client: HttpClient,
     private val gate: ApiV2Gate,
@@ -45,17 +38,17 @@ class MembershipV2Api(
     }
 
     private suspend fun write(list: String, itemId: String, present: Boolean,
-        capturedScope: AuthScopeSnapshot?): ApiResult<MembershipAcknowledgementV2> {
+        capturedScope: AuthScopeSnapshot?): ApiResult<Unit> {
         val scope = capturedScope ?: tokenManager?.snapshotCurrentScope()
         if (scope != null && !scope.stillOwns(tokenManager, OwnerPolicy.IDENTITY)) return identityChanged()
         // No post-guard: do not discard a confirmed old-scope acknowledgement. The
         // caller can resolve its exact recorded command without publishing into the new UI.
-        return ownedV2Call<Unit, MembershipAcknowledgementV2>(gate, tokenManager, null, OwnerPolicy.IDENTITY, HttpStatusCode.NoContent, { _ ->
+        return ownedV2Call<Unit, Unit>(gate, tokenManager, null, OwnerPolicy.IDENTITY, HttpStatusCode.NoContent, { _ ->
             client.request("/api/v2/$list/$itemId") {
                 method = if (present) HttpMethod.Put else HttpMethod.Delete
                 scope?.let { authScope(it) }
                 singleAttempt()
             }
-        }) { MembershipAcknowledgementV2(itemId, present, scope) }
+        }) { }
     }
 }

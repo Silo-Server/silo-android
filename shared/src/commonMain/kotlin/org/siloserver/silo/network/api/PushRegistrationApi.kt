@@ -27,7 +27,7 @@ class DefaultPushRegistrationApi(
         return ownedV2Call<JsonObject, Boolean>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
             client.get("$DEVICES_PATH/capabilities") { authScope(scope!!); requireSiloAuth() }
         }) { body ->
-            body["revision"] == JsonPrimitive("ordered_android_v1") &&
+            body["state"] == JsonPrimitive("available") && body["allowed"] != JsonPrimitive(false) &&
                 body["registration_available"] == JsonPrimitive(true) &&
                 (body["platforms"] as? JsonArray)?.contains(JsonPrimitive("android")) == true
         }

@@ -67,8 +67,7 @@ class MembershipOutbox(
                     else api.removeFromWatchlist(command.targetContentId, authority.scope)
                 else -> error("Invalid membership operation")
             }
-            if (response is ApiResult.Success && response.data.scope == authority.scope &&
-                response.data.itemId == command.targetContentId && response.data.present == present) {
+            if (response is ApiResult.Success) {
                 resolved = dao.resolveMembership(id, claim, authority.key, SENDING) == 1
                 if (resolved) return Result(Resolution.ACKNOWLEDGED,
                     dao.getLatestByCoalesceKey(command.coalesceKey) == null && authority.scope == tokens.snapshotCurrentScope())

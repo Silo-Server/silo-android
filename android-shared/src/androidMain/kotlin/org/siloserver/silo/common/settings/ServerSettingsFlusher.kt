@@ -7,7 +7,6 @@ import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.newSettingMutationId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -73,7 +72,6 @@ private sealed class PendingOp {
 
     data class Set(
         val value: String,
-        val mutationId: String,
         override val serverUrl: String,
         override val authority: AuthScopeSnapshot?,
     ) : PendingOp()
@@ -115,7 +113,7 @@ class DefaultServerSettingsFlusher(
             ) {
                 existing
             } else {
-                PendingOp.Set(value, newSettingMutationId(), serverUrl, authority)
+                PendingOp.Set(value, serverUrl, authority)
             }
         }
     }
@@ -282,7 +280,6 @@ class DefaultServerSettingsFlusher(
                 key = key,
                 scope = SettingScopeIdentity.profileDevice(),
                 value = encoded,
-                mutationId = op.mutationId,
                 profileId = profileId,
                 authority = op.authority,
             )

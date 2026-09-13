@@ -40,19 +40,16 @@ interface SubtitlesApi {
     suspend fun aiQuota(): ApiResult<SubtitleAiQuota>
 
     /** POST /api/v2/subtitles/ai/translate — 202 with the queued job; 429 quota; 503 unconfigured. */
-    suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse>
-    suspend fun translate(request: SubtitleTranslateRequest, scope: AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> = translate(request)
+    suspend fun translate(request: SubtitleTranslateRequest, scope: AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse>
 
     /** GET /api/v2/subtitles/ai/jobs?media_file_id=N */
     suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse>
 
     /** GET /api/v2/subtitles/ai/jobs/{id} — 404 once the job row is gone. */
-    suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse>
-    suspend fun getJob(jobId: Long, scope: AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> = getJob(jobId)
+    suspend fun getJob(jobId: Long, scope: AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse>
 
     /** POST /api/v2/subtitles/ai/jobs/{id}/cancel — 204 acknowledges cancellation. */
-    suspend fun cancelJob(jobId: Long): ApiResult<Unit>
-    suspend fun cancelJob(jobId: Long, scope: AuthScopeSnapshot): ApiResult<Unit> = cancelJob(jobId)
+    suspend fun cancelJob(jobId: Long, scope: AuthScopeSnapshot? = null): ApiResult<Unit>
 }
 
 class DefaultSubtitlesApi(
@@ -75,22 +72,15 @@ class DefaultSubtitlesApi(
 
     override suspend fun aiQuota(): ApiResult<SubtitleAiQuota> = aiReads.quota()
 
-    override suspend fun translate(request: SubtitleTranslateRequest): ApiResult<SubtitleAiJobResponse> =
-        creation.create(request)
-
-    override suspend fun translate(request: SubtitleTranslateRequest, scope: AuthScopeSnapshot): ApiResult<SubtitleAiJobResponse> =
+    override suspend fun translate(request: SubtitleTranslateRequest, scope: AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> =
         creation.create(request, scope)
 
     override suspend fun listJobs(mediaFileId: Int): ApiResult<SubtitleAiJobsResponse> =
         aiReads.jobs(mediaFileId)
 
-    override suspend fun getJob(jobId: Long): ApiResult<SubtitleAiJobResponse> = aiReads.job(jobId)
-
     override suspend fun getJob(jobId: Long, scope: AuthScopeSnapshot?): ApiResult<SubtitleAiJobResponse> =
         aiReads.job(jobId, scope)
 
-    override suspend fun cancelJob(jobId: Long): ApiResult<Unit> = aiReads.cancel(jobId)
-
-    override suspend fun cancelJob(jobId: Long, scope: AuthScopeSnapshot): ApiResult<Unit> =
+    override suspend fun cancelJob(jobId: Long, scope: AuthScopeSnapshot?): ApiResult<Unit> =
         aiReads.cancel(jobId, scope)
 }

@@ -291,7 +291,7 @@ val androidTvModule = module {
             librarySelectionStore = get(),
             getAuthority = { get<TokenManager>().snapshotCurrentScope() },
             getEffectiveSettings = { keys, owner ->
-                get<SettingsRepository>().getMigrationEffectiveValues(keys, owner)
+                get<SettingsRepository>().getEffectiveValues(keys, authority = owner)
             },
         )
     }

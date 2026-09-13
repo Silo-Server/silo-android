@@ -11,6 +11,8 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.stillOwns
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.model.notifications.WsTicketResponse
 import kotlin.time.TimeSource
@@ -228,12 +230,9 @@ class DefaultPlaybackRealtimeClient(
 
     private suspend fun current(owner: Pair<AuthScopeSnapshot, String?>, sessionId: String): Boolean {
         val live = ownerProvider(sessionId) ?: return false
-        val now = tokenManager.snapshotCurrentScope() ?: return false
-        return live.second == owner.second && owner.first.isSameIdentityAs(live.first) &&
-            owner.first.isSameIdentityAs(now) && owner.first.profileId == now.profileId &&
-            owner.first.profileToken == now.profileToken && owner.first.serverUrl == now.serverUrl &&
-            owner.first.credentialGenerationId == now.credentialGenerationId &&
-            owner.first.profileId == live.first.profileId && owner.first.profileToken == live.first.profileToken
+        return live.second == owner.second && owner.first.stillOwns(tokenManager, OwnerPolicy.FULL) &&
+            owner.first.isSameIdentityAs(live.first) && owner.first.profileId == live.first.profileId &&
+            owner.first.profileToken == live.first.profileToken
     }
 
     override suspend fun sendHello(sessionId: String) = sendText(

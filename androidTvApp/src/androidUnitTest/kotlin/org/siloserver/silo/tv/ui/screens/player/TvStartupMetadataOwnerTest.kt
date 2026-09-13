@@ -94,7 +94,7 @@ class TvStartupMetadataOwnerTest {
             val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens, authorities, StartupPlaybackJournal()) {
                 java.util.UUID.randomUUID().toString()
             }
-            val manager = PlaybackSessionManager(PlaybackRepository(sequenced, tokens), tokens)
+            val manager = PlaybackSessionManager(PlaybackRepository(sequenced), tokens)
             val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
             fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
                 it.isAccessible = true; it.get(lifecycle)

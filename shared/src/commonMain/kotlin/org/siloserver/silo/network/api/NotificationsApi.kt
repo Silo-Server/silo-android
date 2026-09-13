@@ -19,7 +19,8 @@ import org.siloserver.silo.network.AuthScopeSnapshot
  *
  * REST is the source of truth for the notifications feature; the websocket
  * ([org.siloserver.silo.network.NotificationsRealtimeClient]) is a foreground
- * accelerator that reuses [wsTicket] for its handshake.
+ * accelerator that takes its handshake ticket from
+ * [org.siloserver.silo.network.apiv2.EventsSocketV2Api].
  */
 interface NotificationsApi {
 
@@ -59,7 +60,4 @@ interface NotificationsApi {
 
     /** GET /api/v2/notifications/capabilities — drives the settings UI. */
     suspend fun capability(): ApiResult<NotificationCapability>
-
-    /** POST /api/v2/events/ws-ticket — single-use short-lived websocket ticket. */
-    suspend fun wsTicket(): ApiResult<WsTicketResponse>
 }

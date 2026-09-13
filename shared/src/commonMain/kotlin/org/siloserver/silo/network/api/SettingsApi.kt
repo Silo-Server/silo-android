@@ -12,8 +12,6 @@ import org.siloserver.silo.network.apiv2.SettingsV2Api
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 import io.ktor.http.HttpStatusCode
-import kotlin.uuid.ExperimentalUuidApi
-import kotlin.uuid.Uuid
 
 /**
  * Admin-configured card-overlay baseline. `enabled` is the global
@@ -59,13 +57,6 @@ sealed class SettingsCapabilitiesResult {
     /** The request never reached the server. */
     data class NetworkError(val exception: Throwable) : SettingsCapabilitiesResult()
 }
-
-/**
- * A local logical-write identifier, retained for legacy transport compatibility.
- * API v2 omits this header and converges desired state without receipt replay.
- */
-@OptIn(ExperimentalUuidApi::class)
-fun newSettingMutationId(): String = Uuid.random().toString()
 
 open class SettingsApi(
     private val v2: SettingsV2Api,
@@ -125,17 +116,14 @@ open class SettingsApi(
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
-    ): ApiResult<EffectiveSettingValuesResponse> = v2.effectiveValues(keys, libraryIds, seriesIds)
-
-    /** Migration decision read pinned to the original author; failures never mean absence. */
-    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: AuthScopeSnapshot): ApiResult<EffectiveSettingValuesResponse> =
-        v2.effectiveValues(keys, emptyList(), emptyList(), authority)
+        authority: AuthScopeSnapshot? = null,
+    ): ApiResult<EffectiveSettingValuesResponse> = v2.effectiveValues(keys, libraryIds, seriesIds, authority)
 
     /**
      * Write one typed value at one scope.
      *
-     * API v2 ignores [mutationId]: repeated desired-state writes may advance the
-     * revision again. There is no stored mutation receipt or concurrency guard.
+     * Repeated desired-state writes may advance the revision again. There is
+     * no stored mutation receipt or concurrency guard.
      * [authority] pins queued work to its original acting account/profile/PIN;
      * [profileId] is the separately authorized target profile query parameter.
      *
@@ -148,7 +136,6 @@ open class SettingsApi(
         key: String,
         scope: SettingScopeIdentity,
         value: JsonElement,
-        mutationId: String,
         profileId: String? = null,
         authority: AuthScopeSnapshot? = null,
     ): ApiResult<StoredSettingValue> = v2.put(key, scope, value, profileId, authority)

@@ -17,10 +17,10 @@ the caller without token-refresh replay. Other requests retain their existing
 refresh behavior. A captured authority that is already stale is refused before
 sending.
 
-A confirmed acknowledgement carries the requested item, desired membership, and
-captured authority. It remains available after an active-viewer change so a caller
-can acknowledge its exact old command. It does not authorize publishing that result
-into the new viewer's UI. Cancellation or an uncertain network outcome is not an
+A confirmed acknowledgement is the 204 itself; the caller already knows the
+item, desired membership, and captured authority it sent. It remains available
+after an active-viewer change so a caller can acknowledge its exact old command.
+It does not authorize publishing that result into the new viewer's UI. Cancellation or an uncertain network outcome is not an
 acknowledgement and must not be treated as safe to replay by a generic outbox rule.
 Consumer adoption must retain command identity through acknowledgement and protect
 newer commands and their optimistic state.

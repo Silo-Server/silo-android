@@ -185,7 +185,7 @@ class DefaultCardPresentationStore(
                 is SettingsCapabilitiesResult.Available ->
                     if (
                         caps.capabilities.apiVersion == 1 &&
-                        caps.capabilities.revision >= MIN_CONTRACT_REVISION &&
+                        caps.capabilities.manifestRevision >= MIN_CONTRACT_REVISION &&
                         caps.capabilities.supportsBatchedEffective
                     ) {
                         CardPresentationSupport.Supported

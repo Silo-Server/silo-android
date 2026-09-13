@@ -962,7 +962,7 @@ class PlaybackSessionLifecycleTest {
 // ----------------------------------------------------------------------------
 
 private open class FakeSessionManager : PlaybackSessionManager(
-    playbackRepository = PlaybackRepository(),
+    playbackRepository = PlaybackRepository(testSequencedPlayback(NoOpHttpClient, NoOpTokenManager)),
     tokenManager = NoOpTokenManager,
 ) {
 

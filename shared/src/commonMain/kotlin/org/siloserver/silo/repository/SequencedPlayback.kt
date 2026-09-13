@@ -116,7 +116,7 @@ class SequencedPlayback(
     }
 
     /** Admission requires v2; unavailable capabilities never select a legacy transport. */
-    suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3>? = mutex.withLock {
+    suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> = mutex.withLock {
         withStableIdentity(null, expectedMetadataOwner, request.profileId) { guard ->
             val current = tokens.snapshotCurrentScope()
                 ?: return@withStableIdentity failure("identity_unavailable", "Playback needs an authenticated profile.")

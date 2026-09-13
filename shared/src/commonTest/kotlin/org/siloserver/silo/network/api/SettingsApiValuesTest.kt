@@ -112,7 +112,7 @@ class SettingsApiValuesTest {
     fun `getContractCapabilities parses the server capabilities shape and never promises receipts`() = runTest {
         val (api, captured) = api(
             responseBody = """
-                {"api_version":1,"revision":4,"contract_etag":"\"abc123\"",
+                {"api_version":1,"revision":"36e767e3","manifest_revision":4,"state":"available","allowed":true,"contract_etag":"\"abc123\"",
                  "definition_count":41,
                  "scopes":["account","profile","profile_device","profile_library","profile_series"],
                  "supports_batched_effective":true,"supports_idempotent_writes":true}
@@ -126,13 +126,12 @@ class SettingsApiValuesTest {
         assertTrue(captured.requiresAuth)
         assertIs<SettingsCapabilitiesResult.Available>(result)
         assertEquals(1, result.capabilities.apiVersion)
-        assertEquals(4, result.capabilities.revision)
+        assertEquals("36e767e3", result.capabilities.revision)
+        assertEquals(4, result.capabilities.manifestRevision)
         assertEquals("\"abc123\"", result.capabilities.contractEtag)
         assertEquals(41, result.capabilities.definitionCount)
         assertEquals(5, result.capabilities.scopes.size)
         assertTrue(result.capabilities.supportsBatchedEffective)
-        // v2 does not declare the mutation-id header, so the flag is never surfaced.
-        assertFalse(result.capabilities.supportsIdempotentWrites)
     }
 
     @Test
@@ -252,9 +251,9 @@ class SettingsApiValuesTest {
         }
         val api = SettingsApi(SettingsV2Api(c, tokens, ApiV2Gate.Unrestricted))
 
-        assertIs<ApiResult.Error>(api.getMigrationEffectiveValues(listOf("one"), original))
+        assertIs<ApiResult.Error>(api.getEffectiveValues(listOf("one"), authority = original))
         assertEquals(original, captured.pinned)
-        assertIs<ApiResult.Error>(api.getMigrationEffectiveValues(listOf("one"), original))
+        assertIs<ApiResult.Error>(api.getEffectiveValues(listOf("one"), authority = original))
         assertEquals(1, captured.sends)
     }
 
@@ -291,7 +290,6 @@ class SettingsApiValuesTest {
             key = "playback.preferred_quality",
             scope = SettingScopeIdentity.profileLibrary(7),
             value = JsonPrimitive("1080p"),
-            mutationId = "mut-1",
         )
 
         assertEquals(HttpMethod.Put, captured.method)
@@ -325,7 +323,6 @@ class SettingsApiValuesTest {
                 put("size", "large")
                 put("edge", "drop_shadow")
             },
-            mutationId = "mut-2",
         )
 
         assertEquals("""{"value":{"size":"large","edge":"drop_shadow"}}""", captured.body)
@@ -345,7 +342,6 @@ class SettingsApiValuesTest {
             key = "playback.preferred_quality",
             scope = SettingScopeIdentity.profile(),
             value = JsonPrimitive("720p"),
-            mutationId = "mut-reused",
         )
 
         assertIs<ApiResult.Error>(result)
@@ -361,7 +357,6 @@ class SettingsApiValuesTest {
             key = "playback.auto_play_next",
             scope = SettingScopeIdentity.profile(),
             value = JsonPrimitive(true),
-            mutationId = "mut-3",
             profileId = "child-profile",
         )
 
@@ -552,14 +547,4 @@ class SettingsApiValuesTest {
         assertEquals("/api/v2/library-playback-prefs/7", captured.path)
     }
 
-    // ---- mutation ids ----
-
-    @Test
-    fun `newSettingMutationId yields distinct non-blank ids`() {
-        val first = newSettingMutationId()
-        val second = newSettingMutationId()
-        assertTrue(first.isNotBlank())
-        assertTrue(second.isNotBlank())
-        assertTrue(first != second)
-    }
 }

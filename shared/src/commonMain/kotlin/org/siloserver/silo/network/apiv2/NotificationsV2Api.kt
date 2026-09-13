@@ -29,11 +29,12 @@ class NotificationsV2Api(
 ) : NotificationsApi {
     override fun forScope(scope: AuthScopeSnapshot) = NotificationsV2Api(client, tokens, gate, scope)
 
-    private suspend inline fun <reified T> exchange(
+    private suspend inline fun <reified T, R> exchange(
         method: HttpMethod, path: String, noinline configure: HttpRequestBuilder.() -> Unit = {},
-    ): ApiResult<T> {
+        crossinline project: (T) -> R,
+    ): ApiResult<R> {
         val scope = captured ?: tokens.snapshotCurrentScope() ?: return identityChanged()
-        return ownedV2Call<T, T>(gate, tokens, scope, OwnerPolicy.IDENTITY,
+        return ownedV2Call<T, R>(gate, tokens, scope, OwnerPolicy.IDENTITY,
             if (T::class == Unit::class) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
             client.request(path) {
                 this.method = method
@@ -41,21 +42,24 @@ class NotificationsV2Api(
                 if (method != HttpMethod.Get) singleAttempt()
                 configure()
             }
-        }) { it }
+        }) { project(it) }
     }
+    private suspend inline fun <reified T> exchange(
+        method: HttpMethod, path: String, noinline configure: HttpRequestBuilder.() -> Unit = {},
+    ): ApiResult<T> = exchange<T, T>(method, path, configure) { it }
 
     override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?): ApiResult<NotificationListResponse> =
-        exchange<InboxPageV2>(HttpMethod.Get, "/api/v2/notifications") {
+        exchange<InboxPageV2, NotificationListResponse>(HttpMethod.Get, "/api/v2/notifications", {
             parameter("limit", limit); parameter("status", if (unreadOnly) "unread" else "all")
             before?.let { parameter("cursor", it) }
-        }.validated {
+        }) {
             require(it.readCutoff.isNotBlank() && (it.page.hasMore == !it.page.nextCursor.isNullOrBlank()))
             NotificationListResponse(it.items, it.page.nextCursor, it.readCutoff)
         }
     override suspend fun sync(since: String?, limit: Int): ApiResult<NotificationSyncResponse> =
-        exchange<InboxSyncV2>(HttpMethod.Get, "/api/v2/notifications/sync") {
+        exchange<InboxSyncV2, NotificationSyncResponse>(HttpMethod.Get, "/api/v2/notifications/sync", {
             parameter("limit", limit); since?.let { parameter("cursor", it) }
-        }.validated {
+        }) {
             require(it.syncCursor.isNotBlank() && (it.page.hasMore == !it.page.nextCursor.isNullOrBlank()))
             NotificationSyncResponse(it.items, it.page.nextCursor, it.unreadCount,
                 it.syncCursor, it.initialSnapshot, it.page.hasMore)
@@ -78,13 +82,4 @@ class NotificationsV2Api(
         }
     override suspend fun capability(): ApiResult<NotificationCapability> =
         exchange(HttpMethod.Get, "/api/v2/notifications/capabilities")
-    // Compatibility facade; production socket clients retain scope through upgrade and frames.
-    override suspend fun wsTicket(): ApiResult<WsTicketResponse> = EventsSocketV2Api(client,tokens,gate).ticket(captured)
-}
-
-private fun <T, R> ApiResult<T>.validated(transform: (T) -> R): ApiResult<R> = when (this) {
-    is ApiResult.Success -> try { ApiResult.Success(transform(data)) }
-        catch (_: IllegalArgumentException) { ApiResult.Error(0, "invalid_notification_page", "The server returned an invalid notification page.") }
-    is ApiResult.Error -> this
-    is ApiResult.NetworkError -> this
 }

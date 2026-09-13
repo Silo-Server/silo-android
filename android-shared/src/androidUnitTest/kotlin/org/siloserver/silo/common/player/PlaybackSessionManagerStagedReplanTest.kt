@@ -1683,7 +1683,7 @@ class PlaybackSessionManagerStagedReplanTest {
             java.util.UUID.randomUUID().toString()
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(sequenced, identity),
+            playbackRepository = PlaybackRepository(sequenced),
             tokenManager = identity,
             // Unresolved publication tests settle explicitly instead of using virtual-time self healing.
             pendingPublicationSettleTimeoutMs = pendingPublicationSettleTimeoutMs,

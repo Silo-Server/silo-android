@@ -16,7 +16,7 @@ class PlaybackMetadataMutexTest {
         val client = HttpClient(MockEngine { error("No real dispatch") })
         try {
             val stopped = mutableListOf<String>()
-            val manager = object : PlaybackSessionManager(PlaybackRepository(), TokenManagerImpl()) {
+            val manager = object : PlaybackSessionManager(PlaybackRepository(testSequencedPlayback(client, TokenManagerImpl())), TokenManagerImpl()) {
                 override suspend fun stopSession(sessionId: String): ApiResult<Unit> { stopped += sessionId; return ApiResult.Success(Unit) }
             }
             val lifecycle = PlaybackSessionLifecycle(manager, org.siloserver.silo.network.api.HealthApi(client),
@@ -45,7 +45,7 @@ class PlaybackMetadataMutexTest {
         var network = 0
         val client = HttpClient(MockEngine { network++; respond("{}", HttpStatusCode.ServiceUnavailable) })
         try {
-            val manager = PlaybackSessionManager(PlaybackRepository(tokens = tokens), tokens)
+            val manager = PlaybackSessionManager(PlaybackRepository(testSequencedPlayback(client, tokens)), tokens)
             val lockField = PlaybackSessionManager::class.java.getDeclaredField("contentStartMutex").apply { isAccessible = true }
             val lock = lockField.get(manager) as Mutex
             val orphanField = PlaybackSessionManager::class.java.getDeclaredField("orphanedSessionIds").apply { isAccessible = true }
@@ -65,4 +65,16 @@ class PlaybackMetadataMutexTest {
             assertEquals(setOf("unrelated-predecessor"), orphans)
         } finally { client.close() }
     }
+}
+
+/** A real [SequencedPlayback] over [client]; the journal is in-memory and no login authority is saved. */
+internal fun testSequencedPlayback(client: HttpClient, tokens: TokenManager): org.siloserver.silo.repository.SequencedPlayback {
+    val journal = object : org.siloserver.silo.repository.PlaybackJournalStore {
+        var entries = emptyList<org.siloserver.silo.repository.PlaybackJournalEntry>()
+        override suspend fun read() = entries
+        override suspend fun write(entries: List<org.siloserver.silo.repository.PlaybackJournalEntry>) { this.entries = entries }
+    }
+    val authorities = object : DurableLoginAuthorityProvider { override suspend fun snapshotDurableLoginAuthority(): DurableLoginAuthority? = null }
+    return org.siloserver.silo.repository.SequencedPlayback(
+        org.siloserver.silo.network.apiv2.PlaybackV2Api(client, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), tokens, authorities, journal) { "stop" }
 }

@@ -400,7 +400,7 @@ class SequencedPlaybackTest {
             val event = PlaybackRouteEventV3(playbackAttemptId = "attempt-1", sessionId = "session-1", event = "first_frame")
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.routeEvent(event.copy(sessionId = "wrong"))).error)
             assertEquals(0, events)
-            assertEquals("invalid_receipt", assertIs<ApiResult.Error>(runtime.routeEvent(event)).error)
+            assertEquals("invalid_response", assertIs<ApiResult.Error>(runtime.routeEvent(event)).error)
             assertEquals(1, store.entries.single().routeEvents.size)
             identity.scope = identity.scope.copy(identityGeneration = 2)
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.routeEvent(event)).error)

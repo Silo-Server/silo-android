@@ -31,7 +31,7 @@ class ProfileSettingsControllerTest {
 
     private class FakeSettingsApi(
         val capabilities: SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(revision = 1)),
+            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(manifestRevision = 1)),
         val effective: ApiResult<EffectiveSettingValuesResponse> =
             ApiResult.Success(EffectiveSettingValuesResponse()),
         val putResult: (String) -> ApiResult<StoredSettingValue> = {
@@ -41,7 +41,6 @@ class ProfileSettingsControllerTest {
     ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
         val calls = mutableListOf<Call>()
-        val mutationIds = mutableListOf<String>()
 
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
 
@@ -49,18 +48,17 @@ class ProfileSettingsControllerTest {
             keys: List<String>,
             libraryIds: List<Int>,
             seriesIds: List<String>,
+            authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> = effective
 
         override suspend fun putValue(
             key: String,
             scope: SettingScopeIdentity,
             value: JsonElement,
-            mutationId: String,
             profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<StoredSettingValue> {
             calls += Call.Put(key, scope.scope, value)
-            mutationIds += mutationId
             return putResult(key)
         }
 
@@ -79,7 +77,7 @@ class ProfileSettingsControllerTest {
         ProfileSettingsController(SettingsRepository(api))
 
     @Test
-    fun `writes address scope profile with a mutation id`() = runTest {
+    fun `writes address scope profile`() = runTest {
         val api = FakeSettingsApi()
         controllerFor(api).setSubtitleMode("always")
 
@@ -93,7 +91,6 @@ class ProfileSettingsControllerTest {
             ),
             api.calls,
         )
-        assertTrue(api.mutationIds.single().isNotBlank(), "a write must carry an idempotency id")
     }
 
     @Test

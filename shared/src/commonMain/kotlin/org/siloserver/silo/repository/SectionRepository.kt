@@ -37,17 +37,17 @@ class SectionRepository(
     /** Scoped consumers never share the legacy Home request or its cache. */
     suspend fun loadScopedHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot,
         stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.section.ResolvedSection>) -> Unit) {
-        if (!isHomeAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        if (!currentCoroutineContext().isActive || !stillCurrent()) return
+        // getHomeSections guards the owner before and after the exchange.
         val result = sectionApi.getHomeSections(owner)
-        if (!isHomeAuthorityCurrent(owner) || !currentCoroutineContext().isActive || !stillCurrent()) return
+        if (!currentCoroutineContext().isActive || !stillCurrent()) return
         if (result is ApiResult.Success) publish(result.data.sections)
     }
 
     /** Fetches a library's resolved sections (offline: last cached sections). */
     suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
-        if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
+        // getLibrarySections guards the owner before and after the exchange.
         val result = sectionApi.getLibrarySections(libraryId, owner)
-        if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
         if (result is ApiResult.Success) {
             catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner)
             if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()

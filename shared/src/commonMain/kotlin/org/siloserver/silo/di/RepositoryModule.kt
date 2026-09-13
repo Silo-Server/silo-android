@@ -69,7 +69,7 @@ val repositoryModule = module {
         )
     }
     single { CalendarRepository(get()) }
-    single { PlaybackRepository(getOrNull(), get()) }
+    single { PlaybackRepository(get()) }
     // `getOrNull()` picks up the Room-backed ports when the Android platform
     // module binds them (Track B local-first writes + offline read cache); falls
     // back to the network-only no-op ports in commonMain tests / when unbound.

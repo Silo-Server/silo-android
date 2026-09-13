@@ -10,7 +10,7 @@ import kotlin.test.*
 class DiscoverV2Test {
     private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
     private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
-    private val valid = """{"items":[{"type":"movie","title":"For You","kind":"for-you-main","key":"stable","items":[{"content_id":"opaque:2","type":"movie","title":"Second","poster_url":"poster","year":2025},{"content_id":"1","type":"movie","title":"First"}]}],"page":{"has_more":false}}"""
+    private val valid = """{"items":[{"type":"movie","title":"For You","kind":"for-you-main","key":"stable","items":[{"content_id":"opaque:2","type":"movie","title":"Second","poster_url":"poster","year":2025},{"content_id":"1","type":"movie","title":"First"}]}]}"""
     @Test fun scopedOrderedRowsAndEmptyCollection() = runTest {
         var body = valid
         val client = HttpClient(MockEngine {
@@ -24,7 +24,7 @@ class DiscoverV2Test {
             assertEquals("For You", row.label); assertEquals("for-you-main", row.sectionKind); assertEquals("stable", row.sectionKey)
             assertEquals(listOf("opaque:2", "1"), row.items.map { it.contentId })
             assertEquals("poster", row.items.first().posterUrl); assertEquals(2025, row.items.first().year)
-            body = """{"items":[],"page":{"has_more":false}}"""
+            body = """{"items":[]}"""
             assertTrue(api.read(owner).getOrThrow().rows.isEmpty())
         } finally { client.close() }
     }
@@ -36,7 +36,7 @@ class DiscoverV2Test {
         })
         try {
             val api = DiscoverV2Api(client, tokens, ApiV2Gate.Unrestricted); val original = owner
-            for (invalid in listOf("{}", valid.replace("false", "true"), valid.replace("\"opaque:2\"", "\"\""), valid.replace("\"items\":[{\"content_id\"", "\"missing\":[{\"content_id\""))) {
+            for (invalid in listOf("{}", valid.dropLast(1) + ""","page":{"has_more":true,"next_cursor":"c"}}""", valid.replace("\"opaque:2\"", "\"\""), valid.replace("\"items\":[{\"content_id\"", "\"missing\":[{\"content_id\""))) {
                 body = invalid; assertFalse(api.read(original) is ApiResult.Success)
             }
             body = valid; status = HttpStatusCode.Accepted; assertFalse(api.read(original) is ApiResult.Success)

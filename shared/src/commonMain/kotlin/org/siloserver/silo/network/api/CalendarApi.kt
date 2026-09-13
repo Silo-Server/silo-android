@@ -35,7 +35,7 @@ interface CalendarApi {
 }
 
 class DefaultCalendarApi(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) : CalendarApi {
-    override suspend fun capture() = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+    override suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     override suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
 
     override suspend fun getCalendar(

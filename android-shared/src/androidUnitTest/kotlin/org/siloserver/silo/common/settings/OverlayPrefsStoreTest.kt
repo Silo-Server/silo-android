@@ -341,6 +341,7 @@ private class RecordingOverlaySettingsApi(
         keys: List<String>,
         libraryIds: List<Int>,
         seriesIds: List<String>,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         effectiveRequests += keys
         val value = storedValue
@@ -372,7 +373,6 @@ private class RecordingOverlaySettingsApi(
         key: String,
         scope: SettingScopeIdentity,
         value: JsonElement,
-        mutationId: String,
         profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {

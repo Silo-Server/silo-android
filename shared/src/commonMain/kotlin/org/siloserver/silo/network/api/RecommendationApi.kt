@@ -22,8 +22,6 @@ class RecommendationApi(client: HttpClient,
     suspend fun isDiscoverAuthorityCurrent(owner: AuthScopeSnapshot) = discover.current(owner)
     suspend fun getDiscover(owner: AuthScopeSnapshot): ApiResult<DiscoverResponse> = discover.read(owner)
 
-    suspend fun captureTasteAuthority() = taste.capture()
-    suspend fun isTasteAuthorityCurrent(owner: AuthScopeSnapshot) = taste.current(owner)
     suspend fun getTasteProfile(owner: AuthScopeSnapshot): ApiResult<TasteProfile> = taste.read(owner)
 
     suspend fun captureSimilarAuthority() = similar.capture()

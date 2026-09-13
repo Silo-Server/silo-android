@@ -7,7 +7,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.OverlayConfigResponse
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.network.api.SettingsCapabilitiesResult
-import org.siloserver.silo.network.api.newSettingMutationId
 import org.siloserver.silo.network.map
 import kotlinx.serialization.json.JsonElement
 
@@ -26,8 +25,9 @@ class SettingsRepository(
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
     ): ApiResult<Map<String, EffectiveSettingValue>> =
-        settingsApi.getEffectiveValues(keys, libraryIds, seriesIds).map { response ->
+        settingsApi.getEffectiveValues(keys, libraryIds, seriesIds, authority).map { response ->
             response.settings.associateBy { it.key }
         }
 
@@ -47,7 +47,7 @@ class SettingsRepository(
      * Picker callers surface failure and let the user make a new decision.
      */
     suspend fun setProfileValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profile(), value, newSettingMutationId())
+        settingsApi.putValue(key, SettingScopeIdentity.profile(), value)
 
     /** Clear the profile-scoped value so the setting inherits again. */
     suspend fun clearProfileValue(key: String): ApiResult<Unit> =
@@ -60,7 +60,7 @@ class SettingsRepository(
      * auth interceptor attaches.
      */
     suspend fun setProfileClientValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profileClient(), value, newSettingMutationId())
+        settingsApi.putValue(key, SettingScopeIdentity.profileClient(), value)
 
     suspend fun clearProfileClientValue(key: String): ApiResult<Unit> =
         treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileClient()))
@@ -71,13 +71,10 @@ class SettingsRepository(
      * `X-Silo-Device-Id` header.
      */
     suspend fun setProfileDeviceValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, newSettingMutationId())
+        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value)
 
     suspend fun setMigrationDeviceValue(key: String, value: JsonElement, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, newSettingMutationId(), authority.profileId, authority)
-
-    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Map<String, EffectiveSettingValue>> =
-        settingsApi.getMigrationEffectiveValues(keys, authority).map { result -> result.settings.associateBy { it.key } }
+        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, authority.profileId, authority)
 
     suspend fun clearProfileDeviceValue(key: String): ApiResult<Unit> =
         treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profileDevice()))

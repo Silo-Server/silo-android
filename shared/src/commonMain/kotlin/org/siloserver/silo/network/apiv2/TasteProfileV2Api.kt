@@ -16,8 +16,6 @@ import org.siloserver.silo.network.*
 )
 
 class TasteProfileV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
-    suspend fun capture(): AuthScopeSnapshot? = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
-    suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
     suspend fun read(owner: AuthScopeSnapshot): ApiResult<TasteProfile> =
         ownedV2Call<TasteSummary, TasteProfile>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
             client.get("/api/v2/recommendations/taste-profile") { authScope(scope!!); requireSiloAuth() }

@@ -8,7 +8,7 @@ import org.siloserver.silo.model.section.*
 import org.siloserver.silo.network.*
 
 class LibrarySectionItemsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
-    suspend fun capture() = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
+    suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
     suspend fun read(libraryId: Int, sectionId: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> {
         if (libraryId <= 0 || sectionId.isBlank()) return ApiResult.Error(422, "validation_failed", "Invalid library section.")

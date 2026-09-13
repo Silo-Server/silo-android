@@ -16,7 +16,7 @@ class SimilarCardsV2Test {
     private val tokens=object:TokenManager by TokenManagerImpl(){override suspend fun snapshotCurrentScope(): AuthScopeSnapshot {
         val captured=owner; onCapture(); return captured
     }}
-    private val cards="""{"items":[{"content_id":"b","title":"Second","type":"movie","year":2024,"poster_url":"/b"},{"content_id":"a","title":"First","type":"series"}],"page":{"has_more":false}}"""
+    private val cards="""{"items":[{"content_id":"b","title":"Second","type":"movie","year":2024,"poster_url":"/b"},{"content_id":"a","title":"First","type":"series"}]}"""
     @Test fun orderedCardsOneRequestNoDetailHydrationAndEmptyCollection()=runTest {
         var sends=0; var body=cards
         val c=HttpClient(MockEngine {
@@ -29,16 +29,16 @@ class SimilarCardsV2Test {
             val published=mutableListOf<List<String>>()
             repo.loadSimilarCards("movie/a?b",owner,{true}) {published+=it.map {it.contentId};assertEquals(2024,it.first().year);assertEquals("/b",it.first().posterUrl)}
             assertEquals(listOf(listOf("b","a")),published);assertEquals(1,sends)
-            body="""{"items":[],"page":{"has_more":false}}"""
+            body="""{"items":[]}"""
             repo.loadSimilarCards("movie/a?b",owner,{true}) {assertTrue(it.isEmpty())};assertEquals(2,sends)
         } finally {c.close()}
     }
-    @Test fun rejectsIncompleteDuplicateBlankOversizeMissingPageAndWrongStatus()=runTest {
+    @Test fun rejectsIncompleteDuplicateBlankOversizePagedAndWrongStatus()=runTest {
         var body=cards;var status=HttpStatusCode.OK
         val c=HttpClient(MockEngine {respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
             val api=SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)
-            for(b in listOf(cards.replace("false","true"),cards.replace("\"a\"","\"b\""),cards.replace("\"b\"","\"\""),"""{"items":[]}""")) {
+            for(b in listOf(cards.dropLast(1)+""","page":{"has_more":true,"next_cursor":"c"}}""",cards.replace("\"a\"","\"b\""),cards.replace("\"b\"","\"\""))) {
                 body=b;assertFalse(api.list("movie",12,owner) is ApiResult.Success)
             }
             body=cards;assertFalse(api.list("movie",1,owner) is ApiResult.Success)

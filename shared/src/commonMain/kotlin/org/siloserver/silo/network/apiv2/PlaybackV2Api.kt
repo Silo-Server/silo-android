@@ -85,16 +85,19 @@ fun PlaybackRouteEventV3.v2Body(installationId: String, eventId: String): JsonOb
 )
 
 class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate) {
-    private fun HttpResponse.expect(status: Int): HttpResponse = also { check(!it.status.isSuccess() || it.status.value == status) }
-
     private fun HttpResponse.identityHeaders(): Map<String, String> = call.request.headers.entries()
         .filter { it.key.equals("Authorization", true) || it.key.equals("X-Profile-Id", true) }
         .associate { it.key to it.value.single() }
 
+    /** One unguarded v2 playback exchange whose success status must be [expected]. */
+    private suspend inline fun <reified T, R> exchange(
+        expected: HttpStatusCode, crossinline block: suspend () -> HttpResponse, crossinline project: (T) -> R,
+    ): ApiResult<R> = ownedV2Call<T, R>(gate, null, null, OwnerPolicy.FULL, expected, { block() }, project)
+
     suspend fun capabilities(scope: AuthScopeSnapshot): ApiResult<PlaybackCapabilitiesV2> =
-        safeApiV2Call(gate) {
-            client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }.expect(200)
-        }
+        exchange<PlaybackCapabilitiesV2, PlaybackCapabilitiesV2>(HttpStatusCode.OK, {
+            client.get("/api/v2/playback/capabilities") { authScope(scope); requireSiloAuth() }
+        }) { it }
 
     suspend fun account(scope: AuthScopeSnapshot): ApiResult<Account> = safeApiV2Call(gate) {
         client.get("/api/v2/account/me") { authScope(scope); requireSiloAuth() }
@@ -102,60 +105,57 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
 
     /** HTTP 201 `PlaybackDecision`, returned raw so the journal can retain the exact decision. */
     suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
-        safeApiV2Call(gate) {
+        exchange<JsonObject, JsonObject>(HttpStatusCode.Created, {
             client.post("/api/v2/playback/start") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { captureHeaders(it.identityHeaders()) }.expect(201)
-        }
+            }.also { captureHeaders(it.identityHeaders()) }
+        }) { it }
 
     suspend fun replan(scope: AuthScopeSnapshot, sessionId: String, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
-        safeApiV2Call(gate) {
+        exchange<JsonObject, JsonObject>(HttpStatusCode.OK, {
             client.post {
                 url { path("", "api", "v2", "playback", sessionId, "replan") }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.also { captureHeaders(it.identityHeaders()) }.expect(200)
-        }
+            }.also { captureHeaders(it.identityHeaders()) }
+        }) { it }
 
     /** HTTP 202 `{event_id, outcome: "accepted"}`; the receipt must echo the sent `event_id`. */
     suspend fun routeEvent(scope: AuthScopeSnapshot, body: JsonObject): ApiResult<Unit> =
-        when (val result = safeApiV2Call<JsonObject>(gate) {
+        exchange<JsonObject, Unit>(HttpStatusCode.Accepted, {
             client.post("/api/v2/playback/route-events") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.expect(202)
-        }) {
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-            is ApiResult.Success ->
-                if (result.data["event_id"] == body["event_id"] && result.data["outcome"] == JsonPrimitive("accepted"))
-                    ApiResult.Success(Unit)
-                else ApiResult.Error(0, "invalid_receipt", "The route event receipt did not match the request.")
+            }
+        }) { receipt ->
+            require(receipt["event_id"] == body["event_id"] && receipt["outcome"] == JsonPrimitive("accepted")) {
+                "The route event receipt did not match the request."
+            }
         }
 
     suspend fun progress(scope: AuthScopeSnapshot, sessionId: String,
-        body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> = safeApiV2Call(gate) {
-        client.post {
-            url { path("", "api", "v2", "playback", sessionId, "progress") }
-            authScope(scope); requireSiloAuth(); singleAttempt()
-            contentType(ContentType.Application.Json); setBody(body)
-        }.expect(200)
-    }
+        body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> =
+        exchange<PlaybackMutationV2, PlaybackMutationV2>(HttpStatusCode.OK, {
+            client.post {
+                url { path("", "api", "v2", "playback", sessionId, "progress") }
+                authScope(scope); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json); setBody(body)
+            }
+        }) { it }
 
     /** Only an HTTP 200 stopped or replayed receipt carrying the sent stop_id confirms the stop. */
     suspend fun stop(scope: AuthScopeSnapshot, sessionId: String, body: PlaybackStopV2): ApiResult<PlaybackMutationV2> =
-        when (val result = safeApiV2Call<PlaybackMutationV2>(gate) {
+        exchange<PlaybackMutationV2, PlaybackMutationV2>(HttpStatusCode.OK, {
             client.delete {
                 url { path("", "api", "v2", "playback", sessionId) }
                 authScope(scope); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json); setBody(body)
-            }.expect(200)
-        }) {
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-            is ApiResult.Success ->
-                if (result.data.stopId == body.stopId && result.data.outcome in PlaybackMutationOutcomeV2.STOP) result
-                else ApiResult.Error(0, "invalid_receipt", "The playback stop receipt did not match the request.")
+            }
+        }) { receipt ->
+            require(receipt.stopId == body.stopId && receipt.outcome in PlaybackMutationOutcomeV2.STOP) {
+                "The playback stop receipt did not match the request."
+            }
+            receipt
         }
 }

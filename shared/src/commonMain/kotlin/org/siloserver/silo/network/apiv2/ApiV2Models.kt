@@ -78,22 +78,6 @@ data class Impersonation(
     @SerialName("impersonator_username") val impersonatorUsername: String,
 )
 
-/** GET /api/v2/progress */
-@Serializable
-data class ProgressCollection(
-    val items: List<ProgressEntryV2> = emptyList(),
-    val page: PageInfo = PageInfo(hasMore = false),
-)
-
-@Serializable
-data class ProgressEntryV2(
-    @SerialName("media_item_id") val mediaItemId: String,
-    @SerialName("position_seconds") val positionSeconds: Double,
-    @SerialName("duration_seconds") val durationSeconds: Double,
-    val completed: Boolean = false,
-    @SerialName("updated_at") val updatedAt: String,
-)
-
 @Serializable
 data class PageInfo(
     @SerialName("has_more") val hasMore: Boolean,

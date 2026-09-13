@@ -49,8 +49,7 @@ class MembershipV2Test {
             assertIs<ApiResult.Success<*>>(api.addFavorite("item", captured))
             assertIs<ApiResult.Success<*>>(api.removeFavorite("item", captured))
             assertIs<ApiResult.Success<*>>(api.addToWatchlist("item", captured))
-            val ack = assertIs<ApiResult.Success<MembershipAcknowledgementV2>>(api.removeFromWatchlist("item", captured)).data
-            assertEquals(captured, ack.scope); assertFalse(ack.present)
+            assertIs<ApiResult.Success<Unit>>(api.removeFromWatchlist("item", captured))
             assertEquals("identity_changed", assertIs<ApiResult.Error>(api.addFavorite("item", captured)).error)
             assertEquals(listOf("PUT /api/v2/favorites/item", "DELETE /api/v2/favorites/item", "PUT /api/v2/watchlist/item", "DELETE /api/v2/watchlist/item"), calls)
         } finally { client.close() }

@@ -86,20 +86,20 @@ data class SettingScopeIdentity(
 
 /**
  * `GET /api/v1/settings/contract/capabilities` — what the connected server
- * supports, for feature detection rather than version sniffing. Compare
- * [revision] against the generated [SettingKeys.REVISION] to hide definitions
- * the server does not know yet.
+ * supports, for feature detection rather than version sniffing. [revision]
+ * is the opaque capability digest; compare [manifestRevision] against the
+ * generated [SettingKeys.REVISION] to hide definitions the server does not know yet.
  */
 @Serializable
 data class SettingsContractCapabilities(
     @SerialName("api_version") val apiVersion: Int = 0,
-    val revision: Int = 0,
+    val revision: String = "",
+    @SerialName("manifest_revision") val manifestRevision: Int = 0,
     @SerialName("contract_etag") val contractEtag: String = "",
     @SerialName("definition_count") val definitionCount: Int = 0,
     val scopes: List<String> = emptyList(),
     @SerialName("client_families") val clientFamilies: List<String> = emptyList(),
     @SerialName("supports_batched_effective") val supportsBatchedEffective: Boolean = false,
-    @SerialName("supports_idempotent_writes") val supportsIdempotentWrites: Boolean = false,
 )
 
 /** Body for `PUT /api/v2/settings/values/{key}`: `{"value": …}`. */

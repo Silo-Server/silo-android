@@ -231,7 +231,7 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `transient failure keeps the write queued and retries with the same mutation id`() = runTest {
+    fun `transient failure keeps the write queued and retries it`() = runTest {
         val api = RecordingSettingsApi()
         api.failNextPuts(1, ApiResult.Error(503, "unavailable", "restarting"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
@@ -240,13 +240,11 @@ class ServerSettingsFlusherTest {
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size, "failed write must be retried, not dropped")
-        assertEquals(api.calls[0].mutationId, api.calls[1].mutationId,
-            "a retry must replay the SAME mutation id so the server can dedupe it")
         assertEquals(JsonPrimitive(true), api.calls[1].value)
     }
 
     @Test
-    fun `network failure keeps the write queued and retries with the same mutation id`() = runTest {
+    fun `network failure keeps the write queued and retries it`() = runTest {
         val api = RecordingSettingsApi()
         api.failNextPuts(2, ApiResult.NetworkError(RuntimeException("offline")))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
@@ -255,7 +253,6 @@ class ServerSettingsFlusherTest {
         advanceUntilIdle()
 
         assertEquals(3, api.calls.size)
-        assertTrue(api.calls.all { it.mutationId == api.calls.first().mutationId })
     }
 
     @Test
@@ -278,7 +275,6 @@ class ServerSettingsFlusherTest {
         flusher.flushNow()
 
         assertEquals(attemptsWhileParked + 1, api.calls.size)
-        assertTrue(api.calls.all { it.mutationId == api.calls.first().mutationId })
     }
 
     @Test
@@ -298,7 +294,7 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `mutation id conflict drops the write`() = runTest {
+    fun `a 409 conflict drops the write`() = runTest {
         val api = RecordingSettingsApi()
         api.failNextPuts(Int.MAX_VALUE, ApiResult.Error(409, "mutation_id_conflict", "id reused"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
@@ -335,7 +331,7 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `re-enqueueing a different value mints a fresh mutation id`() = runTest {
+    fun `re-enqueueing a different value sends the new value`() = runTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
 
@@ -345,8 +341,7 @@ class ServerSettingsFlusherTest {
         advanceUntilIdle()
 
         assertEquals(2, api.calls.size)
-        assertNotEquals(api.calls[0].mutationId, api.calls[1].mutationId,
-            "different content must never reuse a mutation id (409 conflict by design)")
+        assertEquals(JsonPrimitive("1080p"), api.calls[1].value)
     }
 
     @Test
@@ -493,10 +488,6 @@ class ServerSettingsFlusherTest {
 
         assertEquals(3, api.calls.size, "the newer failed write must still be retried")
         assertEquals(JsonPrimitive("1080p"), api.calls[2].value)
-        assertEquals(
-            api.calls[1].mutationId, api.calls[2].mutationId,
-            "the retry replays the newer write's own id",
-        )
     }
 
     @Test
@@ -524,7 +515,6 @@ private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.api
         val key: String,
         val value: JsonElement?,
         val profileId: String?,
-        val mutationId: String?,
         val scope: SettingScopeIdentity,
     ) {
         enum class Kind { PUT, DELETE }
@@ -558,11 +548,10 @@ private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.api
         key: String,
         scope: SettingScopeIdentity,
         value: JsonElement,
-        mutationId: String,
         profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
-        val call = Call(Call.Kind.PUT, key, value, profileId, mutationId, scope)
+        val call = Call(Call.Kind.PUT, key, value, profileId, scope)
         calls.add(call)
         onPut?.invoke(call)
         if (putFailuresRemaining > 0) {
@@ -580,7 +569,7 @@ private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.api
         profileId: String?,
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<Unit> {
-        val call = Call(Call.Kind.DELETE, key, null, profileId, null, scope)
+        val call = Call(Call.Kind.DELETE, key, null, profileId, scope)
         calls.add(call)
         onDelete?.invoke(call)
         if (deleteFailuresRemaining > 0) {
