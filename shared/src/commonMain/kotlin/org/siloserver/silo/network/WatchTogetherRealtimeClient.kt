@@ -12,9 +12,16 @@ import org.siloserver.silo.model.watchtogether.WsTransportRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocketSession
-import io.ktor.client.request.url
-import io.ktor.http.encodeURLParameter
+import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.http.HttpHeaders
+import io.ktor.http.URLProtocol
+import io.ktor.http.isSuccess
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodeURLPathPart
+import io.ktor.http.encodedPath
+import io.ktor.http.takeFrom
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
@@ -31,14 +38,16 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import org.siloserver.silo.model.notifications.WsTicketResponse
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 /**
- * Per-room websocket. One [connect] = one connection to
- * `/api/v1/watch-together/rooms/{id}/ws`. The same-origin Silo auth plugin
- * supplies the access bearer and profile headers. The server still requires
- * `room_token`, `profile_id`, and (when present) `profile_token` in the query;
- * these residual URL credentials remain exposed to infrastructure that logs
- * request targets until the server protocol can be changed.
+ * Per-room websocket. One [connect] = one ticket mint at
+ * `POST /api/v2/watch-together/rooms/{id}/ws-ticket` (scoped auth plus the
+ * room JWT in `X-Room-Token`) followed by one upgrade of
+ * `/api/v2/watch-together/rooms/{id}/ws` that carries only the single-use
+ * ticket in `Sec-WebSocket-Protocol`. No credential travels in the URL.
  *
  * [RoomRealtimeEvent.Closed] is reserved for an explicit decoded
  * `room_closed` frame. Physical EOF and socket failures surface as
@@ -82,28 +91,61 @@ internal interface WatchTogetherSocketConnection {
 }
 
 internal data class WatchTogetherSocketRequest(
-    val url: String,
+    val roomId: String,
+    val roomToken: String,
     val authScope: AuthScopeSnapshot,
 ) {
     override fun toString(): String =
-        "WatchTogetherSocketRequest(url=<redacted>, authScope=$authScope)"
+        "WatchTogetherSocketRequest(roomId=<redacted>, roomToken=<redacted>, authScope=$authScope)"
 }
 
 internal fun interface WatchTogetherSocketConnector {
     suspend fun open(request: WatchTogetherSocketRequest): WatchTogetherSocketConnection
 }
 
+internal const val ROOM_SOCKET_PROTOCOL = "silo.room.v2"
+
+private fun roomPath(roomId: String) = "/api/v2/watch-together/rooms/${roomId.encodeURLPathPart()}"
+
 private class KtorWatchTogetherSocketConnector(
     private val client: HttpClient,
 ) : WatchTogetherSocketConnector {
-    override suspend fun open(request: WatchTogetherSocketRequest): WatchTogetherSocketConnection =
-        KtorWatchTogetherSocketConnection(
-            client.webSocketSession {
-                url(request.url)
-                authScope(request.authScope)
-                requireSiloAuth()
-            },
-        )
+    override suspend fun open(request: WatchTogetherSocketRequest): WatchTogetherSocketConnection {
+        val ticket = when (val minted = safeApiV2Call<WsTicketResponse>(ApiV2Gate.Unrestricted) {
+            client.post {
+                url { encodedPath = "${roomPath(request.roomId)}/ws-ticket" }
+                authScope(request.authScope); requireSiloAuth()
+                header("X-Room-Token", request.roomToken)
+            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
+        }) {
+            is ApiResult.Success -> minted.data
+            is ApiResult.Error -> throw IllegalStateException("room_ticket_unavailable:${minted.code}")
+            is ApiResult.NetworkError -> throw minted.exception
+        }
+        check(ticket.protocol == ROOM_SOCKET_PROTOCOL && ticket.ticket.isNotEmpty()) { "room_ticket_invalid" }
+        val session = client.webSocketSession { roomSocketUpgrade(request.authScope, request.roomId, ticket) }
+        if (session.call.response.headers[HttpHeaders.SecWebSocketProtocol] != ROOM_SOCKET_PROTOCOL) {
+            runCatching { session.close() }
+            throw IllegalStateException("room_socket_protocol_rejected")
+        }
+        return KtorWatchTogetherSocketConnection(session)
+    }
+}
+
+internal fun HttpRequestBuilder.roomSocketUpgrade(scope: AuthScopeSnapshot, roomId: String, ticket: WsTicketResponse) {
+    url {
+        takeFrom(scope.serverUrl)
+        require(protocol == URLProtocol.HTTP || protocol == URLProtocol.HTTPS)
+        require(user == null && password == null)
+        protocol = if (protocol == URLProtocol.HTTPS) URLProtocol.WSS else URLProtocol.WS
+        encodedPath = "${roomPath(roomId)}/ws"
+        parameters.clear(); fragment = ""
+    }
+    // Pin routing but send only the ticket protocols, never bearer/PIN headers.
+    authScope(scope); skipSiloAuth(); singleAttempt()
+    headers.remove(HttpHeaders.Authorization)
+    headers.remove("X-Profile-Id"); headers.remove("X-Profile-Token")
+    header(HttpHeaders.SecWebSocketProtocol, "$ROOM_SOCKET_PROTOCOL, silo.ticket.${ticket.ticket}")
 }
 
 private class KtorWatchTogetherSocketConnection(
@@ -168,21 +210,12 @@ class DefaultWatchTogetherRealtimeClient private constructor(
             return@callbackFlow
         }
 
-        val url = buildString {
-            append("/api/v1/watch-together/rooms/")
-            append(roomId.encodeURLPathPart())
-            append("/ws?room_token=").append(roomToken.encodeURLParameter())
-            append("&profile_id=").append(profileId.encodeURLParameter())
-            if (!scope.profileToken.isNullOrBlank()) {
-                append("&profile_token=").append(scope.profileToken.encodeURLParameter())
-            }
-        }
-
         var connection: WatchTogetherSocketConnection? = null
         try {
             connection = socketConnector.open(
                 WatchTogetherSocketRequest(
-                    url = url,
+                    roomId = roomId,
+                    roomToken = roomToken,
                     authScope = scope,
                 ),
             )

@@ -127,9 +127,9 @@ val repositoryModule = module {
 
     // One room's snapshot/suggestions state + WS lifecycle. The realtime factory
     // builds the per-room socket client from the shared HttpClient + TokenManager.
-    // Access auth is supplied by the same-origin Silo auth plugin; the room/profile
-    // query fields are a residual server contract. Lazy so a socket is only minted
-    // when connect() runs.
+    // Each connect mints a single-use v2 room ticket and upgrades with it in the
+    // subprotocol; no credential travels in the URL. Lazy so a socket is only
+    // minted when connect() runs.
     single {
         val tokenManager: TokenManager = get()
         WatchTogetherRepository(

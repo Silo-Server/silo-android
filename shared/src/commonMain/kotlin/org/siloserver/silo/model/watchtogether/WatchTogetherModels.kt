@@ -161,7 +161,7 @@ data class RoomSnapshot(
 data class Suggestion(
     val id: String,
     @SerialName("room_id") val roomId: String,
-    @SerialName("suggester_user_id") val suggesterUserId: Int = 0,
+    @SerialName("suggester_user_id") val suggesterUserId: String = "",
     @SerialName("suggester_profile_id") val suggesterProfileId: String = "",
     @SerialName("content_id") val contentId: String,
     @SerialName("content_type") val contentType: String,
@@ -249,7 +249,7 @@ data class RoomResponse(
 /** `{suggestions:[…]}` — all suggestion list/mutation responses. */
 @Serializable
 data class SuggestionsResponse(
-    val suggestions: List<Suggestion> = emptyList(),
+    @SerialName("items") val suggestions: List<Suggestion> = emptyList(),
 )
 
 // ---- Client→server WS frames ----------------------------------------------

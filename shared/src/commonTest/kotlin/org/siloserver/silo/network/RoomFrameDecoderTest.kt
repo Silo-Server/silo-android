@@ -51,7 +51,7 @@ class RoomFrameDecoderTest {
     @Test
     fun `decodes suggestions_update frame`() {
         val raw = """{"type":"suggestions_update","suggestions":[{"id":"s1","room_id":"r",
-            "suggester_user_id":1,"suggester_profile_id":"p","content_id":"c","content_type":"movie",
+            "suggester_user_id":"1","suggester_profile_id":"p","content_id":"c","content_type":"movie",
             "title":"T","vote_count":2,"voted_by_me":false,"created_at":"2026-06-12T08:00:00Z"}]}"""
         val event = decodeRoomFrame(json, raw)
         assertIs<RoomRealtimeEvent.SuggestionsEvent>(event)
