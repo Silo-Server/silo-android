@@ -42,7 +42,7 @@ Continuations are not serialized into the offline first-page cache. A cache
 fallback disables further paging until the viewer reloads online. It cannot seed
 a new query with an old server cursor.
 
-The unused version wrapper, watch transport, person refresh, and the
+The watch transport, person refresh, and the
 history transport are separate from this catalog migration. No playback or
 administrative UI is added.
 
@@ -70,8 +70,9 @@ as complete. People search remains a bounded name lookup (default 20, maximum
 
 These reads use the existing gate, captured viewer scope, and cancellation checks.
 Catalog markers retain `start` and `end`; watch transport is a separate contract
-and is not changed here. The unused version wrapper, person refresh,
-and standalone history are outside this read adapter. History adoption is
+and is not changed here. Item file versions read the `items` envelope of
+`/api/v2/catalog/items/{id}/versions` through the same checked projection.
+Person refresh and standalone history are outside this read adapter. History adoption is
 documented in `history-api-v2.md`.
 
 The season and episode reads are shared by both players' existing next-episode

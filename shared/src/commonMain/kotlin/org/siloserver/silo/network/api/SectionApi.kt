@@ -1,53 +1,41 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.*
-import io.ktor.client.request.*
-import io.ktor.http.*
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.section.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 
-class SectionApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val sectionItems: LibrarySectionItemsV2Api? = null,
-    private val home: HomeSectionsV2Api? = null) {
+/** Home and library section reads are viewer-scoped v2 transports; DI supplies the real token manager. */
+class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
+    private val sectionItems: LibrarySectionItemsV2Api = LibrarySectionItemsV2Api(client, TokenManagerImpl()),
+    private val home: HomeSectionsV2Api = HomeSectionsV2Api(client, TokenManagerImpl())) {
 
     // --- Home ---
 
-    suspend fun captureHomeAuthority() = home?.capture()
-    suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = home?.current(owner) == true
-    suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> =
-        home?.list(owner) ?: ApiResult.Error(0, "unavailable", "The scoped home reader is unavailable.")
+    suspend fun captureHomeAuthority() = home.capture()
+    suspend fun isHomeAuthorityCurrent(owner: AuthScopeSnapshot) = home.current(owner)
+    suspend fun getHomeSections(owner: AuthScopeSnapshot): ApiResult<SectionsResponse> = home.list(owner)
 
-    suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
-        home?.section(id, owner) ?: ApiResult.Error(0, "unavailable", "The scoped home reader is unavailable.")
+    suspend fun getHomeSectionItems(id: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
+        home.section(id, owner)
 
-    suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
-        home?.dismiss(surface, itemId, anchor, owner) ?: ApiResult.Error(0, "unavailable", "The scoped Home writer is unavailable.")
-
-    suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> = safeApiCall {
-        client.get("/api/v1/home/layout")
-    }
-
-    suspend fun getHomeSections(): ApiResult<SectionsResponse> = safeApiCall {
-        client.get("/api/v1/home/sections")
-    }
-
-    suspend fun getHomeSectionItems(sectionId: String): ApiResult<HomeSectionItemsResponse> = safeApiCall {
-        client.get("/api/v1/home/sections/$sectionId/items")
-    }
+    suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: AuthScopeSnapshot): ApiResult<Unit> =
+        home.dismiss(surface, itemId, anchor, owner)
 
     // --- Library Sections ---
 
-    suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> =
-        sectionItems?.list(libraryId, owner) ?: ApiResult.Error(0, "unavailable", "The library section reader is unavailable.")
+    suspend fun getLibrarySections(libraryId: Int, owner: AuthScopeSnapshot): ApiResult<SectionsResponse> =
+        sectionItems.list(libraryId, owner)
 
-    suspend fun captureLibrarySectionAuthority() = sectionItems?.capture()
-    suspend fun isLibrarySectionAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionItems?.current(owner) == true
-    suspend fun getLibrarySectionItems(libraryId: Int, sectionId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
-        sectionItems?.read(libraryId, sectionId, owner) ?: ApiResult.Error(0, "unavailable", "The library section reader is unavailable.")
+    suspend fun captureLibrarySectionAuthority() = sectionItems.capture()
+    suspend fun isLibrarySectionAuthorityCurrent(owner: AuthScopeSnapshot) = sectionItems.current(owner)
+    suspend fun getLibrarySectionItems(libraryId: Int, sectionId: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
+        sectionItems.read(libraryId, sectionId, owner)
 
     // --- Library Collections ---
 

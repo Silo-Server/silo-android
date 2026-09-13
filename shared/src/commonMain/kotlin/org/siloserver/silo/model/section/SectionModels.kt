@@ -63,22 +63,6 @@ data class SectionsResponse(
 )
 
 @Serializable
-data class SectionLayout(
-    val id: String,
-    @SerialName("section_type") val sectionType: String,
-    val title: String,
-    val featured: Boolean = false,
-    @SerialName("item_limit") val itemLimit: Int = 0,
-    @SerialName("is_custom") val isCustom: Boolean = false,
-    val customized: Boolean = false
-)
-
-@Serializable
-data class HomeLayoutResponse(
-    val sections: List<SectionLayout> = emptyList()
-)
-
-@Serializable
 data class HomeSectionItemsResponse(
     val section: ResolvedSection? = null,
     val items: List<SectionItem> = emptyList()

@@ -1,26 +1,32 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.recommendation.DiscoverResponse
 import org.siloserver.silo.model.recommendation.TasteProfile
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.DiscoverV2Api
+import org.siloserver.silo.network.apiv2.SimilarCardsV2Api
+import org.siloserver.silo.network.apiv2.TasteProfileV2Api
 import io.ktor.client.HttpClient
 
-class RecommendationApi(private val client: HttpClient, private val similar: org.siloserver.silo.network.apiv2.SimilarCardsV2Api? = null,
-    private val taste: org.siloserver.silo.network.apiv2.TasteProfileV2Api? = null,
-    private val discover: org.siloserver.silo.network.apiv2.DiscoverV2Api? = null) {
+/** Viewer-scoped v2 recommendation reads; DI supplies the real token manager. */
+class RecommendationApi(client: HttpClient,
+    private val similar: SimilarCardsV2Api = SimilarCardsV2Api(client, TokenManagerImpl()),
+    private val taste: TasteProfileV2Api = TasteProfileV2Api(client, TokenManagerImpl()),
+    private val discover: DiscoverV2Api = DiscoverV2Api(client, TokenManagerImpl())) {
 
-    suspend fun captureDiscoverAuthority() = discover?.capture()
-    suspend fun isDiscoverAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = discover?.current(owner) == true
-    suspend fun getDiscover(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<DiscoverResponse> =
-        discover?.read(owner) ?: ApiResult.Error(0, "unavailable", "The Discover transport is unavailable.")
+    suspend fun captureDiscoverAuthority() = discover.capture()
+    suspend fun isDiscoverAuthorityCurrent(owner: AuthScopeSnapshot) = discover.current(owner)
+    suspend fun getDiscover(owner: AuthScopeSnapshot): ApiResult<DiscoverResponse> = discover.read(owner)
 
-    suspend fun captureTasteAuthority() = taste?.capture()
-    suspend fun isTasteAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = taste?.current(owner) == true
-    suspend fun getTasteProfile(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<TasteProfile> =
-        taste?.read(owner) ?: ApiResult.Error(0,"unavailable","The taste-summary transport is unavailable.")
+    suspend fun captureTasteAuthority() = taste.capture()
+    suspend fun isTasteAuthorityCurrent(owner: AuthScopeSnapshot) = taste.current(owner)
+    suspend fun getTasteProfile(owner: AuthScopeSnapshot): ApiResult<TasteProfile> = taste.read(owner)
 
-    suspend fun captureSimilarAuthority() = similar?.capture()
-    suspend fun isSimilarAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = similar?.current(owner) == true
-    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<List<org.siloserver.silo.model.catalog.BrowseItem>> =
-        similar?.list(contentId, limit, owner) ?: ApiResult.Error(0, "unavailable", "The similar-card transport is unavailable.")
+    suspend fun captureSimilarAuthority() = similar.capture()
+    suspend fun isSimilarAuthorityCurrent(owner: AuthScopeSnapshot) = similar.current(owner)
+    suspend fun getSimilar(contentId: String, limit: Int = 12, owner: AuthScopeSnapshot): ApiResult<List<BrowseItem>> =
+        similar.list(contentId, limit, owner)
 }

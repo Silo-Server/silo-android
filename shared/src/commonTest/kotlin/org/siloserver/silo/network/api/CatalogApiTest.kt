@@ -70,6 +70,27 @@ class CatalogApiTest {
     }
 
     @Test
+    fun `getItemVersions reads the v2 items envelope and checks string file ids`() = runTest {
+        val (api, captured) = api(
+            responseBody = """{"items":[{"file_id":"42","resolution":"1080p","codec_video":"h264","codec_audio":"aac",
+                "hdr":false,"container":"mkv","file_size":10,"duration":120,"bitrate":5000,"added_at":"2026-01-01T00:00:00Z"}]}""",
+        )
+
+        val result = api.getItemVersions("item-1")
+
+        assertEquals("/api/v2/catalog/items/item-1/versions", captured.path)
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(42, (result as ApiResult.Success).data.single().fileId)
+    }
+
+    @Test
+    fun `getItemVersions rejects numeric file ids`() = runTest {
+        val (api, _) = api(responseBody = """{"items":[{"file_id":42}]}""")
+
+        assertFalse(api.getItemVersions("item-1") is ApiResult.Success)
+    }
+
+    @Test
     fun `getPersonItems uses signed sort and opaque person ID`() = runTest {
         val (api, captured) = api()
 

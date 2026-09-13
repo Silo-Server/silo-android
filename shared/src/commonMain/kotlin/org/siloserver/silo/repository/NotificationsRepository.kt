@@ -5,7 +5,6 @@ import org.siloserver.silo.model.notifications.NotificationPreferences
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.network.*
-import org.siloserver.silo.network.apiv2.NotificationsV2Api
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.network.ApiResult
@@ -132,7 +131,7 @@ class NotificationsRepository(
     private data class Viewer(val epoch: Long, val scope: AuthScopeSnapshot?, val api: NotificationsApi)
     private suspend fun viewer(): Viewer {
         val scope = tokens?.snapshotCurrentScope()
-        return Viewer(epoch, scope, if (api is NotificationsV2Api && scope != null) api.forScope(scope) else api)
+        return Viewer(epoch, scope, if (scope != null) api.forScope(scope) else api)
     }
     private suspend fun current(viewer: Viewer): Boolean = viewer.epoch == epoch &&
         (tokens == null || viewer.scope?.isSameIdentityAs(tokens.snapshotCurrentScope()) == true)
@@ -233,7 +232,7 @@ class NotificationsRepository(
         if (page !is ApiResult.Success || count !is ApiResult.Success) publishFor(viewer) {
             _error.value = "Notifications could not be refreshed. Retry when connected."
         }
-        if (api is NotificationsV2Api) syncForward(viewer)
+        syncForward(viewer)
     }
 
     private suspend fun syncForward(viewer: Viewer) {
@@ -290,23 +289,20 @@ class NotificationsRepository(
         val viewer = viewer()
         if (viewer.api.markRead(id) is ApiResult.Success) {
             publishFor(viewer) { mutate { applyEvent(it, NotificationRealtimeEvent.Read(id)) } }
-            if (api is NotificationsV2Api && current(viewer)) refresh()
+            if (current(viewer)) refresh()
         } else publishFor(viewer) { _error.value = "Notification read status could not be confirmed." }
     }
 
     suspend fun markAllRead() {
         val viewer = viewer()
         val cutoff = readCutoff // Freeze the displayed boundary before sending this user intent.
-        if (api is NotificationsV2Api && (cutoff == null || cutoffViewer?.isSameIdentityAs(viewer.scope) != true)) {
+        if (cutoff == null || cutoffViewer?.isSameIdentityAs(viewer.scope) != true) {
             publishFor(viewer) { _error.value = "Refresh the inbox before marking it read." }
             return
         }
-        val result = if (cutoff != null) viewer.api.markAllRead(cutoff) else viewer.api.markAllRead()
+        val result = viewer.api.markAllRead(cutoff)
         if (result !is ApiResult.Success) publishFor(viewer) { _error.value = "Mark all read could not be confirmed. Refresh before trying again." }
-        if (result is ApiResult.Success && current(viewer)) {
-            if (api is NotificationsV2Api) refresh()
-            else publishFor(viewer) { mutate { applyEvent(it, NotificationRealtimeEvent.ReadAll) } }
-        }
+        if (result is ApiResult.Success && current(viewer)) refresh()
     }
 
     suspend fun loadPreferences() {
@@ -376,8 +372,8 @@ class NotificationsRepository(
                         backoffMs = INITIAL_BACKOFF_MS
                         established = true
                     }
-                    if (event == NotificationRealtimeEvent.Invalidate ||
-                        (api is NotificationsV2Api && event !is NotificationRealtimeEvent.Closed)) refresh()
+                    // Every live event triggers an authoritative reread; the fold is only for closes.
+                    if (event !is NotificationRealtimeEvent.Closed) refresh()
                     else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
                 }
             } catch (e: CancellationException) {
