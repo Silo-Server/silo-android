@@ -39,72 +39,17 @@ reset or replayed as new v2 intents.
 Generic errors, including HTTP 409, 422 and 503, do not prove that an earlier
 allocation is absent. They retain uncertain START requests. Recovery may replay
 the exact retained attempt under its original validated authority; it must not
-rebase the request, allocate a replacement attempt or fall back to v1. The
-definitive timeline-change refusal described below is the exception.
+rebase the request, allocate a replacement attempt or fall back to v1.
 
-## Bound audiobook timelines
+## Audiobooks
 
-Online audiobooks require `bound_client_timeline` and `sequenced_progress_v1`.
-Explicit discovery uses
-`GET /api/v2/playback/timelines/{file_id}?installation_id=...` under the captured
-viewer and installation. The complete manifest supplies `installation_id`,
-`timeline_id`, `media_item_id`, `edition_id`, total `duration_seconds` and ordered
-parts with `file_id`, `offset_seconds` and `duration_seconds`.
-
-The retained manifest controls initial resume, next-part selection and cross-part
-seeks. Detail metadata may supply chapter labels within trusted part spans, but
-cannot replace the server's offsets or durations. START sends
-`progress_persistence: "client_bound"`, the discovered `timeline_id`, the
-`bound_client_timeline` client feature and an explicit part-local
-`start_position`. The returned `progress_timeline` must match the captured part.
-
-Progress and stop positions remain part-local and carry `timeline_id`. Stop
-requires that identity even when it has no final sample. An accepted receipt
-contains local `position`, global `item_position` and `timeline_id`; zero is a
-valid global position. The client validates both clocks against the retained
-mapping and persists accepted global resume under the same owner and timeline.
-It does not upload bound progress through the personal-data outbox.
-
-A next-part start or cross-part seek waits for the old part's terminal stop
-receipt. Unknown stop outcomes retain the old session, exact stop and intended
-target, and hold the transition. Pressing Play can reconcile that same pending
-stop; it cannot replace an uncertain START. Local renderer retirement alone is
-not a server terminal receipt.
-
-## Definitive timeline-change refusal
-
-The server reserves the exact START attempt before deciding that its trusted
-manifest changed. The definitive refusal is a retained HTTP 201 ordinary START
-decision with:
-
-```json
-{
-  "protocol_version": 3,
-  "outcome": "adaptation_unavailable",
-  "terminal": {
-    "reason": "client_timeline_changed",
-    "message": "Open the book again to use its updated timeline.",
-    "retryable": false
-  }
-}
-```
-
-This excerpt omits the envelope's negotiated feature list. The message is
-illustrative; the discriminator is `terminal.reason`, not `reason_code`.
-There is no session, playback plan, route or activation. Exact attempt replay
-returns the retained terminal before consulting current catalog metadata. Lost
-terminal publication responses remain HTTP 503 or network uncertainty until
-exact replay resolves them. Generic HTTP 409 and interim timeline-change HTTP
-409 responses are not definitive refusals.
-
-After validating this exact terminal decision for the original request and
-current captured authority, the client durably retains the original request,
-manifest and terminal receipt, settles that attempt and invalidates its cached
-discovery. It does not automatically refresh or restart. A **new explicit user
-intent**, such as reopening the book, must discover a fresh manifest and use a
-distinct attempt ID. Old attempt IDs cannot be repurposed. Malformed terminals,
-missing or true `retryable`, and responses containing an allocated session or
-plan do not discharge uncertainty.
+The server has no whole-book timeline. The audiobook player stitches the
+item's part files into one client-side timeline from detail metadata
+(`buildAudiobookTimeline`), plays one part per session with
+`progress_persistence: "client"` and a part-local `start_position`, and
+resumes from the detail's whole-book progress position. Progress and stop
+samples are part-local; whole-book resume is written through the personal
+data path, not the playback session.
 
 ## Other transports and validation limits
 
@@ -116,9 +61,8 @@ legacy outage replacement or write progress through the personal-data outbox.
 File IDs remain JSON strings in requests and the journal; the renderer accepts
 only canonical positive IDs representable by its integer model.
 
-Focused tests cover persisted commands, receipt validation, manifest selection,
-terminal-before-start ordering, lost replies, restart recovery, identity changes,
-explicit fresh intent after definitive refusal and shared lifecycle behavior.
+Focused tests cover persisted commands, receipt validation, lost replies,
+restart recovery, identity changes and shared lifecycle behavior.
 Phone and TV builds check caller and Settings integration. These checks do not
 establish rendered media behavior, device process-kill durability, live server
 admission or physical TV acceptance. Actual isolated native media validation is a

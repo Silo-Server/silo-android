@@ -20,8 +20,8 @@ class PlaybackMutationRoutingTest {
                 return "captured-access"
             }
         }
-        val progress = PlaybackProgressV2("installation", 7, 9.0, false, "retained-timeline")
-        val stop = PlaybackStopV2("installation", "retained-stop", 7, 9.0, false, "retained-timeline")
+        val progress = PlaybackProgressV2("installation", 7, 9.0, false)
+        val stop = PlaybackStopV2("installation", "retained-stop", 7, 9.0, false)
         val replan = buildJsonObject { put("installation_id", "installation"); put("replan_request_id", "retained-replan"); put("position_seconds", 9.0) }
         val expected = listOf(
             Triple(HttpMethod.Post, "/api/v2/playback/owned-session/progress", SiloJson.encodeToString(progress)),

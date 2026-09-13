@@ -45,9 +45,6 @@ data class PlaybackJournalEntry(
     val terminal: Boolean = false,
     val replans: List<PlaybackReplanIntent> = emptyList(),
     val routeEvents: List<JsonObject> = emptyList(),
-    val manifest: PlaybackManifestV2? = null,
-    val acceptedBoundSample: PlaybackSampleV2? = null,
-    val rejectedStartDecision: JsonObject? = null,
 )
 
 /** One shared coordinator covers local, cast, candidate and orphan cleanup callers. */
@@ -61,7 +58,6 @@ class SequencedPlayback(
     private val mutex = Mutex()
     private var entries: List<PlaybackJournalEntry>? = null
     private val adopted = mutableSetOf<String>()
-    private val discovered = mutableMapOf<String, CapturedPlaybackManifest>()
     private val auxiliaryGenerations = mutableMapOf<String, Long>()
     private val auxiliaryHeaders = mutableMapOf<String, ProxyAuxiliaryRequestHeaders>()
     private val scopes = mutableMapOf<String, AuthScopeSnapshot>()
@@ -100,50 +96,6 @@ class SequencedPlayback(
         }
     }
 
-    suspend fun discoverTimeline(fileId: Int, itemId: String, expectedOwner: AuthScopeSnapshot): ApiResult<CapturedPlaybackManifest> = mutex.withLock {
-        val owner = authorities.snapshotDurableLoginAuthority()
-            ?: return@withLock failure("identity_unavailable", "Audiobook playback needs a saved account.")
-        if (owner.scope != expectedOwner) return@withLock failure("identity_changed", "The audiobook metadata viewer changed.")
-        if (fileId <= 0 || itemId.isBlank() || owner.scope.profileId.isNullOrBlank() || owner.scope.credentialGenerationId != null)
-            return@withLock failure("identity_unavailable", "Audiobook playback needs a selected file and profile.")
-        val capability = when (val result = api.capabilities(owner.scope)) {
-            is ApiResult.Success -> result.data
-            is ApiResult.Error -> return@withLock result
-            is ApiResult.NetworkError -> return@withLock result
-        }
-        if (!capability.allowed || capability.state != "available" || capability.installationId.isNullOrBlank() ||
-            BOUND_CLIENT_TIMELINE_FEATURE !in capability.features || SEQUENCED_PROGRESS_FEATURE !in capability.features)
-            return@withLock failure("playback_unavailable", "This server does not support bound audiobook progress.")
-        if (owner != authorities.snapshotDurableLoginAuthority()) return@withLock failure("identity_changed", "The audiobook viewer changed.")
-        when (val result = api.timeline(owner.scope, fileId, capability.installationId)) {
-            is ApiResult.Success -> {
-                if (owner != authorities.snapshotDurableLoginAuthority()) return@withLock failure("identity_changed", "The audiobook viewer changed.")
-                try {
-                    val manifest = result.data
-                    manifest.validate()
-                    require(manifest.installationId == capability.installationId && manifest.mediaItemId == itemId)
-                    manifest.select(fileId)
-                    val captured = CapturedPlaybackManifest(manifest, owner)
-                    discovered[manifest.timelineId] = captured
-                    ApiResult.Success(captured)
-                } catch (_: IllegalArgumentException) { failure("invalid_timeline", "The server returned an invalid audiobook manifest.") }
-            }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-    }
-
-    suspend fun boundResume(captured: CapturedPlaybackManifest): Double? = mutex.withLock {
-        if (captured.authority != authorities.snapshotDurableLoginAuthority()) return@withLock null
-        load().lastOrNull { it.loginId == captured.authority.loginId && it.serverId == captured.authority.scope.serverId &&
-            it.origin == captured.authority.scope.serverUrl && it.profileId == captured.authority.scope.profileId &&
-            it.installationId == captured.manifest.installationId && it.manifest?.timelineId == captured.manifest.timelineId &&
-            it.acceptedBoundSample != null }?.acceptedBoundSample?.itemPosition
-    }
-
-    private fun boundTimeline(entry: PlaybackJournalEntry): PlaybackProgressTimelineV2? =
-        entry.manifest?.select(entry.start.getValue("file_id").jsonPrimitive.content.toInt())
-
     /** Admission requires v2; unavailable capabilities never select a legacy transport. */
     suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3>? = mutex.withLock {
         suspend fun accepted() = tokens.acceptsMetadataOwner(expectedMetadataOwner, request.profileId)
@@ -176,21 +128,6 @@ class SequencedPlayback(
         if (live == null || !current.isSameIdentityAs(live.scope) || live.scope.credentialGenerationId != null ||
             current.profileId != request.profileId)
             return@withLock failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
-        val bound = if (request.progressPersistence == org.siloserver.silo.model.playback.ProgressPersistenceV3.CLIENT_BOUND) {
-            val snapshot = discovered[request.timelineId]
-                ?: return@withLock failure("timeline_unavailable", "Discover a trusted audiobook timeline before starting.")
-            if (snapshot.authority != live || snapshot.manifest.installationId != capability.installationId ||
-                BOUND_CLIENT_TIMELINE_FEATURE !in capability.features || BOUND_CLIENT_TIMELINE_FEATURE !in request.clientFeatures)
-                return@withLock failure("timeline_unavailable", "The captured audiobook timeline is no longer available for this viewer.")
-            val part = snapshot.manifest.parts.singleOrNull { it.fileId == request.fileId.toString() }
-                ?: return@withLock failure("invalid_timeline", "The selected part is outside the captured manifest.")
-            if (request.startPosition?.let { it.isFinite() && it in 0.0..part.durationSeconds } != true)
-                return@withLock failure("invalid_position", "Bound playback needs an explicit part-local start position.")
-            snapshot.manifest
-        } else {
-            if (request.timelineId != null) return@withLock failure("invalid_timeline", "Unbound playback cannot carry timeline authority.")
-            null
-        }
         val account = when (val result = api.account(current)) {
             is ApiResult.Success -> result.data
             is ApiResult.Error -> return@withLock result
@@ -202,7 +139,7 @@ class SequencedPlayback(
             return@withLock failure("attempt_exists", "This playback attempt is already recorded. Use recovery.")
         if (!accepted()) return@withLock changed()
         val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, live.loginId, account.id,
-            request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId), manifest = bound)
+            request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
         save(entry)
         scopes[entry.attemptId] = current
         // A saved attempt is uncertainty, even if its owner changes before send.
@@ -217,26 +154,12 @@ class SequencedPlayback(
         var sentHeaders: Map<String, String> = emptyMap()
         return when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
             is ApiResult.Success -> {
-                // Only the durable HTTP 201 terminal contract proves this bound attempt never activated.
-                // The API enforces 201; generic conflicts/errors never reach this settlement path.
-                val refusal = timelineRefusal(entry, result.data.body)
-                if (refusal != null) {
-                    if (scope(entry) == null || !tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
-                        return failure("identity_changed", "The viewer changed before playback refusal settlement.")
-                    save(entry.copy(terminal = true, rejectedStartDecision = result.data.body))
-                    discovered.remove(entry.manifest?.timelineId)
-                    return ApiResult.Success(refusal)
-                }
                 // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
                 val session = result.data.body["session_id"]?.jsonPrimitive?.contentOrNull
                 if (session.isNullOrBlank()) return failure("invalid_decision", "Playback returned no recoverable session.")
                 save(entry.copy(sessionId = session))
                 try {
                     val decision = decodePlaybackDecisionV2(result.data.body)
-                    val expectedTimeline = boundTimeline(entry)
-                    if (decision.progressTimeline != expectedTimeline || (expectedTimeline != null &&
-                        decision.playbackPlan?.effectiveMediaFileId?.toString() != expectedTimeline.fileId))
-                        return failure("invalid_timeline", "Playback did not retain the captured audiobook part mapping.")
                     if (SEQUENCED_PROGRESS_FEATURE !in decision.serverFeatures)
                         return failure("invalid_decision", "Playback omitted the negotiated progress feature.")
                     if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
@@ -279,21 +202,6 @@ class SequencedPlayback(
         }
         auxiliaryHeaders[entry.attemptId] = ephemeral
         return decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = ephemeral)))
-    }
-
-    private fun timelineRefusal(entry: PlaybackJournalEntry, body: JsonObject): PlaybackDecisionResponseV3? {
-        if (entry.manifest == null || entry.sessionId != null || entry.stop != null || entry.progress != null ||
-            entry.start["progress_persistence"] != JsonPrimitive("client_bound")) return null
-        if (body["protocol_version"] != JsonPrimitive(3) ||
-            body["outcome"] != JsonPrimitive("adaptation_unavailable")) return null
-        // Check raw fields: tolerant plan decoding or default retryable=false must not prove rejection.
-        if (listOf("session_id", "playback_plan", "route", "route_id", "activation").any {
-                body[it] != null && body[it] != JsonNull
-            }) return null
-        val terminal = body["terminal"] as? JsonObject ?: return null
-        if (terminal["reason"] != JsonPrimitive("client_timeline_changed") ||
-            terminal["retryable"] != JsonPrimitive(false)) return null
-        return runCatching { SiloJson.decodeFromJsonElement<PlaybackDecisionResponseV3>(body) }.getOrNull()
     }
 
     /** Socket authority comes only from the admitted session, never from a fresh capability probe. */
@@ -343,10 +251,6 @@ class SequencedPlayback(
                 val decision = decodePlaybackDecisionV2(result.data)
                 if (decision.sessionId != sessionId || (decision.playbackPlan?.sessionId?.let { it != sessionId } == true))
                     return@withLock failure("invalid_decision", "The replacement plan belongs to another session.")
-                val expectedTimeline = boundTimeline(entry)
-                if (expectedTimeline != null && (decision.progressTimeline != expectedTimeline ||
-                    decision.playbackPlan?.effectiveMediaFileId?.toString() != expectedTimeline.fileId))
-                    return@withLock failure("invalid_timeline", "A replan cannot change the captured audiobook part.")
                 save(entry.copy(replans = entry.replans.dropLast(1) + intent.copy(response = result.data)))
                 if (scope(entry) == null) return@withLock failure("identity_changed", "Playback authority changed.")
                 ApiResult.Success(withAuxiliaryAuthority(decision, entry, captured, sentHeaders))
@@ -367,8 +271,6 @@ class SequencedPlayback(
         if (request.sessionId != null && request.sessionId != entry.sessionId)
             return@withLock failure("identity_changed", "The route event belongs to another session.")
         val captured = scope(entry) ?: return@withLock failure("identity_changed", "Playback authority changed.")
-        if (entry.rejectedStartDecision != null)
-            return@withLock failure("playback_rejected", "The rejected attempt has no playback route.")
         if (entry.routeEvents.size >= 128) return@withLock failure("telemetry_pending", "Pending route telemetry is full.")
         val eventId = newId()
         val body = request.v2Body(entry.installationId, eventId)
@@ -402,10 +304,7 @@ class SequencedPlayback(
             entry = load().first { it.attemptId == entry.attemptId }
         }
         if (entry.sequence == Long.MAX_VALUE) return@withLock failure("sequence_exhausted", "Playback sample sequence exhausted.")
-        val timeline = boundTimeline(entry)
-        if (timeline != null && position !in 0.0..timeline.partDurationSeconds)
-            return@withLock failure("invalid_position", "Progress must be within the captured part.")
-        val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused, timeline?.timelineId)
+        val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused)
         entry = entry.copy(sequence = sample.sequence, progress = sample)
         save(entry)
         sendProgress(entry, captured)
@@ -420,11 +319,7 @@ class SequencedPlayback(
                     accepted.sequence < sent.sequence ||
                     (accepted.sequence == sent.sequence && (accepted.position != sent.position || accepted.isPaused != sent.isPaused)))
                     return failure("invalid_progress_receipt", "Playback returned an inconsistent progress receipt.")
-                val timeline = boundTimeline(entry)
-                if ((timeline != null && !timeline.accepts(accepted)) || (timeline == null && (accepted.timelineId != null || accepted.itemPosition != null)))
-                    return failure("invalid_progress_receipt", "Progress did not match the captured timeline clocks.")
-                save(entry.copy(progress = null, sequence = maxOf(entry.sequence, accepted.sequence),
-                    acceptedBoundSample = if (timeline != null) accepted else entry.acceptedBoundSample))
+                save(entry.copy(progress = null, sequence = maxOf(entry.sequence, accepted.sequence)))
                 ApiResult.Success(Unit)
             }
             is ApiResult.Error -> result
@@ -440,8 +335,7 @@ class SequencedPlayback(
         var entry = original
         if (entry.stop == null) {
             val sample = entry.progress
-            entry = entry.copy(stop = PlaybackStopV2(entry.installationId, newId(), sample?.sequence,
-                sample?.position, sample?.isPaused, boundTimeline(entry)?.timelineId))
+            entry = entry.copy(stop = PlaybackStopV2(entry.installationId, newId(), sample?.sequence, sample?.position, sample?.isPaused))
             save(entry)
         }
         val captured = scope(entry) ?: return failure("identity_changed", "Playback authority changed; stop remains pending.")
@@ -449,14 +343,7 @@ class SequencedPlayback(
             if (scope(entry) == null) return failure("identity_changed", "Playback authority changed; stop remains pending.")
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
                 is ApiResult.Success -> {
-                    val timeline = boundTimeline(entry)
-                    val accepted = result.data.receipt.accepted
-                    if (timeline != null && ((entry.stop?.sequence != null && accepted == null) ||
-                        (accepted != null && (!timeline.accepts(accepted) || accepted.sequence < (entry.stop?.sequence ?: entry.acceptedBoundSample?.sequence ?: 0) ||
-                            (accepted.sequence == entry.stop?.sequence && (accepted.position != entry.stop.position || accepted.isPaused != entry.stop.isPaused))))))
-                        return failure("invalid_stop_receipt", "Stop did not confirm the captured timeline sample.")
-                    save(entry.copy(terminal = true, progress = null,
-                        acceptedBoundSample = if (timeline != null) accepted ?: entry.acceptedBoundSample else entry.acceptedBoundSample))
+                    save(entry.copy(terminal = true, progress = null))
                     return ApiResult.Success(Unit)
                 }
                 is ApiResult.Error -> if (result.code != 503) return result
