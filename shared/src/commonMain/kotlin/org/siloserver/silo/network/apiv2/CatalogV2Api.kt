@@ -17,6 +17,7 @@ import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.SeasonsResponse
 import org.siloserver.silo.model.catalog.EpisodesResponse
+import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.network.*
 
@@ -156,6 +157,11 @@ class CatalogV2Api(
         read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->
             client.get("/api/v2/catalog/series/$id/seasons/$number/episodes") { scope?.let { authScope(it) } }
         }.project { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
+
+    suspend fun itemVersions(id: String): ApiResult<List<FileVersion>> =
+        read<DetailCollectionReadV2<FileVersionReadV2>> { scope ->
+            client.get("/api/v2/catalog/items/$id/versions") { scope?.let { authScope(it) } }
+        }.project { it.requireComplete(); it.items.map { row -> row.toDomain() } }
 
     suspend fun itemEpisodes(id: String): ApiResult<EpisodesResponse> =
         read<DetailCollectionReadV2<EpisodeListItemReadV2>> { scope ->

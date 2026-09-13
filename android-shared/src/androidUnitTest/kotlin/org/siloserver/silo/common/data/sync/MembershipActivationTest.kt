@@ -139,8 +139,7 @@ class MembershipActivationTest {
             }
         })
         val (repository, _) = repository(client)
-        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier,
-            homeRequestDispatcher = StandardTestDispatcher(testScheduler)),
+        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier),
             org.siloserver.silo.domain.MediaActionsCoordinator(repository), identityTransitions = barrier)
         viewModels += vm
         vm.uiState.first { !it.isLoading }
@@ -189,8 +188,7 @@ class MembershipActivationTest {
             }
         })
         val (repository, _) = repository(client)
-        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier,
-            homeRequestDispatcher = StandardTestDispatcher(testScheduler)),
+        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier),
             org.siloserver.silo.domain.MediaActionsCoordinator(repository), identityTransitions = barrier)
         viewModels += vm
         vm.uiState.first { !it.isLoading }
@@ -251,8 +249,7 @@ class MembershipActivationTest {
             }
         })
         val (repository, _) = repository(client)
-        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier,
-            homeRequestDispatcher = StandardTestDispatcher(testScheduler)),
+        val vm = HomeViewModel(SectionRepository(SectionApi(client), identityTransitions = barrier),
             org.siloserver.silo.domain.MediaActionsCoordinator(repository), identityTransitions = barrier)
         viewModels += vm
         vm.uiState.first { !it.isLoading }

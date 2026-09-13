@@ -59,7 +59,7 @@ class ProfileRepositoryTest {
             override suspend fun sync(since: String?, limit: Int) = error("unused in this test")
             override suspend fun get(id: String) = error("unused in this test")
             override suspend fun markRead(id: String) = error("unused in this test")
-            override suspend fun markAllRead() = error("unused in this test")
+            override suspend fun markAllRead(through: String) = error("unused in this test")
             override suspend fun getPreferences() = error("unused in this test")
             override suspend fun updatePreferences(
                 update: org.siloserver.silo.model.notifications.NotificationPreferencesUpdate,

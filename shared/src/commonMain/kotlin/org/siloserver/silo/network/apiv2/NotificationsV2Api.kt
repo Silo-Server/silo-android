@@ -27,7 +27,7 @@ class NotificationsV2Api(
     private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
     private val captured: AuthScopeSnapshot? = null,
 ) : NotificationsApi {
-    fun forScope(scope: AuthScopeSnapshot) = NotificationsV2Api(client, tokens, gate, scope)
+    override fun forScope(scope: AuthScopeSnapshot) = NotificationsV2Api(client, tokens, gate, scope)
 
     private suspend inline fun <reified T> exchange(
         method: HttpMethod, path: String, noinline configure: HttpRequestBuilder.() -> Unit = {},
@@ -73,8 +73,6 @@ class NotificationsV2Api(
         exchange(HttpMethod.Get, "/api/v2/notifications/unread-count")
     override suspend fun markRead(id: String): ApiResult<Unit> =
         exchange(HttpMethod.Post, "/api/v2/notifications/${id.encodeURLPathPart()}/read")
-    override suspend fun markAllRead(): ApiResult<Unit> =
-        ApiResult.Error(0, "cutoff_required", "Refresh the inbox before marking it read.")
     override suspend fun markAllRead(through: String): ApiResult<Unit> =
         exchange(HttpMethod.Post, "/api/v2/notifications/read-all") {
             contentType(ContentType.Application.Json); setBody(InboxReadThroughV2(through))

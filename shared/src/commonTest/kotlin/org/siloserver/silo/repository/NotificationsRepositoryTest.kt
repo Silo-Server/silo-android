@@ -181,7 +181,7 @@ class NotificationsRepositoryTest {
             markReadCalls += id
             return markReadResult
         }
-        override suspend fun markAllRead(): ApiResult<Unit> {
+        override suspend fun markAllRead(through: String): ApiResult<Unit> {
             markAllReadCalls++
             return markAllReadResult
         }
@@ -259,8 +259,13 @@ class NotificationsRepositoryTest {
     }
 
     @Test
-    fun `connectRealtime folds a created event into the state flows`() = kotlinx.coroutines.test.runTest {
-        val api = FakeNotificationsApi()
+    fun `connectRealtime rereads the inbox when a created event arrives`() = kotlinx.coroutines.test.runTest {
+        val api = FakeNotificationsApi().apply {
+            listResponse = ApiResult.Success(
+                NotificationListResponse(notifications = listOf(row("live", "2026-06-12T10:00:00Z"))),
+            )
+            unreadResponse = ApiResult.Success(UnreadCountResponse(1))
+        }
         val events = kotlinx.coroutines.flow.MutableSharedFlow<NotificationRealtimeEvent>(
             replay = 0, extraBufferCapacity = 8,
         )

@@ -19,7 +19,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,7 +39,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun browseLetterSelectionUsesServerNamePrefixAndResetsPagination() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = BrowseViewModel(
             catalogRepository = repositories.catalog,
             savedStateHandle = SavedStateHandle(mapOf("libraryId" to "1")),
@@ -62,7 +61,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun browseDensitySelectionUpdatesLayoutWithoutReloadingCatalog() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = BrowseViewModel(
             catalogRepository = repositories.catalog,
             savedStateHandle = SavedStateHandle(mapOf("libraryId" to "1")),
@@ -79,7 +78,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun librariesBrowseLetterSelectionUsesServerNamePrefix() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = LibrariesViewModel(
             personalDataRepository = repositories.personal,
             sectionRepository = repositories.sections,
@@ -100,7 +99,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun librariesDensitySelectionUpdatesLayoutWithoutReloadingCatalog() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = LibrariesViewModel(
             personalDataRepository = repositories.personal,
             sectionRepository = repositories.sections,
@@ -178,15 +177,8 @@ class CatalogLetterIndexViewModelTest {
     private fun List<RequestRecord>.catalogRequestCount(): Int =
         count { it.path == "/api/v2/catalog" }
 
-    /**
-     * [homeRequestDispatcher] is the seam that makes this deterministic.
-     * SectionRepository otherwise fans its library requests out on
-     * Dispatchers.Default, which is a real thread pool the test scheduler
-     * cannot see or wait for.
-     */
     private fun repositoriesFor(
         requests: MutableList<RequestRecord>,
-        homeRequestDispatcher: CoroutineDispatcher,
     ): Repositories {
         val client = HttpClient(
             MockEngine { request ->
@@ -211,7 +203,7 @@ class CatalogLetterIndexViewModelTest {
         }
         return Repositories(
             personal = PersonalDataRepository(PersonalDataApi(client)),
-            sections = SectionRepository(SectionApi(client), homeRequestDispatcher = homeRequestDispatcher),
+            sections = SectionRepository(SectionApi(client)),
             catalog = CatalogRepository(CatalogApi(client)),
         )
     }

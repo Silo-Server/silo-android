@@ -1,17 +1,18 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.*
-import io.ktor.client.request.*
-import io.ktor.http.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.apiv2.*
 import kotlinx.serialization.json.*
 
-class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
-    private val personRefresh: PersonRefreshV2Api? = null,
-    private val watchDetail: WatchDetailV2Api? = null) {
+/** Catalog reads on v2; the scoped delegates default to an unauthenticated token manager outside DI. */
+class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client),
+    private val personRefresh: PersonRefreshV2Api = PersonRefreshV2Api(client, TokenManagerImpl()),
+    private val watchDetail: WatchDetailV2Api = WatchDetailV2Api(client, TokenManagerImpl())) {
 
     suspend fun getCatalog(
         source: String? = null, query: String? = null, mediaType: String? = null,
@@ -62,9 +63,7 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
 
     suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = v2.itemDetail(id)
 
-    suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id/versions")
-    }
+    suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = v2.itemVersions(id)
 
     suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = v2.itemEpisodes(id)
 
@@ -75,24 +74,24 @@ class CatalogApi(private val client: HttpClient, private val v2: CatalogV2Api = 
         seasonNumber: Int
     ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber)
 
-    suspend fun captureWatchAuthority() = watchDetail?.capture()
-    suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = watchDetail?.current(owner) == true
-    suspend fun getWatchDetail(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
-        watchDetail?.detail(id, owner) ?: ApiResult.Error(0, "unavailable", "The scoped watch reader is unavailable.")
+    suspend fun captureWatchAuthority() = watchDetail.capture()
+    suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
+    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot) = watchDetail.detail(id, owner)
 
-    suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
-        client.get("/api/v1/watch/$id")
+    /** Unscoped read for callers without an owner; the current viewer is captured at call time. */
+    suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> {
+        val owner = watchDetail.capture()
+            ?: return ApiResult.Error(0, "identity_unavailable", "Watch metadata needs an authenticated profile.")
+        return watchDetail.detail(id, owner)
     }
 
     suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = v2.people(query)
 
     suspend fun getPerson(id: Long): ApiResult<Person> = v2.person(id)
 
-    suspend fun getPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Person> =
-        personRefresh?.detail(id, owner) ?: ApiResult.Error(0, "unavailable", "The authorized person reader is unavailable.")
+    suspend fun getPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Person> = personRefresh.detail(id, owner)
 
-    suspend fun refreshPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =
-        personRefresh?.refresh(id, owner) ?: ApiResult.Error(0, "unavailable", "The person refresh transport is unavailable.")
+    suspend fun refreshPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Unit> = personRefresh.refresh(id, owner)
 
     suspend fun getPersonItems(personId: Long, mediaType: String? = null,
         continuation: CatalogContinuationV2? = null, limit: Int? = null): ApiResult<CatalogResponse> =
