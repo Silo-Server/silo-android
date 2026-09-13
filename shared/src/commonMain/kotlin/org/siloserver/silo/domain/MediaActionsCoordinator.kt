@@ -7,7 +7,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
  * Cross-screen actions invoked from a card's long-press / context menu.
  *
  * ViewModels delegate to this coordinator instead of each one duplicating
- * watched / favorite / watchlist / dismiss plumbing on top of
+ * watched / favorite / watchlist plumbing on top of
  * [PersonalDataRepository]. The coordinator returns the [ApiResult] so the
  * caller can roll back optimistic UI changes on failure.
  *
@@ -26,13 +26,4 @@ class MediaActionsCoordinator(
     fun isCurrent(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) = personalDataRepository.isCurrent(intent)
 
     val memberships get() = personalDataRepository.memberships
-
-    suspend fun dismissContinueWatching(
-        itemId: String,
-        progressUpdatedAt: String,
-    ): ApiResult<Unit> =
-        personalDataRepository.dismissContinueWatching(itemId, progressUpdatedAt)
-
-    suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> =
-        personalDataRepository.dismissNextUp(itemId, seriesId)
 }

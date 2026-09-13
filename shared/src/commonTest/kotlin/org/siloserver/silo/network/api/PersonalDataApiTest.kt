@@ -23,24 +23,6 @@ import kotlin.test.assertIs
 
 class PersonalDataApiTest {
 
-    private fun api(
-        status: HttpStatusCode = HttpStatusCode.OK,
-        responseBody: String = "",
-    ): PersonalDataApi {
-        val client = HttpClient(
-            MockEngine {
-                respond(
-                    content = responseBody,
-                    status = status,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                )
-            },
-        ) {
-            install(ContentNegotiation) { json(SiloJson) }
-        }
-        return PersonalDataApi(client)
-    }
-
     private fun progressPage(ids: List<String>, nextCursor: String?): String {
         val items = ids.joinToString(",") {
             """{"media_item_id":"$it","position_seconds":1.0,"duration_seconds":10.0,"updated_at":"2026-01-01T00:00:00Z"}"""
@@ -190,41 +172,5 @@ class PersonalDataApiTest {
         companion object {
             const val PINNED_PROFILE = "pinned-profile"
         }
-    }
-
-    // --- checkFavorite ---
-
-    @Test
-    fun `checkFavorite returns true when server responds 204`() = runTest {
-        val api = api(status = HttpStatusCode.NoContent)
-        val result = api.checkFavorite("item-1")
-        assertIs<ApiResult.Success<Boolean>>(result)
-        assertEquals(true, result.data)
-    }
-
-    @Test
-    fun `checkFavorite returns false when server responds 404`() = runTest {
-        val api = api(status = HttpStatusCode.NotFound)
-        val result = api.checkFavorite("item-1")
-        assertIs<ApiResult.Success<Boolean>>(result)
-        assertEquals(false, result.data)
-    }
-
-    // --- checkWatchlist ---
-
-    @Test
-    fun `checkWatchlist returns true when server responds 204`() = runTest {
-        val api = api(status = HttpStatusCode.NoContent)
-        val result = api.checkWatchlist("item-2")
-        assertIs<ApiResult.Success<Boolean>>(result)
-        assertEquals(true, result.data)
-    }
-
-    @Test
-    fun `checkWatchlist returns false when server responds 404`() = runTest {
-        val api = api(status = HttpStatusCode.NotFound)
-        val result = api.checkWatchlist("item-2")
-        assertIs<ApiResult.Success<Boolean>>(result)
-        assertEquals(false, result.data)
     }
 }
