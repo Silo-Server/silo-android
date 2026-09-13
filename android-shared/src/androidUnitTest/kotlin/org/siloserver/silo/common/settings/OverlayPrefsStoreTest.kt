@@ -2,7 +2,6 @@ package org.siloserver.silo.common.settings
 
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
-import org.siloserver.silo.model.settings.SettingEntry
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
@@ -47,7 +46,6 @@ class OverlayPrefsStoreTest {
         assertEquals(expected, store.prefs.value)
         assertTrue(store.hasUserOverride)
         assertEquals(listOf(SettingKeys.UI_CARD_OVERLAYS), api.effectiveRequests.single())
-        assertEquals(0, api.legacyCalls)
     }
 
     @Test
@@ -105,7 +103,6 @@ class OverlayPrefsStoreTest {
         assertEquals(1, api.deleteCount)
         assertEquals(adminDefault, store.prefs.value)
         assertFalse(store.hasUserOverride)
-        assertEquals(0, api.legacyCalls)
     }
 
     @Test
@@ -124,7 +121,6 @@ class OverlayPrefsStoreTest {
         assertEquals(confirmed, store.prefs.value)
         assertTrue(store.hasUserOverride)
         assertEquals("Rejected overlay settings", store.lastError.value)
-        assertEquals(0, api.legacyCalls)
     }
 
     @Test
@@ -299,7 +295,7 @@ class OverlayPrefsStoreTest {
 private class RecordingOverlaySettingsApi(
     var storedValue: JsonElement? = null,
     var adminDefaults: String? = null,
-) : SettingsApi(HttpClient()) {
+) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
 
     data class CallGate(
         val started: CompletableDeferred<Unit> = CompletableDeferred(),
@@ -316,7 +312,6 @@ private class RecordingOverlaySettingsApi(
     val puts = mutableListOf<Put>()
     val mutationEvents = mutableListOf<String>()
     var deleteCount = 0
-    var legacyCalls = 0
     var overlayEnabled = true
     var putFailure: ApiResult<StoredSettingValue>? = null
     var deleteFailure: ApiResult<Unit>? = null
@@ -419,18 +414,4 @@ private class RecordingOverlaySettingsApi(
         return ApiResult.Success(Unit)
     }
 
-    override suspend fun getSetting(key: String): ApiResult<SettingEntry> {
-        legacyCalls += 1
-        error("legacy getSetting must not be called")
-    }
-
-    override suspend fun setSetting(key: String, value: String): ApiResult<Unit> {
-        legacyCalls += 1
-        error("legacy setSetting must not be called")
-    }
-
-    override suspend fun deleteSetting(key: String): ApiResult<Unit> {
-        legacyCalls += 1
-        error("legacy deleteSetting must not be called")
-    }
 }

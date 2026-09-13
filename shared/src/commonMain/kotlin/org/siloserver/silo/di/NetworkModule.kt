@@ -43,10 +43,9 @@ val networkModule = module {
     single<CalendarApi> { DefaultCalendarApi(get(), get(), get()) }
     single { HealthApi(get()) }
     single { BrandingApi(get()) }
-    single { org.siloserver.silo.network.apiv2.SettingsReadsV2Api(get(), get(), get()) }
-    single { org.siloserver.silo.network.apiv2.SettingsWritesV2Api(get(), get(), get()) }
-    single { SettingsApi(get(), get(), get()) }
-    single { LibraryPlaybackPrefsApi(get(), get()) }
+    single { org.siloserver.silo.network.apiv2.SettingsV2Api(get(), get(), get()) }
+    single { SettingsApi(get()) }
+    single { LibraryPlaybackPrefsApi(get()) }
     single { org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(get(), get(), get(), get()) }
     single { org.siloserver.silo.network.apiv2.DownloadCreationV2Api(get(), get(), get(), get(), get()) }
     single { DownloadsApi(get(), get(), get(), get()) }

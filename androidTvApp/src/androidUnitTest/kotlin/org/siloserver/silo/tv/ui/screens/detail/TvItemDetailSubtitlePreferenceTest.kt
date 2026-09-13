@@ -191,7 +191,7 @@ class TvItemDetailSubtitlePreferenceTest {
         private val capabilities: SettingsCapabilitiesResult =
             SettingsCapabilitiesResult.Available(SettingsContractCapabilities(revision = 1)),
         private val effective: EffectiveSettingValuesResponse = EffectiveSettingValuesResponse(),
-    ) : SettingsApi(HttpClient()) {
+    ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
 
         override suspend fun getEffectiveValues(

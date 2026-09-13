@@ -38,7 +38,7 @@ class ProfileSettingsControllerTest {
             ApiResult.Success(StoredSettingValue(key = it, scope = "profile"))
         },
         val deleteResult: ApiResult<Unit> = ApiResult.Success(Unit),
-    ) : SettingsApi(HttpClient()) {
+    ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
 
         val calls = mutableListOf<Call>()
         val mutationIds = mutableListOf<String>()

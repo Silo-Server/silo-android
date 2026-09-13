@@ -983,7 +983,7 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private class UnavailableSettingsApi : SettingsApi(HttpClient()) {
+    private class UnavailableSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
             SettingsCapabilitiesResult.ServerUpgradeRequired
     }

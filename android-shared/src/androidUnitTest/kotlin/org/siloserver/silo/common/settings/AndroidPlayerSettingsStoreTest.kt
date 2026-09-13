@@ -44,7 +44,7 @@ class AndroidPlayerSettingsStoreTest {
     fun `card presentation remains usable without mutation receipt support`() = runTest {
         val client = io.ktor.client.HttpClient()
         var writes = 0
-        val api = object : org.siloserver.silo.network.api.SettingsApi(client) {
+        val api = object : org.siloserver.silo.network.api.SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())) {
             override suspend fun getContractCapabilities() =
                 org.siloserver.silo.network.api.SettingsCapabilitiesResult.Available(
                     org.siloserver.silo.model.settings.SettingsContractCapabilities(
@@ -95,7 +95,7 @@ class AndroidPlayerSettingsStoreTest {
         val original = owner
         val client = HttpClient()
         val seen = mutableListOf<org.siloserver.silo.network.AuthScopeSnapshot?>()
-        val api = object : SettingsApi(client) {
+        val api = object : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())) {
             override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
                 profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
                 seen += authority
@@ -123,7 +123,7 @@ class AndroidPlayerSettingsStoreTest {
         val owner = org.siloserver.silo.network.AuthScopeSnapshot("server", activeProfileId, serverUrl, "proof", credentialEpoch = 1)
         val client = HttpClient()
         var writes = 0
-        val api = object : SettingsApi(client) {
+        val api = object : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())) {
             override suspend fun putValue(key: String, scope: SettingScopeIdentity, value: JsonElement, mutationId: String,
                 profileId: String?, authority: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<org.siloserver.silo.model.settings.StoredSettingValue> {
                 assertEquals(owner,authority)
@@ -168,7 +168,7 @@ class AndroidPlayerSettingsStoreTest {
         try {
             val store = AndroidPlayerSettingsStore(mockContextStub(), fakeLegacyCache,
                 { owner.profileId }, { owner.serverUrl }, fakeFlusher,
-                settingsRepository = SettingsRepository(SettingsApi(client)), getDeviceId = { "device" },
+                settingsRepository = SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl()))), getDeviceId = { "device" },
                 getAuthScope = { owner }, dataStoreFactory = { barrier })
             assertFalse(store.importLegacyDeviceSettings(original, mapOf(PlaybackSettingsKeys.AutoPlayNext to "false")))
             assertEquals(0,localWrites)
@@ -906,7 +906,7 @@ private fun defaulted(key: String, value: JsonElement): Pair<String, EffectiveSe
 /** Stub SettingsApi returning canned canonical effective values; HttpClient never used. */
 private class FakeSettingsApi(
     effective: Map<String, EffectiveSettingValue> = emptyMap(),
-) : SettingsApi(HttpClient()) {
+) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
     // Mutable so a single test can simulate the server's response
     // changing between two `refreshFromServer` calls without standing
     // up a second DataStore over the same file.
@@ -924,10 +924,10 @@ private class FakeSettingsApi(
         return ApiResult.Success(EffectiveSettingValuesResponse(settings = entries, revision = 1))
     }
 
-    override suspend fun setDeviceSetting(key: String, value: String, profileId: String?) =
+    override suspend fun setDeviceSubtitleAppearanceOverride(appearance: SubtitleAppearance, profileId: String?) =
         ApiResult.Success(Unit)
 
-    override suspend fun deleteDeviceSetting(key: String) = ApiResult.Success(Unit)
+    override suspend fun deleteDeviceSubtitleAppearanceOverride() = ApiResult.Success(Unit)
 
     override suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
         ApiResult.Success(
