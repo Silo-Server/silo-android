@@ -9,8 +9,6 @@ import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.PlaybackSessionResponse
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.apiv2.isPlaybackOwnerLossTerminal
-import org.siloserver.silo.network.apiv2.PLAYBACK_OWNER_LOST_MESSAGE
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.repository.PersonalDataRepository
 import kotlinx.coroutines.CancellationException
@@ -82,8 +80,6 @@ class PlaybackSessionLifecycle(
      * `Job` references in agreement.
      */
     private val mutex = Mutex()
-    private val abandonedSessions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    fun wasAbandoned(sessionId: String): Boolean = sessionId in abandonedSessions
 
     @Volatile private var lastStartParams: StartParams? = null
     @Volatile private var lastReportedPosition: Double? = null
@@ -527,7 +523,6 @@ class PlaybackSessionLifecycle(
     private suspend fun stopOwnedSession(expectedSessionId: String?, unpublished: Boolean): Boolean {
         DiagnosticsPlaybackLogger.sessionEvent("session stop requested")
         return mutex.withLock {
-            if (expectedSessionId != null && wasAbandoned(expectedSessionId)) return@withLock false
             if (expectedSessionId != null) {
                 // Read the ownership token, not the presented state: a session
                 // being reconnected or restarted is still owned, and answering
@@ -578,12 +573,9 @@ class PlaybackSessionLifecycle(
             }
 
             var pendingStop = false
-            var abandoned = false
             if (sessionId != null && stopActiveSessionOnStop) {
                 val r = sessionManager.stopSession(sessionId)
-                abandoned = r.isPlaybackOwnerLossTerminal()
-                if (abandoned) abandonedSessions += sessionId
-                pendingStop = !abandoned && sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
+                pendingStop = sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
                 when (r) {
                     is ApiResult.Error -> Log.w(TAG, "stopSession error: ${r.code} ${r.message}")
                     is ApiResult.NetworkError ->
@@ -606,9 +598,9 @@ class PlaybackSessionLifecycle(
             pendingActiveSessionPublication = null
             _notice.value = null
             lastAdoptedSessionId = null
-            _state.value = if (abandoned) SessionState.Failed(PLAYBACK_OWNER_LOST_MESSAGE) else SessionState.Idle
-            DiagnosticsPlaybackLogger.sessionEvent(if (abandoned) "session abandoned" else "session stopped")
-            !abandoned
+            _state.value = SessionState.Idle
+            DiagnosticsPlaybackLogger.sessionEvent("session stopped")
+            true
         }
     }
 

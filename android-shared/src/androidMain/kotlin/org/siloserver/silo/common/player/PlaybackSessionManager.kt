@@ -26,7 +26,6 @@ import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
 import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
-import org.siloserver.silo.network.apiv2.isPlaybackOwnerLossTerminal
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -1725,7 +1724,6 @@ open class PlaybackSessionManager(
      * the same predicate the rest of the manager uses for absence.
      */
     private fun ApiResult<Unit>?.isStopDischarged(): Boolean =
-        isPlaybackOwnerLossTerminal() ||
         this is ApiResult.Success || this?.isPlaybackSessionMissingError() == true
 
     private suspend fun stopCandidateSessionIfUnowned(

@@ -372,7 +372,7 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
-    @Test fun recoveryRetriesDrainingWithExactStopAndNoAutoplay() = runTest {
+    @Test fun recoveryRetriesLostStopWithExactBodyAndNoAutoplay() = runTest {
         val store = Store().apply { entries = listOf(entry()) }
         val deletes = mutableListOf<String>()
         val c = client { req ->
@@ -384,8 +384,8 @@ class SequencedPlaybackTest {
                     assertTrue(req.attributes[SingleAttemptAttributeKey])
                     deletes += req.body.toByteArray().decodeToString()
                     assertEquals(store.entries.single().stop, SiloJson.decodeFromString<PlaybackStopV2>(deletes.last()))
-                    reply("""{"outcome":"${if (deletes.size == 1) "draining" else "stopped"}","stop_id":"$stopId"}""",
-                        if (deletes.size == 1) HttpStatusCode.Accepted else HttpStatusCode.OK)
+                    if (deletes.size == 1) throw IllegalStateException("lost stop reply")
+                    reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
                 }
                 else -> error("Unexpected request ${req.url}")
             }
@@ -458,11 +458,11 @@ class SequencedPlaybackTest {
     @Test fun mismatchedAndWrongStatusStopReceiptsNeverConfirmCompletion() = runTest {
         for ((status, body) in listOf(
             HttpStatusCode.Accepted to """{"outcome":"stopped","stop_id":"$stopId"}""",
-            HttpStatusCode.OK to """{"outcome":"draining","stop_id":"$stopId"}""",
+            HttpStatusCode.OK to """{"outcome":"applied","stop_id":"$stopId"}""",
             HttpStatusCode.OK to """{"outcome":"stopped","stop_id":"wrong"}""",
         )) {
             val c = client { reply(body, status) }
-            try { assertIs<ApiResult.Error>(PlaybackV2Api(c).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId))) }
+            try { assertFalse(PlaybackV2Api(c).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId)) is ApiResult.Success, "$status $body") }
             finally { c.close() }
         }
     }
