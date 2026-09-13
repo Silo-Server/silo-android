@@ -46,7 +46,7 @@ class PlaybackMutationRoutingTest {
             install(SiloAuthPlugin) { tokenManager = tokens }
         }
         try {
-            val api = PlaybackV2Api(client)
+            val api = PlaybackV2Api(client, ApiV2Gate.Unrestricted)
             assertEquals(503, assertIs<ApiResult.Error>(api.progress(owner, "owned-session", progress)).code)
             assertEquals(503, assertIs<ApiResult.Error>(api.stop(owner, "owned-session", stop)).code)
             assertEquals(503, assertIs<ApiResult.Error>(api.replan(owner, "owned-session", replan)).code)

@@ -96,86 +96,99 @@ class SequencedPlayback(
         }
     }
 
+    private class IdentityChanged : RuntimeException()
+
+    /**
+     * Runs [block] with a `guard` that re-checks the metadata owner (and, once an
+     * entry exists, its captured scope) after every suspension the block reports.
+     * A change anywhere settles the call as `identity_changed`.
+     */
+    private suspend inline fun <T> withStableIdentity(
+        entry: PlaybackJournalEntry?, expectedOwner: AuthScopeSnapshot?, profileId: String,
+        block: (guard: suspend () -> Unit) -> ApiResult<T>,
+    ): ApiResult<T> {
+        val guard: suspend () -> Unit = {
+            if (!tokens.acceptsMetadataOwner(expectedOwner, profileId) || (entry != null && scope(entry) == null)) throw IdentityChanged()
+        }
+        return try { guard(); block(guard) }
+        catch (_: IdentityChanged) { failure("identity_changed", "The metadata viewer changed before playback admission.") }
+    }
+
     /** Admission requires v2; unavailable capabilities never select a legacy transport. */
     suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3>? = mutex.withLock {
-        suspend fun accepted() = tokens.acceptsMetadataOwner(expectedMetadataOwner, request.profileId)
-        fun changed() = failure("identity_changed", "The metadata viewer changed before playback admission.")
-        if (!accepted()) return@withLock changed()
-        val current = tokens.snapshotCurrentScope()
-            ?: return@withLock failure("identity_unavailable", "Playback needs an authenticated profile.")
-        if (expectedMetadataOwner != null && !expectedMetadataOwner.matchesMetadataOwner(current)) return@withLock changed()
-        // Probe availability before admission; retained intents still fence new attempts.
-        val capabilityResult = api.capabilities(current)
-        if (!accepted()) return@withLock changed()
-        val capability = when (capabilityResult) {
-            is ApiResult.Success -> capabilityResult.data
-            is ApiResult.Error -> if (capabilityResult.code == 404) null else return@withLock capabilityResult
-            is ApiResult.NetworkError -> return@withLock capabilityResult
+        withStableIdentity(null, expectedMetadataOwner, request.profileId) { guard ->
+            val current = tokens.snapshotCurrentScope()
+                ?: return@withStableIdentity failure("identity_unavailable", "Playback needs an authenticated profile.")
+            if (expectedMetadataOwner != null && !expectedMetadataOwner.matchesMetadataOwner(current)) throw IdentityChanged()
+            // Probe availability before admission; retained intents still fence new attempts.
+            val capabilityResult = api.capabilities(current)
+            guard()
+            val capability = when (capabilityResult) {
+                is ApiResult.Success -> capabilityResult.data
+                is ApiResult.Error -> if (capabilityResult.code == 404) null else return@withStableIdentity capabilityResult
+                is ApiResult.NetworkError -> return@withStableIdentity capabilityResult
+            }
+            if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
+            val live = authorities.snapshotDurableLoginAuthority()
+            guard()
+            val unresolved = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
+                it.serverId == current.serverId && it.profileId == current.profileId }
+            guard()
+            if (unresolved) return@withStableIdentity failure("playback_pending", "A previous playback request needs recovery before starting again.")
+            if (capability == null) return@withStableIdentity failure("server_update_required", "Update the server to use v2 playback.")
+            if (SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withStableIdentity failure("playback_unavailable", "V2 playback is unavailable on this server.")
+            if (!capability.allowed || capability.state != PlaybackCapabilityStateV2.AVAILABLE || capability.installationId.isNullOrBlank() ||
+                3 !in capability.protocolVersions)
+                return@withStableIdentity failure("playback_unavailable", "Sequenced playback is unavailable for this profile.")
+            if (live == null || !current.isSameIdentityAs(live.scope) || live.scope.credentialGenerationId != null ||
+                current.profileId != request.profileId)
+                return@withStableIdentity failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
+            val account = when (val result = api.account(current)) {
+                is ApiResult.Success -> result.data
+                is ApiResult.Error -> return@withStableIdentity result
+                is ApiResult.NetworkError -> return@withStableIdentity result
+            }
+            guard()
+            if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
+            if (load().any { it.attemptId == request.playbackAttemptId })
+                return@withStableIdentity failure("attempt_exists", "This playback attempt is already recorded. Use recovery.")
+            guard()
+            val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, live.loginId, account.id,
+                request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
+            save(entry)
+            scopes[entry.attemptId] = current
+            // A saved attempt is uncertainty, even if its owner changes before send.
+            guard()
+            sendStart(entry, current, expectedMetadataOwner = expectedMetadataOwner)
         }
-        if (!current.isSameIdentityAs(tokens.snapshotCurrentScope()))
-            return@withLock failure("identity_changed", "The active viewer changed.")
-        val live = authorities.snapshotDurableLoginAuthority()
-        if (!accepted()) return@withLock changed()
-        val unresolved = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
-            it.serverId == current.serverId && it.profileId == current.profileId }
-        if (!accepted()) return@withLock changed()
-        if (unresolved) return@withLock failure("playback_pending", "A previous playback request needs recovery before starting again.")
-        if (capability == null) return@withLock failure("server_update_required", "Update the server to use v2 playback.")
-        if (SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withLock failure("playback_unavailable", "V2 playback is unavailable on this server.")
-        if (!capability.allowed || capability.state != "available" || capability.installationId.isNullOrBlank() ||
-            3 !in capability.protocolVersions)
-            return@withLock failure("playback_unavailable", "Sequenced playback is unavailable for this profile.")
-        if (live == null || !current.isSameIdentityAs(live.scope) || live.scope.credentialGenerationId != null ||
-            current.profileId != request.profileId)
-            return@withLock failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
-        val account = when (val result = api.account(current)) {
-            is ApiResult.Success -> result.data
-            is ApiResult.Error -> return@withLock result
-            is ApiResult.NetworkError -> return@withLock result
-        }
-        if (!accepted() || !current.isSameIdentityAs(tokens.snapshotCurrentScope()))
-            return@withLock failure("identity_changed", "The active viewer changed.")
-        if (load().any { it.attemptId == request.playbackAttemptId })
-            return@withLock failure("attempt_exists", "This playback attempt is already recorded. Use recovery.")
-        if (!accepted()) return@withLock changed()
-        val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, live.loginId, account.id,
-            request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
-        save(entry)
-        scopes[entry.attemptId] = current
-        // A saved attempt is uncertainty, even if its owner changes before send.
-        if (!accepted()) return@withLock changed()
-        sendStart(entry, current, expectedMetadataOwner = expectedMetadataOwner)
     }
 
     private suspend fun sendStart(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot,
-        adoptForPlayer: Boolean = true, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> {
-        if (scope(entry) == null || !tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
-            return failure("identity_changed", "The active viewer changed.")
-        var sentHeaders: Map<String, String> = emptyMap()
-        return when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
-            is ApiResult.Success -> {
-                // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
-                val session = result.data.body["session_id"]?.jsonPrimitive?.contentOrNull
-                if (session.isNullOrBlank()) return failure("invalid_decision", "Playback returned no recoverable session.")
-                save(entry.copy(sessionId = session))
-                try {
-                    val decision = decodePlaybackDecisionV2(result.data.body)
-                    if (SEQUENCED_PROGRESS_FEATURE !in decision.serverFeatures)
-                        return failure("invalid_decision", "Playback omitted the negotiated progress feature.")
-                    if (scope(entry) == null) return failure("identity_changed", "The active viewer changed.")
-                    if (!tokens.acceptsMetadataOwner(expectedMetadataOwner, entry.profileId))
-                        return failure("identity_changed", "The metadata viewer changed after playback admission.")
-                    val ready = if (adoptForPlayer) withAuxiliaryAuthority(decision, entry, captured, sentHeaders) else decision
-                    if (adoptForPlayer) adopted += entry.attemptId
-                    publish()
-                    ApiResult.Success(ready)
-                } catch (e: Exception) { ApiResult.NetworkError(e) }
+        adoptForPlayer: Boolean = true, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> =
+        withStableIdentity(entry, expectedMetadataOwner, entry.profileId) { guard ->
+            var sentHeaders: Map<String, String> = emptyMap()
+            when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
+                is ApiResult.Success -> {
+                    // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
+                    val session = result.data["session_id"]?.jsonPrimitive?.contentOrNull
+                    if (session.isNullOrBlank()) return@withStableIdentity failure("invalid_decision", "Playback returned no recoverable session.")
+                    save(entry.copy(sessionId = session))
+                    try {
+                        val decision = decodePlaybackDecisionV2(result.data)
+                        if (SEQUENCED_PROGRESS_FEATURE !in decision.serverFeatures)
+                            return@withStableIdentity failure("invalid_decision", "Playback omitted the negotiated progress feature.")
+                        guard()
+                        val ready = if (adoptForPlayer) withAuxiliaryAuthority(decision, entry, captured, sentHeaders) else decision
+                        if (adoptForPlayer) adopted += entry.attemptId
+                        publish()
+                        ApiResult.Success(ready)
+                    } catch (e: IdentityChanged) { throw e } catch (e: Exception) { ApiResult.NetworkError(e) }
+                }
+                // Preserve uncertain starts, including validation responses until pre-admission is proven.
+                is ApiResult.Error -> result
+                is ApiResult.NetworkError -> result
             }
-            // Preserve uncertain starts, including validation responses until pre-admission is proven.
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
         }
-    }
 
     private fun withAuxiliaryAuthority(
         decision: PlaybackDecisionResponseV3, entry: PlaybackJournalEntry,
@@ -279,10 +292,8 @@ class SequencedPlayback(
         if (scope(saved) == null) return@withLock failure("identity_changed", "Playback authority changed.")
         when (val result = api.routeEvent(captured, body)) {
             is ApiResult.Success -> {
-                if (result.data.eventId != eventId || result.data.outcome != "accepted")
-                    return@withLock failure("invalid_receipt", "The route event receipt did not match the request.")
                 save(saved.copy(routeEvents = entry.routeEvents))
-                ApiResult.Success(Unit)
+                result
             }
             is ApiResult.Error -> {
                 if (result.code == 429) save(saved.copy(routeEvents = entry.routeEvents)) // Contract says drop.
@@ -315,7 +326,7 @@ class SequencedPlayback(
             is ApiResult.Success -> {
                 val accepted = result.data.accepted
                 val sent = entry.progress
-                if (result.data.outcome !in setOf("applied", "replayed", "stale_sample") || accepted == null ||
+                if (result.data.outcome !in PlaybackMutationOutcomeV2.PROGRESS || accepted == null ||
                     accepted.sequence < sent.sequence ||
                     (accepted.sequence == sent.sequence && (accepted.position != sent.position || accepted.isPaused != sent.isPaused)))
                     return failure("invalid_progress_receipt", "Playback returned an inconsistent progress receipt.")

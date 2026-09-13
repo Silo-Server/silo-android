@@ -8,6 +8,15 @@ authenticated profile and the server's installation ID. Temporary credentials do
 not grant durable playback authority. The retained v1 health probe is not a
 playback fallback.
 
+Every playback v2 call goes through the shared `ApiV2Gate`, so a server in the
+update-required state is refused locally without an HTTP exchange. Start returns
+HTTP 201 `PlaybackDecision` (`outcome` playable or adaptation_unavailable);
+progress and stop return HTTP 200 `PlaybackMutation` (`outcome` applied,
+replayed, stale_sample or stopped); route events return HTTP 202 with the echoed
+`event_id`. Capability `state` is available, disabled, not_configured or
+unsupported; Android reads `installation_id`, `state`, `allowed`,
+`protocol_versions` and `features` only.
+
 Server runtime and admission remain off by default. Installing this client or
 passing its tests does not enable either. Playback requires separately configured
 and authorized server admission; unavailable capabilities must remain visible.

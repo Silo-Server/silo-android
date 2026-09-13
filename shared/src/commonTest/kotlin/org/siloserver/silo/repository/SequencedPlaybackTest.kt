@@ -61,7 +61,7 @@ class SequencedPlaybackTest {
             else -> error("Unexpected request")
         } }.config { defaultRequest { header("Authorization", "Bearer captured-request"); header("X-Profile-Id", "profile") } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val decision = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request(), identity.scope)).data
             val headers = assertIs<ProxyAuxiliaryRequestHeaders>(decision.playbackPlan!!.stream.effectiveRequestHeaders)
             assertEquals("Bearer captured-request", headers["Authorization"])
@@ -103,7 +103,7 @@ class SequencedPlaybackTest {
         }
         try {
             val identity = Identity()
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<Unit>>(runtime.recover())
             assertEquals(2, deletes.size); assertEquals(deletes.first(), deletes.last())
             assertTrue(store.entries.single().terminal)
@@ -120,12 +120,12 @@ class SequencedPlaybackTest {
             else -> { deletes++; reply("""{"code":"authority_unavailable","detail":"pending"}""", HttpStatusCode.ServiceUnavailable) }
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertEquals("stop_pending", assertIs<ApiResult.Error>(runtime.recover()).error)
             assertEquals(3, deletes); assertFalse(store.entries.single().terminal)
             val body = store.entries.single().stop
             identity.login = "login-2"
-            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { error("Must retain StopID") }
+            val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { error("Must retain StopID") }
             restarted.recover()
             assertEquals(3, deletes); assertEquals(body, store.entries.single().stop)
         } finally { c.close() }
@@ -137,7 +137,7 @@ class SequencedPlaybackTest {
         var status = HttpStatusCode.OK
         val c = client { reply(if (status == HttpStatusCode.OK) caps("") else "{}", status) }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertEquals("playback_unavailable", assertIs<ApiResult.Error>(runtime.start(request())).error)
             status = HttpStatusCode.Unauthorized
             assertEquals(401, assertIs<ApiResult.Error>(runtime.start(request())).code)
@@ -159,7 +159,7 @@ class SequencedPlaybackTest {
             }
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.NetworkError>(runtime.start(request()))
             assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "attempt-2"))).error)
             assertEquals(1, starts); assertEquals(listOf("attempt-1"), runtime.pending.value)
@@ -173,7 +173,7 @@ class SequencedPlaybackTest {
             HttpStatusCode.OK to """{"outcome":"stopped","stop_id":"wrong"}""",
         )) {
             val c = client { reply(body, status) }
-            try { assertFalse(PlaybackV2Api(c).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId)) is ApiResult.Success, "$status $body") }
+            try { assertFalse(PlaybackV2Api(c, ApiV2Gate.Unrestricted).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId)) is ApiResult.Success, "$status $body") }
             finally { c.close() }
         }
     }
@@ -194,7 +194,7 @@ class SequencedPlaybackTest {
             else -> error("Unexpected route")
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val start = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
             assertEquals(42, start.data.playbackPlan?.effectiveMediaFileId)
             assertIs<ApiResult.NetworkError>(runtime.progress("session-1", 120.0, false))
@@ -216,7 +216,7 @@ class SequencedPlaybackTest {
             else -> { starts++; error("Must not dispatch") }
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val repository = PlaybackRepository(runtime)
             assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
             assertEquals(0, starts)
@@ -232,7 +232,7 @@ class SequencedPlaybackTest {
             else -> error("No fallback allowed")
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val repository = PlaybackRepository(runtime)
             assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
             assertEquals("playback_pending", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
@@ -257,7 +257,7 @@ class SequencedPlaybackTest {
             else -> error("Unexpected request")
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val repository = PlaybackRepository(runtime)
             assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.recoverPlayback()).error)
             assertEquals(1, starts); assertEquals(0, deletes)
@@ -295,13 +295,13 @@ class SequencedPlaybackTest {
             else -> error("Unexpected transport")
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<*>>(runtime.start(request()))
             assertIs<ApiResult.NetworkError>(runtime.replan("session-1", replanRequest()))
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest())).error)
             assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(positionSeconds = 9.0))).error)
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", replanRequest().copy(replanRequestId = "replan-0002"))).error)
-            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertEquals("identity_changed", assertIs<ApiResult.Error>(restarted.replan("session-1", replanRequest())).error)
             assertEquals(1, replans)
             assertNull(store.entries.single().replans.single().response)
@@ -328,7 +328,7 @@ class SequencedPlaybackTest {
         } }
         fun reanchor(index: Int) = replanRequest().copy(replanRequestId = "reanchor-$index", positionSeconds = index.toDouble())
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<*>>(runtime.start(request()))
             for (index in 1..12) {
                 val result = runtime.replan("session-1", reanchor(index))
@@ -349,7 +349,7 @@ class SequencedPlaybackTest {
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13))).error)
             assertEquals("replan_pending", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(14))).error)
             assertEquals("replan_conflict", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(13).copy(positionSeconds = 99.0))).error)
-            val restarted = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertEquals("identity_changed", assertIs<ApiResult.Error>(restarted.replan("session-1", reanchor(14))).error)
             identity.scope = identity.scope.copy(identityGeneration = 2)
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.replan("session-1", reanchor(14))).error)
@@ -367,7 +367,7 @@ class SequencedPlaybackTest {
             else -> { replans++; reply(adoptedDecision) }
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<*>>(runtime.start(request()))
             assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest()))
             assertIs<ApiResult.Success<*>>(runtime.replan("session-1", replanRequest()))
@@ -395,7 +395,7 @@ class SequencedPlaybackTest {
             else -> error("Unexpected transport")
         } }
         try {
-            val runtime = SequencedPlayback(PlaybackV2Api(c), identity, identity, store) { stopId }
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.Success<*>>(runtime.start(request()))
             val event = PlaybackRouteEventV3(playbackAttemptId = "attempt-1", sessionId = "session-1", event = "first_frame")
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.routeEvent(event.copy(sessionId = "wrong"))).error)

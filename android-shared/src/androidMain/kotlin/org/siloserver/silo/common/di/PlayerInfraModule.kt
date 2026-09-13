@@ -50,7 +50,7 @@ val playerInfraModule = module {
     single<org.siloserver.silo.repository.PlaybackJournalStore> {
         org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
     }
-    single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get()) }
+    single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
     single {
         org.siloserver.silo.repository.SequencedPlayback(get(), get(), get(), get()) {
             java.util.UUID.randomUUID().toString()
