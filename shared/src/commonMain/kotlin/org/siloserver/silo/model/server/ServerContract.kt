@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
  * Set from [org.siloserver.silo.network.apiv2.ApiV2Probe] when a connection is
  * established or the server identity is refreshed — never per request.
  * [UPDATE_REQUIRED] is the explicit update-server state for a v1-only alpha
- * server; it blocks the pilot's v2 operations (see
+ * server; it blocks every v2 operation (see
  * [org.siloserver.silo.network.apiv2.ApiV2Gate]). Transport, TLS, auth, rate
  * limit, and server errors leave the previous value in place.
  */

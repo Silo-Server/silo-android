@@ -154,7 +154,7 @@ data class OverlayItemConfig(
 /**
  * Versioned root document stored under the user setting key
  * `ui.card_overlays`. Serialized as a typed JSON object and PUT to
- * `/api/v1/settings/values/ui.card_overlays?scope=profile`. Shared across
+ * `/api/v2/settings/values/ui.card_overlays?scope=profile`. Shared across
  * web, iOS, tvOS, and Android.
  */
 data class CardOverlayPrefs(

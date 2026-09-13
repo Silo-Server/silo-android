@@ -96,8 +96,7 @@ class PersonalDataApi(
     // --- Progress ---
 
     /**
-     * Pilot v2 operation (listProgress): v2 only, no v1 fallback. v1 returned
-     * the whole list; v2 pages by opaque cursor, so every page is walked here.
+     * listProgress: v2 pages by opaque cursor, so every page is walked here.
      *
      * The whole walk runs under ONE identity. [scope] pins it explicitly;
      * otherwise the active scope is captured once up front and applied to

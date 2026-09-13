@@ -124,7 +124,7 @@ interface WatchTogetherApi {
 @OptIn(ExperimentalUuidApi::class)
 class DefaultWatchTogetherApi(
     private val client: HttpClient,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) : WatchTogetherApi {
 
     override suspend fun createRoom(request: CreateRoomRequest, scope: AuthScopeSnapshot): ApiResult<RoomResponse> =

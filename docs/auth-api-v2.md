@@ -1,8 +1,8 @@
 # Native authentication and device sign-in
 
 The existing phone and TV authentication paths use v2 login, setup, signup,
-signup status, logout and refresh. Setup status and current account retain their
-existing v2 pilot operations. Device login uses v2 start, poll, lookup, capability,
+signup status, logout and refresh. Setup status and current account use
+`/api/v2/system/setup` and `/api/v2/account/me`. Device login uses v2 start, poll, lookup, capability,
 approve, deny and profile-scoped handoff approval. Media credential refresh uses
 the same v2 refresh route while preserving its captured-origin credential guards.
 

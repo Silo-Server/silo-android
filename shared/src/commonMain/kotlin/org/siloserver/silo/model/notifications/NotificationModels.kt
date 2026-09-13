@@ -106,7 +106,7 @@ data class NotificationRow(
     val isRead: Boolean get() = !readAt.isNullOrBlank()
 }
 
-/** GET /api/v1/notifications — newest-first page. */
+/** GET /api/v2/notifications — newest-first page. */
 @Serializable
 data class NotificationListResponse(
     val notifications: List<NotificationRow> = emptyList(),
@@ -114,7 +114,7 @@ data class NotificationListResponse(
     @SerialName("read_cutoff") val readCutoff: String? = null,
 )
 
-/** GET /api/v1/notifications/sync — ascending catch-up; adds unread_count. */
+/** GET /api/v2/notifications/sync — ascending catch-up; adds unread_count. */
 @Serializable
 data class NotificationSyncResponse(
     val notifications: List<NotificationRow> = emptyList(),
@@ -125,7 +125,7 @@ data class NotificationSyncResponse(
     @SerialName("has_more") val hasMore: Boolean = false,
 )
 
-/** GET /api/v1/notifications/unread-count. */
+/** GET /api/v2/notifications/unread-count. */
 @Serializable
 data class UnreadCountResponse(val count: Int = 0)
 
@@ -138,7 +138,7 @@ data class WsTicketResponse(
     val protocol: String = "",
 )
 
-/** GET/PUT /api/v1/notifications/preferences (full row). */
+/** GET/PUT /api/v2/notifications/preferences (full row). */
 @Serializable
 data class NotificationPreferences(
     @SerialName("profile_id") val profileId: String = "",
@@ -163,7 +163,7 @@ data class NotificationPreferencesUpdate(
     @SerialName("notify_next_up") val notifyNextUp: Boolean? = null,
 )
 
-/** GET /api/v1/notifications/capability — drives the settings UI. */
+/** GET /api/v2/notifications/capabilities — drives the settings UI. */
 @Serializable
 data class NotificationCapability(
     @SerialName("in_app") val inApp: CapabilityInApp = CapabilityInApp(),
