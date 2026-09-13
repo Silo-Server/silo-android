@@ -2,9 +2,7 @@ package org.siloserver.silo.repository
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.personal.ProgressListResponse
-import org.siloserver.silo.model.personal.RatingEntry
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.apiv2.HistoryContinuationV2
@@ -13,7 +11,6 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
@@ -57,15 +54,8 @@ open class PersonalDataRepository(
 
     // -- Favorites --
 
-    /** Lists the user's favorite items with pagination. */
-    suspend fun listFavorites(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listFavorites(offset, limit)
-
     suspend fun isFavorite(itemId: String): ApiResult<Boolean> =
         memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
-
-    suspend fun listWatchlist(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listWatchlist(offset, limit)
 
     suspend fun isInWatchlist(itemId: String): ApiResult<Boolean> =
         memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST)
@@ -87,14 +77,6 @@ open class PersonalDataRepository(
         ApiResult.Error(0, "playback_unavailable", "Progress needs an admitted v2 playback session. Start playback again.")
 
     // -- Ratings --
-
-    /** Lists all ratings the current user has set. */
-    suspend fun listRatings(): ApiResult<List<RatingEntry>> =
-        personalDataApi.listRatings().map { it.ratings }
-
-    /** Gets the user's rating for a specific item. */
-    suspend fun getRating(itemId: String): ApiResult<RatingEntry> =
-        personalDataApi.getRating(itemId)
 
     /** Sets or updates the user's star rating (integer 1-5) for a specific item. */
     suspend fun setRating(itemId: String, rating: Int): ApiResult<Unit> =
@@ -149,22 +131,6 @@ open class PersonalDataRepository(
         if (result is ApiResult.Success) userItemStatePort.completePersonalWrite(handle)
         return result
     }
-
-    // -- Continue Watching dismissals --
-
-    /** Hide an item from the home Continue Watching row. */
-    open suspend fun dismissContinueWatching(
-        itemId: String,
-        progressUpdatedAt: String
-    ): ApiResult<Unit> =
-        personalDataApi.dismissContinueWatching(itemId, progressUpdatedAt)
-
-    /** Undo a Continue Watching dismissal. */
-    open suspend fun undismissContinueWatching(itemId: String): ApiResult<Unit> =
-        personalDataApi.undismissContinueWatching(itemId)
-
-    open suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> =
-        personalDataApi.dismissNextUp(itemId, seriesId)
 
     private suspend fun writeIfIdentityUnchanged(
         requestGeneration: Long,

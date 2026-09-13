@@ -1,9 +1,10 @@
 # Android membership v2 adapter
 
 `MembershipV2Api` implements favorite and watchlist GET, PUT, and DELETE operations.
-Existing consumers and outbox dispatch remain unchanged pending a separate adoption
-checkpoint. These profile-scoped operations use the shared API contract gate; the
-server exposes no separate membership capability endpoint.
+It is the only membership transport: `PersonalDataApi` carries no favorite or
+watchlist methods, and the outbox dispatches through `MembershipV2Api` directly.
+These profile-scoped operations use the shared API contract gate; the server
+exposes no separate membership capability endpoint.
 
 GET requires the typed `item_id` and `added_at` entry. Only HTTP 404 becomes an
 absent membership; authorization, server, and malformed-response failures remain
