@@ -16,8 +16,6 @@ class PlaybackRepository(
     private val sequenced: SequencedPlayback? = null,
     private val tokens: TokenManager? = null,
 ) {
-    suspend fun discoverTimeline(fileId: Int, itemId: String, expectedOwner: AuthScopeSnapshot) = guarded { sequenced?.discoverTimeline(fileId, itemId, expectedOwner) ?: unavailable() }
-    suspend fun boundResume(captured: org.siloserver.silo.network.apiv2.CapturedPlaybackManifest) = sequenced?.boundResume(captured)
     suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String?>? = sequenced?.controlOwner(sessionId)
     val pendingPlayback = sequenced?.pending ?: MutableStateFlow(emptyList<String>())
     fun isSequenced(sessionId: String): Boolean = sequenced?.owns(sessionId) == true

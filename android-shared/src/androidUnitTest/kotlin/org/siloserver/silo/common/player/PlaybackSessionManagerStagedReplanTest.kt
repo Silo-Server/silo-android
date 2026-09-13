@@ -64,6 +64,7 @@ import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.AuthScopeAttributeKey
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.DurableLoginAuthority
@@ -1678,7 +1679,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 }
             },
         ) { install(ContentNegotiation) { json(SiloJson) } }
-        private val sequenced = SequencedPlayback(PlaybackV2Api(client), identity, identity, journal) {
+        private val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, journal) {
             java.util.UUID.randomUUID().toString()
         }
         val manager = PlaybackSessionManager(

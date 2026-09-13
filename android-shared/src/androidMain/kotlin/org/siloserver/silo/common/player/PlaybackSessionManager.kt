@@ -26,7 +26,6 @@ import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_FEATURE
 import org.siloserver.silo.model.playback.SEEK_REANCHOR_V3_OPERATION
 import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
-import org.siloserver.silo.network.apiv2.isPlaybackOwnerLossTerminal
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -296,7 +295,6 @@ open class PlaybackSessionManager(
         maxBitrateKbps: Int? = null,
         subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
         progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
-        timelineId: String? = null,
         deferPublication: Boolean = false,
         expectedMetadataOwner: AuthScopeSnapshot? = null,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
@@ -331,7 +329,7 @@ open class PlaybackSessionManager(
          */
         var leasedSessionId: String? = null
         try {
-            if (progressPersistence != ProgressPersistenceV3.SERVER && startPosition == null) {
+            if (progressPersistence == ProgressPersistenceV3.CLIENT && startPosition == null) {
                 return@withLock ApiResult.Error(
                     code = 400,
                     error = "client_progress_requires_start_position",
@@ -358,7 +356,6 @@ open class PlaybackSessionManager(
                 subtitleFidelityPreference = subtitleFidelityPreference,
                 startPosition = startPosition,
                 progressPersistence = progressPersistence,
-                timelineId = timelineId,
                 audioTrackId = audioTrackIndex?.let { stableTrackId(fileId, "audio", it) },
                 audioTrackIndex = audioTrackIndex,
                 subtitleTrackId = subtitleTrackIndex?.takeIf { it >= 0 }
@@ -372,8 +369,7 @@ open class PlaybackSessionManager(
                 // identical without tripping the validator. The replan path and
                 // the track id above already filter negatives the same way.
                 subtitleTrackIndex = subtitleTrackIndex?.takeIf { it >= 0 },
-                clientFeatures = playbackClientFeaturesV3(clientPlaybackContext) +
-                    if (progressPersistence == ProgressPersistenceV3.CLIENT_BOUND) listOf(org.siloserver.silo.network.apiv2.BOUND_CLIENT_TIMELINE_FEATURE) else emptyList(),
+                clientFeatures = playbackClientFeaturesV3(clientPlaybackContext),
                 metered = network.metered,
                 bandwidthEstimateKbps = network.bandwidthEstimateKbps,
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
@@ -1725,7 +1721,6 @@ open class PlaybackSessionManager(
      * the same predicate the rest of the manager uses for absence.
      */
     private fun ApiResult<Unit>?.isStopDischarged(): Boolean =
-        isPlaybackOwnerLossTerminal() ||
         this is ApiResult.Success || this?.isPlaybackSessionMissingError() == true
 
     private suspend fun stopCandidateSessionIfUnowned(
@@ -2583,9 +2578,6 @@ open class PlaybackSessionManager(
      * Reports the current playback position to the server.
      * Called periodically (every ~10 seconds) during active playback.
      */
-    suspend fun discoverTimeline(fileId: Int, itemId: String, expectedOwner: AuthScopeSnapshot) = playbackRepository.discoverTimeline(fileId, itemId, expectedOwner)
-    suspend fun boundResume(captured: org.siloserver.silo.network.apiv2.CapturedPlaybackManifest) = playbackRepository.boundResume(captured)
-
     open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
 
     open suspend fun reportProgress(

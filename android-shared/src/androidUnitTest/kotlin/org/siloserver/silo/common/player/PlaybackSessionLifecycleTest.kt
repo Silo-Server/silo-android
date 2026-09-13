@@ -53,28 +53,16 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
-    @Test fun `HTTP owner lost problem is uncertainty not terminal abandonment`() = runTest {
-        val manager = object : FakeSessionManager() { override fun isSequenced(sessionId: String) = true }
-        manager.stopResult = ApiResult.Error(503, "playback_owner_lost", "uncertain")
-        val lifecycle = newLifecycle(manager)
-        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("part"), manageProgress = false)
-        assertFalse(lifecycle.stop("part"))
-        assertFalse(lifecycle.wasAbandoned("part"))
-        assertEquals("Playback stop is pending. Retry from playback recovery.", (lifecycle.state.value as SessionState.Failed).message)
-        manager.stopResult = ApiResult.Success(Unit)
-        assertTrue(lifecycle.stop("part"))
-    }
-
-    @Test fun `bound final flush stays local and pending stop retains old ownership for terminal retry`() = runTest {
+    @Test fun `sequenced final flush stays part-local and pending stop retains old ownership for terminal retry`() = runTest {
         val manager = object : FakeSessionManager() { override fun isSequenced(sessionId: String) = true }
         manager.stopResult = ApiResult.Error(0, "stop_pending", "pending")
         val lifecycle = newLifecycle(manager)
-        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("bound-part"))
-        lifecycle.reportPosition(30.0, 400.0, true, "bound-part", 630.0, 1000.0)
-        assertFalse(lifecycle.stop("bound-part"))
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("part"))
+        lifecycle.reportPosition(30.0, 400.0, true, "part", 630.0, 1000.0)
+        assertFalse(lifecycle.stop("part"))
         assertEquals(30.0, manager.lastProgressPosition)
         manager.stopResult = ApiResult.Success(Unit)
-        assertTrue(lifecycle.stop("bound-part"))
+        assertTrue(lifecycle.stop("part"))
         assertEquals(2, manager.stopCallCount)
         assertEquals(30.0, manager.lastProgressPosition)
         assertTrue(lifecycle.state.value is SessionState.Idle)
