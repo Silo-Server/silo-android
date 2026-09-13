@@ -34,7 +34,7 @@ class RequestsV2Test {
             respond(if (calls == 1) """{"items":[$record],"page":{"has_more":true,"next_cursor":"opaque"}}"""
                 else """{"items":[],"page":{"has_more":false}}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val result = assertIs<ApiResult.Success<*>>(DefaultRequestsApi(client).mine())
+        val result = assertIs<ApiResult.Success<*>>(DefaultRequestsApi(client, ApiV2Gate.Unrestricted).mine())
         assertEquals(2, calls)
         assertEquals(1, (result.data as org.siloserver.silo.model.request.RequestsListResponse).requests.size)
         client.close()
@@ -44,7 +44,7 @@ class RequestsV2Test {
         val client = HttpClient(MockEngine {
             respond("""{"items":[$record],"page":{"has_more":true}}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        assertEquals("requests_incomplete", assertIs<ApiResult.Error>(DefaultRequestsApi(client).mine()).error)
+        assertEquals("requests_incomplete", assertIs<ApiResult.Error>(DefaultRequestsApi(client, ApiV2Gate.Unrestricted).mine()).error)
         client.close()
     }
 
@@ -52,7 +52,7 @@ class RequestsV2Test {
         val client = HttpClient(MockEngine {
             respond("{}", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        assertIs<ApiResult.NetworkError>(DefaultRequestsApi(client).mine())
+        assertEquals("invalid_response", assertIs<ApiResult.Error>(DefaultRequestsApi(client, ApiV2Gate.Unrestricted).mine()).error)
         client.close()
     }
 
@@ -64,7 +64,7 @@ class RequestsV2Test {
             respond("""{"type":"https://siloserver.org/docs/api/v2/problems/conflict","title":"Conflict","status":409,"detail":"Already requested","instance":"urn:test"}""", HttpStatusCode.Conflict,
                 headersOf(HttpHeaders.ContentType, "application/problem+json"))
         }) { install(ContentNegotiation) { json(SiloJson) } }
-        assertIs<ApiResult.Error>(DefaultRequestsApi(client).create(CreateMediaRequest("movie", 1, title = "Film")))
+        assertIs<ApiResult.Error>(DefaultRequestsApi(client, ApiV2Gate.Unrestricted).create(CreateMediaRequest("movie", 1, title = "Film")))
         assertEquals(1, calls)
         client.close()
     }

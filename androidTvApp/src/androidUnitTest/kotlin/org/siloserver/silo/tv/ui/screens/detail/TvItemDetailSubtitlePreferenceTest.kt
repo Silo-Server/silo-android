@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -154,9 +156,9 @@ class TvItemDetailSubtitlePreferenceTest {
             catalogRepository = CatalogRepository(CatalogApi(client)),
             personalDataRepository = PersonalDataRepository(PersonalDataApi(client)),
             playerSettingsStore = FakePlayerSettingsStore(),
-            profileRepository = ProfileRepository(ProfileApi(client), tokenManager),
+            profileRepository = ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokenManager),
             profileSettings = ProfileSettingsController(SettingsRepository(settingsApi)),
-            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client)),
+            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
             contentId = CONTENT_ID,
             tokenManager = tokenManager,
             identityTransitions = org.siloserver.silo.network.DefaultIdentityTransitionBarrier(),
@@ -191,7 +193,7 @@ class TvItemDetailSubtitlePreferenceTest {
         private val capabilities: SettingsCapabilitiesResult =
             SettingsCapabilitiesResult.Available(SettingsContractCapabilities(revision = 1)),
         private val effective: EffectiveSettingValuesResponse = EffectiveSettingValuesResponse(),
-    ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
+    ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
         override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
 
         override suspend fun getEffectiveValues(

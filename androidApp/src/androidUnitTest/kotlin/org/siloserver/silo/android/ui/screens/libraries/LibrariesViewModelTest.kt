@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.libraries
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
@@ -383,7 +385,7 @@ class LibrariesViewModelTest {
 
         fun viewModel(browsePrefs: BrowsePrefsStore? = null) = LibrariesViewModel(
             personalDataRepository = PersonalDataRepository(PersonalDataApi(client)),
-            sectionRepository = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens))),
+            sectionRepository = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
             catalogRepository = CatalogRepository(CatalogApi(client)),
             browsePrefs = browsePrefs,
         )

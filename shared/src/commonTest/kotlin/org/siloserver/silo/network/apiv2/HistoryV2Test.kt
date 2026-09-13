@@ -32,7 +32,7 @@ class HistoryV2Test {
             respond(body, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = HistoryV2Api(client)
+            val api = HistoryV2Api(client, ApiV2Gate.Unrestricted)
             val first = assertIs<ApiResult.Success<HistoryPageV2>>(api.page()).data
             assertEquals("episode-1", first.items.single().watch.mediaItemId)
             assertEquals("future-source", first.items.single().watch.source)
@@ -53,7 +53,7 @@ class HistoryV2Test {
             """{"items":[{"content_id":"m1","type":"movie","title":"Film"}],"page":{"has_more":false}}""")) {
             var calls = 0
             val client = HttpClient(MockEngine { calls++; respond(body, headers = headersOf(HttpHeaders.ContentType, "application/json")) })
-            try { assertFalse(HistoryV2Api(client).page() is ApiResult.Success); assertEquals(1, calls) }
+            try { assertFalse(HistoryV2Api(client, ApiV2Gate.Unrestricted).page() is ApiResult.Success); assertEquals(1, calls) }
             finally { client.close() }
         }
     }
@@ -62,7 +62,7 @@ class HistoryV2Test {
         var calls = 0
         val client = HttpClient(MockEngine { calls++; respond(page("", "same"), headers = headersOf(HttpHeaders.ContentType, "application/json")) })
         try {
-            val api = HistoryV2Api(client)
+            val api = HistoryV2Api(client, ApiV2Gate.Unrestricted)
             val first = assertIs<ApiResult.Success<HistoryPageV2>>(api.page()).data
             assertIs<ApiResult.Error>(api.page(limit = 50, continuation = first.continuation))
             assertEquals(1, calls)
@@ -79,7 +79,7 @@ class HistoryV2Test {
             else respond(page("", "expired"), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = HistoryV2Api(client)
+            val api = HistoryV2Api(client, ApiV2Gate.Unrestricted)
             val first = assertIs<ApiResult.Success<HistoryPageV2>>(api.page()).data
             assertEquals("invalid_cursor", assertIs<ApiResult.Error>(api.page(continuation = first.continuation)).error)
             assertEquals(listOf(null, "expired"), cursors)
@@ -99,7 +99,7 @@ class HistoryV2Test {
             respond(page("", "next"), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = HistoryV2Api(client, tokenManager = tokens)
+            val api = HistoryV2Api(client, ApiV2Gate.Unrestricted, tokens)
             val first = assertIs<ApiResult.Success<HistoryPageV2>>(api.page()).data
             scope = scope.copy(profileId = "p2", identityGeneration = 2)
             assertEquals("identity_changed", assertIs<ApiResult.Error>(api.page(continuation = first.continuation)).error)
@@ -113,7 +113,7 @@ class HistoryV2Test {
         val started = CompletableDeferred<Unit>()
         val client = HttpClient(MockEngine { started.complete(Unit); awaitCancellation() })
         try {
-            val job = async { HistoryV2Api(client).page() }
+            val job = async { HistoryV2Api(client, ApiV2Gate.Unrestricted).page() }
             withContext(Dispatchers.Default) { withTimeout(10_000) { started.await() } }
             job.cancelAndJoin()
             assertTrue(job.isCancelled)

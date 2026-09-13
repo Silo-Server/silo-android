@@ -126,7 +126,7 @@ private fun <T> unsupportedScopedDeviceLoginOperation(): ApiResult<T> = ApiResul
  * Ktor-backed implementation. Uses [safeApiV2Call]
  * for unified error handling, matching [AuthApi]'s pattern.
  */
-class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) : DeviceLoginApi {
+class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: ApiV2Gate) : DeviceLoginApi {
 
     override suspend fun startDeviceLogin(
         deviceName: String?,

@@ -47,10 +47,10 @@ private class FakeApi(
     var serverList: List<DownloadRecord> = emptyList(),
     var deleteResult: (String) -> ApiResult<Unit> = { ApiResult.Success(Unit) },
 ) : org.siloserver.silo.network.api.DownloadsApi(
-    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices),
+    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     tokens = org.siloserver.silo.network.TokenManagerImpl(),
     creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices,
-        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices)),
+        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), OfflineDeleteNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
 ) {
     val deleteCalls = mutableListOf<String>()
     override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> = ApiResult.Success(DownloadsListResponse(serverList))

@@ -27,7 +27,7 @@ class EventsSocketV2Test {
             respond(wire,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val api = EventsSocketV2Api(c,tokens)
+            val api = EventsSocketV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Success<WsTicketResponse>>(api.ticket())
             replace = true
             assertEquals("identity_changed",assertIs<ApiResult.Error>(api.ticket()).error)
@@ -67,7 +67,7 @@ class EventsSocketV2Test {
             }
         }) { install(WebSockets) }
         try {
-            val api = EventsSocketV2Api(c,tokens)
+            val api = EventsSocketV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val home = DefaultHomeRealtimeClient(api)
             val notifications = DefaultNotificationsRealtimeClient(api)
             repeat(2) { assertIs<HomeRealtimeEvent.Closed>(home.connect().toList().last()) }

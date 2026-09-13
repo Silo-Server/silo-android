@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.reader
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -308,7 +310,7 @@ class ReaderViewModelReaderTargetSourceTest {
             }
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens)
+            val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens, ApiV2Gate.Unrestricted)
             val repository = EbookReaderRepository(EbookReaderApi(v2), v2)
             val vm = viewModel(catalogRepository(responseBody = itemDetailJson(fileName = "book.epub", container = "epub")),
                 DownloadStorage(tmp.newFolder("annotation-downloads")), readerRepository = repository,
@@ -422,6 +424,7 @@ class ReaderViewModelReaderTargetSourceTest {
                 install(ContentNegotiation) { json(SiloJson) }
             },
             FakeTokenManager(),
+            org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
         )
         return EbookReaderRepository(EbookReaderApi(v2), v2)
     }
@@ -497,7 +500,7 @@ class ReaderViewModelReaderTargetSourceTest {
     }
 
     private class FakeProfileRepository : ProfileRepository(
-        profileApi = ProfileApi(noOpClient()),
+        profileApi = ProfileApi(noOpClient(), ApiV2Gate.Unrestricted),
         tokenManager = FakeTokenManager(),
     ) {
         override suspend fun getActiveProfileId(): String = PROFILE_ID

@@ -17,13 +17,13 @@ class PersonRefreshV2Test {
             assertEquals(owner,it.attributes[AuthScopeAttributeKey]); assertEquals(0,it.body.contentLength ?: 0)
             respond("""{"status":"queued","person_id":"9007199254740993"}""",HttpStatusCode.Accepted,headersOf(HttpHeaders.ContentType,"application/json"))
         })
-        try { assertIs<ApiResult.Success<Unit>>(PersonRefreshV2Api(c,tokens).refresh(9007199254740993,owner)) } finally {c.close()}
+        try { assertIs<ApiResult.Success<Unit>>(PersonRefreshV2Api(c, tokens, ApiV2Gate.Unrestricted).refresh(9007199254740993,owner)) } finally {c.close()}
     }
     @Test fun rejectsWrongStatusNumericForeignAndMissingReceipts()=runTest {
         var body="{}"; var status=HttpStatusCode.Accepted
         val c=HttpClient(MockEngine {respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val api=PersonRefreshV2Api(c,tokens)
+            val api=PersonRefreshV2Api(c, tokens, ApiV2Gate.Unrestricted)
             for(b in listOf("{}","""{"status":"queued","person_id":7}""","""{"status":"queued","person_id":"8"}""","""{"status":"done","person_id":"7"}""")) {
                 body=b; assertFalse(api.refresh(7,owner) is ApiResult.Success)
             }
@@ -38,7 +38,7 @@ class PersonRefreshV2Test {
             respond("""{"status":"queued","person_id":"7"}""",if(late) HttpStatusCode.Accepted else HttpStatusCode.Unauthorized,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val api=PersonRefreshV2Api(c,tokens)
+            val api=PersonRefreshV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.refresh(7,owner)); assertEquals(1,sends)
             val old=owner; late=true
             assertIs<ApiResult.Error>(api.refresh(7,old)); assertIs<ApiResult.Error>(api.detail(7,old)); assertEquals(2,sends)
@@ -51,7 +51,7 @@ class PersonRefreshV2Test {
             respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val api=PersonRefreshV2Api(c,tokens)
+            val api=PersonRefreshV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Success<*>>(api.detail(7,owner))
             body=body.replace("\"7\"","\"8\""); assertFalse(api.detail(7,owner) is ApiResult.Success)
             body=body.replace("\"8\"","7"); assertFalse(api.detail(7,owner) is ApiResult.Success)

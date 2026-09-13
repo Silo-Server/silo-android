@@ -28,7 +28,7 @@ class CatalogV2Test {
             assertEquals(if (count++ == 0) null else "next", request.url.parameters["cursor"])
             respond(body(if (count == 1) "next" else null), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val api = CatalogV2Api(client)
+        val api = CatalogV2Api(client, ApiV2Gate.Unrestricted)
         val query = CatalogQueryV2(source = "person", personId = "p1", sort = "year", order = "desc")
         val first = assertIs<ApiResult.Success<CatalogPageV2<*>>>(api.browse(query)).data
         assertEquals("window", first.windowCursor)
@@ -57,7 +57,7 @@ class CatalogV2Test {
             CatalogRuleV2("genre", "contains", JsonPrimitive("Drama")),
             CatalogRuleV2("year", "between", JsonArray(listOf(JsonPrimitive("1990"), JsonPrimitive("1999")))),
         )))
-        assertIs<ApiResult.Success<*>>(CatalogV2Api(client).browse(CatalogQueryV2(libraryId = "7", groups = groups), imageSize = "small"))
+        assertIs<ApiResult.Success<*>>(CatalogV2Api(client, ApiV2Gate.Unrestricted).browse(CatalogQueryV2(libraryId = "7", groups = groups), imageSize = "small"))
         client.close()
     }
 
@@ -67,7 +67,7 @@ class CatalogV2Test {
             count++
             respond(body("same"), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val api = CatalogV2Api(client)
+        val api = CatalogV2Api(client, ApiV2Gate.Unrestricted)
         val first = assertIs<ApiResult.Success<CatalogPageV2<*>>>(api.browse(CatalogQueryV2())).data
         assertEquals("invalid_cursor", assertIs<ApiResult.Error>(api.browse(CatalogQueryV2(), first.continuation)).error)
         assertEquals(2, count)
@@ -81,7 +81,7 @@ class CatalogV2Test {
             assertNull(request.url.parameters["include_technical"])
             respond("""{"genres":[],"studios":[],"networks":[],"countries":[],"original_languages":[],"content_ratings":[],"authors":[],"narrators":[],"series":[],"technical":{"resolutions":["4K"],"audio_languages":[],"subtitle_languages":[]}}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        assertEquals(listOf("4K"), assertIs<ApiResult.Success<CatalogFiltersV2>>(CatalogV2Api(client).filters()).data.technical?.resolutions)
+        assertEquals(listOf("4K"), assertIs<ApiResult.Success<CatalogFiltersV2>>(CatalogV2Api(client, ApiV2Gate.Unrestricted).filters()).data.technical?.resolutions)
         client.close()
     }
     @Test fun viewerChangeRejectsContinuationBeforeSending() = runTest {
@@ -94,7 +94,7 @@ class CatalogV2Test {
             calls++
             respond(body("next"), headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val api = CatalogV2Api(client, tokenManager = tokens)
+        val api = CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens)
         val first = assertIs<ApiResult.Success<CatalogPageV2<*>>>(api.browse(CatalogQueryV2())).data
         identity = identity.copy(profileId = "p2", identityGeneration = 2)
         assertEquals("identity_changed", assertIs<ApiResult.Error>(api.browse(CatalogQueryV2(), first.continuation)).error)
@@ -112,7 +112,7 @@ class CatalogV2Test {
             assertEquals("100", request.url.parameters["limit"])
             respond("""{"matches":["Andy Weir"],"has_more":true}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val result = assertIs<ApiResult.Success<CatalogFacetMatchesV2>>(CatalogV2Api(client).searchFacet(CatalogFacetScopeV2(source = "library_collection", collectionId = "c1"), "author", "And"))
+        val result = assertIs<ApiResult.Success<CatalogFacetMatchesV2>>(CatalogV2Api(client, ApiV2Gate.Unrestricted).searchFacet(CatalogFacetScopeV2(source = "library_collection", collectionId = "c1"), "author", "And"))
         assertTrue(result.data.hasMore)
         assertEquals(listOf("Andy Weir"), result.data.matches)
         client.close()

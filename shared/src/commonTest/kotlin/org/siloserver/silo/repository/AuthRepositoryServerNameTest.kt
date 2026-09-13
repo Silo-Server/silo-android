@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -96,7 +98,7 @@ class AuthRepositoryServerNameTest {
         branding: BrandingApi,
         health: HealthApi,
     ) = AuthRepository(
-        authApi = AuthApi(unusedClient()),
+        authApi = AuthApi(unusedClient(), ApiV2Gate.Unrestricted),
         tokenManager = FakeTokenManager,
         serverRegistry = registry,
         healthApi = health,

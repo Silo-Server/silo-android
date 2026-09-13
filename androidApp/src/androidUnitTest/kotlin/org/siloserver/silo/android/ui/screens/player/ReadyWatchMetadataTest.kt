@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
@@ -31,7 +33,7 @@ class ReadyWatchMetadataTest {
             respond("""{"content_id":"movie:a","type":"movie","title":"A","versions":[{"file_id":"7","duration_seconds":90}]}""",
                 code, headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        try { block(CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens)))) } finally { client.close() }
+        try { block(CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted)))) } finally { client.close() }
     }
     private fun lease(repo: CatalogRepository, captured: AuthScopeSnapshot? = owner, url: String = "https://example.invalid") =
         ReadyWatchMetadata(repo, captured, "movie:a", url) { ownsLoad }

@@ -68,8 +68,7 @@ class ApiV2ContractTest {
         assertEquals("1", account.id)
         assertEquals("laura", account.username)
         assertEquals("laura@example.test", account.email)
-        assertEquals(AccountRole.Known.USER, account.role.known)
-        assertFalse(account.role.isAdmin)
+        assertEquals(AccountRole.USER, account.role)
         assertEquals(listOf("marker_edit"), account.permissions)
         assertTrue(account.downloadAllowed)
         assertNull(account.impersonation, "impersonation is absent outside an impersonation session")
@@ -92,9 +91,7 @@ class ApiV2ContractTest {
     fun accountUnknownFieldAndUnknownRoleAreObservable() {
         val body = with(ApiV2Fixtures.bodyObject("get_current_user_ok"), "role" to JsonPrimitive("auditor")).plusUnknown()
         val account = ApiV2Fixtures.decode<Account>(body)
-        assertEquals("auditor", account.role.wire)
-        assertNull(account.role.known, "an unknown role must not collapse to a known default")
-        assertFalse(account.role.isAdmin)
+        assertEquals("auditor", account.role.wire, "an unknown role must not collapse to a known default")
     }
 
     @Test
@@ -106,7 +103,7 @@ class ApiV2ContractTest {
         assertEquals(emptyList(), account.permissions)
         assertFalse(account.downloadAllowed)
         assertNull(account.impersonation)
-        assertTrue(account.role.isAdmin)
+        assertEquals(AccountRole.ADMIN, account.role)
     }
 
     // --- listProgress ---
@@ -120,7 +117,6 @@ class ApiV2ContractTest {
         assertEquals(5400.0, entry.durationSeconds)
         assertFalse(entry.completed)
         assertEquals("2026-01-02T03:04:05.000Z", entry.updatedAt)
-        assertEquals(1767323045000L, entry.updatedAtEpochMillis)
         assertTrue(page.page.hasMore)
         assertNotNull(page.page.nextCursor)
     }
@@ -151,7 +147,7 @@ class ApiV2ContractTest {
             """{"media_item_id":"m","position_seconds":1,"duration_seconds":2,"updated_at":"nonsense"}""",
         )
         assertFalse(entry.completed)
-        assertNull(entry.updatedAtEpochMillis, "an unparseable instant is observable as null, not a crash")
+        assertEquals("nonsense", entry.updatedAt, "instants are kept as wire text, never parsed at decode time")
     }
 
     // --- updateProfile ---
@@ -163,17 +159,17 @@ class ApiV2ContractTest {
         assertEquals("Laura", profile.name)
         assertEquals("preset:fox", profile.avatar)
         assertEquals("/avatars/presets/fox.png", profile.avatarUrl)
-        assertEquals(AvatarSource.Known.PRESET, profile.avatarSource.known)
+        assertEquals("preset", profile.avatarSource.wire)
         assertFalse(profile.hasPin)
         assertTrue(profile.isPrimary)
         assertEquals("", profile.maxContentRating, "cleared string members are emitted as empty, never absent")
-        assertEquals(QualityPreference.Known.AUTO, profile.qualityPreference.known)
+        assertEquals("auto", profile.qualityPreference.wire)
         assertEquals("en", profile.language)
-        assertEquals(SubtitleMode.Known.AUTO, profile.subtitleMode.known)
+        assertEquals("auto", profile.subtitleMode.wire)
         assertTrue(profile.autoSkipIntro)
         assertEquals(listOf("3"), profile.allowedLibraryIds)
-        assertEquals(MaxPlaybackQuality.Known.P1080, profile.maxPlaybackQuality.known)
-        assertEquals(1767323045000L, parseApiV2Instant(profile.createdAt))
+        assertEquals("1080p", profile.maxPlaybackQuality.wire)
+        assertEquals("2026-01-02T03:04:05.000Z", profile.createdAt)
     }
 
     @Test
@@ -187,13 +183,9 @@ class ApiV2ContractTest {
         ).plusUnknown()
         val profile = ApiV2Fixtures.decode<ProfileV2>(body)
         assertEquals("hologram", profile.avatarSource.wire)
-        assertNull(profile.avatarSource.known)
         assertEquals("balanced", profile.qualityPreference.wire)
-        assertNull(profile.qualityPreference.known)
         assertEquals("forced_only", profile.subtitleMode.wire)
-        assertNull(profile.subtitleMode.known)
         assertEquals("4320p", profile.maxPlaybackQuality.wire)
-        assertNull(profile.maxPlaybackQuality.known)
     }
 
     @Test
@@ -204,16 +196,16 @@ class ApiV2ContractTest {
         )
         assertEquals("", minimal.avatar)
         assertNull(minimal.avatarUrl)
-        assertEquals(AvatarSource.Known.NONE, minimal.avatarSource.known)
+        assertEquals("none", minimal.avatarSource.wire)
         assertFalse(minimal.hasPin)
         assertFalse(minimal.isChild)
         assertFalse(minimal.isPrimary)
         assertEquals("", minimal.maxContentRating)
-        assertEquals(QualityPreference.Known.AUTO, minimal.qualityPreference.known)
+        assertEquals("auto", minimal.qualityPreference.wire)
         assertEquals("", minimal.language)
         assertEquals("", minimal.preferredMetadataLanguage)
         assertEquals("", minimal.subtitleLanguage)
-        assertEquals(SubtitleMode.Known.AUTO, minimal.subtitleMode.known)
+        assertEquals("auto", minimal.subtitleMode.wire)
         assertFalse(minimal.autoSkipIntro)
         assertFalse(minimal.autoSkipCredits)
         assertFalse(minimal.autoSkipRecap)
@@ -221,7 +213,7 @@ class ApiV2ContractTest {
         assertFalse(minimal.showForcedSubtitles)
         assertFalse(minimal.libraryRestrictionsEnabled)
         assertEquals(emptyList(), minimal.allowedLibraryIds)
-        assertEquals(MaxPlaybackQuality.Known.P1080, minimal.maxPlaybackQuality.known)
+        assertEquals("1080p", minimal.maxPlaybackQuality.wire)
 
         // Explicit null: nullable member → null; non-nullable member with a
         // default → coerced to the default (coerceInputValues), documented here
@@ -306,18 +298,5 @@ class ApiV2ContractTest {
         assertNull(problem.instance)
         assertEquals(emptyList(), problem.errors)
         assertEquals("x", problem.code)
-    }
-
-    // --- Instants ---
-
-    @Test
-    fun instantParsing() {
-        assertEquals(1767323045000L, parseApiV2Instant("2026-01-02T03:04:05Z"))
-        assertEquals(1767323045123L, parseApiV2Instant("2026-01-02T03:04:05.123456Z"))
-        assertEquals(1767323045000L - 3_600_000L, parseApiV2Instant("2026-01-02T03:04:05+01:00"))
-        assertEquals(0L, parseApiV2Instant("1970-01-01T00:00:00Z"))
-        assertNull(parseApiV2Instant("2026-01-02"))
-        assertNull(parseApiV2Instant("2026-01-02T03:04:05"))
-        assertNull(parseApiV2Instant(""))
     }
 }

@@ -30,7 +30,7 @@ class EbookReaderV2Test {
             else reply("""{"progress":{"content_id":"book","file_id":"7","location":"back","progress":0.2,"updated_at":"2026-09-05T12:00:00Z"}}""")
         }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val event = SaveEbookProgressRequest(7, "back", 0.2, "2026-09-05T12:00:00Z")
             assertIs<ApiResult.Error>(api.saveProgress("book", event, scope))
             assertEquals(0.2, assertIs<ApiResult.Success<EbookReaderProgress>>(api.saveProgress("book", event, scope)).data.progress)
@@ -45,7 +45,7 @@ class EbookReaderV2Test {
         var body = "{}"
         val c = client { reply(body) }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertNull(assertIs<ApiResult.Success<EbookReaderProgress>>(api.progress("book", scope)).data.fileId)
             body = """{"progress":{"content_id":"other","file_id":"7","location":"x","progress":0.5,"updated_at":"2026-09-05T12:00:00Z"}}"""
             assertIs<ApiResult.Error>(api.progress("book", scope))
@@ -66,7 +66,7 @@ class EbookReaderV2Test {
             }
         }
         try {
-            val session = EbookConfigSession(EbookReaderV2Api(c, tokens), "book", scope)
+            val session = EbookConfigSession(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted), "book", scope)
             assertIs<ApiResult.Success<JsonObject>>(session.load())
             val settings = buildJsonObject { put("textScale", 1.2) }
             assertIs<ApiResult.Success<Unit>>(session.saveAndroidDisplay(settings))
@@ -84,7 +84,7 @@ class EbookReaderV2Test {
             reply("""{"content_id":"book","config":{}}""")
         }
         try {
-            val session = EbookConfigSession(EbookReaderV2Api(c, tokens), "book", captured)
+            val session = EbookConfigSession(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted), "book", captured)
             assertIs<ApiResult.Error>(session.load())
             assertIs<ApiResult.Error>(session.saveAndroidDisplay(JsonObject(emptyMap())))
             assertEquals(0, puts)
@@ -96,7 +96,7 @@ class EbookReaderV2Test {
             reply("""{"kindle_conversion":true,"source_formats":["mobi"],"served_format":"epub","header":"X-Conversion","header_failed_value":"failed"}""")
         }
         try {
-            val capability = assertIs<ApiResult.Success<EbookConversionCapability>>(EbookReaderV2Api(c, tokens).capability()).data
+            val capability = assertIs<ApiResult.Success<EbookConversionCapability>>(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted).capability()).data
             assertTrue(capability.enabled); assertEquals(listOf("mobi"), capability.sourceFormats)
             assertEquals("X-Conversion", capability.header)
         } finally { c.close() }
@@ -105,10 +105,10 @@ class EbookReaderV2Test {
     @Test fun missingWriteReceiptAndMalformedConfigCannotBeAcknowledged() = runTest {
         val c = client { reply("{}") }
         try {
-            val api = EbookReaderV2Api(c, tokens)
+            val api = EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.saveProgress("book", SaveEbookProgressRequest(7, "page", 0.2, "2026-09-05T12:00:00Z"), scope))
             val session = EbookConfigSession(api, "book", scope)
-            assertIs<ApiResult.NetworkError>(session.load())
+            assertEquals("invalid_response", assertIs<ApiResult.Error>(session.load()).error)
             assertEquals("config_reload_required", assertIs<ApiResult.Error>(session.saveAndroidDisplay(JsonObject(emptyMap()))).error)
         } finally { c.close() }
     }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -113,8 +115,8 @@ class TvMembershipConsumerTest {
         } as PlayerSettingsStore
         val tokens = TokenManagerImpl(barrier)
         return TvItemDetailViewModel(CatalogRepository(CatalogApi(client)), repository, settings,
-            ProfileRepository(ProfileApi(client), tokens), ProfileSettingsController(SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())))),
-            MetadataAiRepository(DefaultMetadataAiApi(client)), "", tokenManager = tokens, identityTransitions = barrier)
+            ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokens), ProfileSettingsController(SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)))),
+            MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)), "", tokenManager = tokens, identityTransitions = barrier)
     }
 
     private class TestPort(private val release: CompletableDeferred<Unit>? = null) : MembershipPort {

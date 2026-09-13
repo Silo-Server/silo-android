@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.data.sync
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
@@ -34,7 +36,7 @@ class MembershipOutboxTest {
     private val clients = mutableListOf<HttpClient>()
     private fun outbox(engine: MockEngine, owner: String = "process-one"): MembershipOutbox {
         val client = HttpClient(engine).also { clients += it }
-        return MembershipOutbox(dao, MembershipV2Api(client, tokenManager = tokens), tokens, owner)
+        return MembershipOutbox(dao, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, owner)
     }
     @AfterTest fun close() { clients.forEach { it.close() }; db.close(); context.deleteDatabase(name) }
 
@@ -151,7 +153,7 @@ class MembershipOutboxTest {
         }
         var sends = 0
         val client = HttpClient(MockEngine { sends++; respond("", HttpStatusCode.NoContent) }).also { clients += it }
-        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, tokenManager = tokens), tokens, "process-one")
+        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, "process-one")
         val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
         val pending = async { box.send(id, authority) }; committed.await()
         assertEquals(MembershipOutbox.SENDING, realDao.getById(id)?.state)
@@ -175,7 +177,7 @@ class MembershipOutboxTest {
             }
         }
         val client = HttpClient(MockEngine { error("No mutation may start") }).also { clients += it }
-        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, tokenManager = tokens), tokens, "process-one")
+        val box = MembershipOutbox(controlledDao, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, "process-one")
         val id = box.enqueue(authority, "item", MembershipOutbox.ListKind.FAVORITE, true)
         val pending = async { box.send(id, authority) }; reading.await()
         pending.cancel(); pending.join()
@@ -203,7 +205,7 @@ class MembershipOutboxTest {
             override suspend fun snapshotDurableLoginAuthority() = login
         }
         val client = HttpClient(MockEngine { error("Recovery must never send") }).also { clients += it }
-        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, provider)
         val first = async { runtime.captureAuthority() }; entered.await()
         val second = async { runtime.send(id, login) }
         assertEquals(MembershipOutbox.SENDING, realDao.getById(id)?.state)
@@ -232,7 +234,7 @@ class MembershipOutboxTest {
             override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login", scope)
         }
         val client = HttpClient(MockEngine { error("No mutation") }).also { clients += it }
-        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        val runtime = MembershipRuntime(controlled, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, provider)
         assertFailsWith<IllegalStateException> { runtime.captureAuthority() }
         val cancelled = async { runtime.captureAuthority() }; committed.await(); cancelled.cancel(); cancelled.join()
         assertNotNull(runtime.captureAuthority())
@@ -246,7 +248,7 @@ class MembershipOutboxTest {
             override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority(loginId, scope)
         }
         val client = HttpClient(MockEngine { error("Stale callbacks cannot send") }).also { clients += it }
-        val runtime = MembershipRuntime(dao, MembershipV2Api(client, tokenManager = tokens), tokens, provider)
+        val runtime = MembershipRuntime(dao, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, provider)
         val first = assertNotNull(runtime.captureAuthority())
         val a = runtime.enqueue(first, "item", MembershipOutbox.ListKind.FAVORITE, true)
         scope = scope.copy(profileId = "p2", identityGeneration = 2)

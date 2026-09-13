@@ -39,7 +39,7 @@ class ApiV2NoFallbackTest {
     @Test
     fun failedUpdateProfileIsNotRetriedOnV1() = runTest {
         val recorded = mutableListOf<String>()
-        val api = ProfileApi(client(recorded, HttpStatusCode.InternalServerError, """{"type":"https://siloserver.org/docs/api/v2/problems/internal","title":"Internal","status":500,"detail":"boom","instance":"urn:x"}"""))
+        val api = ProfileApi(client(recorded, HttpStatusCode.InternalServerError, """{"type":"https://siloserver.org/docs/api/v2/problems/internal","title":"Internal","status":500,"detail":"boom","instance":"urn:x"}"""), ApiV2Gate.Unrestricted)
 
         val result = api.updateProfile("p-owner", UpdateProfileRequest(name = "Laura"))
 
@@ -53,7 +53,7 @@ class ApiV2NoFallbackTest {
     @Test
     fun validationProblemSurfacesCodeAndDetailWithoutRetry() = runTest {
         val recorded = mutableListOf<String>()
-        val api = ProfileApi(client(recorded, HttpStatusCode.UnprocessableEntity, ApiV2Fixtures.body("update_profile_null_not_clearable")))
+        val api = ProfileApi(client(recorded, HttpStatusCode.UnprocessableEntity, ApiV2Fixtures.body("update_profile_null_not_clearable")), ApiV2Gate.Unrestricted)
 
         val error = assertIs<ApiResult.Error>(api.updateProfile("p-owner", UpdateProfileRequest(name = "Laura")))
 

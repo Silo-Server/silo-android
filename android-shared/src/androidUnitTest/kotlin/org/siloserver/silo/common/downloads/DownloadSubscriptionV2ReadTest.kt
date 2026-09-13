@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -47,7 +49,7 @@ class DownloadSubscriptionV2ReadTest {
         })
         var enqueues = 0
         try {
-            val factory = DownloadSubscriptionEvaluatorFactory(CatalogRepository(CatalogApi(client, CatalogV2Api(client, tokenManager = tokens))),
+            val factory = DownloadSubscriptionEvaluatorFactory(CatalogRepository(CatalogApi(client, CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens))),
                 existingFileIds = { emptySet() }, enqueue = { _, _ -> enqueues++ })
             assertFailsWith<IllegalStateException> { factory.create().evaluate(subscription()) }
             assertEquals(0, enqueues)

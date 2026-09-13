@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
@@ -371,10 +373,10 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 sleepTimer = SleepTimerController(scope),
                 subtitlesRepository = SubtitlesRepository(
                     DefaultSubtitlesApi(
-                        org.siloserver.silo.network.apiv2.SubtitleReadsV2Api(client, tokenManager),
-                        org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api(client, tokenManager),
-                        org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api(client, tokenManager),
-                        org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api(client, tokenManager),
+                        org.siloserver.silo.network.apiv2.SubtitleReadsV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
                     ),
                 ),
                 userItemStatePort = NoOpUserItemStatePort,
@@ -437,7 +439,7 @@ class MobileVideoPlaybackStarterCancellationTest {
             val adoptionEntered = kotlinx.coroutines.CompletableDeferred<Unit>()
             var allocated = false
             val starter = MobileVideoPlaybackStarter(
-                catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager))),
+                catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager, ApiV2Gate.Unrestricted))),
                 playbackSessionManager = manager,
                 profileRepository = profileRepository,
                 capabilityDetector = PlaybackCapabilityDetector(
@@ -762,7 +764,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         val manager = RecordingPlaybackSessionManager(client, tokenManager)
         val context = ApplicationProvider.getApplicationContext<Application>()
         val starter = MobileVideoPlaybackStarter(
-            catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager))),
+            catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager, ApiV2Gate.Unrestricted))),
             playbackSessionManager = manager,
             profileRepository = profileRepository,
             capabilityDetector = PlaybackCapabilityDetector(
@@ -919,7 +921,7 @@ private class FakeProfileRepository(
     client: HttpClient,
     tokenManager: TokenManager,
     private val profile: Profile = Profile(id = PROFILE_ID, name = "Profile"),
-) : ProfileRepository(ProfileApi(client), tokenManager) {
+) : ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokenManager) {
     override suspend fun getActiveProfileId(): String = PROFILE_ID
 
     override suspend fun listProfiles(): ApiResult<List<Profile>> = ApiResult.Success(listOf(profile))
@@ -1147,7 +1149,7 @@ class MobileStartupMetadataOwnerTest {
             val manager = RecordingPlaybackSessionManager(client, tokens)
             val context = ApplicationProvider.getApplicationContext<Application>()
             val starter = MobileVideoPlaybackStarter(
-                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens))),
+                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))),
                 manager, FakeProfileRepository(client, tokens),
                 PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
                 FakePlayerSettingsStore(),
@@ -1209,7 +1211,7 @@ class MobileStartupAdoptedOwnerCleanupTest {
             }
             val context = ApplicationProvider.getApplicationContext<Application>()
             val starter = MobileVideoPlaybackStarter(
-                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens))),
+                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))),
                 manager, FakeProfileRepository(client, tokens),
                 PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
                 FakePlayerSettingsStore(), lifecycle,

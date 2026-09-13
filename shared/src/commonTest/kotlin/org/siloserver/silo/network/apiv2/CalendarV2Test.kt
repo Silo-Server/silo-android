@@ -23,7 +23,7 @@ class CalendarV2Test {
             respond(body, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = DefaultCalendarApi(client, tokens)
+            val api = DefaultCalendarApi(client, tokens, ApiV2Gate.Unrestricted)
             suspend fun read() = api.getCalendar("2026-06-08", "2026-06-14", "following", 3, "Europe/Amsterdam", owner)
             val event = read().getOrThrow().events.single().items.single()
             assertEquals(0, event.seasonNumber); assertEquals("series:1", event.detailContentId)
@@ -38,9 +38,9 @@ class CalendarV2Test {
             respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = DefaultCalendarApi(client, tokens); val original = owner
+            val api = DefaultCalendarApi(client, tokens, ApiV2Gate.Unrestricted); val original = owner
             suspend fun read() = api.getCalendar("2026-06-08", "2026-06-14", owner = original)
-            for (invalid in listOf("{}", valid.replace("\"items\"", "\"missing\""), valid.replace("\"episode:2\"", "2"))) {
+            for (invalid in listOf("{}", valid.replace("\"items\"", "\"missing\""), valid.replace("\"episode:2\"", "\"\""))) {
                 body = invalid; assertFalse(read() is ApiResult.Success)
             }
             body = valid; status = HttpStatusCode.Accepted; assertFalse(read() is ApiResult.Success)

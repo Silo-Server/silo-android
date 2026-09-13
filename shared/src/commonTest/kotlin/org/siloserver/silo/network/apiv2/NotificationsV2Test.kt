@@ -47,7 +47,7 @@ class NotificationsV2Test {
             else -> error("Unexpected request")
         } }
         try {
-            val repository = NotificationsRepository(NotificationsV2Api(c, identity), tokens = identity)
+            val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity)
             repository.refresh(); repository.markAllRead()
             assertEquals(1, posts); assertFalse(repository.rows.value.first().isRead)
             assertTrue(repository.rows.value.last().isRead); assertEquals(1, repository.unreadCount.value)
@@ -68,7 +68,7 @@ class NotificationsV2Test {
             else -> error("Unexpected request")
         } }
         try {
-            fun repo() = NotificationsRepository(NotificationsV2Api(c, identity), tokens = identity, authorities = identity, checkpoints = store)
+            fun repo() = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity, authorities = identity, checkpoints = store)
             repo().refresh(); repo().refresh()
             identity.login = "login-2"
             repo().refresh()
@@ -88,7 +88,7 @@ class NotificationsV2Test {
             }
         } }
         try {
-            val repository = NotificationsRepository(NotificationsV2Api(c, identity), tokens = identity)
+            val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity)
             repository.refresh()
             assertTrue(repository.rows.value.isEmpty()); assertEquals(0, repository.unreadCount.value)
         } finally { c.close() }
@@ -102,7 +102,7 @@ class NotificationsV2Test {
             else -> { posts++; reply("""{"code":"unauthorized"}""", HttpStatusCode.Unauthorized) }
         } }
         try {
-            val repository = NotificationsRepository(NotificationsV2Api(c, identity), tokens = identity)
+            val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity)
             repository.refresh(); repository.markAllRead()
             assertEquals(1, posts); assertFalse(repository.rows.value.single().isRead)
             assertEquals(1, repository.unreadCount.value)
@@ -113,7 +113,7 @@ class NotificationsV2Test {
         val barrier = DefaultIdentityTransitionBarrier()
         val c = client { request -> if (request.url.encodedPath.endsWith("unread-count")) reply("""{"count":1}""") else reply(page(row("old"))) }
         try {
-            val repository = NotificationsRepository(NotificationsV2Api(c, identity), tokens = identity, identityTransitions = barrier)
+            val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity, identityTransitions = barrier)
             repository.refresh()
             assertEquals(1, repository.rows.value.size)
             barrier.changing(IdentityTransitionKind.ACCOUNT_REPLACE) {

@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.settings.LibraryPlaybackPref
 import org.siloserver.silo.model.settings.LibraryPlaybackPrefRequest
 import org.siloserver.silo.model.settings.LibraryPlaybackPrefsResponse
@@ -107,7 +109,7 @@ class LibraryPlaybackPrefsStoreTest {
         val started = kotlinx.coroutines.CompletableDeferred<Unit>()
         val reply = kotlinx.coroutines.CompletableDeferred<Unit>()
         val client = HttpClient()
-        val api = object : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())) {
+        val api = object : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
             override suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> {
                 started.complete(Unit)
                 reply.await()
@@ -138,7 +140,7 @@ class LibraryPlaybackPrefsStoreTest {
 private class FakeLibraryPlaybackPrefsApi(
     initial: List<LibraryPlaybackPref>,
     private var failNextWith: String? = null,
-) : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
+) : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
     data class SetCall(val libraryId: Int, val request: LibraryPlaybackPrefRequest)
 
     private var currentList: List<LibraryPlaybackPref> = initial

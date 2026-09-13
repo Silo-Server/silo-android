@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.data.sync
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import io.ktor.client.HttpClient
@@ -44,7 +46,7 @@ class OrderedEbookProgressTest {
             val authority = requireNotNull(tokens.snapshotDurableLoginAuthority())
             recorder().recordEbookProgress(authority, "book", 7, "back", 0.2, 1000)
             var now = 2000L
-            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens)), { scope },
+            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)), { scope },
                 now = { now }, ebookAuthorities = tokens)
             assertEquals(1, engine.drainOnce().retriable)
             fail = false; now = 100_000
@@ -60,7 +62,7 @@ class OrderedEbookProgressTest {
         try {
             recorder().recordEbookProgress(requireNotNull(tokens.snapshotDurableLoginAuthority()), "book", 7, "page", 0.2, 1000)
             val id = db.dirtyOperationDao().dueBatch("server", "profile", 2000, 10).single().id
-            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens)), { scope }, now = { 2000 }, ebookAuthorities = tokens)
+            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)), { scope }, now = { 2000 }, ebookAuthorities = tokens)
             temporary = true
             engine.drainOnce()
             assertEquals("pending", db.dirtyOperationDao().getById(id)?.state)
@@ -89,7 +91,7 @@ class OrderedEbookProgressTest {
         try {
             recorder().recordEbookProgress(requireNotNull(tokens.snapshotDurableLoginAuthority()), "book", 7, "page", 0.2, 1000)
             val before = db.dirtyOperationDao().dueBatch("server", "profile", 2000, 10).single()
-            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens)), { scope },
+            val engine = SyncEngine(db, PersonalDataApi(c), EbookReaderApi(EbookReaderV2Api(c, tokens, ApiV2Gate.Unrestricted)), { scope },
                 now = { 2000 }, ebookAuthorities = tokens)
             assertEquals(1, engine.drainOnce().retriable)
             assertEquals(before.payloadJson, db.dirtyOperationDao().getById(before.id)?.payloadJson)

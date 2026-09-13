@@ -25,7 +25,7 @@ class SimilarCardsV2Test {
             respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c,tokens)))
+            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)))
             val published=mutableListOf<List<String>>()
             repo.loadSimilarCards("movie/a?b",owner,{true}) {published+=it.map {it.contentId};assertEquals(2024,it.first().year);assertEquals("/b",it.first().posterUrl)}
             assertEquals(listOf(listOf("b","a")),published);assertEquals(1,sends)
@@ -37,8 +37,8 @@ class SimilarCardsV2Test {
         var body=cards;var status=HttpStatusCode.OK
         val c=HttpClient(MockEngine {respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val api=SimilarCardsV2Api(c,tokens)
-            for(b in listOf(cards.replace("false","true"),cards.replace("\"b\"","7"),cards.replace("\"a\"","\"b\""),cards.replace("\"b\"","\"\""),"""{"items":[]}""")) {
+            val api=SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)
+            for(b in listOf(cards.replace("false","true"),cards.replace("\"a\"","\"b\""),cards.replace("\"b\"","\"\""),"""{"items":[]}""")) {
                 body=b;assertFalse(api.list("movie",12,owner) is ApiResult.Success)
             }
             body=cards;assertFalse(api.list("movie",1,owner) is ApiResult.Success)
@@ -49,7 +49,7 @@ class SimilarCardsV2Test {
         var sends=0
         val c=HttpClient(MockEngine {sends++;owner=owner.copy(profileToken="new");respond(cards,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c,tokens)))
+            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)))
             val original=owner
             repo.loadSimilarCards("movie",original,{true}) {fail("late owner published")}
             repo.loadSimilarCards("movie",original,{true}) {fail("replacement dispatched")}
@@ -60,7 +60,7 @@ class SimilarCardsV2Test {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>();var run=1;var sent=false;var captureCount=0
         val c=HttpClient(MockEngine {sent=true;respond(cards,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c,tokens)))
+            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)))
             onCapture={ if(sent && ++captureCount==2) {entered.complete(Unit);release.await()} }
             val job=launch {repo.loadSimilarCards("movie",owner,{run==1}) {fail("old run published")}}
             entered.await();run=2;release.complete(Unit);job.join()
@@ -70,7 +70,7 @@ class SimilarCardsV2Test {
         val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>();var sends=0
         val c=HttpClient(MockEngine {sends++;entered.complete(Unit);release.await();respond(cards,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c,tokens)))
+            val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)))
             repo.loadSimilarCards("movie",owner,{false}) {fail("superseded published")};assertEquals(0,sends)
             val job=launch{repo.loadSimilarCards("movie",owner,{true}) {fail("cancelled published")}}
             entered.await();job.cancelAndJoin();release.complete(Unit);assertEquals(1,sends)

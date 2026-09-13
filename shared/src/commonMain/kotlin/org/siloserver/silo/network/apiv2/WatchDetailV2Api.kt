@@ -3,38 +3,18 @@ package org.siloserver.silo.network.apiv2
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.http.*
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.*
 
 /** Optional watch metadata; callers retain their original owner across local work. */
-class WatchDetailV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
+class WatchDetailV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture() = tokens.snapshotCurrentScope()?.takeIf { !it.profileId.isNullOrBlank() }
-    suspend fun current(owner: AuthScopeSnapshot): Boolean {
-        val now = capture()
-        currentCoroutineContext().ensureActive()
-        return owner.isSameIdentityAs(now) && owner.serverUrl == now?.serverUrl &&
-            owner.profileId == now?.profileId && owner.profileToken == now?.profileToken &&
-            owner.credentialGenerationId == now?.credentialGenerationId
-    }
-    suspend fun detail(id: String, owner: AuthScopeSnapshot): ApiResult<WatchDetail> {
-        if (!current(owner)) return changed()
-        val result = safeApiV2Call<JsonObject>(gate) {
-            client.get("/api/v2/watch/${id.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
-                .also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
-        }
-        if (!current(owner)) return changed()
-        return when (result) {
-            is ApiResult.Success -> try { ApiResult.Success(decodeWatchDetail(result.data, id)) }
-                catch (_: Exception) { ApiResult.Error(0, "invalid_watch_detail", "Unsupported watch metadata.") }
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-    }
-    private fun changed() = ApiResult.Error(0, "watch_authority_changed", "The initiating watch identity changed.")
+    suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
+    suspend fun detail(id: String, owner: AuthScopeSnapshot): ApiResult<WatchDetail> =
+        ownedV2Call<JsonObject, WatchDetail>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
+            client.get("/api/v2/watch/${id.encodeURLPathPart()}") { authScope(scope!!); requireSiloAuth() }
+        }) { decodeWatchDetail(it, id) }
 }
 
 /** Adapt only fields consumed by WatchDetail; do not change the legacy model wire contract. */
@@ -44,9 +24,7 @@ internal fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
     fun numericId(value: JsonElement): JsonPrimitive {
         val text = value as? JsonPrimitive ?: error("Missing file identity")
         check(text.isString)
-        val number = text.content.toIntOrNull() ?: error("Unsupported file identity")
-        check(number > 0 && number.toString() == text.content)
-        return JsonPrimitive(number)
+        return JsonPrimitive(checkedPositiveId(text.content))
     }
     val versions = body["versions"] as? JsonArray ?: error("Missing versions")
     val adapted = body.toMutableMap()

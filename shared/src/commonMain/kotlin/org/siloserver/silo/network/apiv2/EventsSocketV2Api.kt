@@ -17,32 +17,22 @@ import kotlin.time.TimeSource
 class EventsSocketV2Api(
     private val client: HttpClient,
     private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) {
-    internal suspend fun current(scope: AuthScopeSnapshot): Boolean {
-        val now = tokens.snapshotCurrentScope() ?: return false
-        return scope.isSameIdentityAs(now) && scope.profileId == now.profileId &&
-            scope.profileToken == now.profileToken && scope.serverUrl == now.serverUrl &&
-            scope.credentialGenerationId == now.credentialGenerationId
-    }
+    internal suspend fun current(scope: AuthScopeSnapshot): Boolean = scope.stillOwns(tokens, OwnerPolicy.FULL)
 
     suspend fun ticket(scope: AuthScopeSnapshot? = null): ApiResult<WsTicketResponse> {
-        val owner = scope ?: tokens.snapshotCurrentScope() ?: return changed()
-        if (!current(owner)) return changed()
-        val result = safeApiV2Call<WsTicketResponse>(gate) {
+        val owner = scope ?: tokens.snapshotCurrentScope() ?: return identityChanged()
+        return ownedV2Call<WsTicketResponse, WsTicketResponse>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { pinned ->
             client.post("/api/v2/events/ws-ticket") {
-                authScope(owner); requireSiloAuth()
+                authScope(pinned!!); requireSiloAuth()
                 // Natural-idempotent mint may use ordinary scoped auth refresh.
-            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
+            }
+        }) { ticket ->
+            require(validTicket(ticket)) { "The server returned an unsupported realtime ticket." }
+            ticket
         }
-        if (!current(owner)) return changed()
-        if (result is ApiResult.Success && !validTicket(result.data)) {
-            return ApiResult.Error(0,"invalid_realtime_ticket","The server returned an unsupported realtime ticket.")
-        }
-        return result
     }
-
-    private fun changed() = ApiResult.Error(0,"identity_changed","The realtime account or profile changed.")
 
     fun frames(channels: List<String>): Flow<String> = flow {
         val scope = tokens.snapshotCurrentScope() ?: return@flow

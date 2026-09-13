@@ -84,7 +84,7 @@ class ProfileSelectionViewModelContractTest {
             tokenManager = tokens,
             serverRegistry = registry,
         )
-        val profileRepository = ProfileRepository(ProfileApi(client), tokens, registry)
+        val profileRepository = ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokens, registry)
 
         ProfileSelectionViewModel(profileRepository, authRepository)
         runCurrent()

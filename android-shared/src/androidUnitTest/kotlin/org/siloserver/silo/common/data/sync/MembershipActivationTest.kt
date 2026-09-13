@@ -43,7 +43,7 @@ class MembershipActivationTest {
         install(ContentNegotiation) { json(SiloJson) }
     }.also { clients += it }
     private fun repository(client: HttpClient): Pair<PersonalDataRepository, RoomMembershipPort> {
-        val port = RoomMembershipPort(db, MembershipV2Api(client, tokenManager = tokens), tokens, authorities, barrier)
+        val port = RoomMembershipPort(db, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, authorities, barrier)
         return PersonalDataRepository(PersonalDataApi(client), identityTransitions = barrier, membershipPort = port) to port
     }
     private fun page(next: Boolean, second: Boolean = false) = """{"items":[{"content_id":"${if(second) "second" else "item"}","type":"movie","title":"Film"}],"page":{"has_more":$next${if(next) ",\"next_cursor\":\"next\"" else ""}},"total":2,"total_exact":true,"window_cursor":"window"}"""
@@ -68,7 +68,7 @@ class MembershipActivationTest {
                 }
             })
             val (repository, _) = repository(client)
-            val catalog = CatalogRepository(CatalogApi(client, CatalogV2Api(client, tokenManager = tokens)), identityTransitions = barrier)
+            val catalog = CatalogRepository(CatalogApi(client, CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens)), identityTransitions = barrier)
             val vm = if(kind == MembershipPort.Kind.FAVORITE) FavoritesViewModel(repository, catalog) else WatchlistViewModel(repository, catalog)
             viewModels += vm
             vm.uiState.first { !it.isLoading }
@@ -120,7 +120,7 @@ class MembershipActivationTest {
         val (repository, port) = repository(client)
         val intent = repository.memberships.begin("item", MembershipPort.Kind.FAVORITE, true)
         repository.memberships.perform(intent)
-        val worker = SyncEngine(db, PersonalDataApi(client), EbookReaderApi(org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens)), { authority.scope }, memberships = port)
+        val worker = SyncEngine(db, PersonalDataApi(client), EbookReaderApi(org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens, ApiV2Gate.Unrestricted)), { authority.scope }, memberships = port)
         assertFalse(worker.drainOnce().hasPendingWork)
         assertFalse(worker.drainOnce().hasPendingWork)
         assertEquals(listOf(HttpMethod.Put), methods)
@@ -218,7 +218,7 @@ class MembershipActivationTest {
                 } else respond("", HttpStatusCode.NoContent)
             })
             val (repository, _) = repository(client)
-            val catalog = CatalogRepository(CatalogApi(client, CatalogV2Api(client, tokenManager = tokens)), identityTransitions = barrier)
+            val catalog = CatalogRepository(CatalogApi(client, CatalogV2Api(client, ApiV2Gate.Unrestricted, tokens)), identityTransitions = barrier)
             val vm = if (kind == MembershipPort.Kind.FAVORITE) FavoritesViewModel(repository, catalog) else WatchlistViewModel(repository, catalog)
             viewModels += vm
             vm.uiState.first { !it.isLoading }

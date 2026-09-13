@@ -29,7 +29,7 @@ class OnboardingV2Test {
             respond("""{"version":1,"tour_id":"tour","steps":[{"id":"future","kind":"future_kind"}]}""",HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         }
         try {
-            assertEquals("future_kind",assertIs<ApiResult.Success<OnboardingFlow>>(OnboardingApi(c,tokens).getFlow("phone",scope)).data.steps.single().kind)
+            assertEquals("future_kind",assertIs<ApiResult.Success<OnboardingFlow>>(OnboardingApi(c, tokens, ApiV2Gate.Unrestricted).getFlow("phone",scope)).data.steps.single().kind)
         } finally { c.close() }
     }
 
@@ -50,7 +50,7 @@ class OnboardingV2Test {
             }
         }
         try {
-            val api = OnboardingApi(c,tokens)
+            val api = OnboardingApi(c, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Success<OnboardingState>>(api.getState(scope))
             val first = async { api.putProgress(OnboardingProgressRequest("tour", "step"),scope) }
             entered.await()
@@ -73,7 +73,7 @@ class OnboardingV2Test {
             }
         }
         try {
-            val api = OnboardingApi(c,tokens)
+            val api = OnboardingApi(c, tokens, ApiV2Gate.Unrestricted)
             for (i in 0..2) {
                 mode = i
                 api.getState(scope)
@@ -96,7 +96,7 @@ class OnboardingV2Test {
             }
         }
         try {
-            val api = OnboardingApi(c,tokens)
+            val api = OnboardingApi(c, tokens, ApiV2Gate.Unrestricted)
             val original = scope
             assertIs<ApiResult.Error>(api.getState(original))
             assertIs<ApiResult.Error>(api.putProgress(OnboardingProgressRequest("tour"),original))

@@ -23,7 +23,7 @@ private data class AiCreationReceipt(
 class SubtitleAiCreateV2Api(
     private val client: HttpClient,
     private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) {
     // Process-local fence, not an offline queue. A changed playhead/dialog must
     // not turn a lost creation receipt into a new request for the same source.
@@ -33,8 +33,8 @@ class SubtitleAiCreateV2Api(
     private val unresolved = mutableSetOf<Intent>()
 
     suspend fun create(request: SubtitleTranslateRequest, expected: AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> {
-        val owner = expected ?: tokens.snapshotCurrentScope() ?: return changed()
-        if (!current(owner)) return changed()
+        val owner = expected ?: tokens.snapshotCurrentScope() ?: return identityChanged()
+        if (!owner.stillOwns(tokens, OwnerPolicy.PROFILE)) return identityChanged()
         val position = request.startPosition
         if (request.mediaFileId <= 0 || request.kind !in setOf("translate", "transcribe", "transcribe_translate") ||
             request.sourceIndex < -1 || position == null || !position.isFinite() || position < 0) {
@@ -46,9 +46,9 @@ class SubtitleAiCreateV2Api(
             "This subtitle request is pending or may have started. It has not been sent again.")
         var settled = false
         try {
-            val result = safeApiV2Call<AiCreationReceipt>(gate) {
+            val result = ownedV2Call<AiCreationReceipt, SubtitleAiJobResponse>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.Accepted, { pinned ->
                 client.post("/api/v2/subtitles/ai/translate") {
-                    authScope(owner); requireSiloAuth(); singleAttempt()
+                    authScope(pinned!!); requireSiloAuth(); singleAttempt()
                     contentType(ContentType.Application.Json)
                     setBody(buildJsonObject {
                         put("media_file_id", request.mediaFileId.toString())
@@ -58,18 +58,16 @@ class SubtitleAiCreateV2Api(
                         put("target_language", request.targetLanguage.orEmpty())
                         put("start_position", position)
                     })
-                }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.Accepted) }
-            }
-            if (!current(owner)) return changed()
-            return when (result) {
-                is ApiResult.Success -> try {
-                    val job = result.data.job.project()
-                    require(job.mediaFileId == request.mediaFileId && job.kind == request.kind && job.sourceIndex == request.sourceIndex)
-                    settled = true
-                    ApiResult.Success(SubtitleAiJobResponse(job, result.data.liveDeliveryAttached))
-                } catch (_: IllegalArgumentException) {
-                    ApiResult.Error(0, "invalid_subtitle_job", "The server returned an unsupported subtitle creation receipt.")
                 }
+            }) { receipt ->
+                val job = receipt.job.project()
+                require(job.mediaFileId == request.mediaFileId && job.kind == request.kind && job.sourceIndex == request.sourceIndex) {
+                    "The server returned an unsupported subtitle creation receipt."
+                }
+                SubtitleAiJobResponse(job, receipt.liveDeliveryAttached)
+            }
+            return when (result) {
+                is ApiResult.Success -> { settled = true; result }
                 is ApiResult.Error -> {
                     // Definite request refusals can be corrected by a new user
                     // decision. Timeout, server errors and malformed replies cannot.
@@ -82,10 +80,4 @@ class SubtitleAiCreateV2Api(
             if (settled) withContext(NonCancellable) { mutex.withLock { unresolved.remove(intent) } }
         }
     }
-
-    private suspend fun current(owner: AuthScopeSnapshot): Boolean {
-        val now = tokens.snapshotCurrentScope()
-        return owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
-    }
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The subtitle request's account or profile changed.")
 }

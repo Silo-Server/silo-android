@@ -8,31 +8,31 @@ import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.model.onboarding.*
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.ApiV2Gate
-import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.identityChanged
+import org.siloserver.silo.network.apiv2.ownedV2Call
+import org.siloserver.silo.network.apiv2.stillOwns
 
 /** State validators belong to the captured profile and serialize progress writes. */
 class OnboardingApi(
     private val client: HttpClient,
     private val tokens: TokenManager,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) {
     private data class Confirmed(val scope: AuthScopeSnapshot, val state: OnboardingState, val etag: String)
     private val stateLock = Mutex()
     private var confirmed: Confirmed? = null
 
     private suspend fun current(scope: AuthScopeSnapshot): Boolean =
-        !scope.profileId.isNullOrBlank() && scope.isSameIdentityAs(tokens.snapshotCurrentScope())
+        !scope.profileId.isNullOrBlank() && scope.stillOwns(tokens, OwnerPolicy.IDENTITY)
 
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The onboarding account or profile changed.")
+    private fun changed() = identityChanged()
 
     suspend fun getFlow(surface: String, scope: AuthScopeSnapshot): ApiResult<OnboardingFlow> {
-        if (!current(scope)) return changed()
-        val result = safeApiV2Call<OnboardingFlow>(gate) {
-            client.get("/api/v2/onboarding/flow") {
-                authScope(scope); requireSiloAuth(); parameter("surface", surface)
-            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
-        }
-        return if (current(scope)) result else changed()
+        if (scope.profileId.isNullOrBlank()) return changed()
+        return ownedV2Call<OnboardingFlow, OnboardingFlow>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.get("/api/v2/onboarding/flow") { authScope(owner!!); requireSiloAuth(); parameter("surface", surface) }
+        }) { it }
     }
 
     suspend fun getState(scope: AuthScopeSnapshot): ApiResult<OnboardingState> = stateLock.withLock {
@@ -57,22 +57,18 @@ class OnboardingApi(
         etag: String? = null,
     ): ApiResult<OnboardingState> {
         var receivedTag: String? = null
-        val result = safeApiV2Call<OnboardingState>(gate) {
+        val result = ownedV2Call<OnboardingState, OnboardingState>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
             client.request(if (request == null) "/api/v2/onboarding/state" else "/api/v2/onboarding/progress") {
                 method = if (request == null) HttpMethod.Get else HttpMethod.Put
-                authScope(scope); requireSiloAuth()
+                authScope(owner!!); requireSiloAuth()
                 if (request != null) {
                     singleAttempt()
                     header(HttpHeaders.IfMatch, requireNotNull(etag))
                     contentType(ContentType.Application.Json)
                     setBody(request)
                 }
-            }.also {
-                check(!it.status.isSuccess() || it.status == HttpStatusCode.OK)
-                receivedTag = it.headers[HttpHeaders.ETag]
-            }
-        }
-        if (!current(scope)) return changed()
+            }.also { receivedTag = it.headers[HttpHeaders.ETag] }
+        }) { it }
         if (result is ApiResult.Success) {
             val tag = receivedTag
             if (tag == null || !strongTag(tag) ||

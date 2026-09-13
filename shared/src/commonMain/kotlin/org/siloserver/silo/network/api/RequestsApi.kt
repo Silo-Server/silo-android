@@ -8,6 +8,8 @@ import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.ownedV2Call
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
@@ -56,7 +58,7 @@ interface RequestsApi {
 
 class DefaultRequestsApi(
     private val client: HttpClient,
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
     private val tokenManager: TokenManager? = null,
 ) : RequestsApi {
 
@@ -110,25 +112,19 @@ class DefaultRequestsApi(
         val seen = mutableSetOf<String>()
         var cursor: String? = null
         repeat(100) {
-            if (pinned != null && !pinned.isSameIdentityAs(tokenManager?.snapshotCurrentScope())) {
-                return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload requests.")
-            }
-            val result = safeApiV2Call<RequestsListResponse>(gate) {
+            val result = ownedV2Call<RequestsListResponse, RequestsListResponse>(gate, tokenManager, pinned, OwnerPolicy.IDENTITY, null, { owner ->
                 client.get("/api/v2/requests/mine") {
-                    pinned?.let { authScope(it) }
+                    owner?.let { authScope(it) }
                     parameter("status", status)
                     parameter("outcome", outcome)
                     parameter("limit", size)
                     cursor?.let { parameter("cursor", it) }
                 }
-            }
+            }) { it }
             val response = when (result) {
                 is ApiResult.Success -> result.data
                 is ApiResult.Error -> return result
                 is ApiResult.NetworkError -> return result
-            }
-            if (pinned != null && !pinned.isSameIdentityAs(tokenManager?.snapshotCurrentScope())) {
-                return ApiResult.Error(0, "identity_changed", "The active viewer changed. Reload requests.")
             }
             records.addAll(response.requests)
             if (!response.page.hasMore) return ApiResult.Success(RequestsListResponse(requests = records))

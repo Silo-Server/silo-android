@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -30,7 +32,7 @@ class LoginV2ConsumerTest {
                     respond("""{"access_token":"access","refresh_token":"refresh","expires_in":3600,"user":{"id":"1","username":"user","email":"u@example.test","role":"user"}}""",
                         HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
                 }) { install(ContentNegotiation) { json(SiloJson) } }
-                val vm = LoginViewModel(AuthRepository(AuthApi(client), tokens))
+                val vm = LoginViewModel(AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens))
                 try {
                     vm.onUsernameChanged("user"); vm.onPasswordChanged("password")
                     vm.onLoginClick(); vm.onLoginClick(); entered.await()

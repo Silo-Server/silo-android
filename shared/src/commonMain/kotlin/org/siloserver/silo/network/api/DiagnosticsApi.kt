@@ -51,7 +51,7 @@ interface DiagnosticsApi {
 class DefaultDiagnosticsApi(
     client: HttpClient,
     private val nowMs: () -> Long = { GMTDate().timestamp },
-    private val gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    private val gate: ApiV2Gate,
 ) : DiagnosticsApi {
     private val client = client.config { followRedirects = false }
     override suspend fun getStatus(): ApiResult<DiagnosticsStatusResponse> = safeApiV2Call(gate) {
@@ -87,6 +87,9 @@ class DefaultDiagnosticsApi(
         capturedProfileId: String?,
         authorization: DiagnosticsUploadAuthorization?,
     ): DiagnosticsUploadResult = try {
+        gate.blocked()?.let {
+            return DiagnosticsUploadResult.Failure(DiagnosticsErrorCode.UNKNOWN, it.code, message = it.message)
+        }
         val endpoint = authorization?.let { "${it.serverUrl.trimEnd('/')}/api/v2/diagnostics/reports" }
             ?: "/api/v2/diagnostics/reports"
         val response = client.post(endpoint) {

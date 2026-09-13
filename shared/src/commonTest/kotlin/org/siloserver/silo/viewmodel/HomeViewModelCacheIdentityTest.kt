@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -75,7 +77,7 @@ class HomeViewModelCacheIdentityTest {
         val cache = RecordingHomeCache()
         val viewModel = HomeViewModel(
             sectionRepository = SectionRepository(
-                sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens)),
+                sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
                 identityTransitions = identityTransitions,
             ),
             mediaActions = mediaActions(),
@@ -106,7 +108,7 @@ class HomeViewModelCacheIdentityTest {
         }
         val observations = mutableListOf<HomeLoadObservation>()
         val viewModel = HomeViewModel(
-            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens))),
+            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
             mediaActions = mediaActions(),
             diagnostics = HomeDiagnosticsObserver(observations::add),
         )

@@ -295,7 +295,7 @@ class OverlayPrefsStoreTest {
 private class RecordingOverlaySettingsApi(
     var storedValue: JsonElement? = null,
     var adminDefaults: String? = null,
-) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
+) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
     data class CallGate(
         val started: CompletableDeferred<Unit> = CompletableDeferred(),

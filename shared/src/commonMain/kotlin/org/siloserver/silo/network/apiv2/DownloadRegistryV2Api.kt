@@ -28,10 +28,8 @@ internal data class DownloadEntryV2(
     @SerialName("status_event_at") val statusEventAt: String? = null,
 ) {
     fun project(expectedDevice: String): DownloadRecord {
-        val file = mediaFileId.toIntOrNull()
         require(id.isNotBlank() && deviceId == expectedDevice && revision > 0)
-        require(file != null && file > 0 && file.toString() == mediaFileId)
-        return DownloadRecord(id, contentId, episodeId, batchId, file, fileSize, bytesSent, kind, status,
+        return DownloadRecord(id, contentId, episodeId, batchId, checkedPositiveId(mediaFileId), fileSize, bytesSent, kind, status,
             createdAt, completedAt, quality, effectiveQuality, deliveryFormat, targetBitrateKbps,
             deviceId, revision, statusEventAt)
     }
@@ -40,24 +38,24 @@ internal data class DownloadEntryV2(
 
 /** Registry reads are all-or-nothing; local absence reconciliation must never see a prefix. */
 class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: TokenManager,
-    private val devices: DeviceMetadataProvider, private val gate: ApiV2Gate = ApiV2Gate.Unrestricted) {
-    private fun changed() = ApiResult.Error(0, "identity_changed", "The download account, profile or device changed.")
+    private val devices: DeviceMetadataProvider, private val gate: ApiV2Gate) {
     private fun invalid() = ApiResult.Error(0, "invalid_download_registry", "The server returned an incomplete or unsupported download registry.")
     private suspend inline fun <reified T> exchange(scope: AuthScopeSnapshot, device: String, method: HttpMethod,
         path: String, noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
-        if (!scope.isSameIdentityAs(tokens.snapshotCurrentScope()) || devices.current()?.id != device) return changed()
-        val result = safeApiV2Call<T>(gate) {
+        if (devices.current()?.id != device) return identityChanged()
+        val result = ownedV2Call<T, T>(gate, tokens, scope, OwnerPolicy.IDENTITY,
+            if (method == HttpMethod.Delete) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
             client.request(path) {
-                this.method = method; authScope(scope); requireSiloAuth()
+                this.method = method; authScope(owner!!); requireSiloAuth()
                 // The existing auth plugin attaches the installation's device metadata.
                 if (method != HttpMethod.Get) singleAttempt()
                 configure()
-            }.also { check(!it.status.isSuccess() || it.status.value == if (method == HttpMethod.Delete) 204 else 200) }
-        }
-        return if (scope.isSameIdentityAs(tokens.snapshotCurrentScope()) && devices.current()?.id == device) result else changed()
+            }
+        }) { it }
+        return if (devices.current()?.id == device) result else identityChanged()
     }
     suspend fun list(scope: AuthScopeSnapshot): ApiResult<DownloadsListResponse> {
-        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return changed()
+        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
         val rows = linkedMapOf<String, DownloadRecord>()
         val cursors = mutableSetOf<String>()
         var cursor: String? = null
@@ -87,12 +85,12 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
         return invalid()
     }
     suspend fun capability(scope: AuthScopeSnapshot): ApiResult<DownloadCapability> {
-        val device = devices.current()?.id ?: return changed()
+        val device = devices.current()?.id ?: return identityChanged()
         val result = exchange<DownloadCapability>(scope, device, HttpMethod.Get, "/api/v2/capabilities/downloads")
         return if (result is ApiResult.Success && (result.data.revision.isNullOrBlank() || result.data.state.isNullOrBlank())) invalid() else result
     }
     suspend fun delete(id: String, scope: AuthScopeSnapshot): ApiResult<Unit> {
-        val device = devices.current()?.id ?: return changed()
+        val device = devices.current()?.id ?: return identityChanged()
         return exchange(scope, device, HttpMethod.Delete, "/api/v2/downloads/${id.encodeURLPathPart()}")
     }
 }

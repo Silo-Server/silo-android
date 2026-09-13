@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.profile.VerifyPinResponse
 import org.siloserver.silo.model.profile.authorizedProfileToken
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -37,7 +39,7 @@ class ProfileIdentityCommitTest {
         tokenManager: org.siloserver.silo.network.TokenManager,
         barrier: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     ) = ProfileRepository(
-        profileApi = ProfileApi(noOpClient),
+        profileApi = ProfileApi(noOpClient, ApiV2Gate.Unrestricted),
         tokenManager = tokenManager,
         identityTransitions = barrier,
     )

@@ -92,7 +92,7 @@ class TvStartupMetadataOwnerTest {
                     held = true; entered.complete(Unit); release.await()
                 }
             }
-            val profiles = object : ProfileRepository(ProfileApi(client), tokens) {
+            val profiles = object : ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokens) {
                 override suspend fun getActiveProfileId() = "profile"
                 override suspend fun listProfiles(): ApiResult<List<Profile>> = ApiResult.Success(listOf(Profile(id = "profile", name = "Profile")))
             }
@@ -112,7 +112,7 @@ class TvStartupMetadataOwnerTest {
             }
             val context = ApplicationProvider.getApplicationContext<Application>()
             val starter = TvVideoPlaybackStarter(
-                CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens))), manager, profiles,
+                CatalogRepository(CatalogApi(client, watchDetail = WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))), manager, profiles,
                 PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
                 FakePlayerSettingsStore(), lifecycle,
                 ServerReachabilityMonitor(ApiV2Probe(client)::probeFresh, backgroundScope, { null }), localState,

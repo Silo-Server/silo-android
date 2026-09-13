@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.data.sync
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.room.Room
 import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
@@ -45,7 +47,7 @@ class DormantMembershipTest {
         .addCallback(SiloDatabase.CALLBACK).allowMainThreadQueries().build().also { db = it }
     private fun port(engine: MockEngine): RoomMembershipPort {
         val client = HttpClient(engine).also { clients += it }
-        return RoomMembershipPort(requireNotNull(db), MembershipV2Api(client, tokenManager = tokens), tokens, authorities, barrier)
+        return RoomMembershipPort(requireNotNull(db), MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, authorities, barrier)
     }
     @AfterTest fun close() { clients.forEach { it.close() }; db?.close(); context.deleteDatabase(name) }
 
@@ -121,7 +123,7 @@ class DormantMembershipTest {
                 }
         }
         val client = HttpClient(MockEngine { error("No writes") }).also { clients += it }
-        val guarded = RoomMembershipPort(future, MembershipV2Api(client, tokenManager = tokens), tokens, authorities, observer)
+        val guarded = RoomMembershipPort(future, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, authorities, observer)
         guarded.captureAuthority()
         val blocker = async { future.withTransaction { locked.complete(Unit); release.await() } }
         locked.await()

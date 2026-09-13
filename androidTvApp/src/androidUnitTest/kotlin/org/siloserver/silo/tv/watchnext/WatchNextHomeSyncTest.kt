@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.watchnext
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
@@ -38,7 +40,7 @@ class WatchNextHomeSyncTest {
             }
             respond(body, if (fail || (fallback && failFallback)) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        try { block(SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens)))) } finally { client.close() }
+        try { block(SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))) } finally { client.close() }
     }
     private suspend fun sync(repo: SectionRepository) = syncWatchNextHome(repo, gate, { false }) { fields, run, authority ->
         gate.write(run, authority) { applies++; if (empty) assertTrue(fields.isEmpty()) else {

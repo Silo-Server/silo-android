@@ -63,7 +63,7 @@ class EventsSocketLoopbackTest {
         val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         val client = HttpClient(OkHttp) { install(WebSockets); defaultRequest { url(origin) } }
         try {
-            val api = EventsSocketV2Api(client,tokens)
+            val api = EventsSocketV2Api(client,tokens, ApiV2Gate.Unrestricted)
             repeat(2) {
                 val frame = withTimeout(5000) { api.frames(listOf("catalog")).take(1).toList().single() }
                 assertTrue(frame.contains("subscribed"))

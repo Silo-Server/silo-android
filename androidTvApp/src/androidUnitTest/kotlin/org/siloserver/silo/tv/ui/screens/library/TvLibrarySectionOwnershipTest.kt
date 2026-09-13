@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModelStore
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -49,7 +51,7 @@ class TvLibrarySectionOwnershipTest {
         })) { install(ContentNegotiation) { json(SiloJson) } }
         val store = ViewModelStore()
         try {
-            val sections = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens)))
+            val sections = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
             val vm = TvLibraryDetailViewModel(sections, CatalogRepository(CatalogApi(client)), 3, "Library", "movie")
             store.put("library", vm); block(vm)
         } finally { store.clear(); client.close(); Dispatchers.resetMain() }

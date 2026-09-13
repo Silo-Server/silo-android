@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.network
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.engine.mock.respond
 import io.ktor.serialization.kotlinx.json.json
 import android.content.Context
@@ -151,7 +153,7 @@ class DurableLoginAuthorityTest {
                 install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(SiloJson) }
             }
             try {
-                val repository = org.siloserver.silo.repository.AuthRepository(org.siloserver.silo.network.api.AuthApi(client), tokens, registry)
+                val repository = org.siloserver.silo.repository.AuthRepository(org.siloserver.silo.network.api.AuthApi(client, ApiV2Gate.Unrestricted), tokens, registry)
                 val login = async { repository.login("user", "password") }; entered.await()
                 if (switchServer) registry.switchTo(otherServer)
                 else tokens.replaceAccountSession(firstServer, null, "newer", "newer-r", 3600, "p", "pt")

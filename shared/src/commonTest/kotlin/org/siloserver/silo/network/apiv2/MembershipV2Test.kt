@@ -22,7 +22,7 @@ class MembershipV2Test {
                 respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
             })
             try {
-                val api = MembershipV2Api(client)
+                val api = MembershipV2Api(client, ApiV2Gate.Unrestricted)
                 for (result in listOf(api.favorite("item"), api.watchlist("item"))) when (status) {
                     HttpStatusCode.OK -> assertEquals("item", assertIs<ApiResult.Success<MembershipEntryV2?>>(result).data?.itemId)
                     HttpStatusCode.NotFound -> assertNull(assertIs<ApiResult.Success<MembershipEntryV2?>>(result).data)
@@ -45,7 +45,7 @@ class MembershipV2Test {
             respond("", HttpStatusCode.NoContent)
         })
         try {
-            val api = MembershipV2Api(client, tokenManager = tokens)
+            val api = MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens)
             assertIs<ApiResult.Success<*>>(api.addFavorite("item", captured))
             assertIs<ApiResult.Success<*>>(api.removeFavorite("item", captured))
             assertIs<ApiResult.Success<*>>(api.addToWatchlist("item", captured))
@@ -59,7 +59,7 @@ class MembershipV2Test {
     @Test fun wrongEntryAndUnexpectedSuccessStatusAreNotAccepted() = runTest {
         val client = HttpClient(MockEngine { respond("""{"item_id":"other","added_at":"date"}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) })
         try {
-            val api = MembershipV2Api(client)
+            val api = MembershipV2Api(client, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.favorite("item"))
             assertFalse(api.addFavorite("item") is ApiResult.Success)
         } finally { client.close() }
@@ -85,7 +85,7 @@ class MembershipV2Test {
                 install(SiloAuthPlugin) { tokenManager = tokens }
             }
             try {
-                val api = MembershipV2Api(client, tokenManager = tokens)
+                val api = MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens)
                 if (mutating) {
                     val result = assertIs<ApiResult.Error>(api.addFavorite("item"))
                     assertEquals(401, result.code); assertEquals("unauthorized", result.error)

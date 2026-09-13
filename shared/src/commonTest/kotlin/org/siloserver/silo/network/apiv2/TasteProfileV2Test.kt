@@ -18,7 +18,7 @@ class TasteProfileV2Test {
             respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val api=TasteProfileV2Api(c,tokens)
+            val api=TasteProfileV2Api(c, tokens, ApiV2Gate.Unrestricted)
             val result=assertIs<ApiResult.Success<*>>(api.read(owner)).data as org.siloserver.silo.model.recommendation.TasteProfile
             assertEquals(listOf("Drama","Comedy"),result.topGenres);assertEquals(7,result.signalCounts["watched"])
             assertEquals("2026-01-01T00:00:00Z",result.updatedAt)
@@ -30,7 +30,7 @@ class TasteProfileV2Test {
         var body="{}";var status=HttpStatusCode.OK;var late=false;var sends=0
         val c=HttpClient(MockEngine {sends++;if(late)owner=owner.copy(profileToken="new");respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
-            val api=TasteProfileV2Api(c,tokens);val original=owner
+            val api=TasteProfileV2Api(c, tokens, ApiV2Gate.Unrestricted);val original=owner
             assertFalse(api.read(owner) is ApiResult.Success)
             body="""{"top_genres":[],"favorite_directors":[],"signal_counts":{}}""";status=HttpStatusCode.Accepted
             assertFalse(api.read(owner) is ApiResult.Success)

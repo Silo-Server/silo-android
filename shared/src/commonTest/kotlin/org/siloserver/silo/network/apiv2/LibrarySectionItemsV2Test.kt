@@ -19,7 +19,7 @@ class LibrarySectionItemsV2Test {
             respond(reply, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = LibrarySectionItemsV2Api(client, tokens)
+            val api = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)
             val result = api.read(3, "row/a", owner).getOrThrow()
             assertEquals("row/a", result.section?.id); assertEquals(12.5, result.items.single().positionSeconds)
             reply = """{"id":"row/a","section_type":"custom","title":"Row","items":[]}"""
@@ -33,8 +33,8 @@ class LibrarySectionItemsV2Test {
             respond(reply, status, headersOf(HttpHeaders.ContentType, "application/json"))
         })
         try {
-            val api = LibrarySectionItemsV2Api(client, tokens); val original = owner
-            for (bad in listOf("{}", body.replace("row/a", "other"), body.replace("\"movie:a\"", "2"), body.replace("\"items\"", "\"missing\""))) {
+            val api = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted); val original = owner
+            for (bad in listOf("{}", body.replace("row/a", "other"), body.replace("\"movie:a\"", "\"\""), body.replace("\"items\"", "\"missing\""))) {
                 reply = bad; assertFalse(api.read(3, "row/a", original) is ApiResult.Success)
             }
             reply = body; status = HttpStatusCode.Accepted; assertFalse(api.read(3, "row/a", original) is ApiResult.Success)

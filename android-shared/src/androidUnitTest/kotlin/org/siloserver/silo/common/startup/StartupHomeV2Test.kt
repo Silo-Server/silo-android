@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.startup
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
@@ -40,7 +42,7 @@ class StartupHomeV2Test {
             }
             respond(body, if (fallback && fail) HttpStatusCode.ServiceUnavailable else HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        try { block(SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens)))) } finally { client.close() }
+        try { block(SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))) } finally { client.close() }
     }
     private suspend fun warm(repo: SectionRepository) = warmStartupHomeSections(repo, cache, owner, { current }) { rows, mayWarm ->
         assertTrue(mayWarm()); assertEquals("movie:a", rows.single().items.single().contentId); artwork++

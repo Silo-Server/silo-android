@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -28,7 +30,7 @@ class PushRegistrationApiTest {
             respond(receipt, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType,"application/json"))
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val r = assertIs<ApiResult.Success<PushDeviceRegisterResponse>>(DefaultPushRegistrationApi(client,tokens).register(request,key,9007199254740993,expected)).data
+            val r = assertIs<ApiResult.Success<PushDeviceRegisterResponse>>(DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted).register(request,key,9007199254740993,expected)).data
             assertEquals("opaque:r",r.id); assertEquals("opaque:d",r.serverDeviceId); assertEquals("9007199254740993",r.generation)
         } finally { client.close() }
     }
@@ -39,7 +41,7 @@ class PushRegistrationApiTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         try {
-            val api = DefaultPushRegistrationApi(client,tokens)
+            val api = DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
             for (bad in listOf("{}", receipt.replace("\"9007199254740993\"","9007199254740993"), receipt.replace("9007199254740993","2"),receipt.replace("private_push","off"),receipt.replace("opaque:r",""))) {
                 body=bad; assertIs<ApiResult.Error>(api.register(request,key,9007199254740993,owner))
             }
@@ -56,7 +58,7 @@ class PushRegistrationApiTest {
             respond("",status)
         })
         try {
-            val api=DefaultPushRegistrationApi(client,tokens)
+            val api=DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Success<Unit>>(api.delete("device/one",key,1,owner))
             status=HttpStatusCode.OK; assertFalse(api.delete("device/one",key,1,owner) is ApiResult.Success)
         } finally { client.close() }
@@ -69,7 +71,7 @@ class PushRegistrationApiTest {
             respond(if(late) receipt else "{}",if(late) HttpStatusCode.OK else HttpStatusCode.Unauthorized,headersOf(HttpHeaders.ContentType,"application/json"))
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val api=DefaultPushRegistrationApi(client,tokens)
+            val api=DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
             assertIs<ApiResult.Error>(api.register(request,key,9007199254740993,owner)); assertEquals(1,sends)
             late=true; val captured=owner
             assertIs<ApiResult.Error>(api.register(request,key,9007199254740993,captured)); assertEquals(2,sends)
@@ -83,7 +85,7 @@ class PushRegistrationApiTest {
             respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json"))
         })
         try {
-            val api=DefaultPushRegistrationApi(client,tokens)
+            val api=DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
             assertEquals(true,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)
             body=body.replace("true","false"); assertEquals(false,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)
             body="{}"; assertEquals(false,assertIs<ApiResult.Success<Boolean>>(api.available(owner)).data)

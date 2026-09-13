@@ -21,7 +21,7 @@ class SubtitleReadsV2Test {
         var body = """{"subtitles":[$row,${row.replace("\"7\"","\"8\"")}]}"""
         val c = client { assertEquals("/api/v2/subtitles/42",it.url.encodedPath); reply(body) }
         try {
-            val api = SubtitleReadsV2Api(c,tokens)
+            val api = SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertEquals(listOf(7,8),assertIs<ApiResult.Success<DownloadedSubtitlesResponse>>(api.list(42)).data.subtitles.map { it.id })
             for (invalid in listOf(row.replace("\"42\"","\"43\""),row.replace("\"7\"","7"),row.replace("\"7\"","\"2147483648\""))) {
                 body = """{"subtitles":[$invalid]}"""; assertFalse(api.list(42) is ApiResult.Success)
@@ -38,7 +38,7 @@ class SubtitleReadsV2Test {
             reply("""{"results":[{"id":"opaque+/=01","provider":"provider","language":"en","release_name":"release","format":"srt","score":1,"downloads":3,"hearing_impaired":false}],"warnings":["partial result"]}""")
         }
         try {
-            val result = assertIs<ApiResult.Success<SubtitleSearchResponse>>(SubtitleReadsV2Api(c,tokens).search(SubtitleSearchRequest(42,listOf("en")))).data
+            val result = assertIs<ApiResult.Success<SubtitleSearchResponse>>(SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted).search(SubtitleSearchRequest(42,listOf("en")))).data
             assertEquals("opaque+/=01",result.results.single().id); assertNull(result.results.single().uploadDate)
             assertEquals(listOf("partial result"),result.warnings)
         } finally { c.close() }
@@ -51,7 +51,7 @@ class SubtitleReadsV2Test {
             reply("""{"enabled":false,"transcribe_enabled":false}""")
         }
         try {
-            val api = SubtitleReadsV2Api(c,tokens)
+            val api = SubtitleReadsV2Api(c, tokens, ApiV2Gate.Unrestricted)
             assertFalse(assertIs<ApiResult.Success<SubtitleAiStatus>>(api.aiStatus()).data.enabled)
             replace = true; assertIs<ApiResult.Error>(api.aiStatus())
         } finally { c.close() }
