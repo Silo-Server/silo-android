@@ -73,6 +73,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
+import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 
 /**
@@ -640,7 +641,8 @@ private fun FacetValuesScreen(
     }
     if (remoteField != null) {
         OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
-            placeholder = { androidx.compose.material3.Text("Search ${facet.title}") }, modifier = Modifier.fillMaxWidth())
+            placeholder = { androidx.compose.material3.Text("Search ${facet.title}") }, modifier = Modifier.fillMaxWidth(),
+            colors = tvOutlinedTextFieldColors())
         Text(note ?: if (scope == null) "Showing a limited list. Reload filters to search all values." else "Search by the beginning of a name.")
     }
     val choices = if (remoteField != null && scope != null) remoteValues else facet.optionPairs(facetOptions)

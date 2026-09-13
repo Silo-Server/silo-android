@@ -93,8 +93,8 @@ class DormantMembershipTest {
         assertTrue(dao.dueBatch("s", "p", Long.MAX_VALUE, 10).isEmpty())
         assertEquals(true, future.contentItemStateDao().get("s", "p", "item")?.favorite)
         // Quarantine cannot block unrelated item FIFO, even when its IDs are older.
-        val unrelated = dao.insert(rows.first().copy(id = 0, opKind = "SET_RATING", state = "pending",
-            coalesceKey = "rating", idempotencyKey = "rating", nextAttemptAtMs = 0))
+        val unrelated = dao.insert(rows.first().copy(id = 0, opKind = "SET_EBOOK_PROGRESS", state = "pending",
+            coalesceKey = "ebook", idempotencyKey = "ebook", nextAttemptAtMs = 0))
         assertEquals(listOf(unrelated), dao.dueTargetHeads("s", "p", Long.MAX_VALUE, 10).map { it.id })
         // Old producer must abort its whole projection+enqueue transaction after eventual cutover.
         assertFailsWith<IllegalStateException> { repository.recordFavorite("item", false) }

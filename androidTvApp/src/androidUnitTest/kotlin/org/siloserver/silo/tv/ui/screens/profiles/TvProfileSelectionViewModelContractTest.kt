@@ -67,8 +67,8 @@ class TvProfileSelectionViewModelContractTest {
             MockEngine { request ->
                 requests.trySend(request.url.encodedPath)
                 when (request.url.encodedPath) {
-                    "/api/v1/profiles" -> respond(
-                        """{"profiles":[]}""",
+                    "/api/v2/profiles" -> respond(
+                        """{"items":[]}""",
                         HttpStatusCode.OK,
                         headersOf(HttpHeaders.ContentType, "application/json"),
                     )
@@ -92,8 +92,8 @@ class TvProfileSelectionViewModelContractTest {
         runCurrent()
 
         // First load: the gate rejects the v2 call without a request, so the
-        // first thing to reach the network is the v1 list.
-        assertEquals("/api/v1/profiles", requests.awaitNext())
+        // first thing to reach the network is the profile list.
+        assertEquals("/api/v2/profiles", requests.awaitNext())
 
         registry.setContract("a", ServerContract.V2)
         // The collector's resumption is queued on the unconfined event loop
@@ -103,7 +103,7 @@ class TvProfileSelectionViewModelContractTest {
         // The contract change re-ran the load, and this time the gate let
         // the v2 admin lookup through to the network, followed by the list.
         assertEquals("/api/v2/account/me", requests.awaitNext())
-        assertEquals("/api/v1/profiles", requests.awaitNext())
+        assertEquals("/api/v2/profiles", requests.awaitNext())
     }
 
     /** Real-clock wait: under the test scheduler a virtual-time timeout would fire at once. */

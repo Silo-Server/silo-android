@@ -10,6 +10,8 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.*
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -54,6 +56,9 @@ class TvStartupMetadataOwnerTest {
                 val path = req.url.encodedPath
                 var status = HttpStatusCode.OK
                 val body = when {
+                    path == "/api/v2/playback/capabilities" ->
+                        """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["original_http"]}"""
+                    path == "/api/v2/account/me" -> """{"id":"account-1","username":"test","email":"","role":"user"}"""
                     path == "/api/v2/watch/item" -> {
                         reads++
                         assertEquals(original, req.attributes[AuthScopeAttributeKey])
@@ -65,15 +70,17 @@ class TvStartupMetadataOwnerTest {
                         status = HttpStatusCode.Created
                         assertEquals(original, req.attributes[AuthScopeAttributeKey])
                         val session = if (stage == "predecessor" && starts == 1) "predecessor" else "allocated"
-                        """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1"],"outcome":"playable","session_id":"$session","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"$session","delivery":"original_http","stream":{"url":"https://silo.test/stream/$session","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"41","effective_media_file_id":"41"}}"""
+                        """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"$session","playback_plan":{"plan_id":"plan","plan_attempt_key":"key","session_id":"$session","delivery":"original_http","stream":{"url":"https://silo.test/stream/$session","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"41","effective_media_file_id":"41"}}"""
                     }
                     path == "/api/v2/playback/route-events" -> {
                         status = HttpStatusCode.Accepted
-                        """{"event_id":"event","outcome":"accepted"}"""
+                        val sent = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                        """{"event_id":${sent["event_id"]},"outcome":"accepted"}"""
                     }
                     req.method == HttpMethod.Delete && path == "/api/v2/playback/allocated" -> {
                         stops += "allocated"
-                        """{"stop_id":"stop","outcome":"stopped"}"""
+                        val sent = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString()).jsonObject
+                        """{"stop_id":${sent["stop_id"]},"outcome":"stopped"}"""
                     }
                     else -> error("Unexpected transport $path")
                 }
@@ -81,7 +88,13 @@ class TvStartupMetadataOwnerTest {
             }
         })) { install(ContentNegotiation) { json(SiloJson) } }
         try {
-            val manager = PlaybackSessionManager(PlaybackRepository(tokens = tokens), tokens)
+            val authorities = object : DurableLoginAuthorityProvider {
+                override suspend fun snapshotDurableLoginAuthority() = tokens.metadataOwner?.let { DurableLoginAuthority("login-1", it) }
+            }
+            val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens, authorities, StartupPlaybackJournal()) {
+                java.util.UUID.randomUUID().toString()
+            }
+            val manager = PlaybackSessionManager(PlaybackRepository(sequenced, tokens), tokens)
             val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
             fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
                 it.isAccessible = true; it.get(lifecycle)
@@ -153,6 +166,14 @@ class TvStartupMetadataOwnerTest {
             }
             assertEquals(if (stage == "missing") 0 else 1, reads)
         } finally { client.close() }
+    }
+}
+
+private class StartupPlaybackJournal : PlaybackJournalStore {
+    var entries = emptyList<PlaybackJournalEntry>()
+    override suspend fun read() = entries
+    override suspend fun write(entries: List<PlaybackJournalEntry>) {
+        this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
     }
 }
 

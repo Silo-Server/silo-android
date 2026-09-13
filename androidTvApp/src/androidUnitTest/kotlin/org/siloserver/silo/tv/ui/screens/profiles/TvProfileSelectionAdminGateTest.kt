@@ -155,8 +155,8 @@ class TvProfileSelectionAdminGateTest {
 
     private fun createProfileRepository(profiles: List<Profile>): ProfileRepository {
         val jsonString = buildString {
-            append("""{"profiles":[""")
-            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}"}""" })
+            append("""{"items":[""")
+            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""" })
             append("""]}""")
         }
         val engine = MockEngine {
