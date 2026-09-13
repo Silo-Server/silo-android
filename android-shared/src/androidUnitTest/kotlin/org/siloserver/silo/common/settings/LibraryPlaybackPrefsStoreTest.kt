@@ -107,7 +107,7 @@ class LibraryPlaybackPrefsStoreTest {
         val started = kotlinx.coroutines.CompletableDeferred<Unit>()
         val reply = kotlinx.coroutines.CompletableDeferred<Unit>()
         val client = HttpClient()
-        val api = object : LibraryPlaybackPrefsApi(client) {
+        val api = object : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())) {
             override suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> {
                 started.complete(Unit)
                 reply.await()
@@ -138,7 +138,7 @@ class LibraryPlaybackPrefsStoreTest {
 private class FakeLibraryPlaybackPrefsApi(
     initial: List<LibraryPlaybackPref>,
     private var failNextWith: String? = null,
-) : LibraryPlaybackPrefsApi(HttpClient()) {
+) : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl())) {
     data class SetCall(val libraryId: Int, val request: LibraryPlaybackPrefRequest)
 
     private var currentList: List<LibraryPlaybackPref> = initial

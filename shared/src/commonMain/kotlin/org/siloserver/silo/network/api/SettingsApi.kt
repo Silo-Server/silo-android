@@ -1,30 +1,17 @@
 package org.siloserver.silo.network.api
 
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
-import org.siloserver.silo.model.settings.EffectiveSettingsResponse
 import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
-import org.siloserver.silo.model.settings.PlaybackSettingsKeys
-import org.siloserver.silo.model.settings.SettingEntry
-import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
-import org.siloserver.silo.model.settings.SettingValueWriteRequest
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.model.settings.SubtitleAppearance
-import org.siloserver.silo.model.settings.UpdateSettingRequest
 import org.siloserver.silo.network.ApiResult
-import io.ktor.client.HttpClient
-import io.ktor.client.request.HttpRequestBuilder
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.apiv2.SettingsV2Api
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import io.ktor.client.request.delete
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.put
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
-import io.ktor.http.contentType
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
@@ -33,7 +20,7 @@ import kotlin.uuid.Uuid
  * kill-switch (admins can disable overlays for everyone); `defaults` is
  * the serialized [CardOverlayPrefs] JSON used when a user has no override.
  * Mirrors iOS `OverlayConfigResponse` and the server's
- * `GET /api/v1/settings/overlay-config` shape.
+ * `GET /api/v2/settings/overlay-config` shape.
  */
 @Serializable
 data class OverlayConfigResponse(
@@ -45,7 +32,7 @@ data class OverlayConfigResponse(
  * Result of probing the canonical settings contract.
  *
  * A server that predates the canonical settings API has no
- * `/api/v1/settings/contract` routes at all, so the probe 404s. That is a
+ * `/settings/contract` routes at all, so the probe 404s. That is a
  * distinct, actionable state — the UI must say "this server needs an
  * upgrade" rather than render an empty settings screen — so it is a typed
  * case here instead of dissolving into the generic error path.
@@ -57,7 +44,7 @@ sealed class SettingsCapabilitiesResult {
     ) : SettingsCapabilitiesResult()
 
     /**
-     * The connected server does not serve `/api/v1/settings/contract`
+     * The connected server does not serve `/settings/contract`
      * (HTTP 404): it is too old for the canonical settings API.
      */
     data object ServerUpgradeRequired : SettingsCapabilitiesResult()
@@ -81,81 +68,21 @@ sealed class SettingsCapabilitiesResult {
 fun newSettingMutationId(): String = Uuid.random().toString()
 
 open class SettingsApi(
-    private val client: HttpClient,
-    private val readsV2: org.siloserver.silo.network.apiv2.SettingsReadsV2Api? = null,
-    private val writesV2: org.siloserver.silo.network.apiv2.SettingsWritesV2Api? = null,
+    private val v2: SettingsV2Api,
 ) {
 
-    open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = readsV2?.overlayConfig() ?: safeApiCall {
-        client.get("/api/v1/settings/overlay-config")
-    }
+    open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = v2.overlayConfig()
 
-    open suspend fun getSetting(key: String): ApiResult<SettingEntry> = safeApiCall {
-        client.get("/api/v1/settings/$key")
-    }
-
-    open suspend fun setSetting(key: String, value: String): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/settings/$key") {
-            contentType(ContentType.Application.Json)
-            setBody(UpdateSettingRequest(value))
-        }
-    }
-
-    open suspend fun deleteSetting(key: String): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/settings/$key")
-    }
-
-    open suspend fun getDeviceSetting(key: String): ApiResult<SettingEntry> = safeApiCall {
-        client.get("/api/v1/settings/device/$key")
-    }
-
-    open suspend fun setDeviceSetting(
-        key: String,
-        value: String,
-        profileId: String? = null,
-    ): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/settings/device/$key") {
-            if (!profileId.isNullOrBlank()) {
-                header("X-Profile-Id", profileId)
-            }
-            contentType(ContentType.Application.Json)
-            setBody(UpdateSettingRequest(value))
-        }
-    }
-
-    open suspend fun deleteDeviceSetting(key: String): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/settings/device/$key")
-    }
-
-    open suspend fun getEffectiveSettings(keys: List<String>): ApiResult<EffectiveSettingsResponse> = safeApiCall {
-        client.get("/api/v1/settings/effective") {
-            url {
-                parameters.append("keys", keys.joinToString(","))
-            }
-        }
-    }
-
-    open suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> = safeApiCall {
-        client.get("/api/v1/settings/subtitle_appearance/effective")
-    }
+    open suspend fun getEffectiveSubtitleAppearance(): ApiResult<EffectiveSubtitleAppearance> =
+        v2.effectiveSubtitleAppearance()
 
     open suspend fun setDeviceSubtitleAppearanceOverride(
         appearance: SubtitleAppearance,
         profileId: String? = null,
-    ): ApiResult<Unit> = setDeviceSetting(
-        key = PlaybackSettingsKeys.SubtitleAppearance,
-        value = appearance.toJsonString(),
-        profileId = profileId,
-    )
+    ): ApiResult<Unit> = v2.putDeviceSubtitleAppearance(appearance, profileId)
 
     open suspend fun deleteDeviceSubtitleAppearanceOverride(): ApiResult<Unit> =
-        deleteDeviceSetting(PlaybackSettingsKeys.SubtitleAppearance)
-
-    // ------------------------------------------------------------------
-    // Canonical settings API (/settings/contract, /settings/values/*).
-    // Typed JSON values with explicit scopes; the endpoints above speak the
-    // legacy string-only registry and remain for not-yet-migrated call sites.
-    // ------------------------------------------------------------------
+        v2.deleteDeviceSubtitleAppearance()
 
     /**
      * What the connected server's settings contract supports, or
@@ -163,19 +90,16 @@ open class SettingsApi(
      * predates the canonical settings API entirely.
      *
      * Not every 404 on this path means an old server. The route sits behind
-     * the viewer-access middleware, which answers a JSON
-     * `{"error":"not_found"}` when the `X-Profile-Id` this client sends names
-     * a profile the household deleted elsewhere. Telling the user their
-     * server is too old — and to go ask its admin — when the real fix is
-     * re-selecting a profile is worse than saying nothing, so the two are
-     * separated on the wire: a server with no `/settings/contract` routes
-     * falls through to the router's plain-text `404 page not found`, which
-     * leaves the parsed error code empty.
+     * the viewer-access middleware, which answers a problem body with a code
+     * when the `X-Profile-Id` this client sends names a profile the household
+     * deleted elsewhere. Telling the user their server is too old when the
+     * real fix is re-selecting a profile is worse than saying nothing, so the
+     * two are separated on the wire: a server with no `/settings/contract`
+     * routes falls through to the router's plain-text `404 page not found`,
+     * which leaves the parsed error code empty.
      */
     open suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
-        when (val result = writesV2?.capabilities() ?: safeApiCall<SettingsContractCapabilities> {
-            client.get("/api/v1/settings/contract/capabilities")
-        }) {
+        when (val result = v2.capabilities()) {
             is ApiResult.Success -> SettingsCapabilitiesResult.Available(result.data)
             is ApiResult.Error ->
                 if (result.code == HttpStatusCode.NotFound.value && result.error.isEmpty()) {
@@ -201,24 +125,11 @@ open class SettingsApi(
         keys: List<String> = emptyList(),
         libraryIds: List<Int> = emptyList(),
         seriesIds: List<String> = emptyList(),
-    ): ApiResult<EffectiveSettingValuesResponse> = readsV2?.effectiveValues(keys, libraryIds, seriesIds) ?: safeApiCall {
-        client.get("/api/v1/settings/values/effective") {
-            url {
-                if (keys.isNotEmpty()) parameters.append("keys", keys.joinToString(","))
-                if (libraryIds.isNotEmpty()) {
-                    parameters.append("library_ids", libraryIds.joinToString(","))
-                }
-                if (seriesIds.isNotEmpty()) {
-                    parameters.append("series_ids", seriesIds.joinToString(","))
-                }
-            }
-        }
-    }
+    ): ApiResult<EffectiveSettingValuesResponse> = v2.effectiveValues(keys, libraryIds, seriesIds)
 
     /** Migration decision read pinned to the original author; failures never mean absence. */
-    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<EffectiveSettingValuesResponse> =
-        readsV2?.effectiveValues(keys, emptyList(), emptyList(), authority)
-            ?: ApiResult.Error(0, "unavailable", "The v2 settings reader is unavailable.")
+    suspend fun getMigrationEffectiveValues(keys: List<String>, authority: AuthScopeSnapshot): ApiResult<EffectiveSettingValuesResponse> =
+        v2.effectiveValues(keys, emptyList(), emptyList(), authority)
 
     /**
      * Write one typed value at one scope.
@@ -239,17 +150,8 @@ open class SettingsApi(
         value: JsonElement,
         mutationId: String,
         profileId: String? = null,
-        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
-    ): ApiResult<StoredSettingValue> = writesV2?.put(key, scope, value, profileId, authority) ?: safeApiCall {
-        client.put("/api/v1/settings/values/$key") {
-            applyScopeIdentity(scope, profileId)
-            if (mutationId.isNotBlank()) {
-                header("X-Silo-Mutation-Id", mutationId)
-            }
-            contentType(ContentType.Application.Json)
-            setBody(SettingValueWriteRequest(value))
-        }
-    }
+        authority: AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> = v2.put(key, scope, value, profileId, authority)
 
     /**
      * Clear the explicit value at one scope, so the setting inherits again.
@@ -261,34 +163,6 @@ open class SettingsApi(
         key: String,
         scope: SettingScopeIdentity,
         profileId: String? = null,
-        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
-    ): ApiResult<Unit> = writesV2?.delete(key, scope, profileId, authority) ?: safeApiCall {
-        client.delete("/api/v1/settings/values/$key") {
-            applyScopeIdentity(scope, profileId)
-        }
-    }
-
-    /**
-     * Applies the parts of a scope identity that travel with the request.
-     *
-     * Scope and the content ids go in the query. The profile normally rides
-     * the session's `X-Profile-Id` header; an explicit [profileId] overrides
-     * it (the interceptor only fills the header when absent), matching how
-     * [setDeviceSetting] lets a parent act for a child profile. The device id
-     * is never set here — the interceptor always attaches
-     * `X-Silo-Device-Id`, and appending it again would send two values.
-     */
-    private fun HttpRequestBuilder.applyScopeIdentity(
-        scope: SettingScopeIdentity,
-        profileId: String?,
-    ) {
-        url {
-            parameters.append("scope", scope.scope.wire)
-            scope.libraryId?.let { parameters.append("library_id", it.toString()) }
-            scope.seriesId?.let { parameters.append("series_id", it) }
-        }
-        if (!profileId.isNullOrBlank() && scope.scope != SettingScope.ACCOUNT) {
-            header("X-Profile-Id", profileId)
-        }
-    }
+        authority: AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = v2.delete(key, scope, profileId, authority)
 }

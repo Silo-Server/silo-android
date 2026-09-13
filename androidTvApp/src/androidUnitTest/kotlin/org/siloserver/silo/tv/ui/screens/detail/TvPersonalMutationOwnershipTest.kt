@@ -51,7 +51,7 @@ class TvPersonalMutationOwnershipTest {
             personalDataRepository = personal,
             playerSettingsStore = FakePlayerSettingsStore(),
             profileRepository = ProfileRepository(ProfileApi(client), identity),
-            profileSettings = ProfileSettingsController(SettingsRepository(SettingsApi(client))),
+            profileSettings = ProfileSettingsController(SettingsRepository(SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl())))),
             metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client)),
             contentId = "item", tokenManager = identity, identityTransitions = barrier,
         )
