@@ -175,9 +175,9 @@ class SequencedPlayback(
                     if (session.isNullOrBlank()) return@withStableIdentity failure("invalid_decision", "Playback returned no recoverable session.")
                     save(entry.copy(sessionId = session))
                     try {
+                        // The sequenced-progress contract is negotiated on /playback/capabilities;
+                        // the decision's server_features lists only protocol-v3 plan features.
                         val decision = decodePlaybackDecisionV2(result.data)
-                        if (SEQUENCED_PROGRESS_FEATURE !in decision.serverFeatures)
-                            return@withStableIdentity failure("invalid_decision", "Playback omitted the negotiated progress feature.")
                         guard()
                         val ready = if (adoptForPlayer) withAuxiliaryAuthority(decision, entry, captured, sentHeaders) else decision
                         if (adoptForPlayer) adopted += entry.attemptId
