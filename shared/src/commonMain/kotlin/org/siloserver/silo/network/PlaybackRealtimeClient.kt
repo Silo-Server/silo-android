@@ -120,7 +120,7 @@ class DefaultPlaybackRealtimeClient(
         val mintedAt = TimeSource.Monotonic.markNow()
         val proof = when (val result = safeApiV2Call<WsTicketResponse>(gate) {
             client.post {
-                url { path("api", "v2", "playback", "sessions", sessionId, "control", "ws-ticket") }
+                url { path("", "api", "v2", "playback", "sessions", sessionId, "control", "ws-ticket") }
                 authScope(owner.first); requireSiloAuth(); singleAttempt()
                 contentType(ContentType.Application.Json)
                 setBody(buildJsonObject { owner.second?.let { put("installation_id", it) } })
@@ -281,7 +281,7 @@ internal fun HttpRequestBuilder.playbackControlUpgrade(scope: AuthScopeSnapshot,
         require(protocol == URLProtocol.HTTP || protocol == URLProtocol.HTTPS)
         require(user == null && password == null)
         protocol = if (protocol == URLProtocol.HTTPS) URLProtocol.WSS else URLProtocol.WS
-        path("api", "v2", "playback", "sessions", sessionId, "control", "ws")
+        path("", "api", "v2", "playback", "sessions", sessionId, "control", "ws")
         parameters.clear(); fragment = ""
     }
     authScope(scope); skipSiloAuth(); singleAttempt()
