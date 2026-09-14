@@ -161,8 +161,9 @@ class SequencedPlaybackTest {
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.NetworkError>(runtime.start(request()))
-            assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "attempt-2"))).error)
-            assertEquals(1, starts); assertEquals(listOf("attempt-1"), runtime.pending.value)
+            // A later start first replays the exact retained attempt; a lost reply keeps the fence.
+            assertIs<ApiResult.NetworkError>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(2, starts); assertEquals(listOf("attempt-1"), runtime.pending.value)
         } finally { c.close() }
     }
 
@@ -235,8 +236,9 @@ class SequencedPlaybackTest {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val repository = PlaybackRepository(runtime)
             assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
-            assertEquals("playback_pending", assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).error)
-            assertEquals(1, starts); assertEquals(request().v2Body(installation), store.entries.single().start)
+            // The retained attempt is replayed byte-for-byte before a new one may start; the same refusal fences again.
+            assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
+            assertEquals(2, starts); assertEquals(request().v2Body(installation), store.entries.single().start)
         } finally { c.close() }
     }
 
@@ -263,7 +265,7 @@ class SequencedPlaybackTest {
             assertEquals(1, starts); assertEquals(0, deletes)
             assertEquals(listOf("attempt-1"), runtime.pending.value)
             assertEquals("session-1", store.entries.single().sessionId)
-            assertEquals("playback_pending", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "another"))).error)
+            assertEquals("playback_storage", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "another"))).error)
             store.failStop = false
             assertIs<ApiResult.Success<Unit>>(repository.recoverPlayback())
             assertEquals(1, starts); assertEquals(1, deletes)

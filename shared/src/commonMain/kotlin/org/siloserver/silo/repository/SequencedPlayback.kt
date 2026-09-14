@@ -1,5 +1,6 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -132,10 +133,23 @@ class SequencedPlayback(
             if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
             val live = authorities.snapshotDurableLoginAuthority()
             guard()
-            val unresolved = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
+            suspend fun unresolved() = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
                 it.serverId == current.serverId && it.profileId == current.profileId }
             guard()
-            if (unresolved) return@withStableIdentity failure("playback_pending", "A previous playback request needs recovery before starting again.")
+            if (unresolved()) {
+                // Settle the earlier attempt first (replay an uncertain start, then stop it) so a
+                // crashed or rejected session never needs a manual recovery step before playing again.
+                val settled = try { recoverLocked() }
+                    catch (e: CancellationException) { throw e }
+                    catch (e: IdentityChanged) { throw e }
+                    catch (_: Exception) { failure("playback_storage", "Playback recovery storage is unavailable.") }
+                guard()
+                if (unresolved()) return@withStableIdentity when (settled) {
+                    is ApiResult.Success -> failure("playback_pending", "A previous playback request needs recovery before starting again.")
+                    is ApiResult.Error -> settled
+                    is ApiResult.NetworkError -> settled
+                }
+            }
             if (capability == null) return@withStableIdentity failure("server_update_required", "Update the server to use v2 playback.")
             if (SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withStableIdentity failure("playback_unavailable", "V2 playback is unavailable on this server.")
             if (!capability.allowed || capability.state != PlaybackCapabilityStateV2.AVAILABLE || capability.installationId.isNullOrBlank() ||
@@ -375,20 +389,22 @@ class SequencedPlayback(
     }
 
     /** Explicit recovery revalidates installation, canonical account, saved login and profile. Never autoplay. */
-    suspend fun recover(): ApiResult<Unit> = mutex.withLock {
+    suspend fun recover(): ApiResult<Unit> = mutex.withLock { recoverLocked() }
+
+    private suspend fun recoverLocked(): ApiResult<Unit> {
         val live = authorities.snapshotDurableLoginAuthority()
-            ?: return@withLock failure("identity_unavailable", "Sign in to recover playback.")
+            ?: return failure("identity_unavailable", "Sign in to recover playback.")
         val capability = when (val result = api.capabilities(live.scope)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> return@withLock result
-            is ApiResult.NetworkError -> return@withLock result
+            is ApiResult.Error -> return result
+            is ApiResult.NetworkError -> return result
         }
         val account = when (val result = api.account(live.scope)) {
             is ApiResult.Success -> result.data
-            is ApiResult.Error -> return@withLock result
-            is ApiResult.NetworkError -> return@withLock result
+            is ApiResult.Error -> return result
+            is ApiResult.NetworkError -> return result
         }
-        if (live != authorities.snapshotDurableLoginAuthority()) return@withLock failure("identity_changed", "The active viewer changed.")
+        if (live != authorities.snapshotDurableLoginAuthority()) return failure("identity_changed", "The active viewer changed.")
         for (entry in load().filter { it.needsRecovery() }) {
             if (entry.loginId != live.loginId || entry.serverId != live.scope.serverId || entry.origin != live.scope.serverUrl ||
                 entry.profileId != live.scope.profileId || entry.accountId != account.id || entry.installationId != capability.installationId) continue
@@ -397,17 +413,16 @@ class SequencedPlayback(
             if (oldScope != null && !oldScope.isSameIdentityAs(live.scope)) continue
             scopes[entry.attemptId] = live.scope
             if (entry.sessionId == null) {
-                val startResult = sendStart(entry, live.scope, adoptForPlayer = false)
-                if (startResult !is ApiResult.Success) return@withLock when (startResult) {
-                    is ApiResult.Error -> startResult
-                    is ApiResult.NetworkError -> startResult
-                    else -> error("Unreachable")
+                when (val startResult = sendStart(entry, live.scope, adoptForPlayer = false)) {
+                    is ApiResult.Success -> Unit
+                    is ApiResult.Error -> return startResult
+                    is ApiResult.NetworkError -> return startResult
                 }
             }
             val result = stopEntry(load().first { it.attemptId == entry.attemptId })
-            if (result !is ApiResult.Success) return@withLock result
+            if (result !is ApiResult.Success) return result
         }
-        ApiResult.Success(Unit)
+        return ApiResult.Success(Unit)
     }
 }
 

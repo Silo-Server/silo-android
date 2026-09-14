@@ -32,8 +32,10 @@ bytes of an unresolved sample.
 
 Stops persist one UUID and body before dispatch. Only a matching HTTP 200 stopped
 or replayed receipt confirms completion. Network errors and HTTP 503 responses
-retain the request after the bounded stop retry sequence. Settings
-exposes **Retry pending playback stops**. Recovery validates the installation,
+retain the request after the bounded stop retry sequence. A later start for
+the same login, server and profile first runs recovery inline and only refuses
+with `playback_pending` when the retained request still cannot settle; Settings
+also exposes **Retry pending playback stops**. Recovery validates the installation,
 canonical account, saved login, origin and profile, resolves an uncertain start
 with its original attempt, and stops an allocated session without starting a
 renderer. It does not stop a currently adopted in-process player. Identity
