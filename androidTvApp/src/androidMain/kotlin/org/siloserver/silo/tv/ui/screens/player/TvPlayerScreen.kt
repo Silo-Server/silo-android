@@ -1397,6 +1397,7 @@ fun TvPlayerScreen(
                     if (event == Lifecycle.Event.ON_STOP && !exitRequested) {
                         stopPlaybackAndExit()
                     }
+                }
                 Lifecycle.Event.ON_RESUME -> if (roomController != null) {
                     val desired = latestLifecycleRoomSnapshot?.isPaused?.not()
                     mediaController?.let { controller ->
