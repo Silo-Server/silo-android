@@ -5243,7 +5243,11 @@ class TvPlayerViewModel(
         subtitlePersistenceReservation?.let(
             subtitleTransactions::requestDurableFinalPersistence,
         )
-        lifecycleTeardown.stopDetached(expectedSessionId = exitSessionId)
+        // A player route can be stopped before its asynchronous start has
+        // adopted a server session. Never issue an unqualified detached stop:
+        // a replacement session could be adopted before the queued teardown
+        // runs and then be stopped by this old route.
+        exitSessionId?.let { lifecycleTeardown.stopDetached(expectedSessionId = it) }
     }
 
     fun onExit() {
