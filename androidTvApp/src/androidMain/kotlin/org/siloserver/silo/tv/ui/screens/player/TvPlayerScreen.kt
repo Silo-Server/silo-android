@@ -1387,6 +1387,21 @@ fun TvPlayerScreen(
                             }
                         }
                     }
+                    // A TV/Fire TV can stop delivering lifecycle callbacks to
+                    // the player while the process remains alive. Pausing
+                    // alone leaves the 10s progress reporter heartbeating a
+                    // dead server session indefinitely, so tear the session
+                    // down when the player activity really leaves the
+                    // foreground. This is idempotent with the explicit exit
+                    // path and keeps PiP playback alive.
+                    if (event == Lifecycle.Event.ON_STOP && !exitRequested) {
+                        exitRequested = true
+                        viewModel.stopSessionForExitAsync(
+                            positionMs = mediaController?.currentPosition,
+                            durationMs = mediaController?.duration,
+                        )
+                        mediaController?.stop()
+                    }
                 }
                 Lifecycle.Event.ON_RESUME -> if (roomController != null) {
                     val desired = latestLifecycleRoomSnapshot?.isPaused?.not()
