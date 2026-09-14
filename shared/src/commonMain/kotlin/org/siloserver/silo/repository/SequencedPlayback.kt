@@ -185,7 +185,19 @@ class SequencedPlayback(
                 is ApiResult.Success -> {
                     // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
                     val session = result.data["session_id"]?.jsonPrimitive?.contentOrNull
-                    if (session.isNullOrBlank()) return@withStableIdentity failure("invalid_decision", "Playback returned no recoverable session.")
+                    if (session.isNullOrBlank()) {
+                        // A terminal decision without a session allocated nothing on the server. Settle the
+                        // attempt so it never fences later starts, and hand the server's own reason to the
+                        // caller instead of a generic decode failure.
+                        val outcome = result.data["outcome"]?.jsonPrimitive?.contentOrNull
+                        if (outcome == "adaptation_unavailable" && result.data["terminal"] is JsonObject) {
+                            save(entry.copy(terminal = true))
+                            publish()
+                            return@withStableIdentity try { ApiResult.Success(decodePlaybackDecisionV2(result.data)) }
+                                catch (e: IdentityChanged) { throw e } catch (e: Exception) { ApiResult.NetworkError(e) }
+                        }
+                        return@withStableIdentity failure("invalid_decision", "Playback returned no recoverable session.")
+                    }
                     save(entry.copy(sessionId = session))
                     try {
                         // The sequenced-progress contract is negotiated on /playback/capabilities;

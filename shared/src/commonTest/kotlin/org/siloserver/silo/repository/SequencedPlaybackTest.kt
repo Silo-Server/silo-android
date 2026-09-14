@@ -228,6 +228,26 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun terminalDecisionWithoutSessionSettlesTheAttemptAndSurfacesTheReason() = runTest {
+        val identity = Identity(); val store = Store(); var starts = 0
+        val terminal = """{"protocol_version":3,"server_features":["playback_plan_v3"],"outcome":"adaptation_unavailable","terminal":{"reason":"subtitle_unavailable_in_version","message":"The selected subtitle track is unavailable in the fallback media version.","retryable":false}}"""
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply(terminal, HttpStatusCode.Created) }
+            else -> error("Unexpected request ${req.url.encodedPath}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            val first = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            assertEquals("subtitle_unavailable_in_version", first.data.terminal?.reason)
+            assertTrue(store.entries.single().terminal); assertTrue(runtime.pending.value.isEmpty())
+            // The refused attempt never fences the next start; a fresh attempt goes straight to the server.
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(2, starts)
+        } finally { c.close() }
+    }
+
     @Test fun validationRejectionRetainsExactAttemptWithoutLegacyFallback() = runTest {
         val identity = Identity(); val store = Store(); var starts = 0
         val c = client { req -> when (req.url.encodedPath) {
