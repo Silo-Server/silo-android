@@ -1306,11 +1306,6 @@ private fun TvSubtitleSettingsPane(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
-        if (state.settingsAvailability ==
-            ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED
-        ) {
-            item { TvSettingsUpgradeRequiredNotice() }
-        }
         item {
             SettingsGroup(title = "Profile") {
                 SettingsValueRow(
@@ -2371,25 +2366,6 @@ internal fun SettingsInfoRow(label: String, value: String, singleLine: Boolean =
 }
 
 /** Non-focusable explanatory footer below a settings group (tvOS `TVSettingsFooter`). */
-/**
- * Shown when the connected server predates the canonical settings API.
- *
- * The failure mode this replaces was a settings pane that looked normal but
- * saved nothing: the profile preferences resolve to nothing, so the rows show
- * defaults and every edit goes nowhere with no explanation. Playback is
- * unaffected — it runs from this device's own settings.
- */
-@Composable
-private fun TvSettingsUpgradeRequiredNotice() {
-    SettingsGroup(title = "Server Update Needed") {
-        SettingsFooterText(
-            text = "This server is too old to store profile settings. Subtitle and metadata " +
-                "preferences below will not save until it is updated. Playback still works " +
-                "using this Android TV's own settings.",
-        )
-    }
-}
-
 @Composable
 internal fun SettingsFooterText(text: String, modifier: Modifier = Modifier) {
     Text(

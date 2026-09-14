@@ -3,10 +3,10 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.StoredSettingValue
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.OverlayConfigResponse
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.network.map
 import kotlinx.serialization.json.JsonElement
 
@@ -31,13 +31,8 @@ class SettingsRepository(
             response.settings.associateBy { it.key }
         }
 
-    /**
-     * What the connected server's settings contract supports, or
-     * [SettingsCapabilitiesResult.ServerUpgradeRequired] when it predates the
-     * canonical settings API. Screens surface that case as an explanation
-     * rather than as an empty list of settings.
-     */
-    suspend fun contractCapabilities(): SettingsCapabilitiesResult =
+    /** What the connected server's settings contract supports. */
+    suspend fun contractCapabilities(): ApiResult<SettingsContractCapabilities> =
         settingsApi.getContractCapabilities()
 
     /**

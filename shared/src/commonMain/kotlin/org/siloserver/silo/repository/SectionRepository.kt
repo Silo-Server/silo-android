@@ -9,8 +9,6 @@ import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.apiv2.identityChanged
-import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
-import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.port.CatalogCachePort
@@ -23,7 +21,6 @@ class SectionRepository(
     private val sectionApi: SectionApi,
     /** Offline read cache for a library's Recommended sections (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
-    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
 ) {
     suspend fun captureHomeAuthority() = sectionApi.captureHomeAuthority()
     suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isHomeAuthorityCurrent(owner)

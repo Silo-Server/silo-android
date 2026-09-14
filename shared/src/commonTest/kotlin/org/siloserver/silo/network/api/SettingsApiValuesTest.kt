@@ -23,6 +23,7 @@ import kotlinx.serialization.json.put
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.LibraryPlaybackPrefRequest
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.network.ApiResult
@@ -124,25 +125,28 @@ class SettingsApiValuesTest {
         assertEquals("/api/v2/settings/contract/capabilities", captured.path)
         assertEquals(scope, captured.pinned)
         assertTrue(captured.requiresAuth)
-        assertIs<SettingsCapabilitiesResult.Available>(result)
-        assertEquals(1, result.capabilities.apiVersion)
-        assertEquals("36e767e3", result.capabilities.revision)
-        assertEquals(4, result.capabilities.manifestRevision)
-        assertEquals("\"abc123\"", result.capabilities.contractEtag)
-        assertEquals(41, result.capabilities.definitionCount)
-        assertEquals(5, result.capabilities.scopes.size)
-        assertTrue(result.capabilities.supportsBatchedEffective)
+        assertIs<ApiResult.Success<SettingsContractCapabilities>>(result)
+        assertEquals(1, result.data.apiVersion)
+        assertEquals("36e767e3", result.data.revision)
+        assertEquals(4, result.data.manifestRevision)
+        assertEquals("\"abc123\"", result.data.contractEtag)
+        assertEquals(41, result.data.definitionCount)
+        assertEquals(5, result.data.scopes.size)
+        assertTrue(result.data.supportsBatchedEffective)
     }
 
     @Test
-    fun `getContractCapabilities maps a routeless 404 to ServerUpgradeRequired`() = runTest {
+    fun `getContractCapabilities keeps a routeless 404 on the generic error path`() = runTest {
         val (api, _) = api(
             status = HttpStatusCode.NotFound,
             responseBody = "404 page not found",
             responseContentType = "text/plain",
         )
 
-        assertIs<SettingsCapabilitiesResult.ServerUpgradeRequired>(api.getContractCapabilities())
+        val result = api.getContractCapabilities()
+
+        assertIs<ApiResult.Error>(result)
+        assertEquals(404, result.code)
     }
 
     @Test
@@ -155,7 +159,7 @@ class SettingsApiValuesTest {
 
         val result = api.getContractCapabilities()
 
-        assertIs<SettingsCapabilitiesResult.Error>(result)
+        assertIs<ApiResult.Error>(result)
         assertEquals(404, result.code)
         assertEquals("not_found", result.error)
     }
@@ -170,7 +174,7 @@ class SettingsApiValuesTest {
 
         val result = api.getContractCapabilities()
 
-        assertIs<SettingsCapabilitiesResult.Error>(result)
+        assertIs<ApiResult.Error>(result)
         assertEquals(500, result.code)
         assertEquals("internal_error", result.error)
     }

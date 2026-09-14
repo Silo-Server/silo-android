@@ -11,7 +11,6 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.EffectiveSettingValue
 import org.siloserver.silo.model.settings.EffectiveSettingValuesResponse
-import org.siloserver.silo.model.settings.EffectiveSubtitleAppearance
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
@@ -48,7 +47,7 @@ class AndroidPlayerSettingsStoreTest {
         var writes = 0
         val api = object : org.siloserver.silo.network.api.SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
             override suspend fun getContractCapabilities() =
-                org.siloserver.silo.network.api.SettingsCapabilitiesResult.Available(
+                org.siloserver.silo.network.ApiResult.Success(
                     org.siloserver.silo.model.settings.SettingsContractCapabilities(
                         apiVersion = 1, manifestRevision = 12, supportsBatchedEffective = true,
                     ),

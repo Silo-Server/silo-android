@@ -288,9 +288,10 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
 
         // Shared calls are normally relative. Resolve those against the exact
         // server that owns the credential scope before deciding whether any
-        // Silo header may be attached.
+        // Silo header may be attached. The root liveness route is the one
+        // relative path outside `/api/`.
         if (
-            request.url.encodedPath.startsWith("/api/") &&
+            (request.url.encodedPath.startsWith("/api/") || request.url.encodedPath == "/health") &&
             (request.url.host.isBlank() || request.url.host == "localhost") &&
             trustedServerUrl.isNotBlank()
         ) {

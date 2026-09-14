@@ -35,7 +35,6 @@ internal data class AiJobV2(
 }
 @Serializable private data class AiJobEnvelope(val job: AiJobV2)
 @Serializable private data class AiJobsEnvelope(val jobs: List<AiJobV2>)
-@Serializable private data class AiQuotaV2(val limited: Boolean, val limit: Int, val used: Int, val remaining: Int, val period: String)
 
 /** Quota, job reads and job cancellation. Cancellation acknowledges a request; job polling determines the terminal outcome. */
 class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
@@ -48,9 +47,7 @@ class SubtitleAiReadsV2Api(private val client: HttpClient, private val tokens: T
     private suspend inline fun <reified T, R> read(path: String, scope: AuthScopeSnapshot?,
         noinline configure: HttpRequestBuilder.() -> Unit = {}, crossinline project: (T) -> R): ApiResult<R> =
         bound<T, R>(scope, HttpStatusCode.OK, { captured -> client.get(path) { authScope(captured); requireSiloAuth(); configure() } }, project)
-    suspend fun quota(): ApiResult<SubtitleAiQuota> = read<AiQuotaV2, SubtitleAiQuota>("/api/v2/subtitles/ai/quota", null) {
-        SubtitleAiQuota(it.limited, it.limit, it.used, it.remaining, it.period)
-    }
+    suspend fun quota(): ApiResult<SubtitleAiQuota> = read<SubtitleAiQuota, SubtitleAiQuota>("/api/v2/subtitles/ai/quota", null) { it }
     suspend fun job(id: Long, scope: AuthScopeSnapshot? = null): ApiResult<SubtitleAiJobResponse> =
         read<AiJobEnvelope, SubtitleAiJobResponse>("/api/v2/subtitles/ai/jobs/$id", scope) {
             val job = it.job.project(); require(job.id == id); SubtitleAiJobResponse(job)

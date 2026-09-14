@@ -37,7 +37,6 @@ import org.siloserver.silo.network.api.DefaultMetadataAiApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.MetadataAiRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -112,7 +111,7 @@ class TvItemDetailSubtitlePreferenceTest {
         runDetailTest {
             val viewModel = createViewModel(
                 settingsApi = FakeSettingsApi(
-                    capabilities = SettingsCapabilitiesResult.ServerUpgradeRequired,
+                    capabilities = ApiResult.Error(404, "not_found", "404 page not found"),
                 ),
                 profileSubtitleLanguage = "de",
                 profileSubtitleMode = "always",
@@ -190,11 +189,11 @@ class TvItemDetailSubtitlePreferenceTest {
         )
 
     private class FakeSettingsApi(
-        private val capabilities: SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(manifestRevision = 1)),
+        private val capabilities: ApiResult<SettingsContractCapabilities> =
+            ApiResult.Success(SettingsContractCapabilities(manifestRevision = 1)),
         private val effective: EffectiveSettingValuesResponse = EffectiveSettingValuesResponse(),
     ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
-        override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
+        override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
         override suspend fun getEffectiveValues(
             keys: List<String>,

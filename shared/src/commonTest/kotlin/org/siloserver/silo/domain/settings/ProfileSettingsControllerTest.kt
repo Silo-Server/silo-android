@@ -9,7 +9,6 @@ import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
@@ -30,8 +29,8 @@ class ProfileSettingsControllerTest {
     }
 
     private class FakeSettingsApi(
-        val capabilities: SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(manifestRevision = 1)),
+        val capabilities: ApiResult<SettingsContractCapabilities> =
+            ApiResult.Success(SettingsContractCapabilities(manifestRevision = 1)),
         val effective: ApiResult<EffectiveSettingValuesResponse> =
             ApiResult.Success(EffectiveSettingValuesResponse()),
         val putResult: (String) -> ApiResult<StoredSettingValue> = {
@@ -42,7 +41,7 @@ class ProfileSettingsControllerTest {
 
         val calls = mutableListOf<Call>()
 
-        override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
+        override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
         override suspend fun getEffectiveValues(
             keys: List<String>,
@@ -193,11 +192,11 @@ class ProfileSettingsControllerTest {
     }
 
     @Test
-    fun `an old server reports upgrade required and no snapshot`() = runTest {
-        val api = FakeSettingsApi(capabilities = SettingsCapabilitiesResult.ServerUpgradeRequired)
+    fun `a failed contract probe reports unavailable and no snapshot`() = runTest {
+        val api = FakeSettingsApi(capabilities = ApiResult.Error(404, "not_found", "404 page not found"))
         val result = controllerFor(api).load()
 
-        assertEquals(ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED, result.availability)
+        assertEquals(ProfileSettingsController.Availability.UNAVAILABLE, result.availability)
         assertEquals(null, result.snapshot, "values must not be invented for a server that has none")
     }
 

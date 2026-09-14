@@ -52,10 +52,8 @@ data class SettingsUiState(
     val isLoadingUser: Boolean = false,
     val loggedOut: Boolean = false,
 
-    // Whether this server serves the canonical settings API. When it reports
-    // SERVER_UPGRADE_REQUIRED the screen explains that instead of rendering
-    // rows whose edits would silently go nowhere; playback keeps working from
-    // the local defaults either way.
+    // Whether the canonical settings probe succeeded. Playback keeps working
+    // from the local defaults either way.
     val settingsAvailability: ProfileSettingsController.Availability =
         ProfileSettingsController.Availability.UNKNOWN,
 
@@ -165,12 +163,9 @@ class SettingsViewModel(
 
     /**
      * Resolves the profile-scoped preferences through the canonical settings
-     * API, and records whether this server speaks it at all.
-     *
-     * On [Availability.SERVER_UPGRADE_REQUIRED] the values are left as they
-     * are and the screen explains the situation — rendering the rows anyway
-     * would offer edits that go nowhere. Playback is unaffected: it runs from
-     * the device-scoped store, which has its own defaults.
+     * API. When the probe fails the values are left as they are. Playback is
+     * unaffected: it runs from the device-scoped store, which has its own
+     * defaults.
      */
     fun loadProfileSettings() {
         viewModelScope.launch {

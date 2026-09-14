@@ -78,7 +78,6 @@ class HomeViewModelCacheIdentityTest {
         val viewModel = HomeViewModel(
             sectionRepository = SectionRepository(
                 sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
-                identityTransitions = identityTransitions,
             ),
             mediaActions = mediaActions(),
             homeCache = cache,

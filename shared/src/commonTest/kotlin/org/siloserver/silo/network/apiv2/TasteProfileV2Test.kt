@@ -27,7 +27,7 @@ class TasteProfileV2Test {
         } finally {c.close()}
     }
     @Test fun malformedWrongStatusAndLateAuthorityRefuse()=runTest {
-        var body="{}";var status=HttpStatusCode.OK;var late=false;var sends=0
+        var body="""{"top_genres":"not-a-list"}""";var status=HttpStatusCode.OK;var late=false;var sends=0
         val c=HttpClient(MockEngine {sends++;if(late)owner=owner.copy(profileToken="new");respond(body,status,headersOf(HttpHeaders.ContentType,"application/json"))})
         try {
             val api=TasteProfileV2Api(c, tokens, ApiV2Gate.Unrestricted);val original=owner

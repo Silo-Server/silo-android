@@ -9,7 +9,6 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.apiv2.SettingsV2Api
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
-import io.ktor.http.HttpStatusCode
 
 /**
  * Admin-configured card-overlay baseline. `enabled` is the global
@@ -24,69 +23,14 @@ data class OverlayConfigResponse(
     val defaults: String? = null,
 )
 
-/**
- * Result of probing the canonical settings contract.
- *
- * A server that predates the canonical settings API has no
- * `/settings/contract` routes at all, so the probe 404s. That is a
- * distinct, actionable state — the UI must say "this server needs an
- * upgrade" rather than render an empty settings screen — so it is a typed
- * case here instead of dissolving into the generic error path.
- */
-sealed class SettingsCapabilitiesResult {
-    /** The server speaks the canonical settings API. */
-    data class Available(
-        val capabilities: SettingsContractCapabilities,
-    ) : SettingsCapabilitiesResult()
-
-    /**
-     * The connected server does not serve `/settings/contract`
-     * (HTTP 404): it is too old for the canonical settings API.
-     */
-    data object ServerUpgradeRequired : SettingsCapabilitiesResult()
-
-    /** Any other HTTP failure, with the server's error body when present. */
-    data class Error(
-        val code: Int,
-        val error: String,
-        val message: String,
-    ) : SettingsCapabilitiesResult()
-
-    /** The request never reached the server. */
-    data class NetworkError(val exception: Throwable) : SettingsCapabilitiesResult()
-}
-
 open class SettingsApi(
     private val v2: SettingsV2Api,
 ) {
 
     open suspend fun overlayConfig(): ApiResult<OverlayConfigResponse> = v2.overlayConfig()
 
-    /**
-     * What the connected server's settings contract supports, or
-     * [SettingsCapabilitiesResult.ServerUpgradeRequired] when the server
-     * predates the canonical settings API entirely.
-     *
-     * Not every 404 on this path means an old server. The route sits behind
-     * the viewer-access middleware, which answers a problem body with a code
-     * when the `X-Profile-Id` this client sends names a profile the household
-     * deleted elsewhere. Telling the user their server is too old when the
-     * real fix is re-selecting a profile is worse than saying nothing, so the
-     * two are separated on the wire: a server with no `/settings/contract`
-     * routes falls through to the router's plain-text `404 page not found`,
-     * which leaves the parsed error code empty.
-     */
-    open suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
-        when (val result = v2.capabilities()) {
-            is ApiResult.Success -> SettingsCapabilitiesResult.Available(result.data)
-            is ApiResult.Error ->
-                if (result.code == HttpStatusCode.NotFound.value && result.error.isEmpty()) {
-                    SettingsCapabilitiesResult.ServerUpgradeRequired
-                } else {
-                    SettingsCapabilitiesResult.Error(result.code, result.error, result.message)
-                }
-            is ApiResult.NetworkError -> SettingsCapabilitiesResult.NetworkError(result.exception)
-        }
+    /** What the connected server's settings contract supports. */
+    open suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = v2.capabilities()
 
     /**
      * Resolve settings the way the server does, including the scope each

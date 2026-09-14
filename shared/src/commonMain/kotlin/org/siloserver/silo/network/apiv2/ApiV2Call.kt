@@ -65,8 +65,11 @@ enum class OwnerPolicy {
 }
 
 /** Whether this snapshot still owns the active scope of [tokens] at [policy] strength. */
-internal suspend fun AuthScopeSnapshot.stillOwns(tokens: TokenManager?, policy: OwnerPolicy = OwnerPolicy.PROFILE): Boolean {
-    val now = tokens?.snapshotCurrentScope()
+internal suspend fun AuthScopeSnapshot.stillOwns(tokens: TokenManager?, policy: OwnerPolicy = OwnerPolicy.PROFILE): Boolean =
+    matches(tokens?.snapshotCurrentScope(), policy)
+
+/** Whether [now] is this snapshot's scope at [policy] strength. */
+internal fun AuthScopeSnapshot.matches(now: AuthScopeSnapshot?, policy: OwnerPolicy): Boolean {
     if (!isSameIdentityAs(now)) return false
     return when (policy) {
         OwnerPolicy.IDENTITY -> true

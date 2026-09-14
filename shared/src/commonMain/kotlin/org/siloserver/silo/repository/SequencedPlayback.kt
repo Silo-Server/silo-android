@@ -121,7 +121,6 @@ class SequencedPlayback(
         withStableIdentity(null, expectedMetadataOwner, request.profileId) { guard ->
             val current = tokens.snapshotCurrentScope()
                 ?: return@withStableIdentity failure("identity_unavailable", "Playback needs an authenticated profile.")
-            if (expectedMetadataOwner != null && !expectedMetadataOwner.matchesMetadataOwner(current)) throw IdentityChanged()
             // Probe availability before admission; retained intents still fence new attempts.
             val capabilityResult = api.capabilities(current)
             guard()

@@ -12,6 +12,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.matches
+import org.siloserver.silo.network.apiv2.matches
 import org.siloserver.silo.network.apiv2.stillOwns
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 import org.siloserver.silo.model.notifications.WsTicketResponse
@@ -231,8 +233,7 @@ class DefaultPlaybackRealtimeClient(
     private suspend fun current(owner: Pair<AuthScopeSnapshot, String?>, sessionId: String): Boolean {
         val live = ownerProvider(sessionId) ?: return false
         return live.second == owner.second && owner.first.stillOwns(tokenManager, OwnerPolicy.FULL) &&
-            owner.first.isSameIdentityAs(live.first) && owner.first.profileId == live.first.profileId &&
-            owner.first.profileToken == live.first.profileToken
+            owner.first.matches(live.first, OwnerPolicy.PROFILE)
     }
 
     override suspend fun sendHello(sessionId: String) = sendText(

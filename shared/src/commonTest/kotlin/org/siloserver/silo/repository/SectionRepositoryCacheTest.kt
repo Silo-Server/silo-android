@@ -105,7 +105,6 @@ class SectionRepositoryCacheTest {
         val repository = SectionRepository(
             sectionApi = SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
             catalogCache = cache,
-            identityTransitions = identityTransitions,
         )
 
         val oldProfileRequest = async { repository.getLibrarySections(7, owner) }
