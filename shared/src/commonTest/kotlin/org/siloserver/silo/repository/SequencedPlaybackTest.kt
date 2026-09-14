@@ -177,6 +177,10 @@ class SequencedPlaybackTest {
             try { assertFalse(PlaybackV2Api(c, ApiV2Gate.Unrestricted).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId)) is ApiResult.Success, "$status $body") }
             finally { c.close() }
         }
+        // A replayed receipt carries the winning stop's id (an earlier client stop or the server's expiry stop).
+        val replayed = client { reply("""{"outcome":"replayed","stop_id":"11111111-1111-4111-8111-111111111111"}""") }
+        try { assertIs<ApiResult.Success<PlaybackMutationV2>>(replayed.let { PlaybackV2Api(it, ApiV2Gate.Unrestricted).stop(Identity().scope, "session-1", PlaybackStopV2(installation, stopId)) }) }
+        finally { replayed.close() }
     }
     @Test fun lostProgressReplyRetriesExactSampleThenBackwardPositionUsesHigherSequence() = runTest {
         val identity = Identity(); val store = Store(); val samples = mutableListOf<PlaybackProgressV2>()

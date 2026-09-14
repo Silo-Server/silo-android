@@ -373,7 +373,11 @@ class SequencedPlayback(
                     save(entry.copy(terminal = true, progress = null))
                     return ApiResult.Success(Unit)
                 }
-                is ApiResult.Error -> if (result.code != 503) return result
+                // 404: the server has already expired and forgotten the session, so there is nothing left to stop.
+                is ApiResult.Error -> if (result.code == 404) {
+                    save(entry.copy(terminal = true, progress = null))
+                    return ApiResult.Success(Unit)
+                } else if (result.code != 503) return result
                 is ApiResult.NetworkError -> Unit
             }
             if (attempt < 2) delay(250L * (attempt + 1))

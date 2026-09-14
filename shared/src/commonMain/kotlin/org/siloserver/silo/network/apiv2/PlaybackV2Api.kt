@@ -153,9 +153,13 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
                 contentType(ContentType.Application.Json); setBody(body)
             }
         }) { receipt ->
-            require(receipt.stopId == body.stopId && receipt.outcome in PlaybackMutationOutcomeV2.STOP) {
-                "The playback stop receipt did not match the request."
-            }
+            // "stopped" echoes this request's stop_id. "replayed" is the stored receipt of whichever stop
+            // won first (an earlier client stop, or the server's own expiry stop), so its stop_id is the
+            // winner's; either way the session is over and this stop is settled.
+            require(
+                (receipt.outcome == PlaybackMutationOutcomeV2.STOPPED && receipt.stopId == body.stopId) ||
+                    receipt.outcome == PlaybackMutationOutcomeV2.REPLAYED,
+            ) { "The playback stop receipt did not match the request." }
             receipt
         }
 }
