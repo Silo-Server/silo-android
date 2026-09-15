@@ -15,12 +15,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -160,6 +158,15 @@ fun PlayerControls(
             // pushes the toolbar and progress bar off the device's centre line.
             // Apply the larger horizontal inset to BOTH sides: the controls stay
             // clear of the camera and remain centred on the display.
+            //
+            // Deliberately NO vertical inset padding. PlayerScreen hides the
+            // system bars for the whole lifetime of this screen, so there is
+            // nothing at the top or bottom edge to avoid. Worse, when the
+            // activity forces landscape while the display stays at its portrait
+            // rotation, the window is handed the *portrait* inset set: on a
+            // Pixel 9 Pro that is a 68dp "status bar" on top and a 36dp
+            // "navigation bar" underneath, which dropped the toolbar a quarter
+            // of the way down the screen and lifted the seek bar off the bottom.
             val density = LocalDensity.current
             val layoutDirection = LocalLayoutDirection.current
             val safeDrawing = WindowInsets.safeDrawing
@@ -171,7 +178,6 @@ fun PlayerControls(
             }
             Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(safeDrawing.only(WindowInsetsSides.Vertical))
                 .padding(horizontal = horizontalInset)
                 .padding(16.dp)
         }
