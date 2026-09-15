@@ -11,11 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -133,9 +133,22 @@ internal fun playerSheetShape(tabletopPaneHeight: Dp?): Shape =
 internal fun playerSheetDragHandle(tabletopPaneHeight: Dp?): (@Composable () -> Unit)? =
     if (tabletopPaneHeight == null) {
         {
-            BottomSheetDefaults.DragHandle(
-                color = Color.White.copy(alpha = 0.28f),
-            )
+            // Material's default handle reserves 48dp — a 4dp bar inside 22dp of
+            // padding either side. Above a list of 48dp rows that reads as dead
+            // space rather than a grip, so the padding is cut to 8dp.
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 32.dp, height = 4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White.copy(alpha = 0.28f)),
+                )
+            }
         }
     } else {
         null
@@ -215,12 +228,12 @@ internal fun PlayerSheetHeader(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 64.dp)
+            .heightIn(min = 52.dp)
             .padding(
                 start = if (onBack != null) 4.dp else 20.dp,
                 end = if (onDismiss != null) 4.dp else 20.dp,
-                top = 6.dp,
-                bottom = 6.dp,
+                top = 2.dp,
+                bottom = 2.dp,
             ),
     ) {
         if (onBack != null) {

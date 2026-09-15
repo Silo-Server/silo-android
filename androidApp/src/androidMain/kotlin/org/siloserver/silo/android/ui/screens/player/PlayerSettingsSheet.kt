@@ -1,42 +1,27 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -52,9 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -69,19 +52,47 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.common.settings.LetterboxExpansion
 import org.siloserver.silo.common.player.SleepTimerState
 
-private enum class SettingsCategory(
-    val label: String,
-    val description: String,
-    val icon: ImageVector,
-) {
-    Playback("Playback", "Speed and picture sizing", Icons.Filled.PlayArrow),
-    Episodes("Episodes", "Automatic episode behavior", Icons.Filled.SkipNext),
-    Sync("Sync", "Audio and subtitle timing", Icons.Filled.Sync),
-    More("More", "Subtitles, timer, and video", Icons.Filled.MoreHoriz),
+/**
+ * Where the sheet currently is. The gear opens [Root] — a flat list of the
+ * four things worth reading at a glance (quality, subtitles, audio) plus one
+ * door to everything else, the shape Plex uses. Sub-screens replace the sheet
+ * content in place rather than stacking new sheets, so there is only ever one
+ * surface over the video.
+ *
+ * Back targets are fixed rather than a stack: [PlaybackOptions] returns to
+ * [Root], every leaf returns to [PlaybackOptions].
+ */
+private enum class SettingsRoute {
+    Root,
+    PlaybackOptions,
+    Speed,
+    PictureSize,
+    FillScreen,
+    SkipIntros,
+    Sync,
+    ;
+
+    val parent: SettingsRoute?
+        get() = when (this) {
+            Root -> null
+            PlaybackOptions -> Root
+            else -> PlaybackOptions
+        }
+
+    val title: String
+        get() = when (this) {
+            Root -> "Settings"
+            PlaybackOptions -> "Playback Options"
+            Speed -> "Speed"
+            PictureSize -> "Picture size"
+            FillScreen -> "Fill the screen"
+            SkipIntros -> "Skip intros"
+            Sync -> "Audio & subtitle sync"
+        }
 }
 
-/** Adaptive playback settings menu shared by regular phones and tabletop mode. */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+/** Playback settings menu shared by regular phones and tabletop mode. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlayerSettingsSheet(
     isVisible: Boolean,
@@ -100,6 +111,14 @@ fun PlayerSettingsSheet(
     onSetHdrEnabled: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onSetDolbyVisionEnabled: (Boolean) -> Unit,
+    // Root-list values. The gear now reports the same three things the
+    // toolbar buttons open, so the menu answers "what am I watching with?"
+    // without opening anything.
+    qualityLabel: String = "",
+    onOpenQuality: () -> Unit = {},
+    audioLabel: String = "",
+    subtitleLabel: String = "",
+    onOpenTracks: () -> Unit = {},
     onOpenSubtitleStyle: () -> Unit = {},
     onOpenSleepTimer: () -> Unit = {},
     stats: PlayerStatsSnapshot = PlayerStatsSnapshot(),
@@ -116,54 +135,15 @@ fun PlayerSettingsSheet(
 
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
-    var selectedCategoryIndex by rememberSaveable { mutableIntStateOf(0) }
-    val selectedCategory = SettingsCategory.entries[selectedCategoryIndex]
-    val useSideRail = LocalConfiguration.current.screenWidthDp >= 600
+    var routeOrdinal by rememberSaveable { mutableIntStateOf(SettingsRoute.Root.ordinal) }
+    val route = SettingsRoute.entries[routeOrdinal]
     val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
-    val openSubtitleStyle = {
-        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenSubtitleStyle)
-    }
-    val openSleepTimer = {
-        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenSleepTimer)
-    }
-    val openPlaybackStats = {
-        scope.dismissPlayerSheet(sheetState, onDismiss, onOpenPlaybackStats)
+    val leaveFor = { next: () -> Unit ->
+        scope.dismissPlayerSheet(sheetState, onDismiss, next)
     }
 
     LaunchedEffect(isVisible) {
         if (isVisible) sheetState.show()
-    }
-
-    val categoryContent: @Composable (Modifier, Boolean) -> Unit = { modifier, showHeader ->
-        SettingsCategoryContent(
-            category = selectedCategory,
-            playbackSpeed = playbackSpeed,
-            onSetPlaybackSpeed = onSetPlaybackSpeed,
-            videoGravity = videoGravity,
-            onSetVideoGravity = onSetVideoGravity,
-            letterboxExpansion = letterboxExpansion,
-            onSetLetterboxExpansion = onSetLetterboxExpansion,
-            introSkipMode = introSkipMode,
-            onSetIntroSkipMode = onSetIntroSkipMode,
-            autoPlayNextEnabled = autoPlayNextEnabled,
-            onSetAutoPlayNext = onSetAutoPlayNext,
-            audioDelayMs = audioDelayMs,
-            audioDelayEnabled = audioDelayEnabled,
-            onSetAudioDelay = onSetAudioDelay,
-            subtitleDelayMs = subtitleDelayMs,
-            onSetSubtitleDelay = onSetSubtitleDelay,
-            onOpenSubtitleStyle = openSubtitleStyle,
-            sleepTimerState = sleepTimerState,
-            onOpenSleepTimer = openSleepTimer,
-            hdrEnabled = hdrEnabled,
-            onSetHdrEnabled = onSetHdrEnabled,
-            dolbyVisionEnabled = dolbyVisionEnabled,
-            onSetDolbyVisionEnabled = onSetDolbyVisionEnabled,
-            stats = stats,
-            onOpenPlaybackStats = openPlaybackStats,
-            showHeader = showHeader,
-            modifier = modifier,
-        )
     }
 
     PlayerModalBottomSheet(
@@ -178,586 +158,231 @@ fun PlayerSettingsSheet(
                 .nestedScroll(PlayerSheetFlingGuard),
         ) {
             PlayerSheetHeader(
-                title = "Playback Settings",
-                subtitle = selectedCategory.description,
+                title = route.title,
+                onBack = route.parent?.let { parent -> { routeOrdinal = parent.ordinal } },
                 onDismiss = dismissSheet,
             )
+            PlayerSheetDivider()
 
-            if (useSideRail) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    SettingsCategoryRail(
-                        selected = selectedCategory,
-                        onSelect = { selectedCategoryIndex = it.ordinal },
-                        modifier = Modifier
-                            .width(212.dp)
-                            .fillMaxHeight(),
-                    )
-                    categoryContent(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxHeight(),
-                        false,
-                    )
-                }
-            } else {
-                SettingsCategoryTabs(
-                    selected = selectedCategory,
-                    onSelect = { selectedCategoryIndex = it.ordinal },
-                )
-                categoryContent(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 24.dp),
-                    true,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsCategoryRail(
-    selected: SettingsCategory,
-    onSelect: (SettingsCategory) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    PlayerSheetCard(modifier = modifier) {
-        PlayerSheetSectionLabel("Settings")
-        SettingsCategory.entries.forEach { category ->
-            CategoryButton(
-                category = category,
-                isSelected = category == selected,
-                onClick = { onSelect(category) },
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 2.dp, bottom = 18.dp),
+            ) {
+                when (route) {
+                    SettingsRoute.Root -> {
+                        ValueRow(
+                            label = "Quality",
+                            value = qualityLabel,
+                            onClick = { leaveFor(onOpenQuality) },
+                        )
+                        ValueRow(
+                            label = "Subtitles",
+                            value = subtitleLabel,
+                            onClick = { leaveFor(onOpenTracks) },
+                        )
+                        ValueRow(
+                            label = "Audio",
+                            value = audioLabel,
+                            onClick = { leaveFor(onOpenTracks) },
+                        )
+                        ValueRow(
+                            label = "Playback Options",
+                            value = null,
+                            onClick = { routeOrdinal = SettingsRoute.PlaybackOptions.ordinal },
+                        )
+                    }
+
+                    SettingsRoute.PlaybackOptions -> {
+                        ValueRow(
+                            label = "Speed",
+                            value = "${formatPlaybackSpeed(playbackSpeed)}×",
+                            onClick = { routeOrdinal = SettingsRoute.Speed.ordinal },
+                        )
+                        ValueRow(
+                            label = "Picture size",
+                            value = pictureSizeLabel(videoGravity),
+                            onClick = { routeOrdinal = SettingsRoute.PictureSize.ordinal },
+                        )
+                        ValueRow(
+                            label = "Fill the screen",
+                            value = letterboxExpansionLabel(letterboxExpansion),
+                            onClick = { routeOrdinal = SettingsRoute.FillScreen.ordinal },
+                        )
+                        ValueRow(
+                            label = stringResource(R.string.settings_intro_skip_title),
+                            value = introSkipLabel(introSkipMode),
+                            onClick = { routeOrdinal = SettingsRoute.SkipIntros.ordinal },
+                        )
+                        SwitchRow(
+                            label = "Auto-play next episode",
+                            checked = autoPlayNextEnabled,
+                            onCheckedChange = onSetAutoPlayNext,
+                        )
+                        ValueRow(
+                            label = "Audio & subtitle sync",
+                            value = "${formatDelayMs(audioDelayMs)} · ${formatDelayMs(subtitleDelayMs)}",
+                            onClick = { routeOrdinal = SettingsRoute.Sync.ordinal },
+                        )
+                        ValueRow(
+                            label = "Subtitle style",
+                            value = null,
+                            onClick = { leaveFor(onOpenSubtitleStyle) },
+                        )
+                        ValueRow(
+                            label = "Sleep timer",
+                            value = formatSleepTimerSubtitle(sleepTimerState),
+                            onClick = { leaveFor(onOpenSleepTimer) },
+                        )
+                        SwitchRow(
+                            label = "HDR",
+                            checked = hdrEnabled,
+                            onCheckedChange = onSetHdrEnabled,
+                        )
+                        SwitchRow(
+                            label = "Dolby Vision",
+                            checked = dolbyVisionEnabled,
+                            onCheckedChange = onSetDolbyVisionEnabled,
+                        )
+                        ValueRow(
+                            label = "Playback stats",
+                            value = stats.summaryLabel(),
+                            onClick = { leaveFor(onOpenPlaybackStats) },
+                        )
+                    }
+
+                    SettingsRoute.Speed -> {
+                        listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0).forEach { value ->
+                            CheckRow(
+                                label = "${formatPlaybackSpeed(value)}×",
+                                isSelected = isSameSpeed(value, playbackSpeed),
+                                onClick = { onSetPlaybackSpeed(value) },
+                            )
+                        }
+                    }
+
+                    SettingsRoute.PictureSize -> {
+                        listOf("fit", "fill", "stretch").forEach { value ->
+                            CheckRow(
+                                label = pictureSizeLabel(value),
+                                isSelected = videoGravity == value,
+                                onClick = { onSetVideoGravity(value) },
+                            )
+                        }
+                    }
+
+                    SettingsRoute.FillScreen -> {
+                        listOf(
+                            LetterboxExpansion.ClearOfCamera,
+                            LetterboxExpansion.FullWidth,
+                            LetterboxExpansion.Off,
+                        ).forEach { value ->
+                            CheckRow(
+                                label = letterboxExpansionLabel(value),
+                                isSelected = letterboxExpansion == value,
+                                onClick = { onSetLetterboxExpansion(value) },
+                            )
+                        }
+                        FootnoteText(
+                            "Widescreen films are expanded past the black bars stored in the " +
+                                "file, never into the picture itself. Full width uses the whole " +
+                                "display and lets the camera sit on the image. Video without " +
+                                "stored bars already fits and does not change.",
+                        )
+                    }
+
+                    SettingsRoute.SkipIntros -> {
+                        listOf(
+                            IntroSkipMode.NEVER,
+                            IntroSkipMode.ASK,
+                            IntroSkipMode.ALWAYS,
+                        ).forEach { value ->
+                            CheckRow(
+                                label = introSkipLabel(value),
+                                isSelected = introSkipMode == value,
+                                onClick = { onSetIntroSkipMode(value) },
+                            )
+                        }
+                        FootnoteText(
+                            "What happens when a detected intro starts: leave it alone, " +
+                                "offer a Skip Intro button, or skip it and offer an undo.",
+                        )
+                    }
+
+                    SettingsRoute.Sync -> {
+                        DelaySpinnerRow(
+                            label = "Audio delay",
+                            subtitle = "PCM audio only",
+                            valueMs = audioDelayMs,
+                            enabled = audioDelayEnabled,
+                            stepMs = 50,
+                            minMs = -5000,
+                            maxMs = 5000,
+                            onChange = onSetAudioDelay,
+                        )
+                        DelaySpinnerRow(
+                            label = "Subtitle delay",
+                            subtitle = "Move captions earlier or later",
+                            valueMs = subtitleDelayMs,
+                            stepMs = 50,
+                            minMs = -10000,
+                            maxMs = 10000,
+                            onChange = onSetSubtitleDelay,
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
+/** Label · value · chevron. The single row shape the whole menu is built from. */
 @Composable
-private fun SettingsCategoryTabs(
-    selected: SettingsCategory,
-    onSelect: (SettingsCategory) -> Unit,
-) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 20.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(SettingsCategory.entries) { category ->
-            CategoryButton(
-                category = category,
-                isSelected = category == selected,
-                onClick = { onSelect(category) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun CategoryButton(
-    category: SettingsCategory,
-    isSelected: Boolean,
+private fun ValueRow(
+    label: String,
+    value: String?,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (isSelected) PlayerSheetSelectedColor else Color.Transparent)
+        modifier = Modifier
+            .fillMaxWidth()
             .clickable(onClick = onClick)
             .heightIn(min = 48.dp)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Icon(
-            imageVector = category.icon,
-            contentDescription = null,
-            tint = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.58f),
-            modifier = Modifier.size(20.dp),
-        )
-        Text(
-            text = category.label,
-            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.72f),
-            fontSize = 14.sp,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-            maxLines = 1,
-        )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SettingsCategoryContent(
-    category: SettingsCategory,
-    playbackSpeed: Double,
-    onSetPlaybackSpeed: (Double) -> Unit,
-    videoGravity: String,
-    onSetVideoGravity: (String) -> Unit,
-    letterboxExpansion: String,
-    onSetLetterboxExpansion: (String) -> Unit,
-    introSkipMode: IntroSkipMode,
-    onSetIntroSkipMode: (IntroSkipMode) -> Unit,
-    autoPlayNextEnabled: Boolean,
-    onSetAutoPlayNext: (Boolean) -> Unit,
-    audioDelayMs: Int,
-    audioDelayEnabled: Boolean,
-    onSetAudioDelay: (Int) -> Unit,
-    subtitleDelayMs: Int,
-    onSetSubtitleDelay: (Int) -> Unit,
-    onOpenSubtitleStyle: () -> Unit,
-    sleepTimerState: SleepTimerState,
-    onOpenSleepTimer: () -> Unit,
-    hdrEnabled: Boolean,
-    onSetHdrEnabled: (Boolean) -> Unit,
-    dolbyVisionEnabled: Boolean,
-    onSetDolbyVisionEnabled: (Boolean) -> Unit,
-    stats: PlayerStatsSnapshot,
-    onOpenPlaybackStats: () -> Unit,
-    showHeader: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    PlayerSheetCard(modifier = modifier) {
-        if (showHeader) {
-            CategoryContentHeader(category)
-            PlayerSheetDivider()
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(vertical = 8.dp),
-        ) {
-            when (category) {
-                SettingsCategory.Playback -> {
-                    SpeedSetting(
-                        selected = playbackSpeed,
-                        onSelect = onSetPlaybackSpeed,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                    AspectSetting(
-                        selected = videoGravity,
-                        onSelect = onSetVideoGravity,
-                    )
-                    // Modulates Fit only. Fill and Stretch are explicit
-                    // decisions about cropping and are left alone.
-                    LetterboxExpansionSetting(
-                        selected = letterboxExpansion,
-                        onSelect = onSetLetterboxExpansion,
-                    )
-                }
-
-                SettingsCategory.Episodes -> {
-                    IntroSkipModeSetting(
-                        selected = introSkipMode,
-                        onSelect = onSetIntroSkipMode,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    ToggleRow(
-                        label = "Auto-play next episode",
-                        subtitle = "Continue without returning to the series page",
-                        checked = autoPlayNextEnabled,
-                        onCheckedChange = onSetAutoPlayNext,
-                    )
-                }
-
-                SettingsCategory.Sync -> {
-                    DelaySpinnerRow(
-                        label = "Audio delay",
-                        subtitle = "PCM audio only",
-                        valueMs = audioDelayMs,
-                        enabled = audioDelayEnabled,
-                        stepMs = 50,
-                        minMs = -5000,
-                        maxMs = 5000,
-                        onChange = onSetAudioDelay,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    DelaySpinnerRow(
-                        label = "Subtitle delay",
-                        subtitle = "Move captions earlier or later",
-                        valueMs = subtitleDelayMs,
-                        stepMs = 50,
-                        minMs = -10000,
-                        maxMs = 10000,
-                        onChange = onSetSubtitleDelay,
-                    )
-                }
-
-                SettingsCategory.More -> {
-                    TapRow(
-                        label = "Subtitle style",
-                        subtitle = "Font, color, background, and position",
-                        onClick = onOpenSubtitleStyle,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    TapRow(
-                        label = "Sleep timer",
-                        subtitle = formatSleepTimerSubtitle(sleepTimerState),
-                        onClick = onOpenSleepTimer,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    ToggleRow(
-                        label = "HDR",
-                        subtitle = "Allow high dynamic range playback",
-                        checked = hdrEnabled,
-                        onCheckedChange = onSetHdrEnabled,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    ToggleRow(
-                        label = "Dolby Vision",
-                        subtitle = "Turn off to use the HDR10 base layer",
-                        checked = dolbyVisionEnabled,
-                        onCheckedChange = onSetDolbyVisionEnabled,
-                    )
-                    PlayerSheetDivider(modifier = Modifier.padding(horizontal = 16.dp))
-                    TapRow(
-                        label = "Playback stats",
-                        subtitle = stats.summaryLabel(),
-                        onClick = onOpenPlaybackStats,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CategoryContentHeader(category: SettingsCategory) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 14.dp),
+            .padding(horizontal = 20.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-            modifier = Modifier.size(38.dp),
-        ) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = category.icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(21.dp),
-                )
-            }
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = category.label,
-                color = Color.White,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = category.description,
-                color = Color.White.copy(alpha = 0.48f),
-                fontSize = 12.sp,
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SpeedSetting(
-    selected: Double,
-    onSelect: (Double) -> Unit,
-) {
-    val options = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0)
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-        SettingTitle(
-            title = "Speed",
-            value = "${formatPlaybackSpeed(selected)}×",
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            options.forEach { value ->
-                SelectionPill(
-                    label = "${formatPlaybackSpeed(value)}×",
-                    isSelected = isSameSpeed(value, selected),
-                    onClick = { onSelect(value) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AspectSetting(
-    selected: String,
-    onSelect: (String) -> Unit,
-) {
-    val options = listOf("fit" to "Fit", "fill" to "Fill", "stretch" to "Stretch")
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-        SettingTitle(title = "Picture size")
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black.copy(alpha = 0.22f))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            options.forEach { (value, label) ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(
-                            if (selected == value) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        )
-                        .clickable { onSelect(value) }
-                        .heightIn(min = 42.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (selected == value) Color.Black else Color.White.copy(alpha = 0.72f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * What to do about a film whose black bars are baked into the file.
- *
- * The copy promises only what the measurement can deliver: bars the FILE
- * carries are eaten, the picture never is. Content shot without bars has
- * nothing to eat and stays exactly as it is — said plainly here so enabling
- * this and then playing a TV episode is not a puzzle.
- */
-@Composable
-private fun LetterboxExpansionSetting(
-    selected: String,
-    onSelect: (String) -> Unit,
-) {
-    val options = listOf(
-        LetterboxExpansion.ClearOfCamera to "Clear of camera",
-        LetterboxExpansion.FullWidth to "Full width",
-        LetterboxExpansion.Off to "Off",
-    )
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-        SettingTitle(title = "Fill the screen")
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "Widescreen films are expanded past the black bars stored in the " +
-                "file, never into the picture itself. Full width uses the whole " +
-                "display and lets the camera sit on the image. Video without stored " +
-                "bars already fits and does not change.",
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black.copy(alpha = 0.22f))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            options.forEach { (value, label) ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(
-                            if (selected == value) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        )
-                        .clickable { onSelect(value) }
-                        .heightIn(min = 42.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (selected == value) Color.Black else Color.White.copy(alpha = 0.72f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * The three-way `playback.intro_skip_mode` control — the schema recommends a
- * select, and this app has a segmented control, so it uses one (same shape as
- * [LetterboxExpansionSetting]). Copy is fixed by the contract.
- */
-@Composable
-private fun IntroSkipModeSetting(
-    selected: IntroSkipMode,
-    onSelect: (IntroSkipMode) -> Unit,
-) {
-    val options = listOf(
-        IntroSkipMode.NEVER to stringResource(R.string.settings_intro_skip_never),
-        IntroSkipMode.ASK to stringResource(R.string.settings_intro_skip_ask),
-        IntroSkipMode.ALWAYS to stringResource(R.string.settings_intro_skip_always),
-    )
-    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-        SettingTitle(title = stringResource(R.string.settings_intro_skip_title))
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "What happens when a detected intro starts: leave it alone, " +
-                "offer a Skip Intro button, or skip it and offer an undo.",
-            color = Color.White.copy(alpha = 0.6f),
-            fontSize = 12.sp,
-            lineHeight = 16.sp,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color.Black.copy(alpha = 0.22f))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            options.forEach { (value, label) ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(
-                            if (selected == value) MaterialTheme.colorScheme.primary else Color.Transparent,
-                        )
-                        .clickable { onSelect(value) }
-                        .heightIn(min = 42.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (selected == value) Color.Black else Color.White.copy(alpha = 0.72f),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingTitle(title: String, value: String? = null) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            color = Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.weight(1f),
-        )
-        if (value != null) {
-            Text(
-                text = value,
-                color = MaterialTheme.colorScheme.primary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SelectionPill(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(13.dp))
-            .background(
-                if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.06f),
-            )
-            .then(
-                if (isSelected) Modifier else Modifier.border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.10f),
-                    shape = RoundedCornerShape(13.dp),
-                ),
-            )
-            .clickable(onClick = onClick)
-            .heightIn(min = 40.dp)
-            .padding(horizontal = 13.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (isSelected) {
-            Icon(
-                imageVector = Icons.Filled.Check,
-                contentDescription = null,
-                tint = Color.Black,
-                modifier = Modifier.size(16.dp),
-            )
-        }
         Text(
             text = label,
-            color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.78f),
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
+            color = Color.White,
+            fontSize = 15.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun TapRow(
-    label: String,
-    subtitle: String?,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .heightIn(min = 68.dp)
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        RowLabel(label = label, subtitle = subtitle, modifier = Modifier.weight(1f))
+        // The value carries the slack so every chevron lands on the same right
+        // edge; an over-long track name truncates instead of shoving the label.
+        Text(
+            text = value.orEmpty(),
+            color = Color.White.copy(alpha = 0.55f),
+            fontSize = 15.sp,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         Icon(
             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.38f),
-            modifier = Modifier.size(22.dp),
+            tint = Color.White.copy(alpha = 0.34f),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
 
 @Composable
-private fun ToggleRow(
+private fun SwitchRow(
     label: String,
-    subtitle: String?,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
@@ -769,17 +394,24 @@ private fun ToggleRow(
                 onValueChange = onCheckedChange,
                 role = Role.Switch,
             )
-            .heightIn(min = 68.dp)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 20.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RowLabel(label = label, subtitle = subtitle, modifier = Modifier.weight(1f))
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Switch(
             checked = checked,
             onCheckedChange = null,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
+                checkedThumbColor = Color.Black,
                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                 uncheckedThumbColor = Color.White.copy(alpha = 0.72f),
                 uncheckedTrackColor = Color.White.copy(alpha = 0.15f),
@@ -789,31 +421,49 @@ private fun ToggleRow(
     }
 }
 
+/** Leaf-screen option: label on the left, a check on the selected one. */
 @Composable
-private fun RowLabel(
+private fun CheckRow(
     label: String,
-    subtitle: String?,
-    modifier: Modifier = Modifier,
+    isSelected: Boolean,
+    onClick: () -> Unit,
 ) {
-    Column(modifier = modifier) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .heightIn(min = 46.dp)
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         Text(
             text = label,
             color = Color.White,
             fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
         )
-        if (subtitle != null) {
-            Text(
-                text = subtitle,
-                color = Color.White.copy(alpha = 0.48f),
-                fontSize = 12.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
+        if (isSelected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = "Selected",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
             )
         }
     }
+}
+
+@Composable
+private fun FootnoteText(text: String) {
+    Text(
+        text = text,
+        color = Color.White.copy(alpha = 0.5f),
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp),
+    )
 }
 
 @Composable
@@ -830,10 +480,22 @@ private fun DelaySpinnerRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .padding(horizontal = 20.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        RowLabel(label = label, subtitle = subtitle)
+        Column {
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = subtitle,
+                color = Color.White.copy(alpha = 0.48f),
+                fontSize = 12.sp,
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -882,6 +544,25 @@ private fun SpinnerButton(
             fontWeight = FontWeight.Medium,
         )
     }
+}
+
+private fun pictureSizeLabel(value: String): String = when (value) {
+    "fill" -> "Fill"
+    "stretch" -> "Stretch"
+    else -> "Fit"
+}
+
+private fun letterboxExpansionLabel(value: String): String = when (value) {
+    LetterboxExpansion.FullWidth -> "Full width"
+    LetterboxExpansion.Off -> "Off"
+    else -> "Clear of camera"
+}
+
+@Composable
+private fun introSkipLabel(mode: IntroSkipMode): String = when (mode) {
+    IntroSkipMode.NEVER -> stringResource(R.string.settings_intro_skip_never)
+    IntroSkipMode.ASK -> stringResource(R.string.settings_intro_skip_ask)
+    IntroSkipMode.ALWAYS -> stringResource(R.string.settings_intro_skip_always)
 }
 
 private fun formatSleepTimerSubtitle(state: SleepTimerState): String = when (state) {
