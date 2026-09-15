@@ -1196,23 +1196,6 @@ fun TvAppNavigation(
                 initialSubtitleAutoResolved = subtitleAutoResolved,
                 autoAdvanceCount = autoAdvanceCount,
                 episodeSelectionHandoff = episodeSelectionHandoff,
-                onPlayNext = { nextContentId, nextCount, handoff ->
-                    val handoffNonce = processTvEpisodeSelectionHandoffRegistry.register(
-                        targetContentId = nextContentId,
-                        handoff = handoff,
-                    )
-                    // Replace the current player in the back stack so an
-                    // auto-played chain doesn't pile up episodes behind Back.
-                    navController.navigate(
-                        TvRoute.Player(
-                            contentId = nextContentId,
-                            autoAdvanceCount = nextCount,
-                            episodeSelectionHandoffNonce = handoffNonce,
-                        ).route,
-                    ) {
-                        popUpTo(TvRoute.Player.ROUTE) { inclusive = true }
-                    }
-                },
                 onExit = { navController.popBackStack() },
             )
         }
