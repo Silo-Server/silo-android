@@ -435,8 +435,8 @@ fun MainScreen(
                     }
                     Tab.Libraries -> {
                         LibrariesScreen(
-                            onItemClick = { contentId ->
-                                navController.navigate(Route.ItemDetail(contentId).route)
+                            onItemClick = { contentId, libraryId ->
+                                navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },
                             onCollectionClick = { collectionId, libraryId ->
                                 navController.navigate(Route.CollectionDetail(collectionId, libraryId).route)

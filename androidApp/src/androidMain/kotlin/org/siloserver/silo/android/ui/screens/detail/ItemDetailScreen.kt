@@ -122,6 +122,7 @@ fun ItemDetailScreen(
     onBackClick: () -> Unit,
     onPlayClick: (String, Int?, Int?, Int?, Double?) -> Unit,
     onItemDetailClick: (String) -> Unit,
+    onEpisodeDetailClick: (String) -> Unit = onItemDetailClick,
     onPersonClick: (String) -> Unit,
     onSeriesClick: (String) -> Unit,
     onSeriesDetailReplace: (String, Int, String?) -> Unit,
@@ -922,7 +923,7 @@ fun ItemDetailScreen(
                             episodesBySeason = state.episodesBySeason,
                             isLoadingEpisodes = state.isLoadingEpisodes,
                             onSeasonSelected = { viewModel.selectSeason(it) },
-                            onEpisodeDetailClick = onItemDetailClick,
+                            onEpisodeDetailClick = onEpisodeDetailClick,
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },

@@ -13,6 +13,7 @@ internal class ReadyWatchMetadata(
     private val owner: AuthScopeSnapshot?,
     private val contentId: String,
     private val serverUrl: String,
+    private val libraryId: Int? = null,
     private val ownsLoad: () -> Boolean,
 ) {
     suspend fun current(): Boolean {
@@ -25,7 +26,7 @@ internal class ReadyWatchMetadata(
 
     suspend fun read(): WatchDetail? {
         if (owner == null || !current()) return null
-        val result = repository.getWatchDetail(contentId, owner)
+        val result = repository.getWatchDetail(contentId, owner, libraryId)
         if (!current()) return null
         return (result as? ApiResult.Success)?.data
     }

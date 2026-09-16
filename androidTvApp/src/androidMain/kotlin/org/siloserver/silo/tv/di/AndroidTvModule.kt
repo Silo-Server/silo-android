@@ -448,6 +448,7 @@ val androidTvModule = module {
     viewModel { TvSearchViewModel(get(), get(), get()) }
     viewModel { params ->
         TvItemDetailViewModel(
+            libraryId = params.getOrNull<Int>(),
             catalogRepository = get(),
             personalDataRepository = get(),
             playerSettingsStore = get(),

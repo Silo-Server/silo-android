@@ -279,9 +279,11 @@ private fun NavHostController.navigateToTvItemDetail(
     contentId: String,
     seasonNumber: Int? = null,
     episodeContentId: String? = null,
+    libraryId: Int? = null,
 ) {
     val top = currentBackStackEntry
     if (
+        top?.arguments?.getString("libraryId")?.toIntOrNull() == libraryId &&
         tvIsAlreadyShowingItemDetail(
             currentRoute = top?.destination?.route,
             currentContentId = top?.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID),
@@ -297,7 +299,7 @@ private fun NavHostController.navigateToTvItemDetail(
     ) {
         return
     }
-    navigate(TvRoute.ItemDetail(contentId, seasonNumber, episodeContentId).route)
+    navigate(TvRoute.ItemDetail(contentId, seasonNumber, episodeContentId, libraryId).route)
 }
 
 /**
@@ -361,6 +363,7 @@ fun TvAppNavigation(
             val playback = request.playback
             val destination = TvRoute.Player(
                 contentId = playback.contentId,
+                libraryId = playback.libraryId,
                 fileId = playback.fileId,
                 resumePositionSeconds = if (playback.startFromBeginning) 0.0 else playback.resumePosition,
                 audioTrackIndex = playback.audioTrackIndex,
@@ -455,7 +458,7 @@ fun TvAppNavigation(
             } else {
                 null
             }
-            val arrived = when (uri.host) {
+            val arrived = entry.arguments?.getString("libraryId") == null && when (uri.host) {
                 "item" ->
                     route == TvRoute.ItemDetail.ROUTE &&
                         entry.arguments?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID) == contentId
@@ -771,6 +774,9 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
+                onOpenLibraryItemDetail = { contentId, libraryId ->
+                    navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
+                },
                 onOpenItemDetail = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },
@@ -913,6 +919,11 @@ fun TvAppNavigation(
         composable(
             route = TvRoute.ItemDetail.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(TvRoute.ItemDetail.ARG_CONTENT_ID) { type = NavType.StringType },
                 navArgument(TvRoute.ItemDetail.ARG_SEASON_NUMBER) {
                     type = NavType.StringType
@@ -926,6 +937,7 @@ fun TvAppNavigation(
                 },
             ),
         ) { backStack ->
+            val libraryId = backStack.arguments?.getString("libraryId")?.toIntOrNull()
             val contentId = backStack.arguments
                 ?.getString(TvRoute.ItemDetail.ARG_CONTENT_ID)
                 .orEmpty()
@@ -935,6 +947,7 @@ fun TvAppNavigation(
             val episodeContentId = backStack.arguments
                 ?.getString(TvRoute.ItemDetail.ARG_EPISODE_CONTENT_ID)
             TvItemDetailScreen(
+                libraryId = libraryId,
                 contentId = contentId,
                 seasonNumber = seasonNumber,
                 initialEpisodeContentId = episodeContentId,
@@ -958,16 +971,16 @@ fun TvAppNavigation(
                             audioTrackIndex = audioTrackIndex,
                             audioPickedThisSession = audioPicked,
                             subtitleSelection = subtitleSelection,
+                            libraryId = libraryId,
                         ),
                         contentId = playContentId,
                         lastPlaybackNavigation = lastPlaybackNavigation,
                     )
                 },
                 onItemDetail = { itemContentId ->
-                    // The helper, not a bare navigate: a DIFFERENT related
-                    // item pushes — which is what makes the return
-                    // restoration reachable — while an exact repeat is
-                    // collapsed by argument, not by destination node.
+                    // Global recommendations can belong to another library, so
+                    // open them unscoped. The helper pushes different items and
+                    // collapses exact repeats, preserving Back restoration.
                     navController.navigateToTvItemDetail(itemContentId)
                 },
                 // Season switching replaces the current detail entry so paging
@@ -978,7 +991,7 @@ fun TvAppNavigation(
                     // No launchSingleTop: popUpTo is evaluated first, so once
                     // the current page is popped there is nothing left for
                     // single-top to match.
-                    navController.navigate(TvRoute.ItemDetail(itemContentId).route) {
+                    navController.navigate(TvRoute.ItemDetail(itemContentId, libraryId = libraryId).route) {
                         current?.let { popUpTo(it) { inclusive = true } }
                     }
                 },
@@ -994,6 +1007,7 @@ fun TvAppNavigation(
                         TvRoute.ItemDetail(
                             contentId = seriesContentId,
                             seasonNumber = selectedSeason,
+                            libraryId = libraryId,
                             episodeContentId = episodeContentId,
                         ).route,
                     ) {
@@ -1001,10 +1015,10 @@ fun TvAppNavigation(
                     }
                 },
                 onSeriesClick = { seriesId ->
-                    navController.navigateToTvItemDetail(seriesId)
+                    navController.navigateToTvItemDetail(seriesId, libraryId = libraryId)
                 },
                 onSeasonClick = { seriesId, selectedSeason ->
-                    navController.navigateToTvItemDetail(seriesId, selectedSeason)
+                    navController.navigateToTvItemDetail(seriesId, selectedSeason, libraryId = libraryId)
                 },
                 onWatchTogether = { snapshot ->
                     navController.navigateToTvWatchTogether(snapshot, lastPlaybackNavigation)
@@ -1068,6 +1082,11 @@ fun TvAppNavigation(
         composable(
             route = TvRoute.Player.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(TvRoute.Player.ARG_CONTENT_ID) { type = NavType.StringType },
                 navArgument(TvRoute.Player.ARG_FILE_ID) {
                     // Keep StringType because the query param is serialized as
@@ -1186,6 +1205,7 @@ fun TvAppNavigation(
                 capabilityDetector.bindPlaybackDisplay(earlyPlaybackDisplayId)
             }
             TvPlayerScreen(
+                libraryId = backStack.arguments?.getString("libraryId")?.toIntOrNull(),
                 contentId = contentId,
                 preferredFileId = preferredFileId,
                 preferredQuality = preferredQuality,
@@ -1206,6 +1226,7 @@ fun TvAppNavigation(
                     // auto-played chain doesn't pile up episodes behind Back.
                     navController.navigate(
                         TvRoute.Player(
+                            libraryId = backStack.arguments?.getString("libraryId")?.toIntOrNull(),
                             contentId = nextContentId,
                             autoAdvanceCount = nextCount,
                             episodeSelectionHandoffNonce = handoffNonce,
@@ -1221,6 +1242,11 @@ fun TvAppNavigation(
         composable(
             route = TvRoute.AudiobookPlayer.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(TvRoute.AudiobookPlayer.ARG_CONTENT_ID) { type = NavType.StringType },
                 navArgument(TvRoute.AudiobookPlayer.ARG_FILE_ID) {
                     // Query param serialized as a string and may be absent; the
@@ -1305,7 +1331,7 @@ fun TvAppNavigation(
                 title = title,
                 libraryType = libraryType,
                 onItemClick = { contentId ->
-                    navController.navigateToTvItemDetail(contentId)
+                    navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
                 },
                 onBack = { navController.popBackStack() },
             )

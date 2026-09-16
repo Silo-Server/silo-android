@@ -14,6 +14,7 @@ internal suspend fun loadLocalWatchMetadata(
     serverId: String,
     profileId: String,
     contentId: String,
+    libraryId: Int? = null,
     stillCurrent: () -> Boolean,
 ): WatchDetail? {
     if (owner == null || owner.serverId != serverId || owner.profileId != profileId) return null
@@ -23,7 +24,7 @@ internal suspend fun loadLocalWatchMetadata(
         return valid && stillCurrent()
     }
     if (!current()) return null
-    val result = repository.getWatchDetail(contentId, owner)
+    val result = repository.getWatchDetail(contentId, owner, libraryId)
     if (!current()) return null
     return (result as? ApiResult.Success)?.data
 }

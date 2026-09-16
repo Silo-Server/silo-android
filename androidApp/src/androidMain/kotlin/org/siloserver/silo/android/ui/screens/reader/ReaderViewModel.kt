@@ -100,6 +100,7 @@ class ReaderViewModel(
     private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
+    private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val requestedFileId: Int? = savedStateHandle.get<String>("fileId")?.toIntOrNull()
     private var shouldSuppressInitialPageChange = false
@@ -120,7 +121,7 @@ class ReaderViewModel(
     private fun loadDetail() {
         viewModelScope.launch {
             readerAuthority = ebookAuthorities?.snapshotDurableLoginAuthority()
-            when (val r = catalogRepository.getItemDetail(contentId)) {
+            when (val r = catalogRepository.getItemDetail(contentId, libraryId)) {
                 is ApiResult.Success -> {
                     val d = r.data
                     val chosen = chooseReaderVersion(d.versions, requestedFileId)

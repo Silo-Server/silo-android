@@ -140,6 +140,7 @@ class ItemDetailViewModel(
 
     private var similarGeneration = 0L
     private var similarJob: kotlinx.coroutines.Job? = null
+    private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val initialSeasonNumber: Int? =
         savedStateHandle.get<String>("seasonNumber")?.toIntOrNull()
@@ -310,8 +311,8 @@ class ItemDetailViewModel(
         fun ItemDetail?.matchesParent(): Boolean =
             this != null && contentId == seriesContentId && type.equals("series", ignoreCase = true)
 
-        if (catalogRepository.getCachedItemDetail(seriesContentId).matchesParent()) return true
-        return when (val result = catalogRepository.getItemDetail(seriesContentId)) {
+        if (catalogRepository.getCachedItemDetail(seriesContentId, libraryId = libraryId).matchesParent()) return true
+        return when (val result = catalogRepository.getItemDetail(seriesContentId, libraryId = libraryId)) {
             is ApiResult.Success -> result.data.matchesParent()
             else -> false
         }
@@ -327,7 +328,7 @@ class ItemDetailViewModel(
             // Start the live request immediately. The durable cache read can
             // still paint an instant first frame, but it no longer delays the
             // network request that supplies fresh movie/series metadata.
-            val liveDetail = async { catalogRepository.getItemDetail(contentId) }
+            val liveDetail = async { catalogRepository.getItemDetail(contentId, libraryId = libraryId) }
             seedCachedDetail()
 
             when (val result = liveDetail.await()) {
@@ -412,7 +413,7 @@ class ItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
-            when (val result = catalogRepository.getItemDetail(contentId)) {
+            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     _uiState.update {
@@ -445,7 +446,7 @@ class ItemDetailViewModel(
     }
 
     private suspend fun seedCachedDetail() {
-        val cached = catalogRepository.getCachedItemDetail(contentId)?.let { withLocalProgress(it) } ?: return
+        val cached = catalogRepository.getCachedItemDetail(contentId, libraryId = libraryId)?.let { withLocalProgress(it) } ?: return
         _uiState.update {
             it.copy(
                 isLoading = true,
@@ -477,9 +478,9 @@ class ItemDetailViewModel(
             // that fresh cache immediately only for that targeted route; direct
             // card opens retain their normal live season refresh.
             val result = if (initialEpisodeContentId != null) {
-                catalogRepository.getSeasonsForPrefetch(seriesId)
+                catalogRepository.getSeasonsForPrefetch(seriesId, libraryId = libraryId)
             } else {
-                catalogRepository.getSeasons(seriesId)
+                catalogRepository.getSeasons(seriesId, libraryId = libraryId)
             }
             when (result) {
                 is ApiResult.Success -> {
@@ -552,7 +553,7 @@ class ItemDetailViewModel(
 
             for (season in accumulator.remainingSeasons(seasons)) {
                 if (!routeActive) return@launch
-                when (val r = catalogRepository.getEpisodes(seriesId, season.seasonNumber)) {
+                when (val r = catalogRepository.getEpisodes(seriesId, season.seasonNumber, libraryId = libraryId)) {
                     is ApiResult.Success -> {
                         val episodes = withLocalProgress(r.data.episodes)
                         cacheEpisodes(season.seasonNumber, episodes)
@@ -607,7 +608,7 @@ class ItemDetailViewModel(
         _uiState.update { it.copy(selectedSeasonNumber = seasonNumber) }
         loadEpisodes(seriesId, seasonNumber)
         viewModelScope.launch {
-            when (val result = catalogRepository.getSeasons(seriesId)) {
+            when (val result = catalogRepository.getSeasons(seriesId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     val seasons = result.data.seasons.sortedForDisplay()
                     _uiState.update { it.copy(seasons = seasons) }
@@ -618,7 +619,7 @@ class ItemDetailViewModel(
             // Resolve seasons before the series fallback. Otherwise a cache-fast
             // series poster can paint for a frame and then be replaced by the
             // selected season poster when its request completes.
-            when (val result = catalogRepository.getItemDetailForPrefetch(seriesId)) {
+            when (val result = catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -690,9 +691,9 @@ class ItemDetailViewModel(
     private fun loadSelectedEpisodeDetail(contentId: String) {
         selectedEpisodeLoadJob = viewModelScope.launch {
             val result = if (contentId == initialEpisodeContentId) {
-                catalogRepository.getItemDetailForPrefetch(contentId)
+                catalogRepository.getItemDetailForPrefetch(contentId, libraryId = libraryId)
             } else {
-                catalogRepository.getItemDetail(contentId)
+                catalogRepository.getItemDetail(contentId, libraryId = libraryId)
             }
             when (result) {
                 is ApiResult.Success -> _uiState.update { state ->
@@ -781,9 +782,9 @@ class ItemDetailViewModel(
                 )
             }
             val result = if (!forceRefresh && preferPrefetched) {
-                catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber)
+                catalogRepository.getEpisodesForPrefetch(seriesId, seasonNumber, libraryId = libraryId)
             } else {
-                catalogRepository.getEpisodes(seriesId, seasonNumber)
+                catalogRepository.getEpisodes(seriesId, seasonNumber, libraryId = libraryId)
             }
             when (result) {
                 is ApiResult.Success -> {

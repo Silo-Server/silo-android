@@ -788,7 +788,7 @@ private const val ChromeFadeDistanceDp = 80f
 
 @Composable
 fun LibrariesScreen(
-    onItemClick: (String) -> Unit,
+    onItemClick: (String, Int?) -> Unit,
     onCollectionClick: (String, Int) -> Unit,
     viewModel: LibrariesViewModel,
     activeProfile: Profile?,
@@ -881,7 +881,7 @@ fun LibrariesScreen(
                             state = state,
                             listState = recommendedListState,
                             topInset = topInset,
-                            onItemClick = onItemClick,
+                            onItemClick = { onItemClick(it, state.selectedLibraryId) },
                             onRetry = viewModel::retryCurrentTab,
                         )
                     }
@@ -889,7 +889,7 @@ fun LibrariesScreen(
                         BrowseTabContent(
                             state = state,
                             topInset = topInset,
-                            onItemClick = onItemClick,
+                            onItemClick = { onItemClick(it, state.selectedLibraryId) },
                             onRetry = viewModel::retryCurrentTab,
                             onLoadMore = viewModel::loadMoreCatalog,
                             onSortChanged = viewModel::selectBrowseSort,

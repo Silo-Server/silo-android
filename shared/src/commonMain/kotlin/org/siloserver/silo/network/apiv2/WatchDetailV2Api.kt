@@ -11,9 +11,13 @@ import org.siloserver.silo.network.*
 class WatchDetailV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
     suspend fun capture(): AuthScopeSnapshot? = tokens.captureProfileScope()
     suspend fun current(owner: AuthScopeSnapshot): Boolean = owner.stillOwns(tokens, OwnerPolicy.FULL)
-    suspend fun detail(id: String, owner: AuthScopeSnapshot): ApiResult<WatchDetail> =
+    suspend fun detail(id: String, owner: AuthScopeSnapshot, libraryId: Int? = null): ApiResult<WatchDetail> =
         ownedV2Call<JsonObject, WatchDetail>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
-            client.get("/api/v2/watch/${id.encodeURLPathPart()}") { authScope(scope!!); requireSiloAuth() }
+            client.get("/api/v2/watch/${id.encodeURLPathPart()}") {
+                authScope(scope!!)
+                requireSiloAuth()
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { decodeWatchDetail(it, id) }
 }
 

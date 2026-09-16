@@ -242,14 +242,15 @@ fun AppNavigation(
                     // external link to item B while item A's detail is showing
                     // reused A's entry and Back skipped A entirely — the same
                     // defect this branch fixes for in-app navigation.
-                    val useSingleTop = shouldLaunchExternalRouteSingleTop(
-                        currentDestinationRoute = navController.currentBackStackEntry
-                            ?.destination?.route,
-                        currentContentId = navController.currentBackStackEntry
-                            ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-                            ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
-                        targetRoute = route,
-                    )
+                    val useSingleTop = navController.currentBackStackEntry?.arguments?.getString("libraryId") == null &&
+                        shouldLaunchExternalRouteSingleTop(
+                            currentDestinationRoute = navController.currentBackStackEntry
+                                ?.destination?.route,
+                            currentContentId = navController.currentBackStackEntry
+                                ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
+                                ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
+                            targetRoute = route,
+                        )
                     navController.navigate(route) {
                         if (replaceCurrentPlayer) {
                             popUpTo(Route.Player.ROUTE) { inclusive = true }
@@ -855,11 +856,16 @@ fun AppNavigation(
                     defaultValue = null
                 },
             ),
-        ) {
+        ) { backStackEntry ->
             val browseViewModel = koinViewModel<BrowseViewModel>()
             BrowseScreen(
                 onItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
+                    navController.navigate(
+                        Route.ItemDetail(
+                            contentId,
+                            libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
+                        ).route,
+                    )
                 },
                 onBackClick = { navController.popBackStack() },
                 viewModel = browseViewModel,
@@ -881,7 +887,12 @@ fun AppNavigation(
                 collectionId = backStackEntry.arguments?.getString("collectionId") ?: "",
                 onBackClick = { navController.popBackStack() },
                 onItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
+                    navController.navigate(
+                        Route.ItemDetail(
+                            contentId,
+                            libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
+                        ).route,
+                    )
                 },
             )
         }
@@ -890,6 +901,11 @@ fun AppNavigation(
         composable(
             route = Route.ItemDetail.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument("contentId") { type = NavType.StringType },
                 navArgument("seasonNumber") {
                     type = NavType.StringType
@@ -903,6 +919,7 @@ fun AppNavigation(
                 },
             ),
         ) { backStackEntry ->
+            val libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull()
             // Keep the destination scope available to media cards nested in
             // the detail page so the poster shared-element hand-off still runs.
             CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
@@ -938,6 +955,7 @@ fun AppNavigation(
                         // ahead of explicit parameters, so replace its route args.
                         set(DEFAULT_ARGS_KEY, bundleOf(
                             "contentId" to resolvedContentId,
+                            "libraryId" to libraryId?.toString(),
                             "seasonNumber" to resolvedSeason?.toString(),
                             "episodeContentId" to resolvedEpisodeId,
                         ))
@@ -954,6 +972,7 @@ fun AppNavigation(
                     val launchedRemotely = siloCastController.launchOnConnectedTarget(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
+                            libraryId = libraryId,
                             fileId = fileId,
                             audioTrackIndex = audioTrackIndex,
                             subtitleTrackIndex = subtitleTrackIndex,
@@ -966,6 +985,7 @@ fun AppNavigation(
                     } else {
                         navController.navigate(
                             Route.Player(
+                                libraryId = libraryId,
                                 contentId = contentId,
                                 fileId = fileId,
                                 audioTrackIndex = audioTrackIndex,
@@ -978,8 +998,11 @@ fun AppNavigation(
                 onItemDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
+                onEpisodeDetailClick = { contentId ->
+                    navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
+                },
                 onSeriesClick = { seriesId ->
-                    navController.navigate(Route.ItemDetail(seriesId).route)
+                    navController.navigate(Route.ItemDetail(seriesId, libraryId = libraryId).route)
                 },
                 onSeriesDetailReplace = { seriesId, seasonNumber, episodeId ->
                     resolvedSeason = seasonNumber
@@ -993,11 +1016,11 @@ fun AppNavigation(
                 },
                 onAudiobookPlayClick = { contentId, fileId, fromStart, startPosition ->
                     navController.navigate(
-                        Route.AudiobookPlayer(contentId, fileId, fromStart, startPosition).route,
+                        Route.AudiobookPlayer(contentId, fileId, fromStart, startPosition, libraryId).route,
                     )
                 },
                 onBookReadClick = { contentId, fileId ->
-                    navController.navigate(Route.BookReader(contentId, fileId).route)
+                    navController.navigate(Route.BookReader(contentId, fileId, libraryId).route)
                 },
                 onWatchTogether = { contentId, fileId -> wtTarget = contentId to fileId },
                 onOpenCastRemote = {
@@ -1043,6 +1066,11 @@ fun AppNavigation(
         composable(
             route = Route.AudiobookPlayer.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(Route.AudiobookPlayer.ARG_CONTENT_ID) { type = NavType.StringType },
                 navArgument(Route.AudiobookPlayer.ARG_FILE_ID) {
                     type = NavType.StringType
@@ -1069,6 +1097,11 @@ fun AppNavigation(
         composable(
             route = Route.BookReader.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument(Route.BookReader.ARG_CONTENT_ID) { type = NavType.StringType },
                 navArgument(Route.BookReader.ARG_FILE_ID) {
                     type = NavType.StringType
@@ -1102,6 +1135,11 @@ fun AppNavigation(
         composable(
             route = Route.Player.ROUTE,
             arguments = listOf(
+                navArgument("libraryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
                 navArgument("contentId") { type = NavType.StringType },
                 navArgument("fileId") {
                     type = NavType.StringType
@@ -1149,6 +1187,7 @@ fun AppNavigation(
                 }
             }
             PlayerScreen(
+                libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
                 contentId = backStackEntry.arguments?.getString("contentId") ?: "",
                 initialFileId = backStackEntry.arguments?.getString("fileId")?.toIntOrNull(),
                 initialQuality = VideoPlayerRouteArgs.normalizeQuality(
@@ -1323,6 +1362,7 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
     // merely because a Watch Together room currently happens to play the same
     // content/file.
     if (!arguments.getString("roomId").isNullOrBlank()) return false
+    if (arguments.getString("libraryId") != null) return false
     val requestedTarget = playerRouteIntentOrNull(route) ?: return false
     return currentPlayerTarget?.let(requestedTarget::matches) == true
 }

@@ -138,29 +138,44 @@ class CatalogV2Api(
         client.get("/api/v2/library/$libraryId/collections") { scope?.let { authScope(it) } }
     }) { it }
 
-    suspend fun itemDetail(id: String): ApiResult<ItemDetail> =
+    suspend fun itemDetail(id: String, libraryId: Int? = null): ApiResult<ItemDetail> =
         read<ItemDetailReadV2, ItemDetail>({ scope ->
-            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}") { scope?.let { authScope(it) } }
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { it.toDomain() }
 
-    suspend fun seriesSeasons(id: String): ApiResult<SeasonsResponse> =
+    suspend fun seriesSeasons(id: String, libraryId: Int? = null): ApiResult<SeasonsResponse> =
         read<DetailCollectionReadV2<Season>, SeasonsResponse>({ scope ->
-            client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons") { scope?.let { authScope(it) } }
+            client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { it.requireComplete(); SeasonsResponse(it.items) }
 
-    suspend fun seasonEpisodes(id: String, number: Int): ApiResult<EpisodesResponse> =
+    suspend fun seasonEpisodes(id: String, number: Int, libraryId: Int? = null): ApiResult<EpisodesResponse> =
         read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
-            client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons/$number/episodes") { scope?.let { authScope(it) } }
+            client.get("/api/v2/catalog/series/${id.encodeURLPathPart()}/seasons/$number/episodes") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
-    suspend fun itemVersions(id: String): ApiResult<List<FileVersion>> =
+    suspend fun itemVersions(id: String, libraryId: Int? = null): ApiResult<List<FileVersion>> =
         read<DetailCollectionReadV2<FileVersionReadV2>, List<FileVersion>>({ scope ->
-            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/versions") { scope?.let { authScope(it) } }
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/versions") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { it.requireComplete(); it.items.map { row -> row.toDomain() } }
 
-    suspend fun itemEpisodes(id: String): ApiResult<EpisodesResponse> =
+    suspend fun itemEpisodes(id: String, libraryId: Int? = null): ApiResult<EpisodesResponse> =
         read<DetailCollectionReadV2<EpisodeListItemReadV2>, EpisodesResponse>({ scope ->
-            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/episodes") { scope?.let { authScope(it) } }
+            client.get("/api/v2/catalog/items/${id.encodeURLPathPart()}/episodes") {
+                scope?.let { authScope(it) }
+                libraryId?.let { parameter("library_id", it) }
+            }
         }) { it.requireComplete(); EpisodesResponse(it.items.map { row -> row.toDomain() }) }
 
     suspend fun person(id: Long): ApiResult<Person> =

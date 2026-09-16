@@ -155,8 +155,12 @@ class CatalogRepository(
             includeTotal = includeTotal,
         )
 
+    // Library-scoped reads cannot use the content-only offline cache or Home warmups.
+    // Keeping them live prevents versions from leaking between browse contexts.
+
     /** Fetches full metadata for a single catalog item (offline: last cached detail). */
-    suspend fun getItemDetail(contentId: String): ApiResult<ItemDetail> {
+    suspend fun getItemDetail(contentId: String, libraryId: Int? = null): ApiResult<ItemDetail> {
+        if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
         val warmRequest = detailRequestMutex.withLock {
             itemDetailInFlight[requestIdentityGeneration to contentId]
@@ -179,14 +183,15 @@ class CatalogRepository(
     }
 
     /** Returns the last cached item detail without touching the network. */
-    suspend fun getCachedItemDetail(contentId: String): ItemDetail? =
-        catalogCache.getCachedItemDetail(contentId)
+    suspend fun getCachedItemDetail(contentId: String, libraryId: Int? = null): ItemDetail? =
+        if (libraryId != null) null else catalogCache.getCachedItemDetail(contentId)
 
     /**
      * Cache-first detail for speculative UI enrichment. Unlike a detail screen,
      * prefetch must not re-download metadata that is already durable locally.
      */
-    suspend fun getItemDetailForPrefetch(contentId: String): ApiResult<ItemDetail> {
+    suspend fun getItemDetailForPrefetch(contentId: String, libraryId: Int? = null): ApiResult<ItemDetail> {
+        if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId)
         catalogCache.getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
         return getItemDetail(contentId)
     }
@@ -194,13 +199,14 @@ class CatalogRepository(
     /** Fetches playback-oriented detail (versions, user progress, intro/credits markers). */
     suspend fun captureWatchAuthority() = catalogApi.captureWatchAuthority()
     suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.isWatchAuthorityCurrent(owner)
-    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.getWatchDetail(contentId, owner)
+    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId)
 
-    suspend fun getWatchDetail(contentId: String): ApiResult<WatchDetail> =
-        catalogApi.getWatchDetail(contentId)
+    suspend fun getWatchDetail(contentId: String, libraryId: Int? = null): ApiResult<WatchDetail> =
+        catalogApi.getWatchDetail(contentId, libraryId)
 
     /** Lists seasons for a series (offline: last cached seasons). */
-    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> {
+    suspend fun getSeasons(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> {
+        if (libraryId != null) return catalogApi.getSeasons(seriesId, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
         val warmRequest = detailRequestMutex.withLock {
             seasonsInFlight[requestIdentityGeneration to seriesId]
@@ -220,17 +226,19 @@ class CatalogRepository(
     }
 
     /** Returns the last cached season list without touching the network. */
-    suspend fun getCachedSeasons(seriesId: String): SeasonsResponse? =
-        catalogCache.getCachedSeasons(seriesId)
+    suspend fun getCachedSeasons(seriesId: String, libraryId: Int? = null): SeasonsResponse? =
+        if (libraryId != null) null else catalogCache.getCachedSeasons(seriesId)
 
     /** Cache-first season list for speculative detail navigation. */
-    suspend fun getSeasonsForPrefetch(seriesId: String): ApiResult<SeasonsResponse> {
+    suspend fun getSeasonsForPrefetch(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> {
+        if (libraryId != null) return catalogApi.getSeasons(seriesId, libraryId)
         catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
         return getSeasons(seriesId)
     }
 
     /** Lists episodes for a specific season of a series (offline: last cached episodes). */
-    suspend fun getEpisodes(seriesId: String, seasonNumber: Int): ApiResult<EpisodesResponse> {
+    suspend fun getEpisodes(seriesId: String, seasonNumber: Int, libraryId: Int? = null): ApiResult<EpisodesResponse> {
+        if (libraryId != null) return catalogApi.getEpisodes(seriesId, seasonNumber, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
         val requestKey = EpisodesRequestKey(requestIdentityGeneration, seriesId, seasonNumber)
         val warmRequest = detailRequestMutex.withLock { episodesInFlight[requestKey] }
@@ -253,14 +261,16 @@ class CatalogRepository(
     }
 
     /** Returns one cached season's episodes without touching the network. */
-    suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int): EpisodesResponse? =
-        catalogCache.getCachedEpisodes(seriesId, seasonNumber)
+    suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int, libraryId: Int? = null): EpisodesResponse? =
+        if (libraryId != null) null else catalogCache.getCachedEpisodes(seriesId, seasonNumber)
 
     /** Cache-first episode list for speculative detail navigation. */
     suspend fun getEpisodesForPrefetch(
         seriesId: String,
         seasonNumber: Int,
+        libraryId: Int? = null,
     ): ApiResult<EpisodesResponse> {
+        if (libraryId != null) return catalogApi.getEpisodes(seriesId, seasonNumber, libraryId)
         catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let {
             return ApiResult.Success(it)
         }
@@ -268,12 +278,12 @@ class CatalogRepository(
     }
 
     /** Lists all episodes directly attached to an item (e.g. a season content ID). */
-    suspend fun getItemEpisodes(contentId: String): ApiResult<EpisodesResponse> =
-        catalogApi.getItemEpisodes(contentId)
+    suspend fun getItemEpisodes(contentId: String, libraryId: Int? = null): ApiResult<EpisodesResponse> =
+        catalogApi.getItemEpisodes(contentId, libraryId)
 
     /** Lists all available file versions for an item. */
-    suspend fun getItemVersions(contentId: String): ApiResult<List<FileVersion>> =
-        catalogApi.getItemVersions(contentId)
+    suspend fun getItemVersions(contentId: String, libraryId: Int? = null): ApiResult<List<FileVersion>> =
+        catalogApi.getItemVersions(contentId, libraryId)
 
     /** Searches for people (cast/crew) by name. */
     suspend fun searchPeople(query: String): ApiResult<List<Person>> =
