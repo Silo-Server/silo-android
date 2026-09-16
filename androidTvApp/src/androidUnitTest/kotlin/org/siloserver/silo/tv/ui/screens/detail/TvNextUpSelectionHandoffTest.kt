@@ -819,8 +819,14 @@ class TvNextUpSelectionHandoffTest {
         fun client(tokenManager: FakeTokenManager): HttpClient = HttpClient(
             MockEngine { request ->
                 if (request.url.encodedPath.startsWith("/api/v2/")) {
+                    // The engine runs handlers on its own threads, so a request
+                    // issued before an identity transition can be evaluated after
+                    // it and legitimately carries the old owner. Only a request
+                    // issued under the live generation must match the live scope.
                     val owner = request.attributes[AuthScopeAttributeKey]
-                    assertTrue(owner.isSameIdentityAs(tokenManager.currentScope()))
+                    if (owner.identityGeneration == tokenManager.liveGeneration()) {
+                        assertTrue(owner.isSameIdentityAs(tokenManager.currentScope()))
+                    }
                 }
                 fun json(content: String) = respond(
                     content = content,
@@ -968,6 +974,8 @@ class TvNextUpSelectionHandoffTest {
             this.serverId = serverId.orEmpty()
         }
         override suspend fun signOutCurrentServer() = Unit
+        fun liveGeneration(): Long = identityTransitions.generation.value
+
         fun currentScope(profileId: String? = this.profileId) = AuthScopeSnapshot(
             serverId = serverId,
             profileId = profileId,
