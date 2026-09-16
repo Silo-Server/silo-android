@@ -183,14 +183,13 @@ class DownloadWorker(
                     ownedWrite { storage.delete(serverId, profileId, fileId); true }
                     throw IOException("range not satisfiable — restarting fresh")
                 }
-                // A non-original (remux/transcode) row is still `preparing`: the
-                // /file endpoint answers 409 `download_inactive` until the
-                // artifact is `ready` (docs §4.5). That is transient, NOT the
-                // fatal "revoked" case — throw the preparing sentinel so we wait
-                // (WorkManager backoff) and re-probe on the next attempt instead
-                // of deleting the download. Other 409s stay fatal below.
-                // V2 returns a typed conflict without the legacy download_inactive
-                // code. Preserve the partial and use the existing bounded retry.
+                // The v2 file route answers one bare `conflict` problem for every
+                // non-active state: still preparing, cancelled, failed, revoked,
+                // or an artifact that is not ready yet. The body carries no code
+                // that separates them, so a 409 is always treated as "not ready
+                // yet": keep the partial and use the bounded preparing retry. A
+                // row that is truly gone hits the retry cap and fails then; the
+                // registry refresh removes it from the UI long before that.
                 if (response.status == HttpStatusCode.Conflict) throw DownloadPreparingException()
                 downloadHttpStatusFailure(response.status)?.let { throw it }
 
@@ -534,7 +533,7 @@ class DownloadWorker(
 
         /**
          * Max WorkManager attempts to spend waiting on a `preparing` artifact
-         * (409 `download_inactive`) before failing. With [PREPARE_BACKOFF_SECONDS]
+         * (409 from the file route) before failing. With [PREPARE_BACKOFF_SECONDS]
          * linear backoff this is roughly `MAX_PREPARE_ATTEMPTS × backoff` of
          * polling (~15 min at the defaults) — enough for a typical transcode,
          * bounded so a stuck prepare doesn't retry forever.
@@ -625,29 +624,14 @@ class DownloadWorker(
     }
 }
 
-/** Server error code (docs §12) meaning the row's artifact is not servable
- *  yet — for a fresh remux/transcode row that means "still preparing". */
-internal const val DOWNLOAD_INACTIVE_ERROR = "download_inactive"
-
 /**
- * A 409 `download_inactive` while the server is still preparing a remux/
- * transcode artifact (issue #20). Retriable — wait for the row to reach
- * `ready` — NOT a permanent failure. Subclasses [IOException] so it flows
+ * A 409 from the v2 file route: the download is not servable right now,
+ * most often because a remux/transcode artifact is still preparing.
+ * Retriable with a bounded cap. Subclasses [IOException] so it flows
  * through the retry-friendly plumbing, but doWork catches it FIRST to apply
- * the bounded preparing-retry cap instead of resuming/deleting a partial.
+ * the preparing-retry cap instead of resuming/deleting a partial.
  */
 private class DownloadPreparingException : IOException("download artifact still preparing")
-
-/**
- * Pull the `error` code out of the server's flat error envelope
- * (`{"error":"download_inactive","message":"..."}`, docs §12). Returns null
- * when absent/malformed. Pure + string-only so it stays unit-testable without
- * a live HTTP response.
- */
-internal fun extractDownloadErrorCode(body: String): String? =
-    downloadErrorCodeRegex.find(body)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
-
-private val downloadErrorCodeRegex = Regex("""(?i)"error"\s*:\s*"([^"]*)"""")
 
 internal fun downloadHttpStatusFailure(status: HttpStatusCode): Throwable? = when {
     status == HttpStatusCode.OK || status == HttpStatusCode.PartialContent -> null
