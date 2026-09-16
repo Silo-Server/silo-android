@@ -289,7 +289,6 @@ class NotificationsRepository(
         val viewer = viewer()
         if (viewer.api.markRead(id) is ApiResult.Success) {
             publishFor(viewer) { mutate { applyEvent(it, NotificationRealtimeEvent.Read(id)) } }
-            if (current(viewer)) refresh()
         } else publishFor(viewer) { _error.value = "Notification read status could not be confirmed." }
     }
 
@@ -372,8 +371,9 @@ class NotificationsRepository(
                         backoffMs = INITIAL_BACKOFF_MS
                         established = true
                     }
-                    // Every live event triggers an authoritative reread; the fold is only for closes.
-                    if (event !is NotificationRealtimeEvent.Closed) refresh()
+                    // The connection snapshot is the reconnect moment: reread authoritative
+                    // counts and the displayed cutoff once. Every later event folds locally.
+                    if (event is NotificationRealtimeEvent.Snapshot) refresh()
                     else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
                 }
             } catch (e: CancellationException) {

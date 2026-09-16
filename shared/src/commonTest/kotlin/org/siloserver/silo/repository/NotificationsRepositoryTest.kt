@@ -169,8 +169,9 @@ class NotificationsRepositoryTest {
             ApiResult.Success(NotificationCapability())
         var markReadCalls = mutableListOf<String>()
         var markAllReadCalls = 0
+        var listCalls = 0
 
-        override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?) = listResponse
+        override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?) = listResponse.also { listCalls++ }
         override suspend fun sync(since: String?, limit: Int) =
             ApiResult.Success(NotificationSyncResponse())
         override suspend fun get(id: String) = ApiResult.Success(
@@ -258,13 +259,8 @@ class NotificationsRepositoryTest {
     }
 
     @Test
-    fun `connectRealtime rereads the inbox when a created event arrives`() = kotlinx.coroutines.test.runTest {
-        val api = FakeNotificationsApi().apply {
-            listResponse = ApiResult.Success(
-                NotificationListResponse(notifications = listOf(row("live", "2026-06-12T10:00:00Z"))),
-            )
-            unreadResponse = ApiResult.Success(UnreadCountResponse(1))
-        }
+    fun `connectRealtime folds a created event without rereading the inbox`() = kotlinx.coroutines.test.runTest {
+        val api = FakeNotificationsApi()
         val events = kotlinx.coroutines.flow.MutableSharedFlow<NotificationRealtimeEvent>(
             replay = 0, extraBufferCapacity = 8,
         )
@@ -280,6 +276,7 @@ class NotificationsRepositoryTest {
         kotlinx.coroutines.yield()
         assertEquals(listOf("live"), repo.rows.value.map { it.id })
         assertEquals(1, repo.unreadCount.value)
+        assertEquals(0, api.listCalls)
         job.cancel()
     }
 
