@@ -32,6 +32,11 @@ import java.io.File
  *   artwork shares the API clients' warm connection pool instead of a
  *   service-loader-built default client.
  * - Memory cache stays at Coil's heap-proportional default.
+ *
+ * API decoding resolves artwork against its supplying response origin before
+ * it reaches Coil. This covers direct requests and media-session loading, and
+ * keeps cache keys tied to that server when the active session changes.
+ * The image client carries no Silo login or profile credentials.
  */
 fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader =
     ImageLoader.Builder(context)

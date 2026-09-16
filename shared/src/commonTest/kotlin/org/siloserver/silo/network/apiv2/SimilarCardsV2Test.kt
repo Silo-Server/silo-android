@@ -27,7 +27,7 @@ class SimilarCardsV2Test {
         try {
             val repo=RecommendationRepository(RecommendationApi(c,SimilarCardsV2Api(c, tokens, ApiV2Gate.Unrestricted)))
             val published=mutableListOf<List<String>>()
-            repo.loadSimilarCards("movie/a?b",owner,{true}) {published+=it.map {it.contentId};assertEquals(2024,it.first().year);assertEquals("/b",it.first().posterUrl)}
+            repo.loadSimilarCards("movie/a?b",owner,{true}) {published+=it.map {it.contentId};assertEquals(2024,it.first().year);assertEquals("http://localhost/b",it.first().posterUrl)}
             assertEquals(listOf(listOf("b","a")),published);assertEquals(1,sends)
             body="""{"items":[]}"""
             repo.loadSimilarCards("movie/a?b",owner,{true}) {assertTrue(it.isEmpty())};assertEquals(2,sends)
