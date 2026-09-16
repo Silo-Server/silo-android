@@ -64,7 +64,10 @@ class SequencedPlayback(
     private val mutex = Mutex()
     private var entries: List<PlaybackJournalEntry>? = null
     private val adopted = mutableSetOf<String>()
-    private val auxiliaryGenerations = mutableMapOf<String, Long>()
+    // Read without the mutex by ProxyAuxiliaryRequestHeaders.isCurrent on a
+    // Media3 loader thread; written only under the mutex as whole replacements.
+    @kotlin.concurrent.Volatile private var auxiliaryGenerations: Map<String, Long> = emptyMap()
+    @kotlin.concurrent.Volatile private var liveAttempts: Set<String> = emptySet()
     private val auxiliaryHeaders = mutableMapOf<String, ProxyAuxiliaryRequestHeaders>()
     private val scopes = mutableMapOf<String, AuthScopeSnapshot>()
     private val _pending = MutableStateFlow<List<String>>(emptyList())
@@ -80,6 +83,7 @@ class SequencedPlayback(
         (stop != null || attemptId !in adopted || replans.any { it.response == null && it.rejectedCode == null })
 
     private fun publish() {
+        liveAttempts = entries.orEmpty().filter { !it.terminal && it.stop == null }.map { it.attemptId }.toSet()
         _sessions.value = entries.orEmpty().mapNotNull { it.sessionId }.toSet()
         _pending.value = entries.orEmpty().filter { it.needsRecovery() }
             .map { it.attemptId }
@@ -257,7 +261,7 @@ class SequencedPlayback(
         captured: AuthScopeSnapshot, sentHeaders: Map<String, String>,
     ): PlaybackDecisionResponseV3 {
         val generation = (auxiliaryGenerations[entry.attemptId] ?: 0) + 1
-        auxiliaryGenerations[entry.attemptId] = generation
+        auxiliaryGenerations = auxiliaryGenerations + (entry.attemptId to generation)
         auxiliaryHeaders.remove(entry.attemptId)
         val plan = decision.playbackPlan ?: return decision
         val references = (plan.subtitle.inventory.mapNotNull { it.url } + listOfNotNull(plan.subtitle.artifact?.url))
@@ -268,12 +272,10 @@ class SequencedPlayback(
         val sessionId = requireNotNull(decision.sessionId)
         require(plan.sessionId == sessionId)
         val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, sessionId, references, headers) {
-            mutex.withLock {
-                val live = authorities.snapshotDurableLoginAuthority()
-                live?.loginId == entry.loginId && live.scope == captured &&
-                    auxiliaryGenerations[entry.attemptId] == generation &&
-                    entries?.any { it.attemptId == entry.attemptId && !it.terminal && it.stop == null } == true
-            }
+            // Lock-free: a playback request in flight under the mutex must not stall subtitle loads.
+            val live = authorities.snapshotDurableLoginAuthority()
+            live?.loginId == entry.loginId && live.scope == captured &&
+                auxiliaryGenerations[entry.attemptId] == generation && entry.attemptId in liveAttempts
         }
         auxiliaryHeaders[entry.attemptId] = ephemeral
         return decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = ephemeral)))
