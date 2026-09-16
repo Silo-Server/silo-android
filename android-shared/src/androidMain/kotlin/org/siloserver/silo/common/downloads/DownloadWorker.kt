@@ -75,7 +75,7 @@ class DownloadWorker(
     private val repository: DownloadsRepository,
     private val storage: DownloadStorage,
     private val metadataStore: DownloadMetadataStore,
-    httpClient: HttpClient,
+    private val httpClient: HttpClient,
     // Scope guard for the in-memory UI pushes: `repository` only mirrors the
     // ACTIVE scope's records, and record lookup is by mediaFileId alone — a
     // worker running for a background scope with a colliding fileId would
@@ -88,8 +88,6 @@ class DownloadWorker(
     private val gate: org.siloserver.silo.network.apiv2.ApiV2Gate,
 ) : CoroutineWorker(appContext, params) {
 
-    private val streamClient = lazy { httpClient.config { followRedirects = false } }
-    private val httpClient by streamClient
     private var transferAuthority: DurableLoginAuthority? = null
     private suspend fun requireOwner() {
         if (authorities != null && (transferAuthority == null || transferAuthority != authorities.snapshotDurableLoginAuthority() || inputData.getString(KEY_DEVICE_ID) != devices?.current()?.id)) throw DownloadOwnerChanged()
@@ -366,7 +364,6 @@ class DownloadWorker(
         }
         } finally {
             lifetimeLease.close()
-            if (streamClient.isInitialized()) httpClient.close()
         }
     }
 
