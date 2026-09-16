@@ -33,7 +33,6 @@ class PersonalWriteJournalTest {
             assertTrue(row.payloadJson.contains(command.method))
             assertFalse(row.payloadJson.contains("proof"))
             assertEquals(scope, handle.scope)
-            assertNull(repo.beginPersonalWrite(PersonalWrite.Watched("item", false)))
             repo.completePersonalWrite(handle.copy(command = PersonalWrite.Rating("wrong", 1)))
             assertEquals(row, db.dirtyOperationDao().getById(handle.opId))
             repo.completePersonalWrite(handle)
@@ -43,14 +42,15 @@ class PersonalWriteJournalTest {
         assertNull(db.contentItemStateDao().get("server", "profile", "item")?.ratingValue)
     }
 
-    @Test fun unresolvedWriteSurvivesRestartAndDoesNotBlockOtherItems() = runTest {
-        val handle = assertNotNull(repo().beginPersonalWrite(PersonalWrite.Rating("item", 3)))
-        val row = db.dirtyOperationDao().getById(handle.opId)
-        assertNull(repo().beginPersonalWrite(PersonalWrite.Rating("item", 4)))
-        login = "replacement-login"
-        assertNull(repo().beginPersonalWrite(PersonalWrite.Rating("item", 5)))
-        assertNotNull(repo().beginPersonalWrite(PersonalWrite.Rating("different-item", 5)))
-        assertEquals(row, db.dirtyOperationDao().getById(handle.opId))
+    @Test fun unresolvedWriteIsSupersededByTheNextWriteAndNeverProjects() = runTest {
+        val stale = assertNotNull(repo().beginPersonalWrite(PersonalWrite.Rating("item", 3)))
+        val next = assertNotNull(repo().beginPersonalWrite(PersonalWrite.Rating("item", 4)))
+        assertNull(db.dirtyOperationDao().getById(stale.opId))
+        assertNotNull(db.dirtyOperationDao().getById(next.opId))
+        repo().completePersonalWrite(stale) // late acknowledgement of a superseded attempt
+        assertNull(db.contentItemStateDao().get("server", "profile", "item"))
+        repo().abandonPersonalWrite(next)
+        assertEquals(0, db.dirtyOperationDao().count())
         assertNull(db.contentItemStateDao().get("server", "profile", "item"))
     }
 

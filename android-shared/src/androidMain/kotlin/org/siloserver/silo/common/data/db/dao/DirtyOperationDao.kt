@@ -25,6 +25,11 @@ interface DirtyOperationDao {
         "AND targetContentId = :contentId AND opKind IN ('SET_WATCHED', 'SET_RATING', 'SET_POSITION', 'PERSONAL_V2')")
     suspend fun unresolvedPersonalCount(serverId: String, profileId: String, contentId: String): Int
 
+    /** A newer desired-state write supersedes any v2 personal row the previous attempt left behind. */
+    @Query("DELETE FROM dirty_operations WHERE opKind = 'PERSONAL_V2' AND serverId = :serverId " +
+        "AND profileId = :profileId AND targetContentId = :contentId")
+    suspend fun deletePersonalV2ForItem(serverId: String, profileId: String, contentId: String)
+
     @Insert
     suspend fun insert(op: DirtyOperationEntity): Long
 

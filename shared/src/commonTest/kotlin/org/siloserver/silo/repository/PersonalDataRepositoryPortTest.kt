@@ -22,6 +22,7 @@ class PersonalDataRepositoryPortTest {
             return PersonalWriteHandle(1, identity.scope, command).also { pending = it }
         }
         override suspend fun completePersonalWrite(handle: PersonalWriteHandle) { assertEquals(pending, handle); pending = null; completed++ }
+        override suspend fun abandonPersonalWrite(handle: PersonalWriteHandle) { assertEquals(pending, handle); pending = null }
     }
 
     @Test fun freshTypedWritesUseExactV2BodyAndSettleOnly204() = runTest {
@@ -45,30 +46,31 @@ class PersonalDataRepositoryPortTest {
         } finally { client.close() }
     }
 
-    @Test fun unknownResponseBlocksReplacementAndNeverReplays() = runTest {
+    @Test fun unknownResponseReleasesItemForNextWriteWithoutProjecting() = runTest {
         for (status in listOf(HttpStatusCode.Unauthorized, HttpStatusCode.InternalServerError, HttpStatusCode.OK)) {
             val identity = Identity(); val port = Port(identity); var sends = 0
             val client = HttpClient(MockEngine { sends++; respond("{}", status, headersOf(HttpHeaders.ContentType, "application/json")) })
             try {
                 val repo = PersonalDataRepository(PersonalDataApi(client, tokenManager = identity), port)
                 assertFalse(repo.setRating("item", 4) is ApiResult.Success)
-                assertIs<ApiResult.Error>(repo.deleteRating("item"))
-                assertEquals(1, sends); assertEquals(0, port.completed); assertNotNull(port.pending)
+                assertNull(port.pending)
+                assertFalse(repo.deleteRating("item") is ApiResult.Success)
+                assertEquals(2, sends); assertEquals(0, port.completed); assertNull(port.pending)
             } finally { client.close() }
         }
     }
 
-    @Test fun lostResponseRetainsIntentAndBlocksAnotherRequest() = runTest {
+    @Test fun lostResponseReleasesItemAndConsumedIntentCannotReplay() = runTest {
         val identity = Identity(); val port = Port(identity); var sends = 0
         val client = HttpClient(MockEngine { sends++; throw IllegalStateException("lost response") })
         try {
             val repo = PersonalDataRepository(PersonalDataApi(client, tokenManager = identity), port)
             val intent = repo.beginWatched("item", true)
             assertIs<ApiResult.NetworkError>(repo.performPersonalWrite(intent))
-            assertNotNull(port.pending)
-            assertIs<ApiResult.Error>(repo.performPersonalWrite(intent))
-            assertIs<ApiResult.Error>(repo.setWatched("item", false))
-            assertEquals(1, sends); assertEquals(0, port.completed)
+            assertNull(port.pending)
+            assertEquals("personal_write_consumed", assertIs<ApiResult.Error>(repo.performPersonalWrite(intent)).error)
+            assertIs<ApiResult.NetworkError>(repo.setWatched("item", false))
+            assertEquals(2, sends); assertEquals(0, port.completed)
         } finally { client.close() }
     }
 

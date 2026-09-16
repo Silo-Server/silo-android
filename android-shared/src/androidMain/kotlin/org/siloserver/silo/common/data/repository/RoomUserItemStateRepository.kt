@@ -73,6 +73,8 @@ class RoomUserItemStateRepository(
         if (snapshot.credentialGenerationId != null || !snapshot.isSameIdentityAs(snapshotProvider())) return null
         return db.withTransaction {
             if (authority != ebookAuthorities.snapshotDurableLoginAuthority()) return@withTransaction null
+            // A v2 row left by a crashed or failed attempt is superseded by this newer desired state.
+            outboxDao.deletePersonalV2ForItem(snapshot.serverId, profile, command.itemId)
             // Legacy bytes have no safe v2 replay authority; never coalesce, convert or supersede them.
             if (outboxDao.unresolvedPersonalCount(snapshot.serverId, profile, command.itemId) != 0)
                 return@withTransaction null
@@ -130,6 +132,11 @@ class RoomUserItemStateRepository(
             }
             outboxDao.deleteById(row.id)
         }
+    }
+
+    override suspend fun abandonPersonalWrite(handle: PersonalWriteHandle) {
+        val row = outboxDao.getById(handle.opId) ?: return
+        if (row.opKind == "PERSONAL_V2" && row.state == "personal_uncertain") outboxDao.deleteById(row.id)
     }
 
     override suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle =

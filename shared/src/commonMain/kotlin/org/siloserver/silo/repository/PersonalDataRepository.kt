@@ -125,6 +125,7 @@ open class PersonalDataRepository(
         if (intent.identityGeneration != identityTransitions.generation.value)
             return identityChanged()
         if (result is ApiResult.Success) userItemStatePort.completePersonalWrite(handle)
+        else userItemStatePort.abandonPersonalWrite(handle)
         return result
     }
 
