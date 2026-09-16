@@ -74,7 +74,8 @@ class SyncEngine(
                     val payload = runCatching { OutboxOperation.decodeEbookProgressPayload(op.payloadJson) }.getOrNull()
                     val authority = ebookAuthorities.snapshotDurableLoginAuthority()
                     if (authority == null || !authority.scope.isSameIdentityAs(scope))
-                        return DrainResult(synced, dropped, retriable + 1, dao.runnableLegacyCountForScope(serverId, profileId))
+                        return DrainResult(synced, dropped, retriable + 1,
+                            dao.runnableLegacyCountForScope(serverId, profileId) + (memberships?.readyCount() ?: 0))
                     if (op.opVersion < 2 || payload?.updatedAt == null || payload.loginId != authority.loginId ||
                         payload.origin != scope.serverUrl) {
                         dao.quarantineEbookProgress(op.id)
