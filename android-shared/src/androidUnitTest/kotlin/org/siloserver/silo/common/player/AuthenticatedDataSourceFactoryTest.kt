@@ -37,10 +37,11 @@ class AuthenticatedDataSourceFactoryTest {
     }
 
     @Test
-    fun streamRelativeUrlWithoutApiMountIsRejected() {
-        assertFailsWith<IllegalArgumentException> {
-            resolveRoutedDataSourceUrl("https://silo.example", "/stream/session-1")
-        }
+    fun streamRelativeUrlWithoutApiMountResolvesAgainstOrigin() {
+        assertEquals(
+            "https://silo.example/stream/session-1",
+            resolveRoutedDataSourceUrl("https://silo.example", "/stream/session-1"),
+        )
     }
 
     @Test

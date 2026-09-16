@@ -13,7 +13,6 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -326,10 +325,11 @@ class SubtitleManagerTrackSelectionTest {
     }
 
     @Test
-    fun relativeSubtitleUrlsWithoutApiMountAreRejected() {
-        assertFailsWith<IllegalArgumentException> {
-            resolveSubtitleUrl("https://silo.example", "/stream/session-1/subtitles/0.srt")
-        }
+    fun relativeSubtitleUrlsWithoutApiMountResolveAgainstOrigin() {
+        assertEquals(
+            "https://silo.example/stream/session-1/subtitles/0.srt",
+            resolveSubtitleUrl("https://silo.example", "/stream/session-1/subtitles/0.srt"),
+        )
     }
 
     @Test
