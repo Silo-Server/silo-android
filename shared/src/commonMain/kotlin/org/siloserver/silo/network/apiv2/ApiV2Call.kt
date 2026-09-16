@@ -8,8 +8,10 @@ import kotlinx.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.resolveArtworkUrls
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 
@@ -30,7 +32,11 @@ internal suspend inline fun <reified T> safeApiV2Call(
             if (T::class == Unit::class) {
                 @Suppress("UNCHECKED_CAST")
                 ApiResult.Success(Unit as T)
-            } else ApiResult.Success(SiloJson.decodeFromString(response.bodyAsText()))
+            } else {
+                val body = SiloJson.parseToJsonElement(response.bodyAsText())
+                    .resolveArtworkUrls(response.call.request.url.toString())
+                ApiResult.Success(SiloJson.decodeFromJsonElement<T>(body))
+            }
         } else {
             response.toApiV2Error()
         }

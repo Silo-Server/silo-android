@@ -43,6 +43,9 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
             modules(sharedModules() + playerModule + playerInfraModule + androidModule + diagnosticsModule)
         }
         DiagnosticsStartup.startCoordinator { koinApp.koin.get<DiagnosticsCoordinator>() }
+        koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+        )
         // Drive notifications realtime off the app foreground lifecycle. Guarded:
         // it's a foreground accelerator, never load-bearing for cold start.
         runCatching {

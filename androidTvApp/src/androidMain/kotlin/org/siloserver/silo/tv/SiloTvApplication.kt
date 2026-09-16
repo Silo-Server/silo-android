@@ -38,6 +38,9 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
             modules(sharedModules() + playerModule + playerInfraModule + androidTvModule + diagnosticsModule)
         }
         DiagnosticsStartup.startCoordinator { koinApp.koin.get<DiagnosticsCoordinator>() }
+        koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+        )
         // Live-home socket (Apple realtime-updates spec). Guarded — a dead
         // socket just means Home refreshes on open only.
         runCatching {
