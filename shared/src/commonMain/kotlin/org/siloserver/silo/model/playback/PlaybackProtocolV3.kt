@@ -290,7 +290,10 @@ data class PlaybackStreamV3(
     val headers: Map<String, String> = emptyMap(),
     @SerialName("header_refresh") val headerRefresh: PlaybackHeaderRefreshMode = PlaybackHeaderRefreshMode.SESSION,
     @SerialName("header_refresh_url") val headerRefreshUrl: String? = null,
-)
+    @kotlinx.serialization.Transient val auxiliaryRequestHeaders: org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders? = null,
+) {
+    val effectiveRequestHeaders: Map<String, String> get() = auxiliaryRequestHeaders ?: headers
+}
 
 @Serializable
 data class PlaybackTimelineV3(

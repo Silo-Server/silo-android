@@ -7,6 +7,9 @@ import org.siloserver.silo.network.api.CalendarApi
 
 /** Thin pass-through over [CalendarApi]; the calendar holds no client-side cache state. */
 class CalendarRepository(private val api: CalendarApi) {
+    suspend fun capture() = api.capture()
+    suspend fun current(owner: org.siloserver.silo.network.AuthScopeSnapshot) = api.current(owner)
+
 
     suspend fun getCalendar(
         start: String,
@@ -14,5 +17,6 @@ class CalendarRepository(private val api: CalendarApi) {
         filter: String = CalendarFilter.All,
         libraryId: Int? = null,
         timezone: String? = null,
-    ): ApiResult<CalendarResponse> = api.getCalendar(start, end, filter, libraryId, timezone)
+        owner: org.siloserver.silo.network.AuthScopeSnapshot,
+    ): ApiResult<CalendarResponse> = api.getCalendar(start, end, filter, libraryId, timezone, owner)
 }

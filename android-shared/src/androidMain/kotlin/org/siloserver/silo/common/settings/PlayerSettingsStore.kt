@@ -188,7 +188,7 @@ interface PlayerSettingsStore {
     suspend fun flushProjectedSubtitleAppearance()
 
     /**
-     * Pull every device-scoped setting from `/api/v1/settings/effective`
+     * Pull every device-scoped setting from `/api/v2/settings/values/effective`
      * and write the resolved values into the local DataStore without
      * round-tripping them back to the server. Mirrors iOS
      * `PlayerSettings.refreshFromServer()`. Safe to call repeatedly
@@ -230,6 +230,12 @@ interface PlayerSettingsStore {
      * sure settings the user just toggled survive a backgrounding /
      * process death window.
      */
+    /** Import only under original authority; true means all writes were acknowledged. */
+    suspend fun importLegacyDeviceSettings(
+        authority: org.siloserver.silo.network.AuthScopeSnapshot,
+        values: Map<String, String>,
+    ): Boolean = false
+
     suspend fun flushPendingDeviceSettings()
 }
 

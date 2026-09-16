@@ -64,6 +64,31 @@ class RoomCatalogCacheRepository(
     override suspend fun getCachedLibrarySections(libraryId: Int): List<ResolvedSection>? =
         get(librarySectionsKey(libraryId))?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
 
+    override suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: AuthScopeSnapshot) {
+        val profile = owner.profileId ?: return
+        if (owner != snapshotProvider()) return
+        val key = librarySectionsV2Key(libraryId, owner)
+        val body = json.encodeToString(sections)
+        if (body.encodeToByteArray().size > MAX_CACHE_BYTES) {
+            dao.delete(owner.serverId, profile, key)
+            return
+        }
+        // Address only the captured owner's key, even if identity changes during Room's suspension.
+        dao.upsert(CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+    }
+
+    override suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: AuthScopeSnapshot): List<ResolvedSection>? {
+        val profile = owner.profileId ?: return null
+        if (owner != snapshotProvider()) return null
+        val key = librarySectionsV2Key(libraryId, owner)
+        val row = runCatching { dao.get(owner.serverId, profile, key) }.getOrNull()
+        if (owner != snapshotProvider()) return null
+        return row?.json?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
+    }
+
+    private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot): String =
+        owner.identityCacheKey("library-sections-v2:$libraryId")
+
     override suspend fun cacheItemDetail(contentId: String, detail: ItemDetail) =
         cacheItemDetail(contentId, detail, currentWriteLease())
 

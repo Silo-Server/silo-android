@@ -49,7 +49,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import androidx.navigation.NavOptionsBuilder
-import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
+import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
+import org.siloserver.silo.android.ui.theme.SiloNavPillContent
+import org.siloserver.silo.android.ui.theme.SiloNavPillSelected
+import org.siloserver.silo.android.ui.theme.SiloNavPillSelectedContent
+import org.siloserver.silo.android.ui.theme.SiloNavPillSurface
 
 /**
  * Total height of the translucent bottom chrome (cast mini bar + nav bar +
@@ -192,8 +196,8 @@ fun SiloBottomNavBar(
                 .height(PillHeight)
                 .shadow(elevation = 20.dp, shape = CircleShape, clip = false)
                 .clip(CircleShape)
-                .background(SiloDetailActionControlActive)
-                .border(1.dp, Color.White.copy(alpha = 0.24f), CircleShape)
+                .background(SiloNavPillSurface)
+                .border(1.dp, SiloNavPillBorder, CircleShape)
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -218,29 +222,19 @@ private fun PillTabItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Minimized to a lone Home control, there is no chip to sit on, so the
+    // selected tab keeps light-on-dark content instead of inverting.
+    val onLightChip = selected && showSelectedChip
     val chip by animateColorAsState(
-        targetValue = if (selected && showSelectedChip) {
-            Color.White.copy(alpha = 0.28f)
-        } else {
-            Color.Transparent
-        },
+        targetValue = if (onLightChip) SiloNavPillSelected else Color.Transparent,
         animationSpec = tween(durationMillis = 220),
         label = "tabChip",
     )
-    val chipBorder by animateColorAsState(
-        targetValue = if (selected && showSelectedChip) {
-            Color.White.copy(alpha = 0.46f)
-        } else {
-            Color.Transparent
-        },
-        animationSpec = tween(durationMillis = 220),
-        label = "tabChipBorder",
-    )
     val tint by animateColorAsState(
-        targetValue = if (selected) {
-            Color.White
-        } else {
-            Color.White.copy(alpha = 0.96f)
+        targetValue = when {
+            onLightChip -> SiloNavPillSelectedContent
+            selected -> Color.White
+            else -> SiloNavPillContent
         },
         animationSpec = tween(durationMillis = 220),
         label = "tabTint",
@@ -250,13 +244,12 @@ private fun PillTabItem(
         modifier = modifier
             .clip(CircleShape)
             .background(chip)
-            .border(1.dp, chipBorder, CircleShape)
             // selectable (not clickable) so TalkBack announces which tab is
             // active — the chip and filled icon alone are not perceivable.
             .selectable(
                 selected = selected,
                 interactionSource = interaction,
-                indication = ripple(bounded = true, color = Color.White),
+                indication = ripple(bounded = true, color = tint),
                 role = Role.Tab,
                 onClick = onClick,
             ),

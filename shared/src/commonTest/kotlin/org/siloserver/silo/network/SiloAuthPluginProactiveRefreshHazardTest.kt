@@ -142,10 +142,10 @@ class SiloAuthPluginProactiveRefreshHazardTest {
         val sent = mutableListOf<Pair<String, String?>>()
         val client = repudiatingClient(tokenManager, sent)
 
-        val response = client.get("/api/v1/health") { skipSiloAuth() }
+        val response = client.get("/health") { skipSiloAuth() }
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertNull(sent.single { it.first == "/api/v1/health" }.second)
+        assertNull(sent.single { it.first == "/health" }.second)
         assertTrue(
             sent.none { it.first.endsWith("/auth/refresh") },
             "an opted-out call should not have triggered a refresh at all",

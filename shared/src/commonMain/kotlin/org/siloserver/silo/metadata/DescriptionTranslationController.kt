@@ -39,26 +39,43 @@ class DescriptionTranslationController(
     suspend fun translate(
         contentId: String,
         targetLanguage: String,
-        refetchPendingLanguage: suspend () -> String?,
+        refetchPendingLanguage: suspend (org.siloserver.silo.network.AuthScopeSnapshot?) -> String?,
         onTranslated: suspend () -> Unit,
     ) {
         if (_phase.value == DescriptionTranslationPhase.Translating) return
         _phase.value = DescriptionTranslationPhase.Translating
 
-        when (repository.translateDescription(contentId, targetLanguage)) {
-            is ApiResult.Success -> Unit
-            is ApiResult.Error,
-            is ApiResult.NetworkError,
-            -> {
+        val owner = repository.captureAuthority()
+        try {
+            if (!repository.isCurrent(owner)) {
                 _phase.value = DescriptionTranslationPhase.Failed
                 return
             }
-        }
-
-        try {
+            when (val result = repository.translateDescription(contentId, targetLanguage, owner)) {
+                is ApiResult.Success -> {
+                    // 202 can reuse a failed job for fifteen minutes. It does
+                    // not prove another execution started or text is ready.
+                    if (result.data.status in setOf("failed", "canceled")) {
+                        _phase.value = DescriptionTranslationPhase.Failed
+                        return
+                    }
+                }
+                is ApiResult.Error, is ApiResult.NetworkError -> {
+                    _phase.value = DescriptionTranslationPhase.Failed
+                    return
+                }
+            }
             for (backoffSeconds in POLL_BACKOFF_SECONDS) {
                 delayMs(backoffSeconds * 1_000L)
-                val pending = refetchPendingLanguage()
+                if (!repository.isCurrent(owner)) {
+                    _phase.value = DescriptionTranslationPhase.Failed
+                    return
+                }
+                val pending = refetchPendingLanguage(owner)
+                if (!repository.isCurrent(owner)) {
+                    _phase.value = DescriptionTranslationPhase.Failed
+                    return
+                }
                 if (pending == null) {
                     _phase.value = DescriptionTranslationPhase.Idle
                     onTranslated()

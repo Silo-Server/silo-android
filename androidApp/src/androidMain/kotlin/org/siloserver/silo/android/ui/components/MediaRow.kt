@@ -85,8 +85,6 @@ fun MediaRow(
     val context = LocalContext.current
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
-    val browseContentIds = remember(uniqueItems) { uniqueItems.map { it.contentId } }
-    val browseOrigin = remember(title, browseContentIds) { "media-row-$title-${browseContentIds.hashCode()}" }
     val diagnosticsKeySnapshot = remember(items) {
         DiagnosticsListSnapshot.fromKeys(items.map { it.contentId })
     }
@@ -227,8 +225,6 @@ fun MediaRow(
                         .build(),
                 )
             }
-            heroHandoff?.pendingBrowseContentIds = browseContentIds
-            heroHandoff?.pendingBrowseOrigin = browseOrigin
             heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
             heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
             onItemClick(item.contentId)

@@ -1,25 +1,21 @@
 package org.siloserver.silo.android.ui.navigation
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionLayout
-import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingWrongServerScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingUnknownServerScreen
 import androidx.compose.runtime.collectAsState
@@ -37,7 +33,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.DEFAULT_ARGS_KEY
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.core.os.bundleOf
@@ -70,7 +65,6 @@ import org.siloserver.silo.android.ui.screens.collections.CollectionsScreen
 import org.siloserver.silo.android.ui.screens.collections.LibraryCollectionsScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailViewModel
-import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherEntrySheet
 import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherLobbyScreen
 import org.siloserver.silo.android.ui.screens.people.PersonDetailScreen
@@ -110,13 +104,14 @@ import org.siloserver.silo.network.TokenManager
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
-/** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
+/**
+ * Detail identity actually on screen, which a series redirect can move away
+ * from the route's own `contentId` argument.
+ */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
+
+/** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
-private const val DetailCardOpenDurationMs = 600
-private const val DetailCardCloseDurationMs = 440
-private val DetailCardOpenEasing = CubicBezierEasing(0.32f, 0.00f, 0.20f, 1.00f)
-private val DetailCardCloseEasing = CubicBezierEasing(0.40f, 0.00f, 0.20f, 1.00f)
 
 internal class PlayerTargetProviderRegistration(
     val backStackEntryId: String,
@@ -149,7 +144,9 @@ fun AppNavigation(
 ) {
     val tokenManager: TokenManager = koinInject()
     val serverRegistry: org.siloserver.silo.network.ServerRegistry = koinInject()
+    val authRepository: org.siloserver.silo.repository.AuthRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
@@ -323,39 +320,13 @@ fun AppNavigation(
         // this the host wraps to content, leaking unbounded height into screens
         // like the reader whose WebView paginates against the viewport height.
         modifier = Modifier.fillMaxSize(),
-        // Keep the source destination painted underneath an item-detail sheet
-        // while its rounded card rises from the bottom. Every other route keeps
-        // the app's short page fade.
-        enterTransition = {
-            if (targetState.destination.route == Route.ItemDetail.ROUTE) {
-                EnterTransition.None
-            } else {
-                fadeIn(tween(PageFadeDurationMs))
-            }
-        },
-        exitTransition = {
-            if (targetState.destination.route == Route.ItemDetail.ROUTE) {
-                // Hold the exact source page under the rising card, then let
-                // only the final part of the motion dissolve it into the
-                // opaque app background. Once settled, no Home artwork leaks
-                // through the safe-area strip above the rounded card.
-                fadeOut(
-                    tween(
-                        durationMillis = 180,
-                        delayMillis = DetailCardOpenDurationMs - 180,
-                    ),
-                )
-            } else {
-                fadeOut(tween(PageFadeDurationMs))
-            }
-        },
-        popEnterTransition = {
-            if (initialState.destination.route == Route.ItemDetail.ROUTE) {
-                EnterTransition.None
-            } else {
-                fadeIn(tween(PageFadeDurationMs))
-            }
-        },
+        // Item detail is an ordinary full-screen page, so every route shares the
+        // same short fade. It used to be presented as a rounded card rising
+        // from the bottom, which needed the source page held underneath and
+        // then cross-dissolved to hide the seam.
+        enterTransition = { fadeIn(tween(PageFadeDurationMs)) },
+        exitTransition = { fadeOut(tween(PageFadeDurationMs)) },
+        popEnterTransition = { fadeIn(tween(PageFadeDurationMs)) },
         popExitTransition = { fadeOut(tween(PageFadeDurationMs)) },
     ) {
         // ---- Auth flow ----
@@ -495,7 +466,7 @@ fun AppNavigation(
                         serverName = resolved.entry.displayName,
                         onSwitch = {
                             pairingScope.launch {
-                                serverRegistry.switchTo(resolved.entry.id)
+                                authRepository.switchToServer(resolved.entry.id)
                                 // Re-queue ONLY if the target server will send
                                 // the user through auth: that flow ends at
                                 // profile selection, whose popUpTo(0) wipes this
@@ -613,6 +584,7 @@ fun AppNavigation(
                     // the providers above re-hydrate for the new session.
                     // Parity with the TV shell's server-switch path.
                     overlayPrefsStore.clear()
+                    activeProfileStore.reset()
                     cardPresentationStore.clear()
                     navController.navigate(target) {
                         popUpTo(0) { inclusive = true }
@@ -760,6 +732,7 @@ fun AppNavigation(
                     // (see the profile-menu path in MainScreen).
                     navController.navigate(Route.ProfileSelection.route)
                     overlayPrefsStore.clear()
+                    activeProfileStore.reset()
                     cardPresentationStore.clear()
                 },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
@@ -929,33 +902,9 @@ fun AppNavigation(
                     defaultValue = null
                 },
             ),
-            enterTransition = {
-                slideInVertically(
-                    initialOffsetY = { fullHeight -> fullHeight },
-                    animationSpec = tween(
-                        durationMillis = DetailCardOpenDurationMs,
-                        easing = DetailCardOpenEasing,
-                    ),
-                )
-            },
-            exitTransition = { fadeOut(tween(durationMillis = 140)) },
-            popEnterTransition = { EnterTransition.None },
-            // Move the actual outgoing destination and remove it when the
-            // visible slide finishes. A delayed transparent exit leaves an
-            // invisible destination over Home and swallows the next card tap.
-            popExitTransition = {
-                slideOutVertically(
-                    targetOffsetY = { fullHeight -> fullHeight },
-                    animationSpec = tween(
-                        durationMillis = DetailCardCloseDurationMs,
-                        easing = DetailCardCloseEasing,
-                    ),
-                )
-            },
         ) { backStackEntry ->
             // Keep the destination scope available to media cards nested in
-            // the detail page while the page itself uses the native-sheet style
-            // bottom transition above.
+            // the detail page so the poster shared-element hand-off still runs.
             CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
             var wtTarget by remember { mutableStateOf<Pair<String, Int?>?>(null) }
             val initialContentId = backStackEntry.arguments?.getString("contentId").orEmpty()
@@ -963,45 +912,27 @@ fun AppNavigation(
             val openingArtworkThumbhash = remember(initialContentId) {
                 heroSourceHandoff.pendingArtworkThumbhash
             }
-            val browseContentIds = remember(initialContentId) {
-                heroSourceHandoff.pendingBrowseContentIds
-                    ?.takeIf { initialContentId in it }
-                    .orEmpty()
-                    .ifEmpty { listOf(initialContentId) }
-            }
-            val initialPage = browseContentIds.indexOf(initialContentId).coerceAtLeast(0)
-            val detailPagerState = rememberPagerState(initialPage = initialPage) { browseContentIds.size }
             LaunchedEffect(Unit) {
-                heroSourceHandoff.pendingBrowseContentIds = null
-                heroSourceHandoff.pendingBrowseOrigin = null
                 heroSourceHandoff.pendingArtworkUrl = null
                 heroSourceHandoff.pendingArtworkThumbhash = null
             }
-            HorizontalPager(
-                state = detailPagerState,
-                beyondViewportPageCount = 1,
-                pageSpacing = 10.dp,
-                modifier = Modifier.fillMaxSize(),
-            ) { page ->
-            val pageContentId = browseContentIds[page]
-            // Replace only this page's content, preserving the browse deck and
-            // its Back destination. Save the resolution across recreation.
-            var resolvedSeriesId by rememberSaveable(pageContentId) { mutableStateOf<String?>(null) }
-            var resolvedSeason by rememberSaveable(pageContentId) { mutableStateOf<Int?>(null) }
-            var resolvedEpisodeId by rememberSaveable(pageContentId) { mutableStateOf<String?>(null) }
-            val resolvedContentId = resolvedSeriesId ?: pageContentId
+            // A season or episode detail replaces this page's content with its
+            // series in place, preserving the Back destination. Saved across
+            // recreation so the redirect does not have to run again.
+            var resolvedSeriesId by rememberSaveable(initialContentId) { mutableStateOf<String?>(null) }
+            var resolvedSeason by rememberSaveable(initialContentId) { mutableStateOf<Int?>(null) }
+            var resolvedEpisodeId by rememberSaveable(initialContentId) { mutableStateOf<String?>(null) }
+            val resolvedContentId = resolvedSeriesId ?: initialContentId
             SideEffect {
-                if (page == detailPagerState.currentPage) {
-                    // A redirected episode now displays Series. External links
-                    // must compare against this identity, not the original args.
-                    backStackEntry.savedStateHandle[DisplayedDetailContentIdKey] = resolvedContentId
-                }
+                // A redirected episode now displays Series. External links
+                // must compare against this identity, not the original args.
+                backStackEntry.savedStateHandle[DisplayedDetailContentIdKey] = resolvedContentId
             }
-            val detailViewModel: ItemDetailViewModel = if (page == initialPage && resolvedSeriesId == null) {
+            val detailViewModel: ItemDetailViewModel = if (resolvedSeriesId == null) {
                 koinViewModel()
             } else {
                 koinViewModel(
-                    key = "detail-deck-${backStackEntry.id}-$page-$resolvedContentId",
+                    key = "detail-${backStackEntry.id}-$resolvedContentId",
                     extras = MutableCreationExtras(backStackEntry.defaultViewModelCreationExtras).apply {
                         // Koin supplies SavedStateHandle from creation extras
                         // ahead of explicit parameters, so replace its route args.
@@ -1013,13 +944,11 @@ fun AppNavigation(
                     },
                 )
             }
-            CompositionLocalProvider(
-                LocalHeroSourceHandoff provides if (page == initialPage) heroSourceHandoff else null,
-            ) {
+            CompositionLocalProvider(LocalHeroSourceHandoff provides heroSourceHandoff) {
             key(resolvedContentId) {
             ItemDetailScreen(
-                openingArtworkUrl = openingArtworkUrl.takeIf { page == initialPage },
-                openingArtworkThumbhash = openingArtworkThumbhash.takeIf { page == initialPage },
+                openingArtworkUrl = openingArtworkUrl,
+                openingArtworkThumbhash = openingArtworkThumbhash,
                 onBackClick = { navController.popBackStack() },
                 onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
                     val launchedRemotely = siloCastController.launchOnConnectedTarget(
@@ -1077,14 +1006,13 @@ fun AppNavigation(
                 viewModel = detailViewModel,
             )
             }
-            if (page == detailPagerState.currentPage) wtTarget?.let { (cid, fid) ->
+            wtTarget?.let { (cid, fid) ->
                 WatchTogetherEntrySheet(
                     contentId = cid,
                     fileId = fid,
                     onNavigate = { route -> navController.navigate(route) },
                     onDismiss = { wtTarget = null },
                 )
-            }
             }
             }
             }
@@ -1302,6 +1230,11 @@ fun AppNavigation(
         }
 
     }
+    val membershipRepository: org.siloserver.silo.repository.PersonalDataRepository = koinInject()
+    org.siloserver.silo.common.ui.MembershipStatusBanner(
+        membershipRepository.memberships,
+        Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
+    )
         diagnosticsState.prompt
             ?.takeIf {
                 currentEntry?.destination?.route != Route.Diagnostics.route &&

@@ -200,7 +200,7 @@ class MediaAuthSession(
 
     private fun refreshRequest(serverUrl: String, refreshToken: String): Request =
         Request.Builder()
-            .url(serverUrl.trimEnd('/') + "/api/v1/auth/refresh")
+            .url(serverUrl.trimEnd('/') + "/api/v2/auth/refresh")
             .post(
                 json.encodeToString(RefreshRequest(refreshToken))
                     .toRequestBody("application/json; charset=utf-8".toMediaType()),

@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
@@ -359,7 +361,7 @@ class TvItemDetailViewModel(
     private val playerSettingsStore: PlayerSettingsStore,
     private val profileRepository: ProfileRepository,
     private val profileSettings: ProfileSettingsController,
-    metadataAiRepository: org.siloserver.silo.repository.MetadataAiRepository,
+    private val metadataAiRepository: org.siloserver.silo.repository.MetadataAiRepository,
     private val contentId: String,
     private val userItemState: UserItemStatePort = NoOpUserItemStatePort,
     private val recommendationRepository: org.siloserver.silo.repository.RecommendationRepository? = null,
@@ -367,9 +369,25 @@ class TvItemDetailViewModel(
     private val identityTransitions: IdentityTransitionBarrier,
     private val capabilityDetector: PlaybackCapabilityDetector? = null,
 ) : ViewModel() {
+    private var similarGeneration = 0L
 
     private val _uiState = MutableStateFlow(TvItemDetailUiState())
-    val uiState: StateFlow<TvItemDetailUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<TvItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
+        var projected = state
+        actions.values.filter { personalDataRepository.memberships.current(it.intent) }.forEach { action ->
+            val itemId = action.intent.key.itemId
+            val favorite = action.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE
+            if (itemId == contentId) {
+                projected = if (favorite) projected.copy(isTogglingFavorite = action.busy,
+                    isFavorite = if (action.baseline != null) action.baseline!!.present else projected.isFavorite)
+                else projected.copy(isTogglingWatchlist = action.busy,
+                    inWatchlist = if (action.baseline != null) action.baseline!!.present else projected.inWatchlist)
+            }
+            if (favorite && action.baseline != null) projected = projected.copy(
+                episodeFavoriteStates = projected.episodeFavoriteStates + (itemId to action.baseline!!.present))
+        }
+        projected
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, TvItemDetailUiState())
 
     private val descriptionTranslation =
         org.siloserver.silo.metadata.DescriptionTranslationController(
@@ -578,7 +596,11 @@ class TvItemDetailViewModel(
     }
 
     private fun loadDetail() {
+        val similarRun = ++similarGeneration
+        moreLikeThisJob?.cancel()
+        _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         viewModelScope.launch {
+            val similarOwner = recommendationRepository?.captureSimilarAuthority()
             when (val result = catalogRepository.getItemDetail(contentId)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
@@ -623,7 +645,7 @@ class TvItemDetailViewModel(
                             )
                         }
                     }
-                    loadMoreLikeThis(detail)
+                    loadMoreLikeThis(detail, similarOwner, similarRun)
                 }
                 is ApiResult.Error -> _uiState.update {
                     it.copy(
@@ -730,41 +752,29 @@ class TvItemDetailViewModel(
     }
 
     fun onToggleFavorite() {
-        val current = _uiState.value
-        if (current.isTogglingFavorite) return
-        val target = !current.isFavorite
-        _uiState.update { it.copy(isTogglingFavorite = true, isFavorite = target) }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, !uiState.value.isFavorite)
         viewModelScope.launch {
-            val result = personalDataRepository.toggleFavorite(contentId, target)
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingFavorite = false, isFavorite = !target)
-                }
-            } else {
-                _uiState.update { it.copy(isTogglingFavorite = false) }
-                // A series rail one screen up may be holding a stale answer for
-                // this item. Tell it exactly which one changed rather than
-                // making it re-ask about the whole season.
-                TvFavoriteRevalidationSession.markChanged(contentId)
-            }
+            personalDataRepository.memberships.perform(intent)
+            if (personalDataRepository.memberships.confirmed(intent)) TvFavoriteRevalidationSession.markChanged(contentId)
         }
     }
 
     fun onToggleWatchlist() {
-        val current = _uiState.value
-        if (current.isTogglingWatchlist) return
-        val target = !current.inWatchlist
-        _uiState.update { it.copy(isTogglingWatchlist = true, inWatchlist = target) }
-        viewModelScope.launch {
-            val result = personalDataRepository.toggleWatchlist(contentId, target)
-            if (result !is ApiResult.Success) {
-                _uiState.update {
-                    it.copy(isTogglingWatchlist = false, inWatchlist = !target)
-                }
-            } else {
-                _uiState.update { it.copy(isTogglingWatchlist = false) }
-            }
+        val intent = personalDataRepository.memberships.begin(contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, !uiState.value.inWatchlist)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
+    }
+
+    private var watchedMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
+    private var ratingMutationOwner: org.siloserver.silo.repository.port.PersonalWriteIntent? = null
+
+    private fun releaseInvalidatedPersonalMutations(generation: Long) {
+        if (watchedMutationOwner?.identityGeneration?.let { it < generation } == true) {
+            watchedMutationOwner = null
+            _uiState.update { it.copy(isTogglingWatched = false) }
+        }
+        if (ratingMutationOwner?.identityGeneration?.let { it < generation } == true) {
+            ratingMutationOwner = null
+            _uiState.update { it.copy(isTogglingRating = false) }
         }
     }
 
@@ -780,22 +790,32 @@ class TvItemDetailViewModel(
                 detail = it.detail?.withWatchedPlaybackState(target),
             )
         }
+        val writeIntent = personalDataRepository.beginWatched(contentId, target)
+        watchedMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.setWatched(contentId, target)
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(
-                        isTogglingWatched = false,
-                        isWatched = !target,
-                        detail = previousDetail,
-                    )
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(
+                            isTogglingWatched = false,
+                            isWatched = !target,
+                            detail = previousDetail,
+                        )
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingWatched = false) }
+                    // Re-read server-resolved state (including series/season episode
+                    // resolution) without flashing the full detail loading screen.
+                    refreshOnReturn()
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingWatched = false) }
-                // Re-read server-resolved state (including series/season episode
-                // resolution) without flashing the full detail loading screen.
-                refreshOnReturn()
+            } finally {
+                if (watchedMutationOwner == writeIntent) {
+                    watchedMutationOwner = null
+                    _uiState.update { it.copy(isTogglingWatched = false) }
+                }
             }
         }
     }
@@ -806,15 +826,25 @@ class TvItemDetailViewModel(
         val target = stars.coerceIn(1, 5)
         val previous = current.userRating
         _uiState.update { it.copy(isTogglingRating = true, userRating = target) }
+        val writeIntent = personalDataRepository.beginRating(contentId, target)
+        ratingMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.setRating(contentId, target)
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingRating = false, userRating = previous)
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(isTogglingRating = false, userRating = previous)
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingRating = false) }
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingRating = false) }
+            } finally {
+                if (ratingMutationOwner == writeIntent) {
+                    ratingMutationOwner = null
+                    _uiState.update { it.copy(isTogglingRating = false) }
+                }
             }
         }
     }
@@ -824,15 +854,25 @@ class TvItemDetailViewModel(
         if (current.isTogglingRating) return
         val previous = current.userRating ?: return
         _uiState.update { it.copy(isTogglingRating = true, userRating = null) }
+        val writeIntent = personalDataRepository.beginRating(contentId, null)
+        ratingMutationOwner = writeIntent
         viewModelScope.launch {
-            val result = personalDataRepository.deleteRating(contentId)
-            if (result !is ApiResult.Success) {
-                // Roll back on error.
-                _uiState.update {
-                    it.copy(isTogglingRating = false, userRating = previous)
+            try {
+                val result = personalDataRepository.performPersonalWrite(writeIntent)
+                if (!personalDataRepository.isCurrent(writeIntent)) return@launch
+                if (result !is ApiResult.Success) {
+                    // Roll back on error.
+                    _uiState.update {
+                        it.copy(isTogglingRating = false, userRating = previous)
+                    }
+                } else {
+                    _uiState.update { it.copy(isTogglingRating = false) }
                 }
-            } else {
-                _uiState.update { it.copy(isTogglingRating = false) }
+            } finally {
+                if (ratingMutationOwner == writeIntent) {
+                    ratingMutationOwner = null
+                    _uiState.update { it.copy(isTogglingRating = false) }
+                }
             }
         }
     }
@@ -1239,8 +1279,6 @@ class TvItemDetailViewModel(
     private var episodeListGeneration: Long = 0
     private var nextEpisodeWatchMutationGeneration: Long = 0
     private val episodeWatchMutationGenerations = mutableMapOf<String, Long>()
-    private var nextEpisodeFavoriteMutationGeneration: Long = 0
-    private val episodeFavoriteMutationGenerations = mutableMapOf<String, Long>()
     private var nextUpPlaybackDetailGeneration: Long = 0
     private var nextUpSelectorRevision: Long = 0
     private var pendingNextUpSelectionHandoff: PendingNextUpSelectionHandoff? = null
@@ -1399,6 +1437,7 @@ class TvItemDetailViewModel(
         // nothing is treated as already known.
         val knownIds =
             if (revalidate == null) emptySet() else _uiState.value.episodeFavoriteStates.keys - revalidate
+        val membershipGeneration = personalDataRepository.memberships.generation.value
         val resolved = probeEpisodeFavorites(
             episodeIds = episodeIds,
             knownIds = knownIds,
@@ -1406,7 +1445,7 @@ class TvItemDetailViewModel(
                 // Publish per answer rather than per batch. Guarded by the
                 // generation the probes were started for, so a season the
                 // viewer has already left cannot write into the one on screen.
-                if (episodeListGeneration == generation) {
+                if (episodeListGeneration == generation && personalDataRepository.memberships.generation.value == membershipGeneration) {
                     _uiState.update {
                         it.copy(episodeFavoriteStates = it.episodeFavoriteStates + (id to favorite))
                     }
@@ -1436,8 +1475,10 @@ class TvItemDetailViewModel(
         publishCarousel()
         refreshNextUp(updatedEpisodes)
 
+        val writeIntent = personalDataRepository.beginWatched(episodeContentId, watched)
         viewModelScope.launch {
-            val result = personalDataRepository.setWatched(episodeContentId, watched)
+            val result = personalDataRepository.performPersonalWrite(writeIntent)
+            if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             val isCurrentMutation = episodeWatchMutationGenerations[episodeContentId] == mutationGeneration
             if (result !is ApiResult.Success) {
                 if (
@@ -1476,35 +1517,8 @@ class TvItemDetailViewModel(
     }
 
     fun onSetEpisodeFavorite(episodeContentId: String, favorite: Boolean) {
-        val current = _uiState.value
-        val previousFavorite = current.episodeFavoriteStates[episodeContentId] ?: false
-        val isCurrentDetail = episodeContentId == current.detail?.contentId
-        val mutationGeneration = ++nextEpisodeFavoriteMutationGeneration
-        episodeFavoriteMutationGenerations[episodeContentId] = mutationGeneration
-        _uiState.update {
-            it.copy(
-                episodeFavoriteStates = it.episodeFavoriteStates + (episodeContentId to favorite),
-                isFavorite = if (isCurrentDetail) favorite else it.isFavorite,
-            )
-        }
-        viewModelScope.launch {
-            val result = personalDataRepository.toggleFavorite(episodeContentId, favorite)
-            val isCurrentMutation = episodeFavoriteMutationGenerations[episodeContentId] == mutationGeneration
-            if (result !is ApiResult.Success && isCurrentMutation) {
-                _uiState.update {
-                    it.copy(
-                        episodeFavoriteStates = it.episodeFavoriteStates +
-                            (episodeContentId to previousFavorite),
-                        isFavorite = if (isCurrentDetail && it.detail?.contentId == episodeContentId) {
-                            previousFavorite
-                        } else {
-                            it.isFavorite
-                        },
-                    )
-                }
-            }
-            if (isCurrentMutation) episodeFavoriteMutationGenerations.remove(episodeContentId)
-        }
+        val intent = personalDataRepository.memberships.begin(episodeContentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
     private suspend fun withLocalProgress(detail: ItemDetail): ItemDetail =
@@ -1845,16 +1859,18 @@ class TvItemDetailViewModel(
             descriptionTranslation.markAutoFired(detail.contentId, target)
         }
         descriptionTranslation.resetFailure()
-        viewModelScope.launch {
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             descriptionTranslation.translate(
                 contentId = detail.contentId,
                 targetLanguage = target,
-                refetchPendingLanguage = {
-                    when (val result = catalogRepository.getItemDetail(contentId)) {
+                refetchPendingLanguage = { owner ->
+                    when (val result = metadataAiRepository.refreshDetail(detail.contentId, owner)) {
                         is ApiResult.Success -> {
                             val refreshed = withLocalProgress(result.data)
-                            _uiState.update { it.copy(detail = refreshed) }
-                            refreshed.pendingTranslationLanguage
+                            if (metadataAiRepository.isCurrent(owner) && _uiState.value.detail?.contentId == detail.contentId) {
+                                _uiState.update { it.copy(detail = refreshed) }
+                                refreshed.pendingTranslationLanguage
+                            } else target
                         }
                         else -> target // transient refetch failure: keep polling
                     }
@@ -2000,43 +2016,21 @@ class TvItemDetailViewModel(
         }
     }
 
-    private fun loadMoreLikeThis(detail: ItemDetail) {
-        // Apple parity (PhoneSimilarRail + QA 2026-07-08): the shelf shows REAL
-        // engine recommendations from /recommendations/similar, and simply
-        // doesn't render when the server has recommendations/embeddings
-        // disabled (error or empty response). The previous genre browse sorted
-        // by rating was not a recommendation. Episodes never show the shelf —
-        // viewers want the next episode, not a tangent (Apple showsSimilarRail).
-        if (detail.type.lowercase() == "episode") return
+    private fun loadMoreLikeThis(detail: ItemDetail, owner: org.siloserver.silo.network.AuthScopeSnapshot?, run: Long) {
+        if (owner == null || detail.type.lowercase() == "episode" || run != similarGeneration) return
         val recommendations = recommendationRepository ?: return
-
         moreLikeThisJob?.cancel()
         moreLikeThisJob = viewModelScope.launch {
-            // This shelf is secondary. Let the hero, seasons, and episode rail settle
-            // before starting more requests during item-open.
             delay(300)
+            if (!recommendations.isSimilarAuthorityCurrent(owner) || run != similarGeneration ||
+                _uiState.value.detail?.contentId != detail.contentId) return@launch
             _uiState.update { it.copy(moreLikeThisLoading = true) }
-            val scored = recommendations.getSimilar(detail.contentId, limit = 12)
-            if (scored !is ApiResult.Success || scored.data.items.isEmpty()) {
-                _uiState.update { it.copy(moreLikeThisLoading = false, moreLikeThis = emptyList()) }
-                return@launch
-            }
-            // Resolve refs to renderable items in parallel, preserving the
-            // engine's ranking; failed resolutions drop silently (Apple's
-            // withTaskGroup + zip-back-to-index).
-            val resolved = scored.data.items.map { ref ->
-                async {
-                    (catalogRepository.getItemDetail(ref.mediaItemId) as? ApiResult.Success)?.data
-                }
-            }.awaitAll()
-            val items = resolved
-                .filterNotNull()
-                .filterNot { isTvHiddenMediaType(it.type) || it.contentId == detail.contentId }
-                .take(16)
-                .map { it.toSectionItem() }
-            _uiState.update {
-                it.copy(moreLikeThisLoading = false, moreLikeThis = items)
-            }
+            recommendations.loadSimilarCards(detail.contentId, owner,
+                stillCurrent = { run == similarGeneration && _uiState.value.detail?.contentId == detail.contentId },
+                publish = { cards ->
+                    val items = similarCardsForTv(cards, detail.contentId)
+                    _uiState.update { it.copy(moreLikeThisLoading = false, moreLikeThis = items) }
+                })
         }
     }
     // Start observers only after every cache and request field is initialized.
@@ -2044,7 +2038,13 @@ class TvItemDetailViewModel(
         viewModelScope.launch {
             identityTransitions.transitions.collect { transition ->
                 if (transition.phase == IdentityTransitionPhase.WILL_CHANGE) {
+                    releaseInvalidatedPersonalMutations(transition.generation)
                     pendingNextUpSelectionHandoff = null
+                    episodeListGeneration++
+                    _uiState.update { it.copy(isFavorite = false, inWatchlist = false, episodeFavoriteStates = emptyMap()) }
+                } else {
+                    loadUserState()
+                    refreshEpisodeFavoriteStates(_uiState.value.episodes, revalidate = null)
                 }
             }
         }
@@ -2285,3 +2285,7 @@ private fun ItemDetail.withPlaybackReturn(saved: TvDetailTrackSelectionSession.S
         ),
     )
 }
+
+/** Similar cards keep their server rank while honoring the existing TV surface exclusions. */
+internal fun similarCardsForTv(cards: List<BrowseItem>, sourceId: String): List<SectionItem> =
+    cards.filterNot { isTvHiddenMediaType(it.type) || it.contentId == sourceId }.map { it.toSectionItem() }

@@ -19,10 +19,11 @@ import org.siloserver.silo.model.diagnostics.DiagnosticsErrorCode
 import org.siloserver.silo.model.diagnostics.DiagnosticsStatusResponse
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResult
 import org.siloserver.silo.model.diagnostics.DiagnosticsUploadResponse
-import org.siloserver.silo.network.ApiErrorBody
+import org.siloserver.silo.network.singleAttempt
+import org.siloserver.silo.network.diagnosticsProfileScope
+import org.siloserver.silo.network.apiv2.*
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.DiagnosticsUploadAuthorization
-import org.siloserver.silo.network.diagnosticsProfileScope
 import org.siloserver.silo.network.diagnosticsUploadAuthorization
 
 interface DiagnosticsApi {
@@ -48,11 +49,13 @@ interface DiagnosticsApi {
 }
 
 class DefaultDiagnosticsApi(
-    private val client: HttpClient,
+    client: HttpClient,
     private val nowMs: () -> Long = { GMTDate().timestamp },
+    private val gate: ApiV2Gate,
 ) : DiagnosticsApi {
-    override suspend fun getStatus(): ApiResult<DiagnosticsStatusResponse> = safeApiCall {
-        client.get("/api/v1/diagnostics/status")
+    private val client = client.config { followRedirects = false }
+    override suspend fun getStatus(): ApiResult<DiagnosticsStatusResponse> = safeApiV2Call(gate) {
+        client.get("/api/v2/diagnostics/capabilities") { diagnosticsProfileScope(null) }
     }
 
     override suspend fun upload(
@@ -84,9 +87,13 @@ class DefaultDiagnosticsApi(
         capturedProfileId: String?,
         authorization: DiagnosticsUploadAuthorization?,
     ): DiagnosticsUploadResult = try {
-        val endpoint = authorization?.let { "${it.serverUrl.trimEnd('/')}/api/v1/diagnostics/reports" }
-            ?: "/api/v1/diagnostics/reports"
+        gate.blocked()?.let {
+            return DiagnosticsUploadResult.Failure(DiagnosticsErrorCode.UNKNOWN, it.code, message = it.message)
+        }
+        val endpoint = authorization?.let { "${it.serverUrl.trimEnd('/')}/api/v2/diagnostics/reports" }
+            ?: "/api/v2/diagnostics/reports"
         val response = client.post(endpoint) {
+            singleAttempt()
             diagnosticsProfileScope(capturedProfileId)
             authorization?.let { diagnosticsUploadAuthorization(it) }
             setBody(
@@ -119,15 +126,15 @@ class DefaultDiagnosticsApi(
         if (response.status == HttpStatusCode.Created) {
             DiagnosticsUploadResult.Success(response.body<DiagnosticsUploadResponse>())
         } else {
-            val error = try {
-                response.body<ApiErrorBody>()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                ApiErrorBody()
-            }
+            val error = response.toApiV2Error()
             DiagnosticsUploadResult.Failure(
-                code = DiagnosticsErrorCode.fromWire(error.error),
+                code = when (response.status.value) {
+                    401 -> DiagnosticsErrorCode.UNAUTHORIZED
+                    413 -> DiagnosticsErrorCode.TOO_LARGE
+                    429 -> DiagnosticsErrorCode.RATE_LIMITED
+                    403 -> DiagnosticsErrorCode.FORBIDDEN
+                    else -> DiagnosticsErrorCode.UNKNOWN
+                },
                 httpStatus = response.status.value,
                 retryAfterSeconds = response.headers[HttpHeaders.RetryAfter]?.let(::retryAfterSeconds),
                 message = error.message,

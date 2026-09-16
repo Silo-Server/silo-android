@@ -1,5 +1,7 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -36,7 +38,7 @@ class DeviceLoginApiCandidateServerTest {
             setProfileToken("active-profile-token")
         }
         val captured = mutableListOf<CapturedRequest>()
-        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured))
+        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured), ApiV2Gate.Unrestricted)
 
         assertIs<ApiResult.Success<*>>(
             api.startDeviceLoginAt("https://candidate.example/", "Shield", "Android TV"),
@@ -47,8 +49,8 @@ class DeviceLoginApiCandidateServerTest {
 
         assertEquals(
             listOf(
-                "https://candidate.example/api/v1/auth/device/start",
-                "https://candidate.example/api/v1/auth/device/poll",
+                "https://candidate.example/api/v2/auth/device/start",
+                "https://candidate.example/api/v2/auth/device/poll",
             ),
             captured.map { it.url },
         )
@@ -71,7 +73,7 @@ class DeviceLoginApiCandidateServerTest {
             setProfileToken("profile-token")
         }
         val captured = mutableListOf<CapturedRequest>()
-        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured))
+        val api = DefaultDeviceLoginApi(candidateClient(tokenManager, captured), ApiV2Gate.Unrestricted)
 
         val scope = AuthScopeSnapshot(
             serverId = "server-1",
@@ -87,9 +89,9 @@ class DeviceLoginApiCandidateServerTest {
 
         assertEquals(
             listOf(
-                "https://candidate.example/api/v1/auth/device/capability",
-                "https://candidate.example/api/v1/auth/device/start",
-                "https://active.example/api/v1/auth/device/approve-handoff",
+                "https://candidate.example/api/v2/auth/device/capability",
+                "https://candidate.example/api/v2/auth/device/start",
+                "https://active.example/api/v2/auth/device/approve-handoff",
             ),
             captured.map { it.url },
         )
@@ -118,7 +120,7 @@ class DeviceLoginApiCandidateServerTest {
             )
             val body = when {
                 request.url.encodedPath.endsWith("/capability") -> {
-                    """{"remote_playback_handoff":true,"protocol_versions":[2]}"""
+                    """{"revision":"1","state":"available","remote_playback_handoff":true,"protocol_versions":[2]}"""
                 }
                 request.url.encodedPath.endsWith("/approve-handoff") -> {
                     """{"status":"approved"}"""
@@ -139,16 +141,15 @@ class DeviceLoginApiCandidateServerTest {
                 }
                 else -> {
                 """{
-                    "status":"approved",
-                    "access_token":"new-access",
-                    "refresh_token":"new-refresh",
-                    "expires_in":3600
+                    "status":"approved","poll_after":5,"profile_id":"","profile_token":"","temporary":false,
+                    "tokens":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,
+                    "user":{"id":"1","username":"user","email":"u@example.invalid","role":"user"}}
                 }""".trimIndent()
                 }
             }
             respond(
                 content = body,
-                status = HttpStatusCode.OK,
+                status = if (request.url.encodedPath.endsWith("/start")) HttpStatusCode.Created else HttpStatusCode.OK,
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         },

@@ -5,14 +5,10 @@ import org.siloserver.silo.model.notifications.NotificationRealtime
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.WsFrameEnvelope
 import org.siloserver.silo.model.notifications.WsSubscribe
-import org.siloserver.silo.network.api.NotificationsApi
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.readText
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.catch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -36,74 +32,36 @@ sealed class NotificationRealtimeEvent {
     /** `notification.read` with all=true. */
     object ReadAll : NotificationRealtimeEvent()
 
+    /** A signed read cutoff cannot be compared with rounded public timestamps. */
+    object Invalidate : NotificationRealtimeEvent()
+
     /** The socket closed (or failed to connect). The repository reconnects. */
     data class Closed(val reason: String? = null) : NotificationRealtimeEvent()
 }
 
 /**
- * Foreground accelerator over the events websocket. One [connect] = one
- * connection: mint a ticket via [NotificationsApi.wsTicket], connect
- * `GET /api/v1/events/ws?ticket=`, await `hello`, send `subscribe`, then map
- * every server frame through [decodeRealtimeFrame] into the returned [Flow].
- * The flow completes (emitting [NotificationRealtimeEvent.Closed]) when the
- * socket ends; reconnect with capped backoff is the repository's job.
- *
- * Behind an interface so the repository's tests use a fake flow instead of a
- * real socket — the only logic worth unit-testing here is the pure
- * [decodeRealtimeFrame], which is fully covered.
+ * One captured v2 ticket/socket attempt. The repository owns reconnect;
+ * the shared transport fences authority before delivering frames.
  */
 interface NotificationsRealtimeClient {
     fun connect(): Flow<NotificationRealtimeEvent>
 }
 
 class DefaultNotificationsRealtimeClient(
-    private val client: HttpClient,
-    private val api: NotificationsApi,
+    private val socket: org.siloserver.silo.network.apiv2.EventsSocketV2Api,
     private val json: Json = SiloJson,
 ) : NotificationsRealtimeClient {
 
-    override fun connect(): Flow<NotificationRealtimeEvent> = callbackFlow {
-        val ticket = when (val r = api.wsTicket()) {
-            is ApiResult.Success -> r.data.ticket
-            is ApiResult.Error -> {
-                trySend(NotificationRealtimeEvent.Closed("ticket_error_${r.code}"))
-                close()
-                return@callbackFlow
-            }
-            is ApiResult.NetworkError -> {
-                trySend(NotificationRealtimeEvent.Closed("ticket_network_error"))
-                close()
-                return@callbackFlow
-            }
+    override fun connect(): Flow<NotificationRealtimeEvent> = socket.frames(listOf(NotificationRealtime.Channel))
+        .mapNotNull { decodeRealtimeFrame(json, it) }
+        .onCompletion { cause -> if (cause == null) emit(NotificationRealtimeEvent.Closed()) }
+        .catch { error ->
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            val reason = if (error is org.siloserver.silo.network.apiv2.EventsTicketFailure)
+                "ticket_error_${error.code}" else "socket_error"
+            emit(NotificationRealtimeEvent.Closed(reason))
         }
 
-        try {
-            client.webSocket(urlString = "/api/v1/events/ws?ticket=$ticket") {
-                // Subscribe to the notifications channel once connected. The
-                // server sends `hello` first; we don't need to parse it before
-                // subscribing (it just must arrive within 5s).
-                send(
-                    Frame.Text(
-                        json.encodeToString(
-                            WsSubscribe.serializer(),
-                            WsSubscribe(channels = listOf(NotificationRealtime.Channel)),
-                        ),
-                    ),
-                )
-                for (frame in incoming) {
-                    if (frame !is Frame.Text) continue
-                    decodeRealtimeFrame(json, frame.readText())?.let { trySend(it) }
-                }
-            }
-            trySend(NotificationRealtimeEvent.Closed())
-        } catch (e: Throwable) {
-            trySend(NotificationRealtimeEvent.Closed(e.message))
-        } finally {
-            close()
-        }
-
-        awaitClose { /* socket closes when the flow collector is cancelled */ }
-    }
 }
 
 /**
@@ -148,6 +106,7 @@ fun decodeRealtimeFrame(json: Json, raw: String): NotificationRealtimeEvent? {
                 }
                 NotificationRealtime.EventRead -> {
                     val obj = envelope.data as? JsonObject ?: return null
+                    if ("through_created_at" in obj || "through_id" in obj) return NotificationRealtimeEvent.Invalidate
                     val payload = try {
                         json.decodeFromJsonElement(NotificationReadPayload.serializer(), obj)
                     } catch (_: Exception) {

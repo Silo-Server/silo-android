@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +22,7 @@ data class InviteClaimUiState(
     val invitationInvalid: Boolean = false,
     /** The lookup failed for reasons unrelated to the token; offer retry. */
     val lookupFailed: Boolean = false,
+    val acceptanceUnavailable: Boolean = false,
     /**
      * The invite points at a cleartext HTTP server the user hasn't approved.
      * The claim POST carries credentials, so it needs the same explicit
@@ -32,6 +34,8 @@ data class InviteClaimUiState(
     val isSubmitting: Boolean = false,
     val error: String? = null,
     val claimSuccess: Boolean = false,
+    val signInRequiredUsername: String? = null,
+    val acceptanceUncertain: Boolean = false,
 )
 
 /**
@@ -57,7 +61,8 @@ class InviteClaimViewModel(
      * against it before touching state, so a slow response for a superseded
      * link can't paint another invite's email over the current one.
      */
-    private var lookupGeneration = 0
+    private val lookupGeneration = MutableStateFlow(0L)
+    private var claimJob: Job? = null
 
     fun load(serverUrl: String, token: String) {
         // An invite is identified by server *and* token: the same token can
@@ -72,11 +77,13 @@ class InviteClaimViewModel(
         }
         this.serverUrl = serverUrl
         this.token = token
-        val generation = ++lookupGeneration
+        claimJob?.cancel()
+        lookupGeneration.value += 1
+        val generation = lookupGeneration.value
         _uiState.update { InviteClaimUiState() }
         viewModelScope.launch {
             val result = authRepository.lookupInvitation(serverUrl, token)
-            if (generation != lookupGeneration) return@launch
+            if (generation != lookupGeneration.value) return@launch
             when (result) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isLoadingInvitation = false, invitation = result.data)
@@ -86,7 +93,9 @@ class InviteClaimViewModel(
                     // terminal. A 429/5xx says nothing about the invite, and
                     // showing "expired" for it sends the user off to have a
                     // valid link revoked and reissued.
-                    if (result.code in TERMINAL_LOOKUP_CODES) {
+                    if (result.error == "capability_unavailable") {
+                        _uiState.update { it.copy(isLoadingInvitation = false, acceptanceUnavailable = true) }
+                    } else if (result.code in TERMINAL_LOOKUP_CODES) {
                         _uiState.update {
                             it.copy(isLoadingInvitation = false, invitationInvalid = true)
                         }
@@ -123,8 +132,12 @@ class InviteClaimViewModel(
 
     fun onClaimClick() {
         val current = _uiState.value
+        if (current.isSubmitting || current.pendingCleartextOrigin != null || current.claimSuccess ||
+            current.signInRequiredUsername != null || current.acceptanceUncertain ||
+            current.invitation?.acceptanceAvailable != true) return
         val validationError = when {
-            current.password.length < 8 -> "Password must be at least 8 characters"
+            current.password.codePointCount(0, current.password.length) < 8 -> "Password must be at least 8 characters"
+            current.password.toByteArray(Charsets.UTF_8).size > 72 -> "Password must be at most 72 UTF-8 bytes"
             current.password != current.confirmPassword -> "Passwords do not match"
             else -> null
         }
@@ -132,27 +145,32 @@ class InviteClaimViewModel(
             _uiState.update { it.copy(error = validationError) }
             return
         }
-
-        viewModelScope.launch {
-            // The read-only lookup may have slipped past the cleartext gate,
-            // but the claim POST carries a password and will be rejected by
-            // the interceptor for an unapproved http:// origin — surfacing as
-            // an opaque network error. Ask for the same consent server setup
-            // does, then proceed.
-            if (cleartextConsentStore.requiresApproval(serverUrl)) {
-                _uiState.update { it.copy(pendingCleartextOrigin = serverUrl) }
+        val generation = lookupGeneration.value
+        val origin = serverUrl
+        val claimToken = token
+        _uiState.update { it.copy(isSubmitting = true, error = null) }
+        claimJob = viewModelScope.launch {
+            if (cleartextConsentStore.requiresApproval(origin)) {
+                if (generation == lookupGeneration.value) {
+                    _uiState.update { it.copy(isSubmitting = false, pendingCleartextOrigin = origin) }
+                }
                 return@launch
             }
-            submitClaim()
+            submitClaim(generation, origin, claimToken, current.password)
         }
     }
 
     fun onConfirmCleartext() {
-        val origin = _uiState.value.pendingCleartextOrigin ?: return
-        viewModelScope.launch {
+        val current = _uiState.value
+        val origin = current.pendingCleartextOrigin ?: return
+        if (current.isSubmitting) return
+        val generation = lookupGeneration.value
+        val claimToken = token
+        _uiState.update { it.copy(isSubmitting = true, pendingCleartextOrigin = null) }
+        claimJob = viewModelScope.launch {
             cleartextConsentStore.approve(origin)
-            _uiState.update { it.copy(pendingCleartextOrigin = null) }
-            submitClaim()
+            if (generation != lookupGeneration.value) return@launch
+            submitClaim(generation, origin, claimToken, current.password)
         }
     }
 
@@ -160,41 +178,42 @@ class InviteClaimViewModel(
         _uiState.update { it.copy(pendingCleartextOrigin = null) }
     }
 
-    private suspend fun submitClaim() {
-        val current = _uiState.value
-        // Pin the invite this submission is for. A second deep link can replace
-        // the route mid-POST; without this the first response would still drive
-        // the UI — navigating away from the invite now on screen, or reporting
-        // success for an account on a server the user is no longer claiming.
-        val generation = lookupGeneration
-        val claimServerUrl = serverUrl
-        val claimToken = token
-        _uiState.update { it.copy(isSubmitting = true, error = null) }
-        // acceptInvitation talks to the invite's server directly and only
-        // adopts it as the active server after the claim succeeds, so a
-        // failed claim leaves any existing session untouched.
-        val result = authRepository.acceptInvitation(claimServerUrl, claimToken, current.password)
-        if (generation != lookupGeneration) return
+    private suspend fun submitClaim(generation: Long, origin: String, claimToken: String, password: String) {
+        val result = authRepository.acceptInvitation(origin, claimToken, password) {
+            generation == lookupGeneration.value
+        }
+        if (generation != lookupGeneration.value) return
         when (result) {
-            is ApiResult.Success -> {
-                _uiState.update { it.copy(isSubmitting = false, claimSuccess = true) }
+            is ApiResult.Success -> _uiState.update {
+                it.copy(isSubmitting = false, claimSuccess = result.data.signedIn,
+                    signInRequiredUsername = result.data.username.takeUnless { result.data.signedIn },
+                    password = "", confirmPassword = "")
             }
             is ApiResult.Error -> {
-                val message = when (result.code) {
-                    404 -> "This invitation is invalid or has expired."
-                    409 -> "This invitation has already been used."
-                    else -> result.errorMessage("Could not create your account")
+                val invalid = result.code == 404
+                val uncertain = result.code !in setOf(400, 404)
+                _uiState.update {
+                    it.copy(isSubmitting = false, invitationInvalid = invalid,
+                        acceptanceUncertain = uncertain,
+                        error = if (uncertain) "Account creation could not be confirmed. Check sign-in before trying another invitation."
+                            else result.errorMessage("Could not accept this invitation"))
                 }
-                _uiState.update { it.copy(isSubmitting = false, error = message) }
             }
             is ApiResult.NetworkError -> _uiState.update {
-                it.copy(isSubmitting = false, error = result.errorMessage("Could not create your account"))
+                it.copy(isSubmitting = false, acceptanceUncertain = true,
+                    error = "Account creation could not be confirmed. Check sign-in before trying another invitation.")
             }
         }
     }
 
+    override fun onCleared() {
+        lookupGeneration.value += 1
+        claimJob?.cancel()
+        super.onCleared()
+    }
+
     private companion object {
         /** Statuses that mean the token itself is gone, used, or malformed. */
-        private val TERMINAL_LOOKUP_CODES = setOf(400, 404, 409, 410)
+        private val TERMINAL_LOOKUP_CODES = setOf(404)
     }
 }

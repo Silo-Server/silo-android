@@ -181,7 +181,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 return@withLock RefreshOutcome.NotAttempted
             }
 
-            val refreshResponse = client.post("$trustedServerUrl/api/v1/auth/refresh") {
+            val refreshResponse = client.post("$trustedServerUrl/api/v2/auth/refresh") {
                 contentType(ContentType.Application.Json)
                 setBody(RefreshRequest(refreshToken))
             }
@@ -210,7 +210,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 return@withLock RefreshOutcome.NotAttempted
             }
 
-            if (refreshResponse.status.isSuccess()) {
+            if (refreshResponse.status == HttpStatusCode.OK) {
                 diagnosticsObserver.safeAuthRefresh("succeeded")
                 val tokens = refreshResponse.body<RefreshResponse>()
                 tokenManager.saveTokensForScope(
@@ -288,9 +288,10 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
 
         // Shared calls are normally relative. Resolve those against the exact
         // server that owns the credential scope before deciding whether any
-        // Silo header may be attached.
+        // Silo header may be attached. The root liveness route is the one
+        // relative path outside `/api/`.
         if (
-            request.url.encodedPath.startsWith("/api/") &&
+            (request.url.encodedPath.startsWith("/api/") || request.url.encodedPath == "/health") &&
             (request.url.host.isBlank() || request.url.host == "localhost") &&
             trustedServerUrl.isNotBlank()
         ) {
@@ -450,6 +451,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
             request.removeSiloCredentialHeaders()
             return@on proceed(request)
         }
+        if (request.attributes.getOrNull(SingleAttemptAttributeKey) == true) return@on proceed(request)
         if (pinnedScope != null) {
             val sentAuth = request.headers[HttpHeaders.Authorization]
             val originalCall = proceed(request)
@@ -480,11 +482,11 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                 }
                 try {
                     diagnosticsObserver.safeAuthRefresh("started")
-                    val refreshResponse = client.post("${pinnedScope.serverUrl}/api/v1/auth/refresh") {
+                    val refreshResponse = client.post("${pinnedScope.serverUrl}/api/v2/auth/refresh") {
                         contentType(ContentType.Application.Json)
                         setBody(RefreshRequest(refreshToken))
                     }
-                    if (refreshResponse.status.isSuccess()) {
+                    if (refreshResponse.status == HttpStatusCode.OK) {
                         diagnosticsObserver.safeAuthRefresh("succeeded")
                         val tokens = refreshResponse.body<RefreshResponse>()
                         tokenManager.saveTokensForScope(

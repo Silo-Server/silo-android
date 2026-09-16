@@ -36,7 +36,13 @@ class MediaAuthInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
+        val pinned = original.tag(org.siloserver.silo.network.AuthScopeSnapshot::class.java)
+        fun checkPinned(snapshot: MediaAuthSnapshot) {
+            if (pinned != null && !pinned.isSameIdentityAs(snapshot.authScope))
+                throw java.io.IOException("The reader's account or profile changed")
+        }
         val failedSnapshot = runBlocking { authSession.snapshot() }
+        checkPinned(failedSnapshot)
         if (!isSameHttpOrigin(failedSnapshot.serverUrl, original.url.toString())) {
             return chain.proceed(original.withoutSiloCredentials())
         }
@@ -56,10 +62,12 @@ class MediaAuthInterceptor(
 
         if (!refreshed) {
             // Build a fresh response since the original has been consumed.
+            checkPinned(runBlocking { authSession.snapshot() })
             return chain.proceed(authed)
         }
 
         val retrySnapshot = runBlocking { authSession.snapshot() }
+        checkPinned(retrySnapshot)
         val retried = if (isSameHttpOrigin(retrySnapshot.serverUrl, original.url.toString())) {
             original.newBuilder()
                 .applyAuthHeaders(retrySnapshot)

@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import org.siloserver.silo.network.AuthScopeSnapshot
 import java.time.LocalDate
 import java.util.TimeZone
 
@@ -32,18 +35,25 @@ class TvUpcomingViewModel(
         load()
     }
 
+    private var generation = 0L
     fun load() {
+        val run = ++generation
+        _items.value = emptyList()
         viewModelScope.launch {
+            val owner = repository.capture() ?: return@launch
+            if (run != generation || !currentCoroutineContext().isActive) return@launch
             val today = LocalDate.now()
             val start = today.toString()
             val end = today.plusDays(6).toString()
             val timezone = TimeZone.getDefault().id
 
-            val following = fetch(start, end, CalendarFilter.Following, timezone)
+            val following = fetch(start, end, CalendarFilter.Following, timezone, owner)
             val resolved = resolveUpcoming(following) {
-                fetch(start, end, CalendarFilter.All, timezone)
+                if (!repository.current(owner) || run != generation || !currentCoroutineContext().isActive) null
+                else fetch(start, end, CalendarFilter.All, timezone, owner)
             }
 
+            if (!repository.current(owner) || run != generation || !currentCoroutineContext().isActive) return@launch
             _items.value = resolved
                 .distinctBy { it.detailContentId }
                 .map { it.toSectionItem() }
@@ -59,8 +69,9 @@ class TvUpcomingViewModel(
         end: String,
         filter: String,
         timezone: String,
+        owner: AuthScopeSnapshot,
     ): List<CalendarItem>? = when (
-        val result = repository.getCalendar(start = start, end = end, filter = filter, timezone = timezone)
+        val result = repository.getCalendar(start = start, end = end, filter = filter, timezone = timezone, owner = owner)
     ) {
         is ApiResult.Success -> result.data.events.flatMap { it.items }
         else -> null

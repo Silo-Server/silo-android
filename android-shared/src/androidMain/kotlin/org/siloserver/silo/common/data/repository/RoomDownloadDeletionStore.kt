@@ -12,28 +12,32 @@ import org.siloserver.silo.repository.port.PendingDownloadDeletion
  */
 class RoomDownloadDeletionStore(
     db: SiloDatabase,
+    private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
     private val now: () -> Long = { System.currentTimeMillis() },
 ) : DownloadDeletionPort {
 
     private val dao = db.downloadDeletionDao()
 
     override suspend fun enqueue(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {
-        dao.upsert(
-            DownloadDeletionEntity(
-                serverId = serverId,
-                profileId = profileId,
-                recordId = recordId,
-                mediaFileId = mediaFileId,
-                enqueuedAtMs = now(),
-            ),
-        )
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        val device = devices?.current()?.id
+        if (authorities != null) require(authority != null && authority.scope.serverId == serverId &&
+            authority.scope.profileId == profileId && !device.isNullOrBlank()) { "The download owner changed" }
+        val row = DownloadDeletionEntity(serverId, profileId, recordId, mediaFileId, now(),
+            authority?.loginId, authority?.scope?.serverUrl, device)
+        if (authority == null) dao.upsert(row)
+        else check(identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+            dao.upsert(row); true
+        } == true) { "The download owner changed" }
     }
 
     override suspend fun allPendingRecordIds(): Set<String> = dao.allRecordIds().toSet()
 
     override suspend fun pendingForScope(serverId: String, profileId: String): List<PendingDownloadDeletion> =
         dao.forScope(serverId, profileId).map {
-            PendingDownloadDeletion(it.serverId, it.profileId, it.recordId, it.mediaFileId)
+            PendingDownloadDeletion(it.serverId, it.profileId, it.recordId, it.mediaFileId, it.loginId, it.origin, it.deviceId)
         }
 
     override suspend fun remove(serverId: String, profileId: String, recordId: String) {

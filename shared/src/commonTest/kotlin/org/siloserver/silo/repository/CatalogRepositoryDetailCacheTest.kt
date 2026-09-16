@@ -94,7 +94,7 @@ class CatalogRepositoryDetailCacheTest {
                 requestEntered.complete(Unit)
                 releaseResponse.await()
                 respond(
-                    """{"content_id":"c1","type":"movie","title":"A"}""",
+                    """{"content_id":"c1","type":"movie","title":"A","cast":[],"crew":[],"subtitles":[],"versions":[]}""",
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )
@@ -111,7 +111,7 @@ class CatalogRepositoryDetailCacheTest {
     @Test
     fun cachesOnSuccess() = runTest {
         val cache = FakeCache(preset = null)
-        val result = repo(HttpStatusCode.OK, """{"content_id":"c1","type":"movie","title":"A"}""", cache)
+        val result = repo(HttpStatusCode.OK, """{"content_id":"c1","type":"movie","title":"A","cast":[],"crew":[],"subtitles":[],"versions":[]}""", cache)
             .getItemDetail("c1")
         assertTrue(result is ApiResult.Success)
         assertEquals("c1", cache.cachedId)
@@ -142,7 +142,7 @@ class CatalogRepositoryDetailCacheTest {
     @Test
     fun prefetchFetchesAndCachesWhenDetailIsAbsent() = runTest {
         val cache = FakeCache()
-        val result = repo(HttpStatusCode.OK, """{"content_id":"c2","type":"movie","title":"Fresh"}""", cache)
+        val result = repo(HttpStatusCode.OK, """{"content_id":"c2","type":"movie","title":"Fresh","cast":[],"crew":[],"subtitles":[],"versions":[]}""", cache)
             .getItemDetailForPrefetch("c2")
         assertEquals("Fresh", (result as ApiResult.Success).data.title)
         assertEquals("c2", cache.cachedId)
@@ -244,7 +244,7 @@ class CatalogRepositoryDetailCacheTest {
                 requestEntered.complete(Unit)
                 releaseResponse.await()
                 respond(
-                    """{"content_id":"c1","type":"movie","title":"Profile A"}""",
+                    """{"content_id":"c1","type":"movie","title":"Profile A","cast":[],"crew":[],"subtitles":[],"versions":[]}""",
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )
@@ -281,7 +281,7 @@ class CatalogRepositoryDetailCacheTest {
         val client = HttpClient(
             MockEngine {
                 respond(
-                    """{"content_id":"c1","type":"movie","title":"Profile A"}""",
+                    """{"content_id":"c1","type":"movie","title":"Profile A","cast":[],"crew":[],"subtitles":[],"versions":[]}""",
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )

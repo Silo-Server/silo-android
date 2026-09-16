@@ -26,7 +26,7 @@ class CatalogApiTest {
 
     private fun api(
         status: HttpStatusCode = HttpStatusCode.OK,
-        responseBody: String = """{"total":0,"has_more":false,"items":[]}""",
+        responseBody: String = """{"total":0,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[]}""",
         captured: Captured = Captured(),
     ): Pair<CatalogApi, Captured> {
         val client = HttpClient(
@@ -47,14 +47,13 @@ class CatalogApiTest {
     }
 
     @Test
-    fun `getCatalog with snapshotAt sends query param named snapshot not snapshot_at`() = runTest {
+    fun `getCatalog uses v2 without legacy snapshot parameters`() = runTest {
         val (api, captured) = api()
 
-        val result = api.getCatalog(snapshotAt = "2026-06-15T10:00:00Z")
+        val result = api.getCatalog()
 
-        assertEquals("/api/v1/catalog", captured.path)
-        assertTrue("snapshot" in captured.query.keys, "Expected 'snapshot' key in query params")
-        assertEquals("2026-06-15T10:00:00Z", captured.query["snapshot"])
+        assertEquals("/api/v2/catalog", captured.path)
+        assertFalse("snapshot" in captured.query.keys)
         assertFalse("snapshot_at" in captured.query.keys, "Must NOT send 'snapshot_at' (server reads 'snapshot')")
         assertIs<ApiResult.Success<*>>(result)
     }
@@ -71,26 +70,54 @@ class CatalogApiTest {
     }
 
     @Test
-    fun `getPersonItems with snapshotAt sends query param named snapshot not snapshot_at`() = runTest {
+    fun `getItemVersions reads the v2 items envelope and checks string file ids`() = runTest {
+        val (api, captured) = api(
+            responseBody = """{"items":[{"file_id":"42","resolution":"1080p","codec_video":"h264","codec_audio":"aac",
+                "hdr":false,"container":"mkv","file_size":10,"duration":120,"bitrate":5000,"added_at":"2026-01-01T00:00:00Z"}]}""",
+        )
+
+        val result = api.getItemVersions("item-1")
+
+        assertEquals("/api/v2/catalog/items/item-1/versions", captured.path)
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(42, (result as ApiResult.Success).data.single().fileId)
+    }
+
+    @Test
+    fun `opaque content ids are encoded as one path segment`() = runTest {
+        val (api, captured) = api(responseBody = """{"content_id":"movie:a/b","type":"movie","title":"A","cast":[],"crew":[],"versions":[],"subtitles":[]}""")
+
+        api.getItemDetail("movie:a/b")
+
+        assertEquals("/api/v2/catalog/items/movie:a%2Fb", captured.path)
+    }
+
+    @Test
+    fun `getItemVersions rejects numeric file ids`() = runTest {
+        val (api, _) = api(responseBody = """{"items":[{"file_id":42}]}""")
+
+        assertFalse(api.getItemVersions("item-1") is ApiResult.Success)
+    }
+
+    @Test
+    fun `getPersonItems uses signed sort and opaque person ID`() = runTest {
         val (api, captured) = api()
 
         val result = api.getPersonItems(
             personId = 42,
             mediaType = "movie",
-            offset = 60,
             limit = 60,
-            snapshotAt = "2026-06-19T10:00:00Z",
         )
 
-        assertEquals("/api/v1/catalog", captured.path)
+        assertEquals("/api/v2/catalog", captured.path)
         assertEquals("person", captured.query["source"])
         assertEquals("42", captured.query["person_id"])
         assertEquals("movie", captured.query["type"])
-        assertEquals("60", captured.query["offset"])
+        assertFalse("offset" in captured.query.keys)
         assertEquals("60", captured.query["limit"])
-        assertEquals("year", captured.query["sort"])
-        assertEquals("desc", captured.query["order"])
-        assertEquals("2026-06-19T10:00:00Z", captured.query["snapshot"])
+        assertEquals("-year", captured.query["sort"])
+        assertFalse("order" in captured.query.keys)
+        assertFalse("snapshot" in captured.query.keys)
         assertFalse("snapshot_at" in captured.query.keys)
         assertIs<ApiResult.Success<*>>(result)
     }

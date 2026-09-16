@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,34 +38,31 @@ fun rememberTvBrowseItemCardActions(
     val actions = remember(item.contentId, coordinator, scope) {
         TvMediaCardActions(
             onSetWatched = { watched ->
+                val writeIntent = coordinator.beginWatched(item.contentId, watched)
                 val previous = state
                 state = state.copy(played = watched)
                 scope.launch {
-                    if (coordinator.setWatched(item.contentId, watched) !is ApiResult.Success) {
-                        state = previous
+                    if (coordinator.performPersonalWrite(writeIntent) !is ApiResult.Success) {
+                        if (coordinator.isCurrent(writeIntent)) state = previous
                     }
                 }
             },
             onToggleFavorite = { favorite ->
-                val previous = state
-                state = state.copy(isFavorite = favorite)
-                scope.launch {
-                    if (coordinator.toggleFavorite(item.contentId, favorite) !is ApiResult.Success) {
-                        state = previous
-                    }
-                }
+                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, favorite)
+                scope.launch { coordinator.memberships.perform(intent) }
             },
             onToggleWatchlist = { inWatchlist ->
-                val previous = state
-                state = state.copy(inWatchlist = inWatchlist)
-                scope.launch {
-                    if (coordinator.toggleWatchlist(item.contentId, inWatchlist) !is ApiResult.Success) {
-                        state = previous
-                    }
-                }
+                val intent = coordinator.memberships.begin(item.contentId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, inWatchlist)
+                scope.launch { coordinator.memberships.perform(intent) }
             },
         )
     }
 
-    return actions to state
+    val membershipActions by coordinator.memberships.actions.collectAsState()
+    var displayed = state
+    membershipActions.values.filter { it.intent.key.itemId == item.contentId && it.baseline != null && coordinator.memberships.current(it.intent) }.forEach {
+        displayed = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
+            displayed.copy(isFavorite = it.baseline!!.present) else displayed.copy(inWatchlist = it.baseline!!.present)
+    }
+    return actions to displayed
 }

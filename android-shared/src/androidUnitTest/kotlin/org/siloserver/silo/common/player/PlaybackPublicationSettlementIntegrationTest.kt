@@ -15,11 +15,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
+import io.ktor.client.engine.mock.toByteArray
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.siloserver.silo.model.personal.SyncProgressItem
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -41,13 +45,21 @@ import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.SEQUENCED_PROGRESS_FEATURE
+import org.siloserver.silo.network.apiv2.PlaybackV2Api
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.PlaybackJournalEntry
+import org.siloserver.silo.repository.PlaybackJournalStore
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.repository.SequencedPlayback
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -191,6 +203,7 @@ class PlaybackPublicationSettlementIntegrationTest {
                         features = listOf(
                             PLAYBACK_PLAN_V3_FEATURE,
                             NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
                             SEEK_REANCHOR_V3_FEATURE,
                         ),
                     ),
@@ -210,6 +223,7 @@ class PlaybackPublicationSettlementIntegrationTest {
                     features = listOf(
                         PLAYBACK_PLAN_V3_FEATURE,
                         NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
                         SEEK_REANCHOR_V3_FEATURE,
                     ),
                 ),
@@ -458,20 +472,32 @@ class PlaybackPublicationSettlementIntegrationTest {
             Collections.synchronizedMap(mutableMapOf())
         var replanCalls: Int = 0
             private set
+        private val identity = SettlementIdentity()
+        private val journal = SettlementPlaybackJournal()
         private val client = HttpClient(
             MockEngine { request ->
                 val path = request.url.encodedPath
                 var responseStatus = HttpStatusCode.OK
                 val body = when {
-                    path == "/api/v1/playback/start" ->
-                        SiloJson.encodeToString(starts[startIndex.getAndIncrement()])
+                    path == "/api/v2/playback/capabilities" -> """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["server_remux_hls"]}"""
+                    path == "/api/v2/account/me" -> """{"id":"account-1","username":"test","email":"","role":"user"}"""
+                    path == "/api/v2/playback/start" -> {
+                        responseStatus = HttpStatusCode.Created
+                        settlementWireDecision(starts[startIndex.getAndIncrement()])
+                    }
                     path.endsWith("/replan") -> {
                         replanCalls += 1
-                        SiloJson.encodeToString(requireNotNull(replanResponse))
+                        settlementWireDecision(requireNotNull(replanResponse))
+                    }
+                    path == "/api/v2/playback/route-events" -> {
+                        responseStatus = HttpStatusCode.Accepted
+                        val sent = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        """{"event_id":${sent["event_id"]},"outcome":"accepted"}"""
                     }
                     request.method == HttpMethod.Delete &&
-                        path.startsWith("/api/v1/playback/") -> {
+                        path.startsWith("/api/v2/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
+                        val sent = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
                         val attempt = synchronized(stopAttemptCounts) {
                             val next = (stopAttemptCounts[sessionId] ?: 0) + 1
                             stopAttemptCounts[sessionId] = next
@@ -481,9 +507,9 @@ class PlaybackPublicationSettlementIntegrationTest {
                         stoppedEvents.send(sessionId)
                         stopThrowableBehavior(sessionId, attempt)?.let { throw it }
                         responseStatus = stopBehavior(sessionId, attempt)
-                        "{}"
+                        """{"stop_id":${sent["stop_id"]},"outcome":"stopped"}"""
                     }
-                    else -> "{}"
+                    else -> error("Unexpected request ${request.method.value} $path")
                 }
                 respond(
                     content = body,
@@ -494,9 +520,12 @@ class PlaybackPublicationSettlementIntegrationTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
+        private val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, journal) {
+            java.util.UUID.randomUUID().toString()
+        }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
-            tokenManager = SettlementTokenManager,
+            playbackRepository = PlaybackRepository(sequenced),
+            tokenManager = identity,
         )
         val lifecycle = PlaybackSessionLifecycle(
             sessionManager = manager,
@@ -588,6 +617,7 @@ class PlaybackPublicationSettlementIntegrationTest {
             features: List<String> = listOf(
                 PLAYBACK_PLAN_V3_FEATURE,
                 NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
             ),
         ): PlaybackDecisionResponseV3 =
             PlaybackDecisionResponseV3(
@@ -604,7 +634,7 @@ class PlaybackPublicationSettlementIntegrationTest {
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
             stream = PlaybackStreamV3(
-                url = "/stream/$sessionId/master.m3u8",
+                url = "/api/v2/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
                 container = "mpegts",
                 mimeType = "application/x-mpegURL",
@@ -638,21 +668,29 @@ private class SettlementPersonalDataRepository : PersonalDataRepository(
         ApiResult.Success(Unit)
 }
 
-private object SettlementTokenManager : TokenManager {
-    override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
-    override suspend fun getAccessToken(): String? = null
-    override suspend fun getRefreshToken(): String? = null
-    override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {}
-    override suspend fun clearTokens() {}
-    override suspend fun invalidateSession() {}
-    override suspend fun getProfileId(): String? = null
-    override suspend fun setProfileId(profileId: String?) {}
-    override suspend fun getProfileToken(): String? = null
-    override suspend fun setProfileToken(token: String?) {}
-    override suspend fun getServerUrl(): String = ""
-    override suspend fun setServerUrl(url: String) {}
-    override suspend fun getCurrentServerId(): String? = null
-    override suspend fun switchActiveServer(serverId: String?) {}
-    override suspend fun signOutCurrentServer() {}
-    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
+private class SettlementIdentity : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+    val scope = AuthScopeSnapshot("server-1", "profile-1", "https://example.invalid", "proof",
+        identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
+    override suspend fun snapshotCurrentScope() = scope
+    override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login-1", scope)
 }
+
+/** v2 serves file identities as strings; the fixtures above build them as ints. */
+private fun settlementWireDecision(response: PlaybackDecisionResponseV3): String {
+    fun wire(value: JsonElement, key: String = ""): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.mapValues { (name, child) -> wire(child, name) })
+        is JsonArray -> JsonArray(value.map { wire(it) })
+        is JsonPrimitive -> if (key in setOf("requested_media_file_id", "effective_media_file_id", "media_file_id"))
+            JsonPrimitive(value.content) else value
+    }
+    return wire(SiloJson.parseToJsonElement(SiloJson.encodeToString(response))).toString()
+}
+
+private class SettlementPlaybackJournal : PlaybackJournalStore {
+    var entries = emptyList<PlaybackJournalEntry>()
+    override suspend fun read() = entries
+    override suspend fun write(entries: List<PlaybackJournalEntry>) {
+        this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
+    }
+}
+

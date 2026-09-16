@@ -14,12 +14,13 @@ import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -53,9 +54,17 @@ import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.network.api.PlaybackApi
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.SEQUENCED_PROGRESS_FEATURE
+import org.siloserver.silo.network.apiv2.PlaybackV2Api
+import org.siloserver.silo.repository.PlaybackJournalEntry
+import org.siloserver.silo.repository.PlaybackJournalStore
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.repository.SequencedPlayback
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -108,6 +117,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                 features = listOf(
                     PLAYBACK_PLAN_V3_FEATURE,
                     NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
                 ),
             ),
         ) { _, _ -> error("A feature-gated reanchor must not reach the server") }
@@ -130,7 +140,7 @@ class PlaybackSessionManagerSeekReanchorTest {
             bandwidthEstimateKbps = 50_000,
         )
         val reanchoredPlan = initialPlan.copy(
-            stream = initialPlan.stream.copy(url = "/stream/session-1/reanchored.m3u8"),
+            stream = initialPlan.stream.copy(url = "/api/v2/stream/session-1/reanchored.m3u8"),
             timeline = PlaybackTimelineV3(
                 sourceStartSeconds = 90.0,
                 streamOriginSeconds = 90.0,
@@ -273,15 +283,21 @@ class PlaybackSessionManagerSeekReanchorTest {
             harness.manager.start()
 
             val invalid = harness.manager.reanchorActiveVideoSession(positionSeconds = 60.0)
-            assertEquals(
-                "invalid_seek_reanchor_response",
-                assertIs<ApiResult.Error>(invalid, "$name drift must fail closed").error,
-            )
-
+            val error = assertIs<ApiResult.Error>(invalid, "$name drift must fail closed").error
             val retry = harness.manager.reanchorActiveVideoSession(positionSeconds = 120.0)
-            assertIs<VideoSessionStartV3.Ready>(
-                assertIs<ApiResult.Success<VideoSessionStartV3>>(retry, "$name failure must retain the active attempt").data,
-            )
+            if (name == "response session" || name == "session") {
+                // The sequenced journal refuses a plan for another session before the
+                // manager sees it, and keeps that replan intent pending rather than
+                // treating the foreign reply as a settled decision.
+                assertEquals("invalid_decision", error, name)
+                assertEquals("replan_pending", assertIs<ApiResult.Error>(retry, name).error)
+            } else {
+                assertEquals("invalid_seek_reanchor_response", error, name)
+                assertIs<VideoSessionStartV3.Ready>(
+                    assertIs<ApiResult.Success<VideoSessionStartV3>>(retry, "$name failure must retain the active attempt").data,
+                )
+            }
+            assertEquals("session-1", harness.manager.activeSessionIdForTest(), "$name must retain the active attempt")
         }
     }
 
@@ -300,10 +316,15 @@ class PlaybackSessionManagerSeekReanchorTest {
         }
         harness.manager.start()
 
-        assertIs<ApiResult.Error>(harness.manager.reanchorActiveVideoSession(positionSeconds = 60.0))
-        assertIs<ApiResult.Success<VideoSessionStartV3>>(
-            harness.manager.reanchorActiveVideoSession(positionSeconds = 120.0),
+        assertEquals(500, assertIs<ApiResult.Error>(harness.manager.reanchorActiveVideoSession(positionSeconds = 60.0)).code)
+        // A generic replan error is uncertain: the journal retains the exact intent and
+        // refuses a new one until that session stops, but the active attempt stays owned.
+        assertEquals(
+            "replan_pending",
+            assertIs<ApiResult.Error>(harness.manager.reanchorActiveVideoSession(positionSeconds = 120.0)).error,
         )
+        assertEquals("session-1", harness.manager.activeSessionIdForTest())
+        assertEquals(1, harness.replanBodies.size)
     }
 
     @Test
@@ -364,7 +385,7 @@ class PlaybackSessionManagerSeekReanchorTest {
             planId = "plan-2",
             planAttemptKey = "v3:00000000000000a2",
             delivery = PlaybackDelivery.SERVER_TRANSCODE_HLS,
-            stream = initial.stream.copy(url = "/stream/session-1/seek-recovery.m3u8"),
+            stream = initial.stream.copy(url = "/api/v2/stream/session-1/seek-recovery.m3u8"),
             effectiveRecipe = initial.effectiveRecipe.copy(audioCodec = "aac"),
             decisionReason = "seek_transport_fallback",
         )
@@ -413,7 +434,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         val fallback = initial.copy(
             planId = "plan-2",
             planAttemptKey = "v3:00000000000000a2",
-            stream = initial.stream.copy(url = "/stream/session-1/seek-recovery.m3u8"),
+            stream = initial.stream.copy(url = "/api/v2/stream/session-1/seek-recovery.m3u8"),
             requestedMediaFileId = null,
             effectiveMediaFileId = null,
         )
@@ -481,14 +502,14 @@ class PlaybackSessionManagerSeekReanchorTest {
                         combinedIndex = 0,
                         source = "external",
                         delivery = "sidecar",
-                        url = "/stream/session-1/subtitles/0.vtt",
+                        url = "/api/v2/stream/session-1/subtitles/0.vtt",
                     ),
                     PlaybackSubtitleInventoryItemV3(
                         trackId = "server-subtitle-1",
                         combinedIndex = 1,
                         source = "embedded",
                         delivery = "sidecar",
-                        url = "/stream/session-1/subtitles/1.vtt",
+                        url = "/api/v2/stream/session-1/subtitles/1.vtt",
                     ),
                     PlaybackSubtitleInventoryItemV3(
                         trackId = "server-subtitle-2",
@@ -502,7 +523,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                         source = "embedded",
                         codec = "ass",
                         delivery = "sidecar",
-                        url = "/stream/session-1/subtitles/3.ass",
+                        url = "/api/v2/stream/session-1/subtitles/3.ass",
                     ),
                 ),
             ),
@@ -518,7 +539,7 @@ class PlaybackSessionManagerSeekReanchorTest {
                 mode = PlaybackSubtitleModeV3.RENDER,
                 trackId = "server-owned-subtitle-id",
                 artifact = PlaybackSubtitleArtifactV3(
-                    url = "/stream/session-1/subtitles/3.vtt",
+                    url = "/api/v2/stream/session-1/subtitles/3.vtt",
                     mimeType = "text/vtt",
                     format = "webvtt",
                 ),
@@ -555,18 +576,19 @@ class PlaybackSessionManagerSeekReanchorTest {
         val replanBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
         val stoppedSessionIds: MutableList<String> = Collections.synchronizedList(mutableListOf())
         private val replanIndex = AtomicInteger()
+        private val identity = SeekIdentity()
+        private val journal = SeekPlaybackJournal()
         private val client = HttpClient(
             MockEngine { request ->
                 val path = request.url.encodedPath
                 val response = when {
-                    path == "/api/v1/playback/start" -> {
+                    path == "/api/v2/playback/capabilities" -> MockResponse(HttpStatusCode.OK, """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["server_remux_hls"]}""")
+                    path == "/api/v2/account/me" -> MockResponse(HttpStatusCode.OK, """{"id":"account-1","username":"test","email":"","role":"user"}""")
+                    path == "/api/v2/playback/start" -> {
                         startBodies += SiloJson.parseToJsonElement(
                             request.body.toByteArray().decodeToString(),
                         ).jsonObject
-                        MockResponse(
-                            HttpStatusCode.OK,
-                            SiloJson.encodeToString(startResponse),
-                        )
+                        MockResponse(HttpStatusCode.Created, seekWireDecision(startResponse))
                     }
                     path.endsWith("/replan") -> {
                         val body = SiloJson.parseToJsonElement(
@@ -575,11 +597,16 @@ class PlaybackSessionManagerSeekReanchorTest {
                         replanBodies += body
                         replanResponse(replanIndex.getAndIncrement(), body)
                     }
-                    request.method == HttpMethod.Delete && path.startsWith("/api/v1/playback/") -> {
-                        stoppedSessionIds += path.substringAfterLast('/')
-                        MockResponse(HttpStatusCode.OK, "{}")
+                    path == "/api/v2/playback/route-events" -> {
+                        val body = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        MockResponse(HttpStatusCode.Accepted, """{"event_id":${body["event_id"]},"outcome":"accepted"}""")
                     }
-                    else -> MockResponse(HttpStatusCode.OK, "{}")
+                    request.method == HttpMethod.Delete && path.startsWith("/api/v2/playback/") -> {
+                        stoppedSessionIds += path.substringAfterLast('/')
+                        val body = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        MockResponse(HttpStatusCode.OK, """{"stop_id":${body["stop_id"]},"outcome":"stopped"}""")
+                    }
+                    else -> error("Unexpected request ${request.method.value} $path")
                 }
                 respond(
                     content = response.body,
@@ -590,9 +617,12 @@ class PlaybackSessionManagerSeekReanchorTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
+        private val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, journal) {
+            java.util.UUID.randomUUID().toString()
+        }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
-            tokenManager = SeekNoOpTokenManager,
+            playbackRepository = PlaybackRepository(sequenced),
+            tokenManager = identity,
             networkEvidenceProvider = networkEvidenceProvider,
         )
     }
@@ -630,7 +660,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         planAttemptKey = "v3:00000000000000a1",
         delivery = PlaybackDelivery.SERVER_REMUX_HLS,
         stream = PlaybackStreamV3(
-            url = "/stream/session-1/master.m3u8",
+            url = "/api/v2/stream/session-1/master.m3u8",
             protocol = PlaybackStreamProtocol.HLS,
             container = "mpegts",
             mimeType = "application/x-mpegURL",
@@ -655,7 +685,7 @@ class PlaybackSessionManagerSeekReanchorTest {
     )
 
     private fun reanchored(plan: PlaybackPlanV3, position: Double): PlaybackPlanV3 = plan.copy(
-        stream = plan.stream.copy(url = "/stream/session-1/reanchored-$position.m3u8"),
+        stream = plan.stream.copy(url = "/api/v2/stream/session-1/reanchored-$position.m3u8"),
         timeline = PlaybackTimelineV3(
             sourceStartSeconds = position,
             streamOriginSeconds = position,
@@ -672,6 +702,7 @@ class PlaybackSessionManagerSeekReanchorTest {
         features: List<String> = listOf(
             PLAYBACK_PLAN_V3_FEATURE,
             NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
             SEEK_REANCHOR_V3_FEATURE,
         ),
     ): PlaybackDecisionResponseV3 = PlaybackDecisionResponseV3(
@@ -683,28 +714,36 @@ class PlaybackSessionManagerSeekReanchorTest {
     )
 
     private fun success(response: PlaybackDecisionResponseV3): MockResponse =
-        MockResponse(HttpStatusCode.OK, SiloJson.encodeToString(response))
+        MockResponse(HttpStatusCode.OK, seekWireDecision(response))
 
     private fun JsonObject.string(name: String): String = getValue(name).jsonPrimitive.content
 
     private data class MockResponse(val status: HttpStatusCode, val body: String)
 }
 
-private object SeekNoOpTokenManager : TokenManager {
-    override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
-    override suspend fun getAccessToken(): String? = null
-    override suspend fun getRefreshToken(): String? = null
-    override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {}
-    override suspend fun clearTokens() {}
-    override suspend fun invalidateSession() {}
-    override suspend fun getProfileId(): String? = null
-    override suspend fun setProfileId(profileId: String?) {}
-    override suspend fun getProfileToken(): String? = null
-    override suspend fun setProfileToken(token: String?) {}
-    override suspend fun getServerUrl(): String = ""
-    override suspend fun setServerUrl(url: String) {}
-    override suspend fun getCurrentServerId(): String? = null
-    override suspend fun switchActiveServer(serverId: String?) {}
-    override suspend fun signOutCurrentServer() {}
-    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
+private class SeekIdentity : TokenManager by TokenManagerImpl(), DurableLoginAuthorityProvider {
+    val scope = AuthScopeSnapshot("server-1", "profile-1", "https://example.invalid", "proof",
+        identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
+    override suspend fun snapshotCurrentScope() = scope
+    override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login-1", scope)
 }
+
+/** v2 serves file identities as strings; the fixtures above build them as ints. */
+private fun seekWireDecision(response: PlaybackDecisionResponseV3): String {
+    fun wire(value: JsonElement, key: String = ""): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.mapValues { (name, child) -> wire(child, name) })
+        is JsonArray -> JsonArray(value.map { wire(it) })
+        is JsonPrimitive -> if (key in setOf("requested_media_file_id", "effective_media_file_id", "media_file_id"))
+            JsonPrimitive(value.content) else value
+    }
+    return wire(SiloJson.parseToJsonElement(SiloJson.encodeToString(response))).toString()
+}
+
+private class SeekPlaybackJournal : PlaybackJournalStore {
+    var entries = emptyList<PlaybackJournalEntry>()
+    override suspend fun read() = entries
+    override suspend fun write(entries: List<PlaybackJournalEntry>) {
+        this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
+    }
+}
+

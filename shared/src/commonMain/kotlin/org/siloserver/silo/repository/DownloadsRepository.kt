@@ -36,6 +36,9 @@ import kotlinx.coroutines.flow.update
 class DownloadsRepository(
     private val api: DownloadsApi,
     private val deletions: DownloadDeletionPort = NoOpDownloadDeletionPort,
+    private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) {
 
     private val _records = MutableStateFlow<List<DownloadRecord>>(emptyList())
@@ -50,13 +53,13 @@ class DownloadsRepository(
     /** Fetch + cache the server's download capability. Best-effort: on failure
      *  the cache keeps its previous value (or null) and the picker falls back
      *  to an optimistic preset list. */
-    suspend fun refreshCapability(): ApiResult<DownloadCapability> = when (val r = api.capability()) {
-        is ApiResult.Success -> {
-            _capability.update { r.data }
-            r
-        }
-        is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-        is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
+    suspend fun refreshCapability(): ApiResult<DownloadCapability> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        val result = api.capability()
+        if (!current(authority)) return changed()
+        if (result is ApiResult.Success && !localWrite(authority) { _capability.value = result.data }) return changed()
+        return result
     }
 
     /** Ids the user has asked to delete but which the server still returns
@@ -65,6 +68,23 @@ class DownloadsRepository(
      *  session-scoped; the durable cross-restart tombstone is [deletions] (used
      *  for offline-first delete — see [refresh] filtering + reconcile). */
     private val pendingDelete = mutableSetOf<String>()
+
+    init {
+        identityTransitions?.installGate { transition ->
+            if (transition.phase == org.siloserver.silo.network.IdentityTransitionPhase.WILL_CHANGE) {
+                _records.value = emptyList(); _capability.value = null; pendingDelete.clear()
+            }
+        }
+    }
+
+    private fun changed() = ApiResult.Error(0, "identity_changed", "The download account or profile changed.")
+    private suspend fun current(authority: org.siloserver.silo.network.DurableLoginAuthority?): Boolean =
+        authorities == null || (authority != null && authority == authorities.snapshotDurableLoginAuthority())
+    private suspend fun localWrite(authority: org.siloserver.silo.network.DurableLoginAuthority?, block: suspend () -> Unit): Boolean {
+        if (!current(authority)) return false
+        if (authority == null) { block(); return true }
+        return identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) { block(); true } == true
+    }
 
     /**
      * Seed the in-memory cache from sidecars on disk. Idempotent: running
@@ -105,60 +125,54 @@ class DownloadsRepository(
         keepIdsAbsentFromServer: Set<String> = emptySet(),
         serverId: String? = null,
         profileId: String? = null,
-    ): ApiResult<Unit> = when (val r = api.list()) {
-        is ApiResult.Success -> {
-            val serverIds = r.data.downloads.map { it.id }.toSet()
-            val durableTombstones = deletions.allPendingRecordIds()
-            val tombstoned = pendingDelete + durableTombstones
-            // Server's view, minus anything the user deleted locally.
-            val serverList = r.data.downloads.filterNot { it.id in tombstoned }
-            _records.update { current ->
-                // Local records the server no longer reports — keep only the
-                // ones the caller proved still have bytes on disk.
-                val localKeepers = current.filter { rec ->
-                    rec.id !in serverIds &&
-                        rec.id !in tombstoned &&
-                        rec.id in keepIdsAbsentFromServer
-                }
-                serverList + localKeepers
-            }
-            // Scope-local reconcile of durable (offline) tombstones.
-            if (serverId != null && profileId != null) {
-                for (p in deletions.pendingForScope(serverId, profileId)) {
-                    if (p.recordId !in serverIds) {
-                        // Server's list confirms it's gone — drop the tombstone.
-                        deletions.remove(serverId, profileId, p.recordId)
-                        pendingDelete.remove(p.recordId)
-                    } else {
-                        // Still present — replay the server delete; the tombstone
-                        // clears on the next refresh once the list confirms absence.
-                        serverDeleteConfirmedGone(p.recordId)
+    ): ApiResult<Unit> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority) || (authority != null &&
+            ((serverId != null && serverId != authority.scope.serverId) || (profileId != null && profileId != authority.scope.profileId)))) return changed()
+        return when (val result = api.list(authority?.scope)) {
+            is ApiResult.Success -> {
+                if (!current(authority)) return changed()
+                val serverIds = result.data.downloads.map { it.id }.toSet()
+                val durable = deletions.allPendingRecordIds()
+                if (!localWrite(authority) {
+                    val hidden = pendingDelete + durable
+                    val serverList = result.data.downloads.filterNot { it.id in hidden }
+                    _records.update { current -> serverList + current.filter { it.id !in serverIds && it.id !in hidden && it.id in keepIdsAbsentFromServer } }
+                }) return changed()
+                if (serverId != null && profileId != null) {
+                    val deviceId = devices?.current()?.id
+                    for (pending in deletions.pendingForScope(serverId, profileId)) {
+                        if (!current(authority)) return changed()
+                        // Old tombstones have no provable saved-login/device ownership. Keep them isolated.
+                        if (authority != null && (pending.loginId != authority.loginId || pending.origin != authority.scope.serverUrl || pending.deviceId != deviceId)) continue
+                        if (pending.recordId !in serverIds) {
+                            localWrite(authority) { deletions.remove(serverId, profileId, pending.recordId); pendingDelete.remove(pending.recordId) }
+                        } else serverDeleteConfirmedGone(pending.recordId, authority?.scope)
                     }
                 }
+                if (!localWrite(authority) { pendingDelete.removeAll((pendingDelete - durable) - serverIds) }) return changed()
+                ApiResult.Success(Unit)
             }
-            // In-memory-only entries (this session's online deletes) the server
-            // already dropped. Safe to clear regardless of scope: a
-            // server-deleted record is absent from every scope's list. Durable
-            // (offline) tombstones are excluded here — they're handled above.
-            val inMemoryOnlyGone = (pendingDelete - durableTombstones) - serverIds
-            if (inMemoryOnlyGone.isNotEmpty()) pendingDelete.removeAll(inMemoryOnlyGone)
-            ApiResult.Success(Unit)
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
         }
-        is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
-        is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
     }
 
     /** Server creates a record; we upsert into the cache so the UI updates
      *  immediately without waiting for the next refresh. */
-    suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> =
-        when (val r = api.create(request)) {
+    suspend fun create(request: DownloadRequest, expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null): ApiResult<DownloadRecord> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        return when (val r = api.create(request, authority?.scope)) {
             is ApiResult.Success -> {
-                upsertLocal(r.data)
+                if (!localWrite(authority) { upsertLocal(r.data) }) return changed()
                 ApiResult.Success(r.data)
             }
             is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
             is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
         }
+
+    }
 
     /**
      * Series-batch creation (one POST → N records sharing a batchId). All
@@ -166,15 +180,19 @@ class DownloadsRepository(
      * update immediately. Caller is responsible for enqueueing one worker
      * per record on the Android side.
      */
-    suspend fun createBatch(request: DownloadRequest): ApiResult<List<DownloadRecord>> =
-        when (val r = api.createBatch(request)) {
+    suspend fun createBatch(request: DownloadRequest, expectedAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null): ApiResult<org.siloserver.silo.model.download.DownloadsListResponse> {
+        val authority = expectedAuthority ?: authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        return when (val r = api.createBatch(request, authority?.scope)) {
             is ApiResult.Success -> {
-                r.data.downloads.forEach { upsertLocal(it) }
-                ApiResult.Success(r.data.downloads)
+                if (!localWrite(authority) { r.data.downloads.forEach { upsertLocal(it) } }) return changed()
+                ApiResult.Success(r.data)
             }
             is ApiResult.Error -> ApiResult.Error(r.code, r.error, r.message)
             is ApiResult.NetworkError -> ApiResult.NetworkError(r.exception)
         }
+
+    }
 
     /**
      * Two-phase delete to handle the server's "cancel-then-delete" semantics
@@ -191,21 +209,21 @@ class DownloadsRepository(
      */
     suspend fun delete(id: String): ApiResult<Unit> {
         // First DELETE: may only cancel if record was active.
-        val first = api.delete(id)
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return changed()
+        val first = api.delete(id, authority?.scope)
         if (first is ApiResult.Error && first.code == 404) {
             // Server doesn't know this record — confirmed gone; drop locally.
-            markPendingDelete(id)
-            _records.update { list -> list.filterNot { it.id == id } }
+            if (!localWrite(authority) { markPendingDelete(id); _records.update { list -> list.filterNot { it.id == id } } }) return changed()
             return ApiResult.Success(Unit)
         }
         if (first !is ApiResult.Success) return first.mapToUnit()
         // Second DELETE: removes the (now-cancelled) row. 404 is fine — it
         // means the first DELETE already removed it. Anything else means
         // the row may still exist server-side, so leave the cache untouched.
-        val second = api.delete(id)
+        val second = api.delete(id, authority?.scope)
         if (second is ApiResult.Success || (second is ApiResult.Error && second.code == 404)) {
-            markPendingDelete(id)
-            _records.update { list -> list.filterNot { it.id == id } }
+            if (!localWrite(authority) { markPendingDelete(id); _records.update { list -> list.filterNot { it.id == id } } }) return changed()
             return ApiResult.Success(Unit)
         }
         return second.mapToUnit()
@@ -220,24 +238,36 @@ class DownloadsRepository(
      * caller deletes bytes so a crash can't lose the server-delete intent.
      */
     suspend fun enqueueDurableDelete(serverId: String, profileId: String, recordId: String, mediaFileId: Int?) {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        check(current(authority)) { "The download owner changed" }
         deletions.enqueue(serverId, profileId, recordId, mediaFileId)
-        markPendingDelete(recordId)
-        _records.update { list -> list.filterNot { it.id == recordId } }
+        check(localWrite(authority) {
+            markPendingDelete(recordId)
+            _records.update { list -> list.filterNot { it.id == recordId } }
+        }) { "The download owner changed" }
     }
 
     /** Pending durable tombstones for a scope — lets the Android side finish an
      *  on-device cleanup interrupted by a crash (idempotent byte/metadata delete). */
-    suspend fun pendingDeletionsForScope(serverId: String, profileId: String) =
-        deletions.pendingForScope(serverId, profileId)
+    suspend fun pendingDeletionsForScope(serverId: String, profileId: String): List<org.siloserver.silo.repository.port.PendingDownloadDeletion> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (!current(authority)) return emptyList()
+        val device = devices?.current()?.id
+        val pending = deletions.pendingForScope(serverId, profileId)
+        if (!current(authority)) return emptyList()
+        return pending.filter { authority == null || (authority.scope.serverId == serverId &&
+            authority.scope.profileId == profileId && it.loginId == authority.loginId &&
+            it.origin == authority.scope.serverUrl && it.deviceId == device) }
+    }
 
     /** The server's two-phase DELETE, returning true iff the record is confirmed
      *  gone (first-call 404, or success/404 on the second). Used by [refresh]'s
      *  reconcile to replay an offline delete without touching cache state. */
-    private suspend fun serverDeleteConfirmedGone(id: String): Boolean {
-        val first = api.delete(id)
+    private suspend fun serverDeleteConfirmedGone(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): Boolean {
+        val first = api.delete(id, scope)
         if (first is ApiResult.Error && first.code == 404) return true
         if (first !is ApiResult.Success) return false
-        val second = api.delete(id)
+        val second = api.delete(id, scope)
         return second is ApiResult.Success || (second is ApiResult.Error && second.code == 404)
     }
 

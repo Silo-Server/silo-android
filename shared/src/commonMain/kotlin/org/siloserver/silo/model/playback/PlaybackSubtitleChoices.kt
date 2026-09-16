@@ -123,7 +123,7 @@ fun enrichAuthoritativePlaybackSubtitleChoices(
 private val DOWNLOADED_SUBTITLE_SESSION_PATH =
     Regex("""(/stream/)([^/]+)(/subtitles/[0-9]+\.[^/]+)$""")
 
-/** Retargets a downloaded subtitle artifact to a replacement playback session. */
+/** Legacy-only retargeting. A v2 artifact is server-minted and cannot move to another session. */
 fun rebaseDownloadedSubtitleUrl(url: String, targetSessionId: String): String {
     if (
         targetSessionId.isEmpty() ||
@@ -138,6 +138,9 @@ fun rebaseDownloadedSubtitleUrl(url: String, targetSessionId: String): String {
     val resource = url.substring(0, pathEnd)
     val suffix = url.substring(pathEnd)
     val match = DOWNLOADED_SUBTITLE_SESSION_PATH.find(resource) ?: return url
+    if (resource.contains("/api/v2/")) {
+        return if (match.groups[2]?.value == targetSessionId) url else ""
+    }
     val sessionRange = match.groups[2]?.range ?: return url
     return resource.replaceRange(sessionRange, targetSessionId) + suffix
 }

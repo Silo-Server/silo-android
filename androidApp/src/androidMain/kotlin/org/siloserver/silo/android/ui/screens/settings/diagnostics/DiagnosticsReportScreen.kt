@@ -261,6 +261,7 @@ private fun DiagnosticsSentConfirmation(
 }
 
 internal fun uploadKeptMessage(decision: DiagnosticsUploadDecision): String = when (decision) {
+    DiagnosticsUploadDecision.KeptUncertain -> "The server may have received this report. It has been kept on this device and will not be sent again."
     is DiagnosticsUploadDecision.Uploaded -> "" // handled by the caller
     is DiagnosticsUploadDecision.HostedProcessing ->
         "Report ${decision.shortId} was accepted and is still processing. It will be checked again automatically."

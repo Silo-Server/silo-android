@@ -53,6 +53,17 @@ data class AuthScopeSnapshot(
      */
     val credentialEpoch: Long = 0L,
 ) {
+    /**
+     * Whether [current] is still the identity this snapshot was captured from:
+     * same server, identity generation, and persistent-credential epoch. A
+     * null [current] means the identity is gone, so it never matches.
+     */
+    fun isSameIdentityAs(current: AuthScopeSnapshot?): Boolean =
+        current != null &&
+            current.serverId == serverId &&
+            current.identityGeneration == identityGeneration &&
+            current.credentialEpoch == credentialEpoch
+
     override fun toString(): String =
         "AuthScopeSnapshot(" +
             "serverId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
@@ -95,3 +106,7 @@ internal fun HttpRequestBuilder.requireSiloAuth() {
 fun HttpRequestBuilder.skipSiloAuth() {
     attributes.put(SkipSiloAuthAttributeKey, true)
 }
+
+/** A nonretryable mutation must not be replayed by the auth-refresh interceptor. */
+internal val SingleAttemptAttributeKey = AttributeKey<Boolean>("SiloSingleAttempt")
+internal fun HttpRequestBuilder.singleAttempt() { attributes.put(SingleAttemptAttributeKey, true) }

@@ -108,7 +108,7 @@ fun TvFavoritesScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val controls = rememberPersonalListControls(FavoritesSource, viewModel)
-    PersonalListResumeRefresh(viewModel)
+    PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalGrid(
         title = "Favorites",
         surfaceKey = "personal-favorites",
@@ -132,7 +132,7 @@ fun TvWatchlistScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val controls = rememberPersonalListControls(WatchlistSource, viewModel)
-    PersonalListResumeRefresh(viewModel)
+    PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalGrid(
         title = "Watchlist",
         surfaceKey = "personal-watchlist",
@@ -162,7 +162,7 @@ fun TvFavoritesInline(
         listViewModel = viewModel,
         mediaType = selectedMediaKind.mediaType,
     )
-    PersonalListResumeRefresh(viewModel)
+    PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalInlineGrid(
         state = state,
         controls = controls,
@@ -191,7 +191,7 @@ fun TvWatchlistInline(
 ) {
     val state by viewModel.uiState.collectAsState()
     val controls = rememberPersonalListControls(WatchlistSource, viewModel)
-    PersonalListResumeRefresh(viewModel)
+    PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
     PersonalInlineGrid(
         state = state,
         controls = controls,
@@ -213,7 +213,12 @@ fun TvHistoryScreen(
     viewModel: HistoryViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    PersonalListResumeRefresh(viewModel)
+    PersonalListResumeRefresh(viewModel.uiState, { viewModel.hasLoadedOnce }, viewModel::refresh)
+    LaunchedEffect(state.items.isEmpty(), state.hasMore, state.isLoadingMore, state.isLoading, state.error) {
+        if (state.items.isEmpty() && state.hasMore && !state.isLoading && !state.isLoadingMore && !state.isRefreshing && state.error == null) {
+            viewModel.loadMore()
+        }
+    }
     PersonalGrid(
         title = "Watch History",
         surfaceKey = "personal-history",
@@ -277,14 +282,18 @@ private fun rememberPersonalListControls(
  * the composition can't reset the gate the way a remembered flag did.
  */
 @Composable
-private fun PersonalListResumeRefresh(viewModel: PersonalListViewModel) {
+private fun PersonalListResumeRefresh(
+    uiState: kotlinx.coroutines.flow.StateFlow<PersonalListUiState>,
+    hasLoadedOnce: () -> Boolean,
+    onRefresh: () -> Unit,
+) {
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                val current = viewModel.uiState.value
-                if (viewModel.hasLoadedOnce && !current.isLoading && !current.isRefreshing) {
-                    viewModel.refresh()
+                val current = uiState.value
+                if (hasLoadedOnce() && !current.isLoading && !current.isRefreshing) {
+                    onRefresh()
                 }
             }
         }
@@ -404,7 +413,7 @@ private fun PersonalGrid(
                 // a screen either has a controls holder for its whole life or not.
                 val controlsState = controls?.uiState?.collectAsState()?.value
                 TvCatalogGrid(
-                    items = state.items,
+                    items = if (state.error != null) emptyList() else state.items,
                     // A restored deep scroll position sits at the paging threshold,
                     // so the grid would ask for the next page the moment it lands.
                     // During a refresh that page is fetched at an offset the
@@ -511,7 +520,7 @@ private fun PersonalInlineGrid(
         // until a card exists — which is what it did before the header did.
         val listIsEmpty = state.items.isEmpty() && !state.isLoading && !state.isRefreshing
         TvCatalogGrid(
-            items = state.items,
+            items = if (state.error != null) emptyList() else state.items,
             // A restored deep scroll position sits at the paging threshold,
             // so the grid would ask for the next page the moment it lands.
             // During a refresh that page is fetched at an offset the
@@ -592,7 +601,7 @@ private fun PersonalInlineGrid(
 @Composable
 private fun PersonalControlHeader(
     controlsState: TvPersonalListControlsViewModel.UiState,
-    total: Int,
+    total: Int?,
     isLoading: Boolean,
     onSort: () -> Unit,
     onFilter: () -> Unit,
@@ -616,7 +625,7 @@ private fun PersonalControlHeader(
         Spacer(modifier = Modifier.weight(1f))
         // Hidden until a page has landed, so the count never contradicts a
         // list that is still being replaced.
-        if (!isLoading && total > 0) {
+        if (!isLoading && total != null && total > 0) {
             Text(
                 text = if (total == 1) "1 item" else "$total items",
                 style = MaterialTheme.typography.bodyMedium,

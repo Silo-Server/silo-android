@@ -102,6 +102,7 @@ fun SettingsScreen(
     downloadsViewModel: DownloadsViewModel = koinViewModel(),
     diagnosticsViewModel: DiagnosticsViewModel = koinViewModel(),
 ) {
+    val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     val state by viewModel.uiState.collectAsState()
     var subtitleStyleVisible by remember { mutableStateOf(false) }
     org.siloserver.silo.android.ui.screens.player.SubtitleStyleSheet(
@@ -166,6 +167,18 @@ fun SettingsScreen(
                 )
             }
 
+            if (recovery.visible) {
+                item {
+                    SettingsSectionCard {
+                        SettingsNavigationRow(
+                            label = if (recovery.busy) "Recovering playback…" else "Retry pending playback stops",
+                            description = recovery.message,
+                            onClick = recovery.retry,
+                            enabled = !recovery.busy,
+                        )
+                    }
+                }
+            }
             if (shouldShowDiagnosticsEntry(diagnosticsState)) {
                 item {
                     SettingsSectionCard {
@@ -183,12 +196,6 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
-
-            if (state.settingsAvailability ==
-                org.siloserver.silo.domain.settings.ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED
-            ) {
-                item { SettingsUpgradeRequiredNotice() }
             }
 
             item {
@@ -400,27 +407,6 @@ fun SettingsScreen(
 
     if (showHomeSectionsEditor) {
         HomeSectionsEditor(onDismiss = { showHomeSectionsEditor = false })
-    }
-}
-
-/**
- * Shown when the connected server predates the canonical settings API.
- *
- * The failure mode this replaces was an empty (or silently non-saving)
- * settings screen: the profile preferences resolve to nothing, so the rows
- * render defaults and an edit goes nowhere with no explanation. Saying so is
- * the whole point — playback keeps working from the device's local defaults,
- * only the profile-wide preferences are unavailable.
- */
-@Composable
-fun SettingsUpgradeRequiredNotice(modifier: Modifier = Modifier) {
-    SettingsSection(title = "Server update needed", modifier = modifier) {
-        SettingsProse(
-            title = "This server is too old for profile settings",
-            body = "Subtitle and metadata preferences are stored by the server, and this one " +
-                "does not support them yet. Playback still works using this device's settings. " +
-                "Ask whoever runs the server to update it.",
-        )
     }
 }
 

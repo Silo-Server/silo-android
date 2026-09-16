@@ -29,7 +29,7 @@ class InboxFormattersTest {
         id = id,
         rawType = rawType,
         profileId = "p1",
-        libraryId = libraryId,
+        libraryId = libraryId?.toString(),
         seriesId = seriesId,
         episodeId = episodeId,
         seriesTitle = seriesTitle,

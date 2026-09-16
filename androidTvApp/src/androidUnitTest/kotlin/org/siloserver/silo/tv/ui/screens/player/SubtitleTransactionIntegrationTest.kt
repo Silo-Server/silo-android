@@ -32,7 +32,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -74,14 +77,21 @@ import org.siloserver.silo.model.playback.SubtitleMediaIdentity
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.PlaybackV2Api
+import org.siloserver.silo.network.apiv2.SEQUENCED_PROGRESS_FEATURE
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.PlaybackJournalEntry
+import org.siloserver.silo.repository.PlaybackJournalStore
 import org.siloserver.silo.repository.PlaybackRepository
+import org.siloserver.silo.repository.SequencedPlayback
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -119,23 +129,24 @@ class SubtitleTransactionIntegrationTest {
     @Test
     fun `sidecar replacement remains unpublished until exact typed Media3 mount`() = runTest {
         val harness = harness(
-            replanResponse = { _, _ -> response(sidecarPlan("s2", FILE_ID, B_INDEX)) },
+            replanResponse = { _, _ -> response(sidecarPlan("s1", FILE_ID, B_INDEX).asReplan("s2")) },
         )
         harness.start(sidecarA)
 
         harness.adapter.select(sidecarB)
         runCurrent()
         harness.awaitReplans(1)
-        harness.awaitAdopted("s2")
+        harness.awaitAdoptions(1)
+        runCurrent()
 
         assertEquals(listOf("s1"), harness.replanBaseSessions)
         assertReplan(harness.replanBodies.single(), audioIndex = 0, subtitleIndex = B_INDEX)
-        harness.assertActiveSession("s2")
+        harness.assertActiveSession("s1")
         assertTrue(harness.stoppedSessions.isEmpty())
         assertTrue(harness.persistence.isEmpty())
 
         harness.mountPending(
-            expectedSessionId = "s2",
+            expectedSessionId = "s1",
             tracks =
             listOf(
                 media3Track(
@@ -144,65 +155,27 @@ class SubtitleTransactionIntegrationTest {
                     label = "English",
                 ),
                 harness.sidecarMountedTrack(
-                    expectedSessionId = "s2",
+                    expectedSessionId = "s1",
                     serverIndex = B_INDEX,
                     playerIndex = 9,
                 ),
             ),
         )
         runCurrent()
-        harness.awaitStopped("s1")
         harness.awaitPersistence(1)
         runCurrent()
 
-        assertEquals(listOf(Harness.MountedSelection("s2", 9)), harness.media3Selections)
-        harness.assertActiveSession("s2")
-        assertEquals(mapOf("s1" to 1), harness.stopCounts())
+        assertEquals(listOf(Harness.MountedSelection("s1", 9)), harness.media3Selections)
+        harness.assertActiveSession("s1")
+        // A v2 replan replaces the plan inside the session; nothing is stopped.
+        assertEquals(emptyMap(), harness.stopCounts())
         val persistedSidecar = assertIs<SubtitleIdentity.ServerSidecar>(
             harness.persistence.single().first.identity,
         )
         assertEquals(B_INDEX, persistedSidecar.serverIndex)
         assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedSidecar.media?.trackId)
-        assertEquals("s2", harness.persistence.single().second.sessionId)
+        assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
-    }
-
-    @Test
-    fun `cleanup wait advances the manager-owned test scheduler`() = runTest {
-        val cleanupDispatcher = StandardTestDispatcher()
-        val cleanupJob = SupervisorJob()
-        val cleanupScope = CoroutineScope(cleanupJob + cleanupDispatcher)
-        try {
-            val harness = harness(
-                replanResponse = { _, _ -> response(sidecarPlan("s2", FILE_ID, B_INDEX)) },
-                committedSessionCleanupScope = cleanupScope,
-                committedSessionCleanupScheduler = cleanupDispatcher.scheduler,
-            )
-            harness.start(sidecarA)
-
-            harness.adapter.select(sidecarB)
-            runCurrent()
-            harness.awaitReplans(1)
-            harness.awaitAdopted("s2")
-            harness.mountPending(
-                expectedSessionId = "s2",
-                tracks = listOf(
-                    harness.sidecarMountedTrack(
-                        expectedSessionId = "s2",
-                        serverIndex = B_INDEX,
-                        playerIndex = 9,
-                    ),
-                ),
-            )
-            runCurrent()
-
-            harness.awaitStopped("s1")
-
-            assertEquals(mapOf("s1" to 1), harness.stopCounts())
-            harness.assertNoOrphans()
-        } finally {
-            cleanupJob.cancelAndJoin()
-        }
     }
 
     @Test
@@ -240,9 +213,9 @@ class SubtitleTransactionIntegrationTest {
                 if (index == 0) {
                     firstEntered.complete(Unit)
                     releaseFirst.await()
-                    response(sidecarPlan("s2", FILE_ID, B_INDEX))
+                    response(sidecarPlan("s1", FILE_ID, B_INDEX).asReplan("s2"))
                 } else {
-                    response(basePlan("s3", FILE_ID, audioIndex = 0))
+                    response(basePlan("s1", FILE_ID, audioIndex = 0).asReplan("s3"))
                 }
             },
         )
@@ -254,8 +227,7 @@ class SubtitleTransactionIntegrationTest {
         releaseFirst.complete(Unit)
         runCurrent()
         harness.awaitReplans(2)
-        harness.awaitStopped("s2")
-        harness.awaitAdopted("s3")
+        harness.awaitAdoptions(1)
         assertTrue(
             testScheduler.currentTime < EVENT_TIMEOUT_MS,
             "Adoption reached the pending Media3 mount deadline before the test could mount it.",
@@ -265,21 +237,21 @@ class SubtitleTransactionIntegrationTest {
         assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
         assertReplan(harness.replanBodies[0], audioIndex = 0, subtitleIndex = B_INDEX)
         assertReplan(harness.replanBodies[1], audioIndex = 0, subtitleIndex = -1)
-        harness.assertActiveSession("s3")
-        assertEquals(mapOf("s2" to 1), harness.stopCounts())
+        harness.assertActiveSession("s1")
+        // The superseded candidate shared the live session, so discarding it stops nothing.
+        assertEquals(emptyMap(), harness.stopCounts())
         assertTrue(harness.persistence.isEmpty())
 
-        harness.mountPending(expectedSessionId = "s3", tracks = emptyList())
+        harness.mountPending(expectedSessionId = "s1", tracks = emptyList())
         runCurrent()
-        harness.awaitStopped("s1")
         harness.awaitPersistence(1)
         runCurrent()
 
-        assertEquals(listOf(Harness.MountedSelection("s3", -1)), harness.media3Selections)
-        harness.assertActiveSession("s3")
-        assertEquals(mapOf("s2" to 1, "s1" to 1), harness.stopCounts())
+        assertEquals(listOf(Harness.MountedSelection("s1", -1)), harness.media3Selections)
+        harness.assertActiveSession("s1")
+        assertEquals(emptyMap(), harness.stopCounts())
         assertEquals(listOf(SubtitleIdentity.Off), harness.persistence.map { it.first.identity })
-        assertEquals("s3", harness.persistence.single().second.sessionId)
+        assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
 
@@ -287,22 +259,21 @@ class SubtitleTransactionIntegrationTest {
     fun `burn-in commits without a Media3 text selection`() = runTest {
         val burnIn = SubtitleIdentity.ServerBurnIn(B_INDEX)
         val harness = harness(
-            replanResponse = { _, _ -> response(burnInPlan("s2", FILE_ID, B_INDEX)) },
+            replanResponse = { _, _ -> response(burnInPlan("s1", FILE_ID, B_INDEX).asReplan("s2")) },
         )
         harness.start(sidecarA)
 
         harness.adapter.select(burnIn)
         runCurrent()
         harness.awaitReplans(1)
-        harness.awaitAdopted("s2")
-        harness.awaitStopped("s1")
+        harness.awaitAdoptions(1)
         harness.awaitPersistence(1)
         runCurrent()
 
         assertEquals(listOf("s1"), harness.replanBaseSessions)
         assertReplan(harness.replanBodies.single(), audioIndex = 0, subtitleIndex = B_INDEX)
-        harness.assertActiveSession("s2")
-        assertEquals(mapOf("s1" to 1), harness.stopCounts())
+        harness.assertActiveSession("s1")
+        assertEquals(emptyMap(), harness.stopCounts())
         assertTrue(harness.media3Selections.isEmpty())
         assertNull(harness.adapter.snapshot.localMountIdentity)
         val persistedBurnIn = assertIs<SubtitleIdentity.ServerBurnIn>(
@@ -310,20 +281,20 @@ class SubtitleTransactionIntegrationTest {
         )
         assertEquals(B_INDEX, persistedBurnIn.serverIndex)
         assertEquals("file:$FILE_ID:subtitle:$B_INDEX", persistedBurnIn.media?.trackId)
-        assertEquals("s2", harness.persistence.single().second.sessionId)
+        assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
 
     @Test
-    fun `audio replan rebases downloaded subtitle and waits for exact download mount`() = runTest {
+    fun `audio replan keeps the downloaded subtitle and waits for exact download mount`() = runTest {
         val downloaded = downloadedIdentity(DOWNLOAD_ID)
         val originalDownloaded = downloadedRow(
             index = 40,
             downloadId = DOWNLOAD_ID,
-            url = "/stream/s1/subtitles/$DOWNLOAD_ID.vtt",
+            url = "/api/v2/stream/s1/subtitles/$DOWNLOAD_ID.vtt",
         )
         val harness = harness(
-            replanResponse = { _, _ -> response(basePlan("s2", FILE_ID, audioIndex = 2)) },
+            replanResponse = { _, _ -> response(basePlan("s1", FILE_ID, audioIndex = 2).asReplan("s2")) },
         )
         harness.start(
             committedIdentity = downloaded,
@@ -358,48 +329,49 @@ class SubtitleTransactionIntegrationTest {
         harness.adapter.selectAudio(2)
         runCurrent()
         harness.awaitReplans(1)
-        harness.awaitAdopted("s2")
+        harness.awaitAdoptions(1)
+        runCurrent()
 
         assertEquals(listOf("s1"), harness.replanBaseSessions)
         assertReplan(harness.replanBodies.single(), audioIndex = 2, subtitleIndex = -1)
-        harness.assertActiveSession("s2")
+        harness.assertActiveSession("s1")
         assertTrue(harness.stoppedSessions.isEmpty())
         assertTrue(harness.persistence.isEmpty())
+        // A server-minted v2 artifact stays on its session across an in-place replan.
         assertEquals(
-            "/stream/s2/subtitles/$DOWNLOAD_ID.vtt",
+            "/api/v2/stream/s1/subtitles/$DOWNLOAD_ID.vtt",
             harness.adapter.snapshot.subtitleTracks.single { it.downloadId == DOWNLOAD_ID }.url,
         )
 
         harness.mountPending(
-            expectedSessionId = "s2",
+            expectedSessionId = "s1",
             tracks =
             listOf(
                 media3Track(3, "download-decoy", "English"),
                 harness.downloadedMountedTrack(
-                    expectedSessionId = "s2",
+                    expectedSessionId = "s1",
                     downloadId = DOWNLOAD_ID,
                     playerIndex = 8,
                 ),
             ),
         )
         runCurrent()
-        harness.awaitStopped("s1")
         harness.awaitPersistence(1)
         runCurrent()
 
         assertEquals(
             listOf(
                 Harness.MountedSelection("s1", 7),
-                Harness.MountedSelection("s2", 8),
+                Harness.MountedSelection("s1", 8),
             ),
             harness.media3Selections,
         )
-        harness.assertActiveSession("s2")
-        assertEquals(mapOf("s1" to 1), harness.stopCounts())
+        harness.assertActiveSession("s1")
+        assertEquals(emptyMap(), harness.stopCounts())
         assertEquals(1, harness.persistence.size)
         assertEquals(downloaded, harness.persistence.single().first.identity)
         assertEquals(2, harness.persistence.single().first.audioTrackIndex)
-        assertEquals("s2", harness.persistence.single().second.sessionId)
+        assertEquals("s1", harness.persistence.single().second.sessionId)
         harness.assertNoOrphans()
     }
 
@@ -484,6 +456,7 @@ class SubtitleTransactionIntegrationTest {
             Collections.synchronizedMap(mutableMapOf())
         private var mountedSubtitleIdentity: SubtitleIdentity? = null
         val media3Selections = mutableListOf<MountedSelection>()
+        private val adoptions = AtomicInteger()
 
         private val replanEvents = Channel<Unit>(Channel.UNLIMITED)
         private val persistenceEvents = Channel<Unit>(Channel.UNLIMITED)
@@ -494,8 +467,32 @@ class SubtitleTransactionIntegrationTest {
         private val client = HttpClient(
             MockEngine { request ->
                 val path = request.url.encodedPath
+                var status = HttpStatusCode.OK
                 val payload = when {
-                    path == "/api/v1/playback/start" -> {
+                    path == "/api/v2/playback/capabilities" -> {
+                        return@MockEngine respond(
+                            """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["server_remux_hls"]}""",
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    }
+                    path == "/api/v2/account/me" -> {
+                        return@MockEngine respond(
+                            """{"id":"account-1","username":"test","email":"","role":"user"}""",
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    }
+                    path == "/api/v2/playback/route-events" -> {
+                        val sent = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        return@MockEngine respond(
+                            """{"event_id":${sent["event_id"]},"outcome":"accepted"}""",
+                            HttpStatusCode.Accepted,
+                            headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
+                    }
+                    path == "/api/v2/playback/start" -> {
+                        status = HttpStatusCode.Created
                         val body = SiloJson.parseToJsonElement(
                             request.body.toByteArray().decodeToString(),
                         ).jsonObject
@@ -524,24 +521,32 @@ class SubtitleTransactionIntegrationTest {
                         replanResponse(replanIndex.getAndIncrement(), body)
                     }
                     request.method == HttpMethod.Delete &&
-                        path.startsWith("/api/v1/playback/") -> {
+                        path.startsWith("/api/v2/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
                         stoppedSessions += sessionId
-                        null
+                        val sent = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        return@MockEngine respond(
+                            """{"stop_id":${sent["stop_id"]},"outcome":"stopped"}""",
+                            HttpStatusCode.OK,
+                            headersOf(HttpHeaders.ContentType, "application/json"),
+                        )
                     }
                     else -> null
                 }
                 respond(
-                    content = payload?.let(SiloJson::encodeToString) ?: "{}",
-                    status = HttpStatusCode.OK,
+                    content = payload?.let(::wireDecision) ?: "{}",
+                    status = status,
                     headers = headersOf(HttpHeaders.ContentType, "application/json"),
                 )
             },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
+        private val sequenced = SequencedPlayback(
+            PlaybackV2Api(client, ApiV2Gate.Unrestricted), IntegrationTokenManager, IntegrationTokenManager, IntegrationPlaybackJournal(),
+        ) { java.util.UUID.randomUUID().toString() }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
+            playbackRepository = PlaybackRepository(sequenced),
             tokenManager = IntegrationTokenManager,
             committedSessionCleanupScope = committedSessionCleanupScope,
         )
@@ -629,6 +634,7 @@ class SubtitleTransactionIntegrationTest {
                         adoptedPlaybackRows[candidate.session.sessionId] =
                             adoption.playback.subtitleTracks
                         mountedSubtitleIdentity = adoption.committed.identity
+                        adoptions.incrementAndGet()
                         TvSubtitleAdoptionResult.Adopted
                     } else {
                         TvSubtitleAdoptionResult.Superseded
@@ -744,7 +750,7 @@ class SubtitleTransactionIntegrationTest {
                     it.serverTrackId == "file:$FILE_ID:subtitle:$serverIndex" &&
                     it.serverDelivery == SUBTITLE_DELIVERY_SIDECAR
             }
-            assertEquals("/stream/$expectedSessionId/subtitles/$serverIndex.vtt", row.url)
+            assertEquals("/api/v2/stream/$expectedSessionId/subtitles/$serverIndex.vtt", row.url)
             val artifactTrackId = subtitleArtifactTrackId(row.index)
             assertEquals(subtitleArtifactTrackId(serverIndex), artifactTrackId)
             return media3Track(
@@ -760,7 +766,7 @@ class SubtitleTransactionIntegrationTest {
             playerIndex: Int,
         ): PlayerTrackEntry {
             val row = mountedRow(expectedSessionId) { it.downloadId == downloadId }
-            assertEquals("/stream/$expectedSessionId/subtitles/$downloadId.vtt", row.url)
+            assertEquals("/api/v2/stream/$expectedSessionId/subtitles/$downloadId.vtt", row.url)
             val artifactTrackId = downloadedSubtitleArtifactTrackId(
                 requireNotNull(row.downloadId),
             )
@@ -802,15 +808,13 @@ class SubtitleTransactionIntegrationTest {
             }
         }
 
-        suspend fun awaitAdopted(sessionId: String) {
+        /** A v2 replan is adopted in place, so adoption is counted rather than keyed by session. */
+        suspend fun awaitAdoptions(count: Int) {
             awaitHarnessCondition(
                 transactionScheduler = transactionScheduler,
                 cleanupScheduler = transactionScheduler,
                 timeoutMillis = EVENT_TIMEOUT_MS,
-                condition = {
-                    manager.activeSessionIdForTest() == sessionId &&
-                        lifecycle.activeSessionId() == sessionId
-                },
+                condition = { adoptions.get() >= count },
             )
         }
 
@@ -899,11 +903,15 @@ class SubtitleTransactionIntegrationTest {
             serverFeatures = listOf(
                 PLAYBACK_PLAN_V3_FEATURE,
                 NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                SEQUENCED_PROGRESS_FEATURE,
             ),
             outcome = PlaybackDecisionOutcome.PLAYABLE,
             sessionId = plan.sessionId,
             playbackPlan = plan,
         )
+
+        /** A replacement plan for the same session carries its own plan identity. */
+        fun PlaybackPlanV3.asReplan(key: String) = copy(planId = "plan-$key", planAttemptKey = "v3:test:$key")
 
         fun basePlan(
             sessionId: String,
@@ -915,7 +923,7 @@ class SubtitleTransactionIntegrationTest {
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
             stream = PlaybackStreamV3(
-                url = "/stream/$sessionId/master.m3u8",
+                url = "/api/v2/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
                 container = "mpegts",
                 mimeType = "application/x-mpegURL",
@@ -948,7 +956,7 @@ class SubtitleTransactionIntegrationTest {
                 mode = PlaybackSubtitleModeV3.CONVERT,
                 trackId = "file:$fileId:subtitle:$subtitleIndex",
                 artifact = PlaybackSubtitleArtifactV3(
-                    url = "/stream/$sessionId/subtitles/$subtitleIndex.vtt",
+                    url = "/api/v2/stream/$sessionId/subtitles/$subtitleIndex.vtt",
                     mimeType = "text/vtt",
                     format = "webvtt",
                 ),
@@ -1003,7 +1011,7 @@ class SubtitleTransactionIntegrationTest {
                 } else {
                     SUBTITLE_DELIVERY_SIDECAR
                 },
-                url = if (burnIn) null else "/stream/$sessionId/subtitles/$index.vtt",
+                url = if (burnIn) null else "/api/v2/stream/$sessionId/subtitles/$index.vtt",
             )
         }
 
@@ -1103,7 +1111,31 @@ private class IntegrationPersonalDataRepository : PersonalDataRepository(
         ApiResult.Success(Unit)
 }
 
-private object IntegrationTokenManager : TokenManager {
+/** v2 serves file identities as strings; the fixtures above build them as ints. */
+private fun wireDecision(response: PlaybackDecisionResponseV3): String {
+    fun wire(value: JsonElement, key: String = ""): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.mapValues { (name, child) -> wire(child, name) })
+        is JsonArray -> JsonArray(value.map { wire(it) })
+        is JsonPrimitive -> if (key in setOf("requested_media_file_id", "effective_media_file_id", "media_file_id"))
+            JsonPrimitive(value.content) else value
+    }
+    return wire(SiloJson.parseToJsonElement(SiloJson.encodeToString(response))).toString()
+}
+
+private class IntegrationPlaybackJournal : PlaybackJournalStore {
+    var entries = emptyList<PlaybackJournalEntry>()
+    override suspend fun read() = entries
+    override suspend fun write(entries: List<PlaybackJournalEntry>) {
+        this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
+    }
+}
+
+private object IntegrationTokenManager : TokenManager, DurableLoginAuthorityProvider {
+    private val scope = AuthScopeSnapshot(
+        "server-1", "profile-1", "https://example.invalid", "proof",
+        identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1,
+    )
+    override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login-1", scope)
     override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
     override suspend fun getAccessToken(): String? = null
     override suspend fun getRefreshToken(): String? = null
@@ -1119,7 +1151,7 @@ private object IntegrationTokenManager : TokenManager {
     override suspend fun getCurrentServerId(): String? = null
     override suspend fun switchActiveServer(serverId: String?) {}
     override suspend fun signOutCurrentServer() {}
-    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
+    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot = scope
 }
 
 /**

@@ -7,6 +7,32 @@ import kotlin.test.assertEquals
 class DownloadStatusLabelTest {
 
     @Test
+    fun localCompletionIsReadyDespiteServerAdmissionStatus() {
+        for (server in listOf(DownloadStatus.Ready, DownloadStatus.Queued)) {
+            val status = downloadItemDisplayStatus(DownloadStatus.Completed, server)
+            val state = downloadItemFileState(status, hasLocalMedia = true)
+            val progress = downloadItemDisplayProgress(status, rawProgress = 0f, hasLocalMedia = true)
+            assertEquals(true, state.isComplete)
+            assertEquals(1f, progress)
+            assertEquals("Ready", downloadStatusLabel(status, progress))
+        }
+    }
+
+    @Test
+    fun serverReadyCannotHideMissingCompletedLocalFile() {
+        val status = downloadItemDisplayStatus(DownloadStatus.Completed, DownloadStatus.Ready)
+        val state = downloadItemFileState(status, hasLocalMedia = false)
+        assertEquals(false, state.isComplete)
+        assertEquals("Missing file", downloadStatusLabel(status, 0f, isMissingLocal = state.isMissingLocal))
+    }
+
+    @Test
+    fun incompleteLocalTransferStillUsesServerStatus() {
+        assertEquals(DownloadStatus.Downloading, downloadItemDisplayStatus(DownloadStatus.Queued, DownloadStatus.Downloading))
+        assertEquals(DownloadStatus.Queued, downloadItemDisplayStatus(DownloadStatus.Queued, null))
+    }
+
+    @Test
     fun queuedWithNoBytesShowsQueued() {
         assertEquals("Queued", downloadStatusLabel(DownloadStatus.Queued, progress = 0f))
     }

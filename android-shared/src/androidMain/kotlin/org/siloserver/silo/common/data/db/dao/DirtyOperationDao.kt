@@ -20,6 +20,16 @@ import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 @Dao
 interface DirtyOperationDao {
 
+    // Personal-data v1 rows are held byte-for-byte, including crash-stranded rows.
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+        "AND targetContentId = :contentId AND opKind IN ('SET_WATCHED', 'SET_RATING', 'SET_POSITION', 'PERSONAL_V2')")
+    suspend fun unresolvedPersonalCount(serverId: String, profileId: String, contentId: String): Int
+
+    /** A newer desired-state write supersedes any v2 personal row the previous attempt left behind. */
+    @Query("DELETE FROM dirty_operations WHERE opKind = 'PERSONAL_V2' AND serverId = :serverId " +
+        "AND profileId = :profileId AND targetContentId = :contentId")
+    suspend fun deletePersonalV2ForItem(serverId: String, profileId: String, contentId: String)
+
     @Insert
     suspend fun insert(op: DirtyOperationEntity): Long
 
@@ -34,13 +44,16 @@ interface DirtyOperationDao {
         return insert(op)
     }
 
+    @Query("UPDATE dirty_operations SET state = 'ebook_identity_quarantined' WHERE id = :id AND opKind = 'SET_EBOOK_PROGRESS' AND state = 'pending'")
+    suspend fun quarantineEbookProgress(id: Long): Int
+
     @Query(
         "DELETE FROM dirty_operations WHERE coalesceKey = :coalesceKey AND state = '${DirtyOperationEntity.STATE_PENDING}'",
     )
     suspend fun deletePendingByCoalesceKey(coalesceKey: String)
 
     @Query(
-        "SELECT * FROM dirty_operations WHERE coalesceKey = :coalesceKey " +
+        "SELECT * FROM dirty_operations WHERE coalesceKey = :coalesceKey AND state != 'legacy_membership_quarantined' " +
             "ORDER BY id DESC LIMIT 1",
     )
     suspend fun getLatestByCoalesceKey(coalesceKey: String): DirtyOperationEntity?
@@ -132,12 +145,12 @@ interface DirtyOperationDao {
      */
     @Query(
         "SELECT candidate.* FROM dirty_operations candidate " +
-            "WHERE candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
+            "WHERE candidate.opKind = 'SET_EBOOK_PROGRESS' AND candidate.state = '${DirtyOperationEntity.STATE_PENDING}' " +
             "AND candidate.nextAttemptAtMs <= :nowMs " +
             "AND candidate.serverId = :serverId AND candidate.profileId = :profileId " +
             "AND NOT EXISTS (" +
             "SELECT 1 FROM dirty_operations older " +
-            "WHERE older.serverId = candidate.serverId " +
+            "WHERE older.opKind = 'SET_EBOOK_PROGRESS' AND older.serverId = candidate.serverId " +
             "AND older.profileId = candidate.profileId " +
             "AND older.targetContentId = candidate.targetContentId " +
             "AND older.state IN ('${DirtyOperationEntity.STATE_PENDING}', '${DirtyOperationEntity.STATE_IN_FLIGHT}') " +
@@ -199,7 +212,7 @@ interface DirtyOperationDao {
      * never touches another server/profile's rows.
      */
     @Query(
-        "DELETE FROM dirty_operations WHERE state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+        "DELETE FROM dirty_operations WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND profileId = :profileId " +
             "AND EXISTS (SELECT 1 FROM dirty_operations newer " +
             "WHERE newer.coalesceKey = dirty_operations.coalesceKey " +
@@ -211,7 +224,7 @@ interface DirtyOperationDao {
     /** Return remaining crash-stranded in-flight rows (for one scope) to pending. */
     @Query(
         "UPDATE dirty_operations SET state = '${DirtyOperationEntity.STATE_PENDING}' " +
-            "WHERE state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
+            "WHERE opKind = 'SET_EBOOK_PROGRESS' AND state = '${DirtyOperationEntity.STATE_IN_FLIGHT}' " +
             "AND serverId = :serverId AND profileId = :profileId",
     )
     suspend fun resetInFlightToPending(serverId: String, profileId: String)
@@ -221,22 +234,71 @@ interface DirtyOperationDao {
             "state = '${DirtyOperationEntity.STATE_PENDING}', " +
             "attemptCount = attemptCount + 1, " +
             "lastAttemptAtMs = :nowMs, nextAttemptAtMs = :nextAttemptAtMs, lastError = :error " +
-            "WHERE id = :id",
+            "WHERE id = :id AND state != 'legacy_membership_quarantined'",
     )
     suspend fun recordFailure(id: Long, nowMs: Long, nextAttemptAtMs: Long, error: String?)
 
     @Query("SELECT * FROM dirty_operations WHERE id = :id")
     suspend fun getById(id: Long): DirtyOperationEntity?
 
-    @Query("DELETE FROM dirty_operations WHERE id = :id")
+    @Query("DELETE FROM dirty_operations WHERE id = :id AND state != 'legacy_membership_quarantined'")
     suspend fun deleteById(id: Long)
 
     @Query(
         "SELECT COUNT(*) FROM dirty_operations " +
-            "WHERE serverId = :serverId AND profileId = :profileId",
+            "WHERE serverId = :serverId AND profileId = :profileId AND state != 'legacy_membership_quarantined'",
     )
     suspend fun countForScope(serverId: String, profileId: String): Int
 
-    @Query("SELECT COUNT(*) FROM dirty_operations")
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE state != 'legacy_membership_quarantined'")
     suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE state = 'legacy_membership_quarantined'")
+    suspend fun quarantinedMembershipCount(): Int
+
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE membershipAuthority = :authority AND state = 'membership_ready'")
+    suspend fun readyMembershipCount(authority: String): Int
+
+    /** Future worker cutover must use this count, not all unresolved membership states. */
+    @Query("SELECT COUNT(*) FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
+        "AND opKind = 'SET_EBOOK_PROGRESS' AND state IN ('pending', 'in_flight')")
+    suspend fun runnableLegacyCountForScope(serverId: String, profileId: String): Int
+
+    @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +
+        "AND state = 'membership_ready' ORDER BY id LIMIT :limit")
+    suspend fun readyMembershipCommands(authority: String, limit: Int): List<DirtyOperationEntity>
+
+    /** Membership rows never enter the legacy retry/drain states. */
+    @Query("DELETE FROM dirty_operations WHERE coalesceKey = :key AND state = 'membership_ready'")
+    suspend fun deleteReadyMembership(key: String)
+
+    @Transaction
+    suspend fun enqueueMembership(op: DirtyOperationEntity): Long {
+        require(op.state == "membership_ready" && !op.membershipAuthority.isNullOrBlank())
+        deleteReadyMembership(op.coalesceKey)
+        return insert(op)
+    }
+
+    @Query("UPDATE dirty_operations SET state = 'membership_sending', membershipClaim = :claim, " +
+        "membershipOwner = :owner WHERE id = :id AND membershipAuthority = :authority " +
+        "AND state = 'membership_ready' AND NOT EXISTS (SELECT 1 FROM dirty_operations older " +
+        "WHERE older.coalesceKey = dirty_operations.coalesceKey AND older.state = 'membership_sending')")
+    suspend fun claimMembership(id: Long, authority: String, claim: String, owner: String): Int
+
+    @Query("UPDATE dirty_operations SET state = :state WHERE id = :id AND membershipClaim = :claim " +
+        "AND membershipAuthority = :authority AND state = :expectedState")
+    suspend fun transitionMembership(id: Long, claim: String, authority: String, expectedState: String, state: String): Int
+
+    @Query("DELETE FROM dirty_operations WHERE id = :id AND membershipClaim = :claim " +
+        "AND membershipAuthority = :authority AND state = :state")
+    suspend fun resolveMembership(id: Long, claim: String, authority: String, state: String): Int
+
+    /** Call once at process startup, before any membership sender starts. Never reclaim by timeout. */
+    @Query("UPDATE dirty_operations SET state = 'membership_reconcile' " +
+        "WHERE state = 'membership_sending' AND (membershipOwner IS NULL OR membershipOwner != :owner)")
+    suspend fun recoverMembership(owner: String): Int
+
+    @Query("SELECT * FROM dirty_operations WHERE membershipAuthority = :authority " +
+        "AND state IN ('membership_ready', 'membership_reconcile', 'membership_paused') ORDER BY id LIMIT :limit")
+    suspend fun membershipCommands(authority: String, limit: Int): List<DirtyOperationEntity>
 }

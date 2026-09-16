@@ -73,9 +73,8 @@ class TvSettingsViewModel(
         val profileAvatar: String? = null,
         val serverUrl: String = "",
         val serverName: String = "",
-        // Whether this server serves the canonical settings API at all. When
-        // it reports SERVER_UPGRADE_REQUIRED the pane explains that instead of
-        // showing rows whose edits go nowhere; playback is unaffected.
+        // Whether the canonical settings probe succeeded; playback is
+        // unaffected either way.
         val settingsAvailability: ProfileSettingsController.Availability =
             ProfileSettingsController.Availability.UNKNOWN,
         // Quality is two orthogonal values behind one picker:
@@ -226,12 +225,8 @@ class TvSettingsViewModel(
 
     /**
      * Resolves the profile-scoped preferences through the canonical settings
-     * API, and records whether this server speaks it at all.
-     *
-     * On [ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED] the
-     * values are left alone and the Subtitles pane explains why — rendering
-     * rows whose edits silently go nowhere is the failure this replaces.
-     * Playback keeps running from the device-scoped store.
+     * API. When the probe fails the values are left alone. Playback keeps
+     * running from the device-scoped store.
      */
     fun loadProfileSettings() {
         viewModelScope.launch {

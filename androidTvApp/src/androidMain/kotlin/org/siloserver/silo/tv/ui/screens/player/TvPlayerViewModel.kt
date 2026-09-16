@@ -780,6 +780,7 @@ class TvPlayerViewModel(
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
+        if (_uiState.value.sessionId?.let(playbackSessionManager::isSequenced) == true) return
         if (positionSec < 0.0) return
         val cid = contentId.takeIf { it.isNotBlank() } ?: return
         val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId ?: return
@@ -1689,7 +1690,7 @@ class TvPlayerViewModel(
                 delivery = ready.plan.delivery,
                 streamUrl = ready.plan.stream.url,
                 transportMountNonce = mountNonce,
-                requestHeaders = ready.plan.stream.headers,
+                requestHeaders = ready.plan.stream.effectiveRequestHeaders,
                 selectedFileId = fileId,
                 mediaFileId = fileId,
                 selectedFileResolution = version?.resolution
@@ -2571,7 +2572,7 @@ class TvPlayerViewModel(
                                 delivery = decision.plan.delivery,
                                 streamUrl = decision.plan.stream.url,
                                 transportMountNonce = transportMountNonce,
-                                requestHeaders = decision.plan.stream.headers,
+                                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                                 selectedFileId = effectiveFileId,
                                 mediaFileId = effectiveFileId,
                                 selectedFileResolution = effectiveResolution,
@@ -3670,7 +3671,7 @@ class TvPlayerViewModel(
                 delivery = decision.plan.delivery,
                 streamUrl = decision.plan.stream.url,
                 transportMountNonce = transportMountNonce,
-                requestHeaders = decision.plan.stream.headers,
+                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                 container = decision.plan.stream.container ?: it.container,
                 startPosition = decision.plan.timeline.playerStartSeconds,
                 position = sourcePosition,
@@ -4679,6 +4680,8 @@ class TvPlayerViewModel(
     }
 
     fun closeSubtitleSearchDialog() {
+        subtitleDownloadGeneration++
+        _subtitleSearch.update { it.copy(downloadingResultId = null) }
         _uiState.update { it.copy(showSubtitleSearchDialog = false) }
     }
 
@@ -4721,10 +4724,14 @@ class TvPlayerViewModel(
         }
     }
 
+    private var subtitleDownloadGeneration = 0L
+
     fun downloadSubtitle(result: SubtitleResult) {
         val mediaFileId = _uiState.value.mediaFileId ?: return
+        val sessionId = _uiState.value.sessionId
         if (_subtitleSearch.value.downloadingResultId != null) return
         _subtitleSearch.update { it.copy(downloadingResultId = result.id, error = null) }
+        val generation = ++subtitleDownloadGeneration
         viewModelScope.launch {
             val request = SubtitleDownloadRequest(
                 mediaFileId = mediaFileId,
@@ -4736,12 +4743,15 @@ class TvPlayerViewModel(
                 score = result.score,
                 hearingImpaired = result.hearingImpaired,
             )
-            when (val r = subtitlesRepository.download(request)) {
+            val r = subtitlesRepository.download(request)
+            if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
+            when (r) {
                 is ApiResult.Success -> {
                     val merged = refreshSubtitles(
                         autoSelectSubtitleId = r.data.subtitle.id,
                         source = TvSubtitleRefreshSource.Download,
                     )
+                    if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleSearch.update {
                         if (merged) {
                             it.copy(downloadingResultId = null, completedNonce = it.completedNonce + 1)
@@ -4882,10 +4892,11 @@ class TvPlayerViewModel(
 
     fun refreshAiQuota() {
         viewModelScope.launch {
-            when (val r = subtitlesRepository.aiQuota()) {
-                is ApiResult.Success -> _aiTranslate.update { it.copy(quota = r.data) }
-                else -> Unit // quota line is simply absent on failure
-            }
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
+            val result = subtitlesRepository.aiQuota()
+            val now = subtitlesRepository.captureJobAuthority()
+            if (!owner.isSameIdentityAs(now) || owner.profileId != now?.profileId || owner.profileToken != now?.profileToken) return@launch
+            if (result is ApiResult.Success) _aiTranslate.update { it.copy(quota = result.data) }
         }
     }
 
@@ -4895,28 +4906,48 @@ class TvPlayerViewModel(
      * streaming live cues. Runs in viewModelScope so player exit cancels the
      * poll via structured concurrency (the server job itself keeps running).
      */
+    private var aiCreationInFlight = false
+    private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
+
     fun submitAiTranslate(
         kind: String,
         sourceIndex: Int,
         sourceLanguage: String?,
         targetLanguage: String,
     ) {
-        val mediaFileId = _uiState.value.mediaFileId ?: return
+        val state = _uiState.value
+        val generation = contentLoadGeneration
+        val mediaFileId = state.mediaFileId ?: return
         val phase = _aiTranslate.value.phase
-        if (phase is AiJobPhase.Submitting || phase is AiJobPhase.Running) return
+        if (aiCreationInFlight || phase is AiJobPhase.Submitting || phase is AiJobPhase.Running) return
+        aiCreationInFlight = true
         _aiTranslate.update { it.copy(phase = AiJobPhase.Submitting) }
         aiJobPollJob?.cancel()
-        aiJobPollJob = viewModelScope.launch {
+        aiJobPollJob = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val owner = subtitlesRepository.captureJobAuthority() ?: run {
+                _aiTranslate.update { it.copy(phase = AiJobPhase.Failed("Sign in before starting subtitle processing.")) }
+                return@launch
+            }
+            fun samePlayback() = generation == contentLoadGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
+            suspend fun ownsRequest(): Boolean {
+                val now = subtitlesRepository.captureJobAuthority()
+                return samePlayback() && owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
+            }
+            if (!ownsRequest()) return@launch
             val request = SubtitleTranslateRequest(
                 mediaFileId = mediaFileId,
                 kind = kind,
                 sourceIndex = sourceIndex,
                 sourceLanguage = sourceLanguage?.ifBlank { null },
                 targetLanguage = targetLanguage.ifBlank { null },
-                startPosition = _uiState.value.position,
+                startPosition = state.position,
             )
-            val job = when (val r = subtitlesRepository.translate(request)) {
-                is ApiResult.Success -> r.data.job
+            val r = subtitlesRepository.translate(request, owner)
+            if (!ownsRequest()) return@launch
+            val job = when (r) {
+                is ApiResult.Success -> r.data.job.let { job ->
+                    if (!r.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
+                }
                 is ApiResult.Error -> {
                     // 429 = quota exhausted → refresh quota so the dialog
                     // flips to the exhausted state; 503 = engine unconfigured.
@@ -4933,14 +4964,16 @@ class TvPlayerViewModel(
                     return@launch
                 }
             }
+            aiCancelOwner = job.id to owner
             activeAiJobId = job.id
             _aiTranslate.update {
                 it.copy(phase = AiJobPhase.Running(job.progress, job.progressMessage.ifBlank { null }))
             }
             val outcome = subtitlesRepository.pollJob(
                 jobId = job.id,
+                expectedScope = owner,
                 onUpdate = { update ->
-                    _aiTranslate.update {
+                    if (samePlayback()) _aiTranslate.update {
                         it.copy(
                             phase = AiJobPhase.Running(
                                 update.progress,
@@ -4950,6 +4983,7 @@ class TvPlayerViewModel(
                     }
                 },
             )
+            if (!ownsRequest()) return@launch
             activeAiJobId = null
             when (outcome) {
                 is SubtitlesRepository.SubtitleJobOutcome.Completed -> {
@@ -4957,6 +4991,7 @@ class TvPlayerViewModel(
                         autoSelectSubtitleId = outcome.resultSubtitleId,
                         source = TvSubtitleRefreshSource.AiCompletion,
                     )
+                    if (!ownsRequest()) return@launch
                     _aiTranslate.update {
                         if (merged) {
                             it.copy(phase = AiJobPhase.Idle, completedNonce = it.completedNonce + 1)
@@ -4976,18 +5011,19 @@ class TvPlayerViewModel(
                     it.copy(phase = AiJobPhase.Idle)
                 }
             }
-        }
+        }.also { job -> job.invokeOnCompletion { aiCreationInFlight = false } }
     }
 
     /** Dialog Cancel row: stop polling, ask the server to cancel, return to the form. */
     fun cancelAiTranslateJob() {
         val jobId = activeAiJobId
+        val owner = aiCancelOwner?.takeIf { it.first == jobId }?.second
         aiJobPollJob?.cancel()
         aiJobPollJob = null
         activeAiJobId = null
         _aiTranslate.update { it.copy(phase = AiJobPhase.Idle) }
-        if (jobId != null) {
-            viewModelScope.launch { subtitlesRepository.cancelJob(jobId) }
+        if (jobId != null && owner != null) {
+            viewModelScope.launch { subtitlesRepository.cancelJob(jobId, owner) }
         }
     }
 
@@ -5158,7 +5194,7 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val fileId = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if (scope != null && contentId.isNotBlank() && fileId != null) {
+        if ((lastAdoptedSessionId ?: state.sessionId)?.let(playbackSessionManager::isSequenced) != true && scope != null && contentId.isNotBlank() && fileId != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -5195,12 +5231,12 @@ class TvPlayerViewModel(
     }
 
     /** Ordered path used by auto-advance before the singleton lifecycle starts the next item. */
-    suspend fun stopSessionForExit() {
+    suspend fun stopSessionForExit(): Boolean {
         subtitleTransactions.invalidateAndAwaitSettlement()
         playbackMutationFence.invalidateAll()
         prepareSessionExit()
         subtitleTransactions.persistCommittedSelectionAndFlush()
-        lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)
+        return lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)
     }
 
     /** Ordinary Back/remote-stop path: snapshot locally and return to detail immediately. */
@@ -5548,7 +5584,7 @@ class TvPlayerViewModel(
         val cid = contentId.takeIf { it.isNotBlank() }
         val fid = _uiState.value.selectedFileId ?: _uiState.value.mediaFileId
         val scope = finalPositionScope
-        if (scope != null && cid != null && fid != null) {
+        if (exitSessionId?.let(playbackSessionManager::isSequenced) != true && scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,

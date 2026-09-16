@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -31,13 +33,13 @@ class AuthRepositoryAccountReplacementTest {
         val client = HttpClient(
             MockEngine { request ->
                 assertEquals(
-                    "/api/v1/invitations/invite-token/accept",
+                    "/api/v2/invitations/invite-token/accept",
                     request.url.encodedPath,
                 )
                 respond(
                     content =
-                        """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"user":{"id":7,"username":"new-user","email":"new@example.com","role":"user"}}""",
-                    status = HttpStatusCode.OK,
+                        """{"status":"accepted","login_status":"signed_in","username":"new-user","tokens":{"access_token":"new-access","refresh_token":"new-refresh","expires_in":3600,"user":{"id":"7","username":"new-user","email":"new@example.com","role":"user"}}}""",
+                    status = HttpStatusCode.Created,
                     headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                 )
             },
@@ -45,7 +47,7 @@ class AuthRepositoryAccountReplacementTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val repository = AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
             serverRegistry = registry,
         )
@@ -57,7 +59,7 @@ class AuthRepositoryAccountReplacementTest {
         )
 
         assertEquals("new-user", assertIs<org.siloserver.silo.network.ApiResult.Success<*>>(result).data.let {
-            (it as org.siloserver.silo.model.auth.User).username
+            (it as org.siloserver.silo.model.auth.InvitationClaimResult).username
         })
         assertEquals(
             AccountReplacement(
@@ -87,6 +89,8 @@ private data class AccountReplacement(
 private class RecordingAccountReplacementTokenManager : TokenManager {
     override val sessionExpired = MutableSharedFlow<Unit>()
     var replacement: AccountReplacement? = null
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(
+        if (replacement == null) 0 else 1, "old-server", "https://old.example")
 
     override suspend fun replaceAccountSession(
         serverId: String?,
@@ -96,6 +100,7 @@ private class RecordingAccountReplacementTokenManager : TokenManager {
         expiresIn: Long,
         profileId: String?,
         profileToken: String?,
+        expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
     ) {
         check(serverUrl == null) { "a registry-backed invitation must install by server id" }
         check(replacement == null) { "the session must be installed exactly once" }

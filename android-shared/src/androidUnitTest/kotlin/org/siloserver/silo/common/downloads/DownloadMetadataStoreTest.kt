@@ -13,6 +13,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * Room-backed metadata store — replaces the old on-disk `.record.json` sidecar
@@ -186,4 +188,37 @@ class DownloadMetadataStoreTest {
         assertEquals(emptyList(), store.listSidecars("srv1", "profB"))
         assertEquals(listOf(3), store.listSidecars("srv2", "profA").map { it.record.mediaFileId })
     }
+    @Test fun `old deletion cannot erase a replacement in the same file slot`() = runTest {
+        val old = stubSidecar(7)
+        val replacement = old.copy(record = old.record.copy(id = "replacement"))
+        store.writeSidecar("server", "profile", replacement)
+        var deletedBytes = false
+        assertFalse(store.completePendingDeletion("server", "profile", 7, old.record.id) {
+            deletedBytes = true; true
+        })
+        assertFalse(deletedBytes)
+        assertEquals(replacement, store.readSidecar("server", "profile", 7))
+    }
+
+    @Test fun `matching cleanup removes metadata only after byte deletion succeeds`() = runTest {
+        val row = stubSidecar(7)
+        store.writeSidecar("server", "profile", row)
+        assertFalse(store.completePendingDeletion("server", "profile", 7, row.record.id) { false })
+        assertNotNull(store.readSidecar("server", "profile", 7))
+        assertTrue(store.completePendingDeletion("server", "profile", 7, row.record.id) { true })
+        assertNull(store.readSidecar("server", "profile", 7))
+    }
+
+    @Test fun `missing or other profile metadata cannot authorize byte cleanup`() = runTest {
+        val row = stubSidecar(7)
+        store.writeSidecar("server", "profile", row)
+        assertFalse(store.completePendingDeletion("server", "other-profile", 7, row.record.id) {
+            error("Another profile's bytes must not be touched")
+        })
+        assertFalse(store.completePendingDeletion("server", "profile", 8, row.record.id) {
+            error("Missing metadata cannot prove byte ownership")
+        })
+        assertNotNull(store.readSidecar("server", "profile", 7))
+    }
+
 }

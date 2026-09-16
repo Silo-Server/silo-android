@@ -19,6 +19,7 @@ data class SaveEbookProgressRequest(
     @SerialName("file_id") val fileId: Int,
     val location: String,
     val progress: Double,
+    @SerialName("updated_at") val updatedAt: String? = null,
 )
 
 @Serializable
@@ -41,6 +42,7 @@ data class EbookAnnotationListResponse(
 @Serializable
 data class EbookAnnotation(
     val id: String,
+    val etag: String? = null,
     @SerialName("content_id") val contentId: String,
     val kind: String,
     @SerialName("cfi_range") val cfiRange: String? = null,

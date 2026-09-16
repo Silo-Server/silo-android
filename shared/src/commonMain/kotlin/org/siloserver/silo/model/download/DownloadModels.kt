@@ -34,6 +34,9 @@ data class DownloadRecord(
     @SerialName("effective_quality") val effectiveQuality: String? = null,
     @SerialName("delivery_format") val deliveryFormat: String? = null,
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    val revision: Int? = null,
+    @SerialName("status_event_at") val statusEventAt: String? = null,
 )
 
 /**
@@ -43,6 +46,13 @@ data class DownloadRecord(
 @Serializable
 data class DownloadsListResponse(
     val downloads: List<DownloadRecord> = emptyList(),
+    val skipped: List<SkippedDownload> = emptyList(),
+)
+
+@Serializable
+data class SkippedDownload(
+    @SerialName("episode_id") val episodeId: String,
+    val reason: String,
 )
 
 /**
@@ -70,7 +80,7 @@ enum class DownloadQuality(
 }
 
 /**
- * POST /api/v1/downloads body. Either `episodeId` or `fileId` is set on
+ * POST /api/v2/downloads body. Either `episodeId` or `fileId` is set on
  * top of the always-required `contentId`. `series = true` requests batch
  * download of all episodes for a series content id (server expands and
  * returns one DownloadRecord per file under a shared batchId).
@@ -83,6 +93,9 @@ data class DownloadRequest(
     val series: Boolean = false,
     val quality: String? = null,
     @SerialName("target_bitrate_kbps") val targetBitrateKbps: Int? = null,
+    @SerialName("device_id") val deviceId: String? = null,
+    val revision: Int? = null,
+    @SerialName("status_event_at") val statusEventAt: String? = null,
 )
 
 /**
@@ -128,7 +141,7 @@ enum class DownloadKind(val wire: String) {
 }
 
 /**
- * `GET /api/v1/downloads/capability` response — the server's per-account
+ * `GET /api/v2/capabilities/downloads` response — the server's per-account
  * download feature gate (issue #20 §3). Fetched at detail load / profile
  * switch so the quality picker offers only [qualityPresets] and never a
  * value the server will reject (a bitrate request against a transcode-disabled
@@ -138,6 +151,10 @@ enum class DownloadKind(val wire: String) {
  */
 @Serializable
 data class DownloadCapability(
+    val revision: String? = null,
+    val state: String? = null,
+    @SerialName("proxy_delivery") val proxyDelivery: Boolean = false,
+    @SerialName("ordered_status") val orderedStatus: Boolean = false,
     val enabled: Boolean = false,
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     @SerialName("quality_presets") val qualityPresets: List<String> = emptyList(),
@@ -148,7 +165,7 @@ data class DownloadCapability(
     @SerialName("monitoring_modes") val monitoringModes: List<String> = emptyList(),
 ) {
     /** Downloads are usable only when the feature is on AND this user may download. */
-    val isUsable: Boolean get() = enabled && downloadAllowed
+    val isUsable: Boolean get() = enabled && downloadAllowed && (revision == null || (revision.isNotBlank() && state == "available"))
 
     /**
      * The [DownloadQuality] presets to offer this user, in ladder order.

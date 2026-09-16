@@ -70,6 +70,7 @@ class PersonalListViewModelGenerationTest {
             offset: Int,
             limit: Int,
             query: PersonalListQuery,
+            continuation: org.siloserver.silo.network.apiv2.CatalogContinuationV2?,
         ): ApiResult<CatalogResponse> {
             offsets += offset
             queries += query

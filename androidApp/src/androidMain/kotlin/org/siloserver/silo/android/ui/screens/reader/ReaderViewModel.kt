@@ -54,6 +54,7 @@ data class ReaderUiState(
     val readMode: EbookReadMode = EbookReadMode.Unsupported,
     val formatDisplayName: String = "",
     val fileUrl: String? = null,
+    val fileAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null,
     val localUri: String? = null,
     val localDisplayName: String? = null,
     val fileId: Int? = null,
@@ -94,13 +95,20 @@ class ReaderViewModel(
     private val serverRegistry: ServerRegistry,
     private val profileRepository: ProfileRepository,
     savedStateHandle: SavedStateHandle,
+    private val ebookAuthorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val ebookV2: org.siloserver.silo.network.apiv2.EbookReaderV2Api? = null,
+    private val identityTransitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
 ) : ViewModel() {
 
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val requestedFileId: Int? = savedStateHandle.get<String>("fileId")?.toIntOrNull()
     private var shouldSuppressInitialPageChange = false
+    private var readerAuthority: org.siloserver.silo.network.DurableLoginAuthority? = null
+    private var configSession: org.siloserver.silo.repository.EbookConfigSession? = null
+    private var displayRevision = 0L
     private var progressSaveJob: Job? = null
     private val progressPersistMutex = Mutex()
+    private val annotationMutex = Mutex()
 
     private val _uiState = MutableStateFlow(ReaderUiState())
     val uiState: StateFlow<ReaderUiState> = _uiState.asStateFlow()
@@ -111,6 +119,7 @@ class ReaderViewModel(
 
     private fun loadDetail() {
         viewModelScope.launch {
+            readerAuthority = ebookAuthorities?.snapshotDurableLoginAuthority()
             when (val r = catalogRepository.getItemDetail(contentId)) {
                 is ApiResult.Success -> {
                     val d = r.data
@@ -171,6 +180,7 @@ class ReaderViewModel(
                             readMode = target.support.readMode,
                             formatDisplayName = target.support.displayName,
                             fileUrl = fileUrl,
+                            fileAuthority = readerAuthority,
                             localUri = offlineMedia?.uriString,
                             localDisplayName = offlineMedia?.displayName ?: version.fileName,
                             fileId = version.fileId,
@@ -260,7 +270,7 @@ class ReaderViewModel(
         progressPercent = local.progressPercent
         bookmarks = local.bookmarks
 
-        when (val progress = ebookReaderRepository.getProgress(contentId)) {
+        when (val progress = ebookReaderRepository.getProgress(contentId, readerAuthority?.scope)) {
             is ApiResult.Success -> {
                 if (progress.data.fileId == fileId && local.progressLocation == null) {
                     progressLocation = progress.data.location
@@ -271,30 +281,38 @@ class ReaderViewModel(
             else -> Unit
         }
 
-        when (val annotations = ebookReaderRepository.listAnnotations(contentId)) {
-            is ApiResult.Success -> {
-                val serverBookmarks = annotations.data.items.filter { annotation -> annotation.kind == "bookmark" }
-                val serverLocations = serverBookmarks.mapNotNull { annotation -> annotation.location }.toSet()
-                val staleLocalBookmarks = bookmarks.orEmpty().filter { annotation ->
-                    annotation.id.startsWith("local-") &&
-                        annotation.location != null &&
-                        annotation.location in serverLocations
+        val authority = readerAuthority
+        if (authority != null) annotationMutex.withLock {
+            val receipts = mutableListOf<EbookAnnotation>()
+            val (serverId, profileId) = resolveScope()
+            val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+            for (bookmark in pending.filter { it.loginId == authority.loginId && it.origin == authority.scope.serverUrl }) {
+                if (bookmark.deleteETag != null) {
+                    val deletion = ebookReaderRepository.deleteAnnotation(contentId,
+                        bookmark.toAnnotation().copy(etag = bookmark.deleteETag), authority.scope)
+                    if (deletion is ApiResult.Success || (deletion is ApiResult.Error && deletion.code == 404))
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                    else _uiState.update { it.copy(syncError = "Bookmark deletion needs a reload before retrying.") }
+                    continue
                 }
-                if (staleLocalBookmarks.isNotEmpty()) {
-                    val (serverId, profileId) = resolveScope()
-                    withContext(Dispatchers.IO) {
-                        staleLocalBookmarks.forEach { annotation ->
-                            localStateStore.removeBookmark(serverId, profileId, contentId, annotation.id)
-                        }
+                when (val result = ebookReaderRepository.createBookmark(contentId, bookmark.id, bookmark.location, authority.scope)) {
+                    is ApiResult.Success -> {
+                        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                        receipts += result.data
+                        bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
                     }
+                    else -> _uiState.update { it.copy(syncError = "Some bookmarks are local. Reopen the reader to retry sync.") }
                 }
-                val currentLocalBookmarks = bookmarks.orEmpty()
-                    .filterNot { annotation -> staleLocalBookmarks.any { stale -> stale.id == annotation.id } }
-                bookmarks = (currentLocalBookmarks + serverBookmarks)
-                    .distinctBy { annotation -> annotation.id }
-                    .takeIf { merged -> merged.isNotEmpty() }
             }
-            else -> Unit
+            val annotations = ebookReaderRepository.listAnnotations(contentId, authority.scope)
+            if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+            val remaining = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+                .filter { it.loginId == null || (it.loginId == authority.loginId && it.origin == authority.scope.serverUrl) }
+                .map { it.toAnnotation() }
+            val remote = if (annotations is ApiResult.Success) annotations.data.items else receipts
+            if (annotations !is ApiResult.Success)
+                _uiState.update { it.copy(syncError = "Bookmarks could not load completely. Reopen the reader to retry.") }
+            bookmarks = (remaining + remote.filter { it.kind == "bookmark" }).associateBy { it.id }.values.toList()
         }
 
         return InitialReaderState(
@@ -312,7 +330,8 @@ class ReaderViewModel(
         val progress = userItemStatePort.localEbookProgress(contentId, fileId)
         val bookmarks = withContext(Dispatchers.IO) {
             localStateStore.listBookmarks(serverId, profileId, contentId)
-        }.map { it.toAnnotation() }
+        }.filter { it.loginId == null || (it.loginId == readerAuthority?.loginId && it.origin == readerAuthority?.scope?.serverUrl) }
+            .map { it.toAnnotation() }
         return InitialReaderState(
             currentPage = ebookPageNumberFromProgressLocation(progress?.location),
             progressLocation = progress?.location,
@@ -329,10 +348,25 @@ class ReaderViewModel(
     }
 
     private suspend fun loadDisplaySettings(): ReaderDisplaySettings {
+        val revision = displayRevision
         val (serverId, profileId) = resolveScope()
-        return withContext(Dispatchers.IO) {
-            localStateStore.readDisplaySettings(serverId, profileId)
-        } ?: ReaderDisplaySettings()
+        val local = withContext(Dispatchers.IO) { localStateStore.readDisplaySettings(serverId, profileId) }
+            ?: ReaderDisplaySettings()
+        val authority = readerAuthority ?: return local
+        val api = ebookV2 ?: return local
+        val session = org.siloserver.silo.repository.EbookConfigSession(api, contentId, authority.scope)
+        val loaded = session.load()
+        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return local
+        configSession = session
+        if (loaded is ApiResult.Success) {
+            val remote = loaded.data["android_reader"]
+            if (remote != null && displayRevision == revision) {
+                return runCatching {
+                    org.siloserver.silo.network.SiloJson.decodeFromJsonElement(ReaderDisplaySettings.serializer(), remote).normalized()
+                }.getOrElse { local }
+            }
+        } else _uiState.update { it.copy(syncError = "Reader settings are local. Server settings could not be loaded.") }
+        return if (displayRevision == revision) local else _uiState.value.displaySettings
     }
 
     fun onPageChanged(page: Int) {
@@ -414,6 +448,8 @@ class ReaderViewModel(
      * reflowable-locator ([onLocatorChanged]) progress reporting.
      */
     private fun persistProgress(fileId: Int, location: String, progressPercent: Double) {
+        val eventTimeMs = System.currentTimeMillis()
+        val authority = readerAuthority
         progressSaveJob?.cancel()
         // Optimistic + offline-first: the local Room projection is the resume
         // source and is written instantly, so progress is "saved" immediately;
@@ -426,7 +462,10 @@ class ReaderViewModel(
                 // VM is torn down right after the final page turn (back navigation
                 // cancels viewModelScope) — otherwise the last position is lost.
                 withContext(NonCancellable) {
-                    userItemStatePort.recordEbookProgress(contentId, fileId, location, progressPercent)
+                    if (authority != null) userItemStatePort.recordEbookProgress(authority,
+                        contentId, fileId, location, progressPercent, eventTimeMs)
+                    else if (ebookAuthorities == null) userItemStatePort.recordEbookProgress(contentId, fileId, location, progressPercent)
+                    else _uiState.update { it.copy(syncError = "Reading progress needs a saved account and profile.") }
                 }
             }
         }
@@ -462,12 +501,31 @@ class ReaderViewModel(
     }
 
     fun setDisplaySettings(settings: ReaderDisplaySettings) {
+        displayRevision++
+        val authority = readerAuthority
+        val session = configSession
         val normalized = settings.normalized()
         _uiState.update { it.copy(displaySettings = normalized) }
         viewModelScope.launch {
             val (serverId, profileId) = resolveScope()
-            withContext(Dispatchers.IO) {
+            if (authority != null) {
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@launch
+                val saved = identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+                    withContext(Dispatchers.IO) { localStateStore.writeDisplaySettings(serverId, profileId, normalized) }
+                    true
+                }
+                if (saved != true) return@launch
+            } else if (ebookAuthorities == null) withContext(Dispatchers.IO) {
                 localStateStore.writeDisplaySettings(serverId, profileId, normalized)
+            }
+            if (session == null && ebookV2 != null) {
+                _uiState.update { it.copy(syncError = "Reader settings are local. Reopen the reader to load server settings.") }
+            }
+            if (authority != null && authority == ebookAuthorities?.snapshotDurableLoginAuthority() && session != null) {
+                val value = org.siloserver.silo.network.SiloJson.encodeToJsonElement(ReaderDisplaySettings.serializer(), normalized)
+                val result = session.saveAndroidDisplay(value as kotlinx.serialization.json.JsonObject)
+                if (authority == ebookAuthorities?.snapshotDurableLoginAuthority() && result !is ApiResult.Success)
+                    _uiState.update { it.copy(syncError = "Reader settings are saved locally. Reopen the reader before retrying server sync.") }
             }
         }
     }
@@ -476,50 +534,94 @@ class ReaderViewModel(
         _uiState.update { it.copy(sections = sections) }
     }
 
+    private suspend fun <T : Any> bookmarkWrite(
+        authority: org.siloserver.silo.network.DurableLoginAuthority, block: () -> T,
+    ): T? {
+        if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return null
+        return identityTransitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+            withContext(Dispatchers.IO) { block() }
+        }
+    }
+
     fun addBookmark() {
         val location = _uiState.value.progressLocation ?: "page:${_uiState.value.currentPage}"
+        val authority = readerAuthority
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
-            val local = withContext(Dispatchers.IO) {
-                localStateStore.addBookmark(serverId, profileId, contentId, location)
-            }
-            _uiState.update { it.copy(bookmarks = it.bookmarks + local.toAnnotation(), syncError = null) }
-            when (val result = ebookReaderRepository.createBookmark(contentId, location)) {
-                is ApiResult.Success -> {
-                    withContext(Dispatchers.IO) {
-                        localStateStore.removeBookmark(serverId, profileId, contentId, local.id)
-                    }
-                    _uiState.update {
-                        it.copy(
-                            bookmarks = (it.bookmarks.filterNot { bookmark -> bookmark.id == local.id } + result.data),
-                            syncError = null,
-                        )
-                    }
+            annotationMutex.withLock {
+                if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
+                    _uiState.update { it.copy(syncError = "Bookmarks need a saved account and profile.") }
+                    return@withLock
                 }
-                else -> _uiState.update { it.copy(syncError = "Bookmark could not sync.") }
+                val (serverId, profileId) = resolveScope()
+                val local = try {
+                    bookmarkWrite(authority) { localStateStore.addBookmark(serverId, profileId, contentId, location,
+                        loginId = authority.loginId, origin = authority.scope.serverUrl) }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    _uiState.update { it.copy(syncError = "Bookmark could not be saved locally.") }
+                    null
+                } ?: return@withLock
+                _uiState.update { it.copy(bookmarks = it.bookmarks + local.toAnnotation(), syncError = null) }
+                val result = ebookReaderRepository.createBookmark(contentId, local.id, location, authority.scope)
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                if (result is ApiResult.Success) {
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, local.id) }
+                    _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == local.id } + result.data) }
+                } else _uiState.update { it.copy(syncError = "Bookmark is local. Reopen the reader to retry sync.") }
             }
         }
     }
 
     fun deleteBookmark(bookmark: EbookAnnotation) {
+        val authority = readerAuthority
         viewModelScope.launch {
-            val (serverId, profileId) = resolveScope()
-            withContext(Dispatchers.IO) {
-                localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id)
-            }
-            _uiState.update { state ->
-                state.copy(bookmarks = state.bookmarks.filterNot { it.id == bookmark.id }, syncError = null)
-            }
-            if (!bookmark.id.startsWith("local-")) {
-                when (ebookReaderRepository.deleteAnnotation(contentId, bookmark.id)) {
-                    is ApiResult.Success -> Unit
-                    else -> _uiState.update { it.copy(syncError = "Bookmark delete could not sync.") }
+            annotationMutex.withLock {
+                if (authority == null || authority != ebookAuthorities?.snapshotDurableLoginAuthority()) {
+                    _uiState.update { it.copy(syncError = "Bookmark deletion needs the original account and profile.") }
+                    return@withLock
                 }
+                val (serverId, profileId) = resolveScope()
+                val pending = withContext(Dispatchers.IO) { localStateStore.listBookmarks(serverId, profileId, contentId) }
+                    .find { it.id == bookmark.id }
+                // An uncertain create may already exist remotely. Resolve the same ID before deleting it.
+                val remote = if (pending?.loginId == authority.loginId && pending.origin == authority.scope.serverUrl && pending.deleteETag == null) {
+                    val replay = ebookReaderRepository.createBookmark(contentId, pending.id, pending.location, authority.scope)
+                    if (replay !is ApiResult.Success) {
+                        _uiState.update { it.copy(syncError = "Bookmark could not be resolved for deletion. Reopen the reader to retry.") }
+                        return@withLock
+                    }
+                    replay.data
+                } else if (bookmark.etag == null && pending?.deleteETag != null) bookmark.copy(etag = pending.deleteETag)
+                    else bookmark
+                val localOnly = pending != null && pending.loginId == null && bookmark.etag == null
+                if (!localOnly) {
+                    val tag = remote.etag
+                    if (tag.isNullOrBlank()) {
+                        _uiState.update { it.copy(syncError = "Reopen the reader to load this bookmark before deleting it.") }
+                        return@withLock
+                    }
+                    val saved = try {
+                        bookmarkWrite(authority) { localStateStore.markBookmarkDelete(serverId, profileId, contentId,
+                            remote.id, remote.location ?: bookmark.location.orEmpty(), authority.loginId, authority.scope.serverUrl, tag) }
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        _uiState.update { it.copy(syncError = "Bookmark deletion could not be saved locally.") }
+                        null
+                    } ?: return@withLock
+                }
+                val result = if (localOnly) ApiResult.Success(Unit)
+                    else ebookReaderRepository.deleteAnnotation(contentId, remote, authority.scope)
+                if (authority != ebookAuthorities?.snapshotDurableLoginAuthority()) return@withLock
+                if (result is ApiResult.Success || (result is ApiResult.Error && result.code == 404)) {
+                    bookmarkWrite(authority) { localStateStore.removeBookmark(serverId, profileId, contentId, bookmark.id) }
+                    _uiState.update { it.copy(bookmarks = it.bookmarks.filterNot { b -> b.id == bookmark.id }, syncError = null) }
+                } else _uiState.update { it.copy(syncError = "Bookmark was kept. Reopen the reader to reload before deleting again.") }
             }
         }
     }
 
     private suspend fun resolveScope(): Pair<String, String> {
+        readerAuthority?.let { return it.scope.serverId to it.scope.profileId.orEmpty() }
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
         return serverId to profileId

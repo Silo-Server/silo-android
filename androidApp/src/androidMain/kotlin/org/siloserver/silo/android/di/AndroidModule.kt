@@ -118,7 +118,15 @@ val androidModule = module {
     // commonMain in-memory TokenManager. Koin 3.1+ replaces same-key bindings
     // when the redefining module is loaded after the original — sharedModules()
     // is registered first in SiloApplication, so this wins.
-    single<TokenManager> { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single<TokenManager> { get<EncryptedTokenManagerImpl>() }
+    single<org.siloserver.silo.network.DurableLoginAuthorityProvider> { get<EncryptedTokenManagerImpl>() }
+    single<org.siloserver.silo.repository.port.MembershipPort> {
+        org.siloserver.silo.common.data.sync.RoomMembershipPort(
+            get<org.siloserver.silo.common.data.db.SiloDatabase>(),
+            get(), get(), get(), get(), get(),
+        )
+    }
     single { org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache(androidContext()) }
 
     // Offline-first Room store (Track B). Bound after sharedModules() so the
@@ -134,7 +142,7 @@ val androidModule = module {
     single<org.siloserver.silo.repository.port.UserItemStatePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
-            db = get(),
+            db = get(), ebookAuthorities = get(), identityTransitions = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             // Drain is requested only when a write is left pending (resolve RETRIABLE).
             syncScheduler = get(),
@@ -157,7 +165,7 @@ val androidModule = module {
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
-        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get())
+        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get(), authorities = get(), devices = get(), identityTransitions = get())
     }
     single<org.siloserver.silo.repository.DownloadSubscriptionRepository> {
         org.siloserver.silo.common.data.repository.RoomDownloadSubscriptionRepository(db = get())
@@ -167,7 +175,8 @@ val androidModule = module {
         org.siloserver.silo.common.data.sync.SyncEngine(
             db = get(),
             personalDataApi = get(),
-            ebookReaderApi = get(),
+            memberships = get(),
+            ebookReaderApi = get(), ebookAuthorities = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
         )
     }
@@ -215,6 +224,8 @@ val androidModule = module {
             tokenProvider = get(),
             repository = get(),
             deviceIdProvider = { PairingDeviceId.stable(androidContext()) },
+            authorities = get(),
+            store = org.siloserver.silo.android.push.FilePushInstallationStore(androidContext()),
         )
     }
     single {
@@ -304,7 +315,7 @@ val androidModule = module {
     // One-time import of the legacy .record.json sidecar tree into Room.
     single { org.siloserver.silo.common.downloads.LegacyDownloadImporter(androidContext().filesDir, get()) }
     single { OfflineMediaResolver(get(), get(), get()) }
-    single { DownloadEnqueuer(androidContext(), get(), get(), get(), get(), get(), get(), get()) }
+    single { DownloadEnqueuer(androidContext(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     single { DownloadSubscriptionEvaluatorFactory(get(), get(), get()) }
     // CoroutineWorker constructed by Koin's WorkerFactory — see
     // SiloApplication.onCreate `workManagerFactory()` call.
@@ -316,6 +327,10 @@ val androidModule = module {
             storage = get(),
             metadataStore = get(),
             httpClient = get(),
+            authorities = get(),
+            devices = get(),
+            transitions = get(),
+            gate = get(),
         )
     }
     worker {
@@ -401,7 +416,7 @@ val androidModule = module {
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
         )
     }
-    viewModel { params -> PersonDetailViewModel(get(), params.get()) }
+    viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }
     viewModel { params -> LibraryCollectionsViewModel(get(), params.get()) }
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }
@@ -413,7 +428,7 @@ val androidModule = module {
             catalogRepository = get(),
         )
     }
-    viewModel { HistoryViewModel(get()) }
+    viewModel { HistoryViewModel(get(), get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
     viewModel { RequestsViewModel(get()) }
@@ -437,7 +452,7 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }
@@ -450,7 +465,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         DevicePairingViewModel(
@@ -494,7 +509,7 @@ val androidModule = module {
     viewModel {
         org.siloserver.silo.android.ui.screens.reader.ReaderViewModel(
             catalogRepository = get(),
-            ebookReaderRepository = get(),
+            ebookReaderRepository = get(), ebookAuthorities = get(), ebookV2 = get(), identityTransitions = get(),
             offlineMediaResolver = get(),
             localStateStore = get(),
             userItemStatePort = get(),

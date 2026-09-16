@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,12 +77,7 @@ class TvBrowseViewModel(
 
     private val pageSize = 100
     private var generation = 0
-    private var snapshot: String? = null
-
-    // Raw (pre-visibleOnTv-filter) loaded count = the server offset for the next
-    // page. Using the filtered items.size would skip/duplicate items whenever a
-    // page contains hidden (ebook) entries.
-    private var rawLoaded = 0
+    private var continuation: CatalogContinuationV2? = null
 
     init {
         loadFilters()
@@ -111,7 +107,7 @@ class TvBrowseViewModel(
 
     fun loadMore() {
         val state = _uiState.value
-        if (state.loading || state.loadingMore || !state.hasMore) return
+        if (state.error != null || state.loading || state.loadingMore || !state.hasMore) return
         load(reset = false)
     }
 
@@ -149,14 +145,10 @@ class TvBrowseViewModel(
             generation
         }
 
-        if (reset) {
-            snapshot = null
-            rawLoaded = 0
-        }
+        if (reset) continuation = null
 
         viewModelScope.launch {
             val state = _uiState.value
-            val offset = if (reset) 0 else rawLoaded
             val filter = state.filter
 
             _uiState.update {
@@ -180,9 +172,8 @@ class TvBrowseViewModel(
                 contentRating = filter.contentRating,
                 sort = filter.sort,
                 order = filter.order,
-                offset = offset,
+                continuation = if (reset) null else continuation,
                 limit = pageSize,
-                snapshotAt = snapshot,
             )
 
             if (gen != generation) return@launch
@@ -190,10 +181,7 @@ class TvBrowseViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
-                    if (snapshot == null) {
-                        snapshot = response.snapshot
-                    }
-                    rawLoaded = if (reset) response.items.size else rawLoaded + response.items.size
+                    continuation = response.continuation
                     _uiState.update {
                         val visibleItems = response.items.visibleOnTv()
                         it.copy(

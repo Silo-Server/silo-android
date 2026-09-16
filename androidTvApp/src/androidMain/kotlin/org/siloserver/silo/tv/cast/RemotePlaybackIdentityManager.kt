@@ -151,9 +151,9 @@ class RemotePlaybackIdentityManager(
                 }
                 is ApiResult.Error -> {
                     if (result.code == 404) error("Remote playback handoff expired.")
-                    delay(started.interval.coerceAtLeast(1) * 1_000L)
+                    error("Pairing status could not be confirmed. Start pairing again.")
                 }
-                is ApiResult.NetworkError -> delay(started.interval.coerceAtLeast(1) * 1_000L)
+                is ApiResult.NetworkError -> error("Pairing status could not be confirmed. Start pairing again.")
             }
         }
         error("Remote playback handoff expired.")

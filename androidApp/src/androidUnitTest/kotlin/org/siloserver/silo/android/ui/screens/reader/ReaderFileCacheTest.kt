@@ -13,6 +13,17 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class ReaderFileCacheTest {
+    @Test
+    fun `remote cache separates profiles and login incarnations`() {
+        val scope = org.siloserver.silo.network.AuthScopeSnapshot("server", "profile", "https://reader.example", null)
+        val authority = org.siloserver.silo.network.DurableLoginAuthority("login-one", scope)
+        val url = "https://reader.example/api/v2/ebooks/book/files/7/read"
+        val first = readerRemoteCacheFileName(url, authority, "pdf")
+        assertFalse(first == readerRemoteCacheFileName(url, authority.copy(loginId = "login-two"), "pdf"))
+        assertFalse(first == readerRemoteCacheFileName(url, authority.copy(scope = scope.copy(profileId = "other")), "pdf"))
+        assertEquals(first, readerRemoteCacheFileName(url, authority.copy(scope = scope.copy(identityGeneration = 8)), "pdf"))
+    }
+
     private val source = java.io.File(
         "src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/reader/ReaderFileCache.kt",
     ).readText()

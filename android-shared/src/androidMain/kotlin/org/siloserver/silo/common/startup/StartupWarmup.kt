@@ -14,9 +14,10 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
-import org.siloserver.silo.repository.port.HomeCacheWriteLease
+import org.siloserver.silo.network.AuthScopeSnapshot
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import org.siloserver.silo.viewmodel.hydrateHomeSections
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.supervisorScope
@@ -90,6 +91,8 @@ suspend fun warmAuthenticatedStartup(
     serverUrl: String?,
     artworkPlan: StartupArtworkPlan,
 ) {
+    val homeGeneration = identityTransitions.generation.value
+    val homeOwner = sectionRepository.captureHomeAuthority()
     supervisorScope {
         listOf(
             async {
@@ -111,13 +114,10 @@ suspend fun warmAuthenticatedStartup(
             },
             async {
                 runCatching {
-                    warmHome(
-                        context,
-                        sectionRepository,
-                        homeCache,
-                        identityTransitions,
-                        artworkPlan,
-                    )
+                    if (homeOwner != null) warmStartupHomeSections(
+                        sectionRepository, homeCache, homeOwner,
+                        stillCurrent = { homeGeneration == identityTransitions.generation.value },
+                    ) { sections, mayWarm -> warmHomeArtwork(context, sections, artworkPlan, mayWarm) }
                 }
                 Unit
             },
@@ -143,32 +143,27 @@ suspend fun warmProfileSelectionStartup(
     warmAvatarArtwork(context, profiles.take(maxProfileArtworkUrls), serverUrl)
 }
 
-private suspend fun CoroutineScope.warmHome(
-    context: Context,
+/** Actual startup Home branch; image dispatch is injected for focused tests. */
+internal suspend fun warmStartupHomeSections(
     sectionRepository: SectionRepository,
     homeCache: HomeCachePort,
-    identityTransitions: IdentityTransitionBarrier,
-    artworkPlan: StartupArtworkPlan,
+    owner: AuthScopeSnapshot,
+    stillCurrent: () -> Boolean,
+    warmArtwork: suspend (List<ResolvedSection>, suspend () -> Boolean) -> Unit,
 ) {
-    val requestIdentityGeneration = identityTransitions.generation.value
-    val cacheWriteLease = HomeCacheWriteLease(requestIdentityGeneration)
-    when (val result = sectionRepository.getHomeSections()) {
-        is ApiResult.Success -> {
-            val hydration = hydrateHomeSections(result.data.sections) { sectionId ->
-                sectionRepository.getHomeSectionItems(sectionId)
-            }
-            if (
-                hydration.fullyResolved &&
-                hydration.sections.isNotEmpty() &&
-                requestIdentityGeneration == identityTransitions.generation.value
-            ) {
-                homeCache.cacheHome(hydration.sections, cacheWriteLease)
-                warmHomeArtwork(context, hydration.sections, artworkPlan)
-            }
-        }
-        is ApiResult.Error,
-        is ApiResult.NetworkError -> Unit
+    suspend fun mayWarm(): Boolean = sectionRepository.isHomeAuthorityCurrent(owner) &&
+        currentCoroutineContext().isActive && stillCurrent()
+    if (!mayWarm()) return
+    val result = sectionRepository.getHomeSections(owner)
+    if (!mayWarm() || result !is ApiResult.Success) return
+    val hydration = hydrateHomeSections(result.data.sections) { id ->
+        if (!mayWarm()) ApiResult.Error(0, "superseded", "Startup identity changed.")
+        else sectionRepository.getHomeSectionItems(id, owner)
     }
+    if (!mayWarm() || !hydration.fullyResolved || hydration.sections.isEmpty()) return
+    homeCache.cacheHomeV2IfAbsent(hydration.sections, owner, stillCurrent)
+    if (!mayWarm()) return
+    warmArtwork(hydration.sections, ::mayWarm)
 }
 
 /**
@@ -182,6 +177,7 @@ private suspend fun warmHomeArtwork(
     context: Context,
     sections: List<ResolvedSection>,
     plan: StartupArtworkPlan,
+    mayWarm: suspend () -> Boolean,
 ) {
     val seen = HashSet<String>()
     val requests = ArrayList<ImageRequest>(plan.maxUrls)
@@ -231,7 +227,7 @@ private suspend fun warmHomeArtwork(
         if (requests.size >= plan.maxUrls) break
     }
 
-    warmImages(context, requests)
+    warmImages(context, requests, mayWarm)
 }
 
 private suspend fun warmAvatarArtwork(
@@ -261,12 +257,12 @@ private suspend fun warmAvatarArtwork(
     warmImages(context, requests)
 }
 
-private suspend fun warmImages(context: Context, requests: List<ImageRequest>) {
+private suspend fun warmImages(context: Context, requests: List<ImageRequest>, mayWarm: suspend () -> Boolean = { true }) {
     if (requests.isEmpty()) return
     val loader = SingletonImageLoader.get(context)
     supervisorScope {
         requests.map { request ->
-            async { runCatching { loader.execute(request) } }
+            async { if (mayWarm()) runCatching { loader.execute(request) } }
         }.awaitAll()
     }
 }

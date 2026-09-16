@@ -43,6 +43,10 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.tv.BuildConfig
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
@@ -65,9 +69,18 @@ class TvVideoPlaybackStarter(
         if (!shouldReachServerForPlayback(reachabilityMonitor, request.force)) {
             return VideoPlaybackStartResult.ServerUnreachable(request.contentId)
         }
+        val expectedMetadataOwner = catalogRepository.captureWatchAuthority()
+            ?: return failure(request.contentId, "Playback metadata needs an authenticated profile.", diagnosticsCode = PlaybackDiagnosticsCode.NOT_AUTHENTICATED)
+        suspend fun ownerCurrent(): Boolean {
+            val valid = catalogRepository.isWatchAuthorityCurrent(expectedMetadataOwner)
+            currentCoroutineContext().ensureActive()
+            return valid
+        }
         val ownershipEpoch = sessionLifecycle.acquireOwnershipEpoch()
+        var unpublishedSessionId: String? = null
+        var lifecycleAdopted = false
         return try {
-            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId)) {
+            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner)) {
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,
@@ -188,6 +201,10 @@ class TvVideoPlaybackStarter(
                 ),
             )
 
+            val maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first()
+            if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl) {
+                return failure(request.contentId, "The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            }
             val v3Start = when (
                 val r = playbackSessionManager.startVideoSessionV3(
                     fileId = version.fileId,
@@ -207,8 +224,9 @@ class TvVideoPlaybackStarter(
                     // applies the cap only from what the request carries, so
                     // sending the resolution alone lets a capped preset stream
                     // at the bandwidth the user explicitly declined.
-                    maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first(),
+                    maxBitrateKbps = maxBitrateKbps,
                     deferPublication = true,
+                    expectedMetadataOwner = expectedMetadataOwner,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -238,6 +256,12 @@ class TvVideoPlaybackStarter(
                 )
             }
             val resolved = readyV3.session
+            unpublishedSessionId = resolved.sessionId
+            if (!ownerCurrent()) {
+                discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
+                unpublishedSessionId = null
+                return failure(request.contentId, "The metadata viewer changed after playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            }
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
                 ?: version.fileId
@@ -271,26 +295,34 @@ class TvVideoPlaybackStarter(
                 playerStartPosition = playerStartPos,
             )
 
-            val adopted = sessionLifecycle.adoptActiveSessionIfCurrent(
-                params = StartParams(
-                    contentId = request.contentId,
-                    fileId = effectiveFileId,
-                    capabilities = readyV3.capabilities,
-                    audioTrackIndex = resolved.audioTrackIndex,
-                    subtitleTrackIndex = if (request.episodeSelectionHandoff != null) {
-                        serverSubtitleTrackIndex
-                    } else {
-                        request.subtitleTrackIndex
-                    },
-                    qualityPreference = playbackQualityIntent,
-                    startPosition = sourceStartPos,
-                    clientPlaybackContext = readyV3.clientPlaybackContext,
-                ),
-                session = resolved,
-                deferPublication = true,
-                expectedOwnershipEpoch = ownershipEpoch,
-            )
+            val adopted = try {
+                sessionLifecycle.adoptActiveSessionIfCurrent(
+                    params = StartParams(
+                        contentId = request.contentId,
+                        fileId = effectiveFileId,
+                        capabilities = readyV3.capabilities,
+                        audioTrackIndex = resolved.audioTrackIndex,
+                        subtitleTrackIndex = if (request.episodeSelectionHandoff != null) {
+                            serverSubtitleTrackIndex
+                        } else {
+                            request.subtitleTrackIndex
+                        },
+                        qualityPreference = playbackQualityIntent,
+                        startPosition = sourceStartPos,
+                        clientPlaybackContext = readyV3.clientPlaybackContext,
+                    ),
+                    session = resolved,
+                    deferPublication = true,
+                    expectedOwnershipEpoch = ownershipEpoch,
+                    expectedMetadataOwnerCurrent = ::ownerCurrent,
+                )
+            } catch (cancellation: CancellationException) {
+                // The lifecycle owns acknowledged cleanup once adoption begins.
+                unpublishedSessionId = null
+                throw cancellation
+            }
             if (!adopted) {
+                unpublishedSessionId = null
                 return failure(
                     request.contentId,
                     "Playback start was superseded.",
@@ -298,7 +330,13 @@ class TvVideoPlaybackStarter(
                 )
             }
 
-            VideoPlaybackStartResult.Ready(
+            lifecycleAdopted = true
+            if (!ownerCurrent()) {
+                discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
+                unpublishedSessionId = null
+                return failure(request.contentId, "The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            }
+            val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
                 fileId = effectiveFileId,
                 versions = watchDetail.versions,
@@ -309,7 +347,7 @@ class TvVideoPlaybackStarter(
                 playMethod = resolved.playMethod,
                 playbackPlan = resolved.playbackPlan,
                 playbackPlanV3 = readyV3.plan,
-                requestHeaders = readyV3.plan.stream.headers,
+                requestHeaders = readyV3.plan.stream.effectiveRequestHeaders,
                 delivery = resolvedDelivery,
                 container = readyV3.plan.stream.container ?: effectiveVersion?.container,
                 title = watchDetail.title,
@@ -351,11 +389,34 @@ class TvVideoPlaybackStarter(
                 episodeNumber = watchDetail.episodeNumber,
                 resolvedEpisodeSelection = resolvedEpisodeSelection,
             )
+            unpublishedSessionId = null
+            result
         } catch (e: CancellationException) {
+            discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
             throw e
         } catch (e: Exception) {
+            discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
             Log.e(TAG, "Error loading content", e)
             failure(request.contentId, "Unexpected error: ${e.message}", e, PlaybackDiagnosticsCode.UNEXPECTED)
+        }
+    }
+
+    private suspend fun discardUnpublishedSession(sessionId: String?, lifecycleAdopted: Boolean) {
+        val id = sessionId ?: return
+        withContext(NonCancellable) {
+            try {
+                if (lifecycleAdopted) {
+                    val rolledBack = sessionLifecycle.settlePendingPublicationIfCurrent(id, confirm = false) {
+                        playbackSessionManager.rollbackUnpublishedVideoSession(id)
+                    }
+                    if (rolledBack || sessionLifecycle.retireUnpublishedSession(id)) return@withContext
+                }
+                if (!playbackSessionManager.rollbackUnpublishedVideoSession(id)) {
+                    playbackSessionManager.stopSession(id)
+                }
+            } catch (error: Exception) {
+                Log.w(TAG, "Could not stop unpublished playback session $id", error)
+            }
         }
     }
 

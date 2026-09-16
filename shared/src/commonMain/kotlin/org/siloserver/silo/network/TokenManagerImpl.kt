@@ -75,6 +75,16 @@ class TokenManagerImpl(
         }
     }
 
+    override suspend fun captureAccountSessionExpectation(): AccountSessionExpectation? {
+        val generation = identityTransitions.generation.value
+        return identityTransitions.withCurrentGeneration(generation) {
+            mutex.withLock {
+                check(temporaryScope == null) { "Temporary identity cannot install a persistent session" }
+                AccountSessionExpectation(generation, null, serverUrl)
+            }
+        }
+    }
+
     override suspend fun replaceAccountSession(
         serverId: String?,
         serverUrl: String?,
@@ -83,11 +93,15 @@ class TokenManagerImpl(
         expiresIn: Long,
         profileId: String?,
         profileToken: String?,
+        expectedIdentity: AccountSessionExpectation?,
     ) {
         tokenWriteMutex.withLock {
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
                 target = {
+                    if (expectedIdentity != null && (identityTransitions.generation.value != expectedIdentity.generation || !expectedIdentity.installationAllowed())) {
+                        throw AccountSessionChangedException()
+                    }
                     check(mutex.withLock { temporaryScope == null }) {
                         "cannot replace the account inside a temporary auth scope"
                     }

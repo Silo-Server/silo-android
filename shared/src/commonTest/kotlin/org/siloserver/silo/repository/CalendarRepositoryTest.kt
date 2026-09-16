@@ -3,6 +3,7 @@ package org.siloserver.silo.repository
 import org.siloserver.silo.model.calendar.CalendarDay
 import org.siloserver.silo.model.calendar.CalendarFilter
 import org.siloserver.silo.model.calendar.CalendarResponse
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.CalendarApi
 import kotlinx.coroutines.test.runTest
@@ -23,6 +24,7 @@ class CalendarRepositoryTest {
             filter = CalendarFilter.Following,
             libraryId = 3,
             timezone = "Europe/Amsterdam",
+            owner = api.capture(),
         )
 
         assertEquals(ApiResult.Success(response), result)
@@ -38,7 +40,7 @@ class CalendarRepositoryTest {
         val api = RecordingCalendarApi(error)
         val repository = CalendarRepository(api)
 
-        val result = repository.getCalendar(start = "2026-06-08", end = "2026-06-14")
+        val result = repository.getCalendar(start = "2026-06-08", end = "2026-06-14", owner = api.capture())
 
         assertEquals(error, result)
         assertEquals(listOf("2026-06-08|2026-06-14|all|null|null"), api.calls)
@@ -48,6 +50,10 @@ class CalendarRepositoryTest {
 private class RecordingCalendarApi(
     private val result: ApiResult<CalendarResponse>,
 ) : CalendarApi {
+    var owner = AuthScopeSnapshot("server", "profile", "https://example.invalid", "pin", identityGeneration = 1)
+    override suspend fun capture() = owner
+    override suspend fun current(owner: AuthScopeSnapshot) = this.owner == owner
+
 
     val calls = mutableListOf<String>()
 
@@ -57,6 +63,7 @@ private class RecordingCalendarApi(
         filter: String,
         libraryId: Int?,
         timezone: String?,
+        owner: AuthScopeSnapshot,
     ): ApiResult<CalendarResponse> {
         calls += "$start|$end|$filter|$libraryId|$timezone"
         return result

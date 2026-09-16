@@ -552,6 +552,8 @@ class SiloPlayerFactory(
      */
     private fun requestHeadersFor(uri: android.net.Uri): Map<String, String> {
         val scope = requestHeaderScope ?: return emptyMap()
+        val captured = scope.headers as? org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders
+        if (captured != null) return scopedProxyRequestHeaders(uri.toString(), captured)
         val issued = scope.streamUri
         if (!uri.scheme.equals(issued.scheme, ignoreCase = true) ||
             !uri.host.equals(issued.host, ignoreCase = true) ||
@@ -739,8 +741,8 @@ class SiloPlayerFactory(
  *
  * Already-absolute URLs (`http`/`https`) and local offline URIs
  * (`file`/`content`) are returned unchanged. API-relative URLs are only
- * prefixed with the server base URL; stream-relative paths are prefixed with
- * the server base URL and the `/api/v1` mount.
+ * prefixed with the server base URL. Other relative paths are rejected: the
+ * v2 decision owns the delivery mount, so the client must not infer one.
  *
  * Shared by [SiloPlayerFactory] (video) and the audiobook player so both
  * resolve identically. Players that hand a relative URI straight to Media3 hit
@@ -754,8 +756,11 @@ fun resolvePlaybackStreamUrl(serverUrl: String, streamUrl: String): String {
             streamUrl.startsWith("https://") ||
             streamUrl.startsWith("file://") ||
             streamUrl.startsWith("content://") -> streamUrl // Already absolute / local offline: nothing to prefix.
-        streamUrl.startsWith("/api/") -> "$base$streamUrl"
-        else -> "$base/api/v1$streamUrl"
+        // v2 already mounts relative delivery paths under /api/v2; any other
+        // server-relative path is resolved against the origin so an unexpected
+        // shape surfaces as a handled playback error, not a crash in preparation.
+        streamUrl.startsWith("/") -> "$base$streamUrl"
+        else -> "$base/$streamUrl"
     }
 }
 

@@ -36,10 +36,12 @@ class EncryptedTokenManagerImpl(
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val afterAccountSessionCommit: suspend () -> Unit = {},
     private val afterAccountSignOutCommit: suspend () -> Unit = {},
-) : TokenManager {
+) : TokenManager, DurableLoginAuthorityProvider {
 
     private val mutex = Mutex()
     private val tokenWriteMutex = Mutex()
+    private val failedAuthorityWrites = mutableSetOf<String>()
+    private val pendingAuthorityBootstrap = mutableSetOf<String>()
     private val scope = CoroutineScope(Dispatchers.Default)
 
     private var activeServerId: String? = registry.activeServerId.value
@@ -169,6 +171,17 @@ class EncryptedTokenManagerImpl(
         }
     }
 
+    override suspend fun captureAccountSessionExpectation(): AccountSessionExpectation? {
+        val generation = identityTransitions.generation.value
+        return identityTransitions.withCurrentGeneration(generation) {
+            mutex.withLock {
+                ensureCacheMatchesRegistryLocked()
+                check(temporaryScope == null) { "Temporary identity cannot install a persistent session" }
+                AccountSessionExpectation(generation, activeServerId, registry.activeEntry.value?.url.orEmpty())
+            }
+        }
+    }
+
     override suspend fun replaceAccountSession(
         serverId: String?,
         serverUrl: String?,
@@ -177,6 +190,7 @@ class EncryptedTokenManagerImpl(
         expiresIn: Long,
         profileId: String?,
         profileToken: String?,
+        expectedIdentity: AccountSessionExpectation?,
     ) {
         val targetServerId = serverId
             ?: serverUrl?.let { registry.addOrUpdate(it) }
@@ -188,6 +202,9 @@ class EncryptedTokenManagerImpl(
             identityTransitions.changing(
                 kind = IdentityTransitionKind.ACCOUNT_REPLACE,
                 target = {
+                    if (expectedIdentity != null && (identityTransitions.generation.value != expectedIdentity.generation || !expectedIdentity.installationAllowed())) {
+                        throw AccountSessionChangedException()
+                    }
                     check(mutex.withLock { temporaryScope == null }) {
                         "cannot replace the account inside a temporary auth scope"
                     }
@@ -200,6 +217,7 @@ class EncryptedTokenManagerImpl(
                     // Registry selection and token/profile slots share the same
                     // encrypted preferences file, so commit them atomically and
                     // synchronously before publishing the cache.
+                    failedAuthorityWrites.add(targetServerId)
                     androidRegistry.commitAccountReplacement(
                         serverId = targetServerId,
                         profileId = profileId,
@@ -209,6 +227,7 @@ class EncryptedTokenManagerImpl(
                         expiryEpochMs = expiryEpochMs,
                         lifetimeMs = lifetimeMs,
                     )
+                    failedAuthorityWrites.remove(targetServerId)
                     activeServerId = targetServerId
                     this.profileId = profileId
                     this.profileToken = profileToken
@@ -239,6 +258,18 @@ class EncryptedTokenManagerImpl(
                 return@withLock
             }
             val serverId = activeServerId ?: return@withLock
+            val firstInstall = this.accessToken == null && this.refreshToken == null
+            if (firstInstall) {
+                failedAuthorityWrites.add(serverId)
+                check(prefs.edit()
+                    .putString(serverScopedKey(serverId, KEY_LOGIN_ID), java.util.UUID.randomUUID().toString())
+                    .putString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), accessToken)
+                    .putString(serverScopedKey(serverId, KEY_REFRESH_TOKEN), refreshToken)
+                    .putLong(serverScopedKey(serverId, KEY_TOKEN_EXPIRY), System.currentTimeMillis() + expiresIn * 1000L)
+                    .putLong(serverScopedKey(serverId, KEY_TOKEN_LIFETIME), expiresIn * 1000L)
+                    .commit()) { "unable to durably install account session" }
+                failedAuthorityWrites.remove(serverId)
+            }
             this.accessToken = accessToken
             this.refreshToken = refreshToken
             val lifetimeMs = expiresIn * 1000L
@@ -293,11 +324,13 @@ class EncryptedTokenManagerImpl(
         val serverId = activeServerId
         var committedSignOut = false
         if (serverId != null) {
+            failedAuthorityWrites.add(serverId)
             val androidRegistry = registry as? AndroidServerRegistry
             if (androidRegistry != null) {
                 androidRegistry.commitAccountSignOut(serverId)
             } else {
                 val editor = prefs.edit()
+                    .remove(serverScopedKey(serverId, KEY_LOGIN_ID))
                     .remove(serverScopedKey(serverId, KEY_ACCESS_TOKEN))
                     .remove(serverScopedKey(serverId, KEY_REFRESH_TOKEN))
                     .remove(serverScopedKey(serverId, KEY_TOKEN_EXPIRY))
@@ -307,6 +340,7 @@ class EncryptedTokenManagerImpl(
                 check(editor.commit()) { "unable to durably sign out account" }
                 registry.signOut(serverId)
             }
+            failedAuthorityWrites.remove(serverId)
             committedSignOut = true
         }
         persistentCredentialEpoch += 1
@@ -467,9 +501,33 @@ class EncryptedTokenManagerImpl(
 
     // ---- Scoped auth (pinned background requests) ----
 
-    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = mutex.withLock {
+    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = mutex.withLock { snapshotCurrentScopeLocked() }
+
+    override suspend fun snapshotDurableLoginAuthority(): DurableLoginAuthority? = tokenWriteMutex.withLock {
+        mutex.withLock {
+            val scope = snapshotCurrentScopeLocked() ?: return@withLock null
+            if (scope.credentialGenerationId != null || scope.profileId.isNullOrBlank() ||
+                accessToken.isNullOrBlank() || refreshToken.isNullOrBlank() ||
+                scope.serverId in failedAuthorityWrites) return@withLock null
+            val key = serverScopedKey(scope.serverId, KEY_LOGIN_ID)
+            var loginId = prefs.getString(key, null)
+            if (loginId.isNullOrBlank()) {
+                loginId = java.util.UUID.randomUUID().toString()
+                pendingAuthorityBootstrap.add(scope.serverId)
+            }
+            // A failed SharedPreferences commit may still change its in-memory map.
+            // Retry that commit before exposing the marker, never trust the map alone.
+            if (scope.serverId in pendingAuthorityBootstrap) {
+                if (!prefs.edit().putString(key, loginId).commit()) return@withLock null
+                pendingAuthorityBootstrap.remove(scope.serverId)
+            }
+            DurableLoginAuthority(loginId, scope)
+        }
+    }
+
+    private suspend fun snapshotCurrentScopeLocked(): AuthScopeSnapshot? {
         temporaryScope?.let { scope ->
-            return@withLock AuthScopeSnapshot(
+            return AuthScopeSnapshot(
                 serverId = scope.serverId,
                 profileId = scope.profileId,
                 serverUrl = scope.serverUrl,
@@ -487,15 +545,15 @@ class EncryptedTokenManagerImpl(
         // did not, which made it disagree with them. Note getCurrentServerId
         // still reads the cache directly.
         ensureCacheMatchesRegistryLocked()
-        val serverId = activeServerId ?: return@withLock null
+        val serverId = activeServerId ?: return null
         // Resolve the URL for *this* serverId from the registry entries so the
         // snapshot is internally consistent. Do NOT fall back to activeEntry —
         // if the captured serverId isn't a known, non-blank-URL entry, a pinned
         // request could be sent to the wrong server (or skip the rewrite and hit
         // localhost). Return null instead so the drain simply no-ops this pass.
         val url = registry.entries.value.firstOrNull { it.id == serverId }?.url
-        if (url.isNullOrBlank()) return@withLock null
-        AuthScopeSnapshot(
+        if (url.isNullOrBlank()) return null
+        return AuthScopeSnapshot(
             serverId = serverId,
             profileId = profileId,
             serverUrl = url,
@@ -716,6 +774,7 @@ class EncryptedTokenManagerImpl(
     }
 
     internal companion object {
+        const val KEY_LOGIN_ID = "login_authority_id"
         const val KEY_ACCESS_TOKEN = "access_token"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_TOKEN_EXPIRY = "token_expiry_epoch_ms"

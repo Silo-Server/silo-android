@@ -168,10 +168,7 @@ open class ProfileRepository(
      */
     suspend fun identityScopeUnchanged(expected: AuthScopeSnapshot?): Boolean {
         if (expected == null) return true
-        val current = tokenManager.snapshotCurrentScope() ?: return false
-        return current.serverId == expected.serverId &&
-            current.identityGeneration == expected.identityGeneration &&
-            current.credentialEpoch == expected.credentialEpoch
+        return expected.isSameIdentityAs(tokenManager.snapshotCurrentScope())
     }
 
     /**

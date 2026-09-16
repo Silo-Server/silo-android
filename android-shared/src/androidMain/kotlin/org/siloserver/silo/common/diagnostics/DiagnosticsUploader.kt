@@ -22,6 +22,7 @@ sealed interface DiagnosticsUploadDecision {
         val state: HostedDiagnosticsReportState = HostedDiagnosticsReportState.READY,
     ) : DiagnosticsUploadDecision
     data class HostedProcessing(val shortId: String) : DiagnosticsUploadDecision
+    data object KeptUncertain : DiagnosticsUploadDecision
     data object KeptRetryable : DiagnosticsUploadDecision
     data object KeptIdentityChanged : DiagnosticsUploadDecision
     data object KeptTooLarge : DiagnosticsUploadDecision
@@ -122,6 +123,8 @@ class DefaultDiagnosticsUploader(
         // this operation invalidates all post-network local bookkeeping.
         val operationGeneration = identityTransitions.generation.value
         val report = reports.load(reportId) ?: return DiagnosticsUploadDecision.KeptInvalid
+        if (report.binding.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED &&
+            report.state.errorCode == "delivery_uncertain") return DiagnosticsUploadDecision.KeptUncertain
         if (
             report.binding.destinationKind == DiagnosticsDestinationKind.HOSTED &&
             report.state.hostedRemoteShortId != null
@@ -319,6 +322,7 @@ class DefaultDiagnosticsUploader(
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
+            if (reports.load(report.id)?.state?.errorCode == "delivery_uncertain") return DiagnosticsUploadDecision.KeptUncertain
             markRetryable(report.id, "network")
             return DiagnosticsUploadDecision.KeptRetryable
         }
@@ -345,18 +349,25 @@ class DefaultDiagnosticsUploader(
                         requireAlwaysConsent,
                     ) -> SelfHostedUploadAttempt.Revoked
                     reports.load(report.id) == null -> SelfHostedUploadAttempt.ReportRemoved
+                    reports.load(report.id)?.state?.errorCode == "delivery_uncertain" -> SelfHostedUploadAttempt.Uncertain
                     else -> {
                         // Keep the request bound to the exact identity that approved
                         // this report. Privacy and identity revocations either happen
                         // before this lease and prevent the POST, or wait for it.
-                        SelfHostedUploadAttempt.Sent(
-                            api.upload(
-                                bundle.manifestBytes,
-                                bundle.bytes,
-                                report.binding.profileId,
-                                authorization,
-                            ),
+                        // Persist before dispatch: process death or a lost receipt cannot
+                        // authorize a second non-retryable POST.
+                        val attempt = reports.beginServerUpload(report.id)
+                            ?: return@withTransport SelfHostedUploadAttempt.Uncertain
+                        val result = api.upload(
+                            bundle.manifestBytes,
+                            bundle.bytes,
+                            report.binding.profileId,
+                            authorization,
                         )
+                        if (result is DiagnosticsUploadResult.Failure && result.httpStatus in 400..499 && result.httpStatus != 408) {
+                            reports.rejectServerUpload(report.id, attempt)
+                        }
+                        SelfHostedUploadAttempt.Sent(result)
                     }
                 }
             }
@@ -365,6 +376,7 @@ class DefaultDiagnosticsUploader(
             SelfHostedUploadAttempt.IdentityChanged -> return DiagnosticsUploadDecision.KeptIdentityChanged
             SelfHostedUploadAttempt.Revoked -> return DiagnosticsUploadDecision.KeptConsentReviewRequired
             SelfHostedUploadAttempt.ReportRemoved -> return DiagnosticsUploadDecision.KeptInvalid
+            SelfHostedUploadAttempt.Uncertain -> return DiagnosticsUploadDecision.KeptUncertain
             is SelfHostedUploadAttempt.Sent -> uploadAttempt.result
         }
         return when (result) {
@@ -394,16 +406,15 @@ class DefaultDiagnosticsUploader(
                     DiagnosticsUploadDecision.Uploaded(result.response.shortId)
                 }
             }
-            is DiagnosticsUploadResult.NetworkError -> {
-                markRetryable(report.id, "network")
-                DiagnosticsUploadDecision.KeptRetryable
-            }
+            is DiagnosticsUploadResult.NetworkError -> DiagnosticsUploadDecision.KeptUncertain
             is DiagnosticsUploadResult.Failure -> if (result.code == DiagnosticsErrorCode.UNAUTHORIZED) {
                 // The leased exact-scope request deliberately suppresses auth
                 // refresh to avoid re-entering the identity barrier. A normal
                 // preflight on the next attempt may refresh before send.
                 markRetryable(report.id, result.code.wire)
                 DiagnosticsUploadDecision.KeptRetryable
+            } else if (result.httpStatus >= 500 || result.httpStatus == 408 || result.httpStatus in 200..299) {
+                DiagnosticsUploadDecision.KeptUncertain
             } else {
                 mapServerError(report, result, expectedIdentity.noticeVersion)
             }
@@ -1112,6 +1123,7 @@ class DefaultDiagnosticsUploader(
         data object IdentityChanged : SelfHostedUploadAttempt
         data object Revoked : SelfHostedUploadAttempt
         data object ReportRemoved : SelfHostedUploadAttempt
+        data object Uncertain : SelfHostedUploadAttempt
         data class Sent(val result: DiagnosticsUploadResult) : SelfHostedUploadAttempt
     }
 

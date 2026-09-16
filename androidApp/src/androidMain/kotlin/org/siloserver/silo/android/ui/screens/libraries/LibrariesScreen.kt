@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.android.ui.components.TopBarRowTopInset
+import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
@@ -117,6 +119,7 @@ import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
@@ -127,6 +130,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 enum class LibrariesSubtab {
     Recommended,
@@ -207,6 +211,7 @@ class LibrariesViewModel(
     private var browseLoadedLibraryId: Int? = null
     private var collectionsLoadedLibraryId: Int? = null
     private var recommendedRequestGeneration = 0L
+    private var catalogContinuation: CatalogContinuationV2? = null
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
@@ -419,7 +424,7 @@ class LibrariesViewModel(
     fun loadMoreCatalog() {
         val state = _uiState.value
         val libraryId = state.selectedLibraryId ?: return
-        if (state.isLoadingCatalog || state.isLoadingMoreCatalog || !state.catalogHasMore) return
+        if (state.catalogError != null || state.isLoadingCatalog || state.isLoadingMoreCatalog || !state.catalogHasMore) return
         loadCatalog(libraryId, reset = false, force = true)
     }
 
@@ -458,7 +463,22 @@ class LibrariesViewModel(
                 }
             }
 
-            when (val result = sectionRepository.getLibrarySections(libraryId)) {
+            val owner = sectionRepository.captureLibrarySectionAuthority()
+            if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
+            if (owner == null) {
+                recommendedLoadedLibraryId = null
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList(), sectionsError = "Sign in to load library sections.") }
+                return@launch
+            }
+            val result = sectionRepository.getLibrarySections(libraryId, owner)
+            val valid = sectionRepository.isLibrarySectionAuthorityCurrent(owner)
+            if (!isRecommendedRequestCurrent(requestGeneration, libraryId) || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
+            if (!valid) {
+                recommendedLoadedLibraryId = null
+                _uiState.update { it.copy(isLoadingSections = false, sections = emptyList()) }
+                return@launch
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     if (!isRecommendedRequestCurrent(requestGeneration, libraryId)) return@launch
                     _uiState.update {
@@ -562,7 +582,7 @@ class LibrariesViewModel(
                     libraryId = libraryId,
                     sort = requestState.browseSort.sortField,
                     order = requestState.browseSort.sortOrder,
-                    offset = offset,
+                    continuation = if (reset) null else catalogContinuation,
                     limit = pageSize,
                     namePrefix = requestState.selectedNamePrefix,
                     // Full facet filtering (genre/decade/rating/studio/language/...)
@@ -576,6 +596,7 @@ class LibrariesViewModel(
                     // Overlay local optimistic watched/favorite (mirrors Home/Browse).
                     val overlaid = overlayLocalState(result.data.items)
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
+                    catalogContinuation = result.data.continuation
                     // Audiobook libraries expose book-native facets
                     // (author/narrator/series) — detected from the first item.
                     val detectedMediaType = overlaid.firstOrNull()?.let { first ->
@@ -824,7 +845,7 @@ fun LibrariesScreen(
                 // Background inside the source so the glass captures an
                 // opaque scene rather than compositing over the sharp content.
                 .hazeSource(chromeHaze)
-                .background(MaterialTheme.colorScheme.background)
+                .siloPageBackdrop()
                 .clipToBounds(),
         ) {
             // Hold content until the chrome has been measured once so the
@@ -1071,7 +1092,7 @@ private fun BrowseTabContent(
                     modifier = Modifier.fillMaxSize().padding(top = topInset),
                 )
             }
-            state.catalogError != null && state.catalogItems.isEmpty() -> {
+            state.catalogError != null -> {
                 // Controls stay mounted so a rejected sort/filter/letter can be
                 // changed from here rather than only retried.
                 Column(modifier = Modifier.fillMaxSize().padding(top = topInset)) {
@@ -1336,7 +1357,7 @@ private fun LibrariesFloatingChrome(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
+                .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset),
         ) {
         // Top row: library selector on the left, action icons on the right.
         Row(

@@ -7,7 +7,6 @@ import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.SiloDeviceMetadata
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -182,24 +181,21 @@ class DefaultCardPresentationStore(
             val identity = currentIdentity() ?: return
 
             val support = when (val caps = repository.contractCapabilities()) {
-                is SettingsCapabilitiesResult.Available ->
+                is ApiResult.Success ->
                     if (
-                        caps.capabilities.apiVersion == 1 &&
-                        caps.capabilities.revision >= MIN_CONTRACT_REVISION &&
-                        caps.capabilities.supportsBatchedEffective &&
-                        caps.capabilities.supportsIdempotentWrites
+                        caps.data.apiVersion == 1 &&
+                        caps.data.manifestRevision >= MIN_CONTRACT_REVISION &&
+                        caps.data.supportsBatchedEffective
                     ) {
                         CardPresentationSupport.Supported
                     } else {
                         CardPresentationSupport.Unsupported
                     }
-                is SettingsCapabilitiesResult.ServerUpgradeRequired ->
-                    CardPresentationSupport.Unsupported
-                is SettingsCapabilitiesResult.Error -> {
+                is ApiResult.Error -> {
                     commitError(caps.message, startGeneration)
                     return
                 }
-                is SettingsCapabilitiesResult.NetworkError -> {
+                is ApiResult.NetworkError -> {
                     commitError(caps.exception.message, startGeneration)
                     return
                 }

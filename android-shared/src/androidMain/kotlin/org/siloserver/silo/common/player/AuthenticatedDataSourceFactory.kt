@@ -84,6 +84,13 @@ internal class RefreshingHttpDataSource(
         if (!runBlocking { authSession.isTransportApproved(dataSpec.uri.toString()) }) {
             throw CleartextOriginNotApprovedException(dataSpec.uri.toString())
         }
+        val auxiliary = org.siloserver.silo.network.apiv2.isProxyAuxiliaryUrl(dataSpec.uri.toString())
+        if (auxiliary) {
+            val captured = dataSpec.customData as? org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders
+                ?: throw IOException("Proxy subtitle request has no captured playback authority")
+            if (dataSpec.uri.toString() !in captured.references || !runBlocking { captured.isCurrent() })
+                throw IOException("Proxy subtitle authority is no longer current")
+        }
         val guardEnabled = isResumableDirectPlayUri(dataSpec.uri)
         if (guardEnabled) {
             prepareEntityGuard(dataSpec.uri)
@@ -95,7 +102,7 @@ internal class RefreshingHttpDataSource(
             first.openWithGuards(dataSpec, failedSnapshot, guardEnabled)
         } catch (error: HttpDataSource.InvalidResponseCodeException) {
             if (
-                !shouldRefreshMediaRequest(
+                auxiliary || !shouldRefreshMediaRequest(
                     serverUrl = failedSnapshot.serverUrl,
                     requestUrl = dataSpec.uri.toString(),
                     responseCode = error.responseCode,
@@ -250,6 +257,8 @@ internal fun authenticatedHeadersFor(
     explicitHeaders: Map<String, String>,
 ): Map<String, String> {
     val resolvedRequestUrl = resolveRoutedDataSourceUrl(serverUrl, requestUrl)
+    if (org.siloserver.silo.network.apiv2.isProxyAuxiliaryUrl(resolvedRequestUrl))
+        return org.siloserver.silo.network.apiv2.capturedProxyAuxiliaryHeaders(explicitHeaders)
     val scopedSessionHeaders = if (isSameHttpOrigin(serverUrl, resolvedRequestUrl)) {
         sessionHeaders
     } else {
@@ -339,6 +348,7 @@ private class RoutedDataSource(
         } else {
             resolved.buildUpon()
                 .setHttpRequestHeaders(resolved.httpRequestHeaders + headers)
+                .apply { if (headers is org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders) setCustomData(headers) }
                 .build()
         }
     }
@@ -458,3 +468,22 @@ internal fun normalizeSubripDataIfNeeded(raw: ByteArray): ByteArray =
 
 internal const val MAX_SUBTITLE_BYTES = 32L * 1024 * 1024
 private const val DEFAULT_SUBRIP_READ_BUFFER_SIZE = 16 * 1024
+
+/** Exact issued proxy references retain their captured credentials and lifetime through Media3. */
+internal fun scopedProxyRequestHeaders(
+    requestUrl: String,
+    captured: org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders,
+): Map<String, String> {
+    if (!isSameHttpOrigin(requestUrl, captured.streamUrl)) return emptyMap()
+    val issued = Uri.parse(captured.streamUrl)
+    val target = Uri.parse(requestUrl)
+    val root = "/stream/v3/${captured.sessionId}"
+    val headerPrimary = issued.encodedPath == root || issued.encodedPath.orEmpty().startsWith("$root/")
+    val permitted = requestUrl in captured.references || (headerPrimary && (
+        requestUrl == captured.streamUrl || target.encodedPath == "$root/master.m3u8" ||
+            Regex("${Regex.escape(root)}/segment/[A-Za-z0-9_.-]+").matches(target.encodedPath.orEmpty())
+        ))
+    if (!permitted) return emptyMap()
+    if (!runBlocking { captured.isCurrent() }) throw IOException("Playback request authority changed")
+    return captured
+}

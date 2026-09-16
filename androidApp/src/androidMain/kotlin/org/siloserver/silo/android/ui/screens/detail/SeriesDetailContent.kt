@@ -33,6 +33,9 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalDensity
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
@@ -42,7 +45,7 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 @Composable
 fun SeriesDetailContent(
     detail: ItemDetail,
-    similarItems: List<ItemDetail> = emptyList(),
+    similarItems: List<org.siloserver.silo.model.catalog.BrowseItem> = emptyList(),
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     episodes: List<EpisodeListItem>,
@@ -210,15 +213,34 @@ fun SeriesDetailContent(
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
     val feedState = rememberLazyListState()
+    // Feed the pinned header. Only the first item (the hero) matters: it is
+    // taller than the fade range, so once it has scrolled away the header is
+    // already fully settled.
+    val detailScroll = LocalDetailScrollState.current
+    if (detailScroll != null) {
+        val density = LocalDensity.current
+        LaunchedEffect(feedState, detailScroll, density) {
+            snapshotFlow {
+                if (feedState.firstVisibleItemIndex > 0) {
+                    HeaderSettledDp
+                } else {
+                    with(density) { feedState.firstVisibleItemScrollOffset.toDp().value }
+                }
+            }.collect { detailScroll.update(it) }
+        }
+    }
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
     val isExpandedDetailLayout = maxWidth >= ExpandedDetailBreakpoint
+    DetailPageSurface(
+        backdropUrl = detail.backdropUrl,
+        backdropThumbhash = detail.backdropThumbhash,
+        tint = dominantColor,
+    ) {
     DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
         state = feedState,
         modifier = Modifier
-            .fillMaxSize()
-            .background(SiloBackground)
-            .background(detailScreenBackgroundBrush(dominantColor)),
+            .fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(36.dp),
     ) {
         item(contentType = "detail-hero") {
@@ -414,6 +436,7 @@ fun SeriesDetailContent(
                 onDismiss = { showSubtitlePicker = false },
             )
         }
+    }
     }
 }
 

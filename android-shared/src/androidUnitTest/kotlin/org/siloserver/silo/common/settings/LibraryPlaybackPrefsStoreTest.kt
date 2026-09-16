@@ -1,5 +1,7 @@
 package org.siloserver.silo.common.settings
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.settings.LibraryPlaybackPref
 import org.siloserver.silo.model.settings.LibraryPlaybackPrefRequest
 import org.siloserver.silo.model.settings.LibraryPlaybackPrefsResponse
@@ -7,6 +9,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.LibraryPlaybackPrefsApi
 import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
@@ -101,6 +104,30 @@ class LibraryPlaybackPrefsStoreTest {
         assertEquals("boom", store.lastError.value)
     }
 
+    @Test
+    fun `clear fences an in-flight list publication`() = runTest {
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val reply = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val client = HttpClient()
+        val api = object : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(client, org.siloserver.silo.network.TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
+            override suspend fun list(): ApiResult<LibraryPlaybackPrefsResponse> {
+                started.complete(Unit)
+                reply.await()
+                return ApiResult.Success(LibraryPlaybackPrefsResponse(listOf(prefFor(1))))
+            }
+        }
+        try {
+            val store = DefaultLibraryPlaybackPrefsStore(LibraryPlaybackPrefsRepository(api))
+            val refresh = async { store.refresh() }
+            started.await()
+            store.clear()
+            reply.complete(Unit)
+            refresh.await()
+            assertTrue(store.libraryPrefs.value.isEmpty())
+            assertNull(store.lastError.value)
+        } finally { client.close() }
+    }
+
     private fun prefFor(libraryId: Int, audio: String? = null, sub: String? = null) =
         LibraryPlaybackPref(
             profileId = "p",
@@ -113,7 +140,7 @@ class LibraryPlaybackPrefsStoreTest {
 private class FakeLibraryPlaybackPrefsApi(
     initial: List<LibraryPlaybackPref>,
     private var failNextWith: String? = null,
-) : LibraryPlaybackPrefsApi(HttpClient()) {
+) : LibraryPlaybackPrefsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
     data class SetCall(val libraryId: Int, val request: LibraryPlaybackPrefRequest)
 
     private var currentList: List<LibraryPlaybackPref> = initial

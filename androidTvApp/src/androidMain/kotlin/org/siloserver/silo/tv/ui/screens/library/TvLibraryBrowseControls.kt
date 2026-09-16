@@ -32,6 +32,12 @@ import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.runtime.Composable
+import androidx.compose.material3.OutlinedTextField
+import kotlinx.coroutines.delay
+import org.koin.compose.koinInject
+import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +73,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
+import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.components.tvSkylinePanelChrome
 
 /**
@@ -612,7 +619,34 @@ private fun FacetValuesScreen(
         }
     }
 
-    facet.optionPairs(facetOptions).forEach { (value, label) ->
+    val remoteField = when (facet) { TvCatalogFacet.Author -> "author"; TvCatalogFacet.Narrator -> "narrator"; TvCatalogFacet.SeriesName -> "series"; else -> null }
+    val scope = facetOptions?.facetScope
+    val repository: CatalogRepository = koinInject()
+    var query by remember(facet, scope) { mutableStateOf("") }
+    var remoteValues by remember(facet, scope) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var note by remember(facet, scope) { mutableStateOf<String?>(null) }
+    LaunchedEffect(query, facet, scope) {
+        if (remoteField != null && scope != null) {
+            remoteValues = emptyList()
+            note = "Searching…"
+            delay(250)
+            when (val result = repository.searchFacet(scope, remoteField, query.trim())) {
+                is ApiResult.Success -> {
+                    remoteValues = result.data.matches.map { it to it }
+                    note = if (result.data.hasMore) "More matches are available. Refine your search." else null
+                }
+                else -> note = result.errorMessage("Could not search filter values")
+            }
+        }
+    }
+    if (remoteField != null) {
+        OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+            placeholder = { androidx.compose.material3.Text("Search ${facet.title}") }, modifier = Modifier.fillMaxWidth(),
+            colors = tvOutlinedTextFieldColors())
+        Text(note ?: if (scope == null) "Showing a limited list. Reload filters to search all values." else "Search by the beginning of a name.")
+    }
+    val choices = if (remoteField != null && scope != null) remoteValues else facet.optionPairs(facetOptions)
+    choices.forEach { (value, label) ->
         val isSelected = draft.isSelected(facet, value)
         BrowsePanelRow(onClick = { onDraftChanged(draft.toggled(facet, value)) }) { foreground ->
             Icon(

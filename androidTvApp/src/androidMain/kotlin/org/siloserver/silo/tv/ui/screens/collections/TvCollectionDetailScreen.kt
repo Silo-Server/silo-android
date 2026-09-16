@@ -84,7 +84,7 @@ fun TvCollectionDetailScreen(
 
         when {
             state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
-            state.error != null && state.items.isEmpty() -> TvErrorScreen(
+            state.error != null -> TvErrorScreen(
                 message = state.error!!,
                 onRetry = viewModel::retry,
             )

@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
@@ -121,6 +122,7 @@ fun PersonDetailScreen(
                     pagingError = state.pagingError,
                     onFilterSelected = { viewModel.applyFilter(it) },
                     onLoadMore = viewModel::loadMoreIfNeeded,
+                    onRetryItems = viewModel::retryItems,
                     onItemClick = onItemClick,
                 )
                 }
@@ -133,7 +135,7 @@ fun PersonDetailScreen(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(8.dp)
+                .padding(horizontal = TopBarEdgeMargin)
                 .size(40.dp)
                 .clip(CircleShape)
                 .background(Color.Black.copy(alpha = 0.45f)),
@@ -160,6 +162,7 @@ private fun PersonDetailContent(
     pagingError: String?,
     onFilterSelected: (PersonMediaFilter) -> Unit,
     onLoadMore: () -> Unit,
+    onRetryItems: () -> Unit,
     onItemClick: (String) -> Unit,
 ) {
     val gridState = rememberLazyGridState()
@@ -254,7 +257,7 @@ private fun PersonDetailContent(
                     PagingFooter(
                         isLoading = isLoadingItems,
                         error = pagingError,
-                        onRetry = onLoadMore,
+                        onRetry = onRetryItems,
                     )
                 }
             }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -116,7 +118,7 @@ private class QueueProfileRepository(
     private val results: ArrayDeque<ApiResult<List<Profile>>>,
     private val beforeResult: suspend (Int) -> Unit = {},
 ) : ProfileRepository(
-    profileApi = ProfileApi(HttpClient(MockEngine { respond("{}") })),
+    profileApi = ProfileApi(HttpClient(MockEngine { respond("{}") }), ApiV2Gate.Unrestricted),
     tokenManager = tokenManager,
     identityTransitions = barrier,
 ) {

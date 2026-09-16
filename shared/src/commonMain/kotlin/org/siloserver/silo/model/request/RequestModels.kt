@@ -77,7 +77,7 @@ data class RequestDiscoverySection(
 
 @Serializable
 data class RequestsDiscoverResponse(
-    val sections: List<RequestDiscoverySection> = emptyList(),
+    @kotlinx.serialization.Required @SerialName("items") val sections: List<RequestDiscoverySection> = emptyList(),
 )
 
 @Serializable
@@ -139,7 +139,7 @@ data class CreateMediaRequest(
 
 @Serializable
 data class RequestTarget(
-    val id: Long,
+    val id: String,
     @SerialName("request_id") val requestId: String,
     @SerialName("integration_id") val integrationId: String = "",
     @SerialName("integration_kind") val integrationKind: String = "",
@@ -169,7 +169,7 @@ data class MediaRequest(
     @SerialName("backdrop_path") val backdropPath: String? = null,
     val status: String,
     val outcome: String,
-    @SerialName("requested_by_user_id") val requestedByUserId: Int? = null,
+    @SerialName("requested_by_user_id") val requestedByUserId: String? = null,
     @SerialName("requested_by_profile_id") val requestedByProfileId: String = "",
     @SerialName("integration_kind") val integrationKind: String = "",
     @SerialName("is_anime") val isAnime: Boolean = false,
@@ -188,7 +188,8 @@ data class MediaRequest(
 
 @Serializable
 data class RequestsListResponse(
-    val requests: List<MediaRequest> = emptyList(),
+    @kotlinx.serialization.Required @SerialName("items") val requests: List<MediaRequest> = emptyList(),
+    @kotlinx.serialization.Required val page: org.siloserver.silo.network.apiv2.PageInfo = org.siloserver.silo.network.apiv2.PageInfo(hasMore = false),
 )
 
 @Serializable

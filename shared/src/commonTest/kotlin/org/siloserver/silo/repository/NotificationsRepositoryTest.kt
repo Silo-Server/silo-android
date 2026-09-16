@@ -169,8 +169,9 @@ class NotificationsRepositoryTest {
             ApiResult.Success(NotificationCapability())
         var markReadCalls = mutableListOf<String>()
         var markAllReadCalls = 0
+        var listCalls = 0
 
-        override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?) = listResponse
+        override suspend fun list(limit: Int, unreadOnly: Boolean, before: String?) = listResponse.also { listCalls++ }
         override suspend fun sync(since: String?, limit: Int) =
             ApiResult.Success(NotificationSyncResponse())
         override suspend fun get(id: String) = ApiResult.Success(
@@ -181,14 +182,13 @@ class NotificationsRepositoryTest {
             markReadCalls += id
             return markReadResult
         }
-        override suspend fun markAllRead(): ApiResult<Unit> {
+        override suspend fun markAllRead(through: String): ApiResult<Unit> {
             markAllReadCalls++
             return markAllReadResult
         }
         override suspend fun getPreferences() = prefsResponse
         override suspend fun updatePreferences(update: NotificationPreferencesUpdate) = prefsResponse
         override suspend fun capability() = capabilityResponse
-        override suspend fun wsTicket() = ApiResult.Success(WsTicketResponse("t", 30))
     }
 
     @Test
@@ -259,7 +259,7 @@ class NotificationsRepositoryTest {
     }
 
     @Test
-    fun `connectRealtime folds a created event into the state flows`() = kotlinx.coroutines.test.runTest {
+    fun `connectRealtime folds a created event without rereading the inbox`() = kotlinx.coroutines.test.runTest {
         val api = FakeNotificationsApi()
         val events = kotlinx.coroutines.flow.MutableSharedFlow<NotificationRealtimeEvent>(
             replay = 0, extraBufferCapacity = 8,
@@ -276,6 +276,10 @@ class NotificationsRepositoryTest {
         kotlinx.coroutines.yield()
         assertEquals(listOf("live"), repo.rows.value.map { it.id })
         assertEquals(1, repo.unreadCount.value)
+        assertEquals(0, api.listCalls)
+        events.emit(NotificationRealtimeEvent.Invalidate)
+        kotlinx.coroutines.yield()
+        assertEquals(1, api.listCalls, "a signed read cutoff cannot fold locally and must reread the inbox")
         job.cancel()
     }
 

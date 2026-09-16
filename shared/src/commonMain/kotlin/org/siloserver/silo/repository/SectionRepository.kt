@@ -2,122 +2,72 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
-import org.siloserver.silo.model.section.HomeLayoutResponse
 import org.siloserver.silo.model.section.HomeSectionItemsResponse
 import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
 import org.siloserver.silo.model.section.SectionsResponse
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
-import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
+import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.port.CatalogCachePort
-import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.canServeCache
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 
 class SectionRepository(
     private val sectionApi: SectionApi,
     /** Offline read cache for a library's Recommended sections (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
-    private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
-    private val homeRequestDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
-    private val homeRequestScope = CoroutineScope(SupervisorJob() + homeRequestDispatcher)
-    private val homeRequestMutex = Mutex()
-    private val homeSectionsInFlight =
-        mutableMapOf<Long, Deferred<ApiResult<SectionsResponse>>>()
-    private val homeSectionItemsInFlight =
-        mutableMapOf<Pair<Long, String>, Deferred<ApiResult<HomeSectionItemsResponse>>>()
+    suspend fun captureHomeAuthority() = sectionApi.captureHomeAuthority()
+    suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isHomeAuthorityCurrent(owner)
 
-    /** Fetches the home screen layout configuration. */
-    suspend fun getHomeLayout(): ApiResult<HomeLayoutResponse> =
-        sectionApi.getHomeLayout()
+    suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSections(owner)
+    suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSectionItems(id, owner)
 
-    /** Fetches all home screen sections (with items pre-resolved). */
-    suspend fun getHomeSections(): ApiResult<SectionsResponse> {
-        val identityGeneration = identityTransitions.generation.value
-        val request = homeRequestMutex.withLock {
-            homeSectionsInFlight[identityGeneration] ?: run {
-                lateinit var created: Deferred<ApiResult<SectionsResponse>>
-                created = homeRequestScope.async(start = CoroutineStart.LAZY) {
-                    try {
-                        sectionApi.getHomeSections()
-                    } finally {
-                        homeRequestMutex.withLock {
-                            if (homeSectionsInFlight[identityGeneration] === created) {
-                                homeSectionsInFlight.remove(identityGeneration)
-                            }
-                        }
-                    }
-                }
-                homeSectionsInFlight[identityGeneration] = created
-                created.start()
-                created
-            }
-        }
-        return request.await()
-    }
+    suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =
+        sectionApi.dismissHomeItem(surface, itemId, anchor, owner)
 
-    /** Fetches the items within a specific home section. */
-    suspend fun getHomeSectionItems(sectionId: String): ApiResult<HomeSectionItemsResponse> {
-        val requestKey = identityTransitions.generation.value to sectionId
-        val request = homeRequestMutex.withLock {
-            homeSectionItemsInFlight[requestKey] ?: run {
-                lateinit var created: Deferred<ApiResult<HomeSectionItemsResponse>>
-                created = homeRequestScope.async(start = CoroutineStart.LAZY) {
-                    try {
-                        sectionApi.getHomeSectionItems(sectionId)
-                    } finally {
-                        homeRequestMutex.withLock {
-                            if (homeSectionItemsInFlight[requestKey] === created) {
-                                homeSectionItemsInFlight.remove(requestKey)
-                            }
-                        }
-                    }
-                }
-                homeSectionItemsInFlight[requestKey] = created
-                created.start()
-                created
-            }
-        }
-        return request.await()
+    /** Scoped consumers never share the legacy Home request or its cache. */
+    suspend fun loadScopedHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot,
+        stillCurrent: () -> Boolean, publish: (List<org.siloserver.silo.model.section.ResolvedSection>) -> Unit) {
+        if (!currentCoroutineContext().isActive || !stillCurrent()) return
+        // getHomeSections guards the owner before and after the exchange.
+        val result = sectionApi.getHomeSections(owner)
+        if (!currentCoroutineContext().isActive || !stillCurrent()) return
+        if (result is ApiResult.Success) publish(result.data.sections)
     }
 
     /** Fetches a library's resolved sections (offline: last cached sections). */
-    suspend fun getLibrarySections(libraryId: Int): ApiResult<SectionsResponse> {
-        val requestIdentityGeneration = identityTransitions.generation.value
-        val cacheWriteLease = CatalogCacheWriteLease(requestIdentityGeneration)
-        val result = sectionApi.getLibrarySections(libraryId)
+    suspend fun getLibrarySections(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
+        // getLibrarySections guards the owner before and after the exchange.
+        val result = sectionApi.getLibrarySections(libraryId, owner)
         if (result is ApiResult.Success) {
-            if (requestIdentityGeneration == identityTransitions.generation.value) {
-                catalogCache.cacheLibrarySections(libraryId, result.data.sections, cacheWriteLease)
-            }
+            catalogCache.cacheLibrarySectionsV2(libraryId, result.data.sections, owner)
+            if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
             return result
         }
         if (result.canServeCache()) {
-            catalogCache.getCachedLibrarySections(libraryId)
-                ?.let { return ApiResult.Success(SectionsResponse(sections = it)) }
+            val cached = catalogCache.getCachedLibrarySectionsV2(libraryId, owner)
+            if (!isLibrarySectionAuthorityCurrent(owner)) return identityChanged()
+            if (cached != null) return ApiResult.Success(SectionsResponse(cached))
         }
         return result
     }
+
+    suspend fun captureLibrarySectionAuthority() = sectionApi.captureLibrarySectionAuthority()
+    suspend fun isLibrarySectionAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isLibrarySectionAuthorityCurrent(owner)
 
     /** Fetches items within a specific library section. */
     suspend fun getLibrarySectionItems(
         libraryId: Int,
         sectionId: String,
+        owner: org.siloserver.silo.network.AuthScopeSnapshot,
     ): ApiResult<HomeSectionItemsResponse> =
-        sectionApi.getLibrarySectionItems(libraryId, sectionId)
+        sectionApi.getLibrarySectionItems(libraryId, sectionId, owner)
 
     /** Lists collections within a library as a flat list. Callers that need
      *  the grouped layout should use [getLibraryCollectionsGrouped]. */
@@ -132,7 +82,7 @@ class SectionRepository(
     /** Pages a library collection's items via the catalog resolver. */
     suspend fun getLibraryCollectionItems(
         collectionId: String,
-        offset: Int = 0,
+        continuation: CatalogContinuationV2? = null,
         limit: Int = 60,
         sort: String? = null,
         order: String? = null,
@@ -141,7 +91,7 @@ class SectionRepository(
     ): ApiResult<CatalogResponse> =
         sectionApi.getLibraryCollectionItems(
             collectionId = collectionId,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             sort = sort,
             order = order,

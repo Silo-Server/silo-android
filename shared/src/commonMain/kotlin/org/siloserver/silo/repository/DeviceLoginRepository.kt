@@ -133,12 +133,13 @@ class DeviceLoginRepository(
                             )
                             return
                         }
-                        // Transient — keep trying.
+                        // Transient (5xx, proxy hiccup): the pending authorization is
+                        // still valid on the server, so keep polling. A consumed code
+                        // answers 404 above, which already ends the flow.
                         delay(intervalMs)
                         continue
                     }
                     is ApiResult.NetworkError -> {
-                        // Transient network blip — keep trying.
                         delay(intervalMs)
                         continue
                     }

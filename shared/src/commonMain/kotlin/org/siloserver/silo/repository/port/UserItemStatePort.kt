@@ -37,6 +37,17 @@ sealed interface TrackSelectionFingerprintUpdate {
  * server result so the op can be acked, kept for retry, or dropped.
  */
 interface UserItemStatePort {
+    /** Persist before dispatch; null means missing authority or an unresolved predecessor. */
+    suspend fun beginPersonalWrite(command: PersonalWrite): PersonalWriteHandle? = null
+    /** Only a verified 204 projects the command locally and releases the journal row. */
+    suspend fun completePersonalWrite(handle: PersonalWriteHandle) {}
+    /**
+     * Releases the journal row without projecting. Watched and rating writes are
+     * idempotent desired-state writes, so an unacknowledged attempt is simply
+     * retried by the next user action rather than blocking the item.
+     */
+    suspend fun abandonPersonalWrite(handle: PersonalWriteHandle) {}
+
 
     /** rating `null` clears the rating. */
     suspend fun recordWatched(contentId: String, watched: Boolean): OutboxHandle
@@ -172,6 +183,10 @@ interface UserItemStatePort {
         progress: Double,
     ) {
     }
+
+    /** V2 event: capture authority and event time before queuing any delayed work. */
+    suspend fun recordEbookProgress(authority: org.siloserver.silo.network.DurableLoginAuthority,
+        contentId: String, fileId: Int, location: String, progress: Double, eventTimeMs: Long) {}
 
     /** Locally-recorded ebook resume point for a file, or null. No-op (null) by default. */
     suspend fun localEbookProgress(contentId: String, fileId: Int): EbookLocalProgress? = null

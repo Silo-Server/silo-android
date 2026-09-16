@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.ktor.client.HttpClient
@@ -29,7 +31,9 @@ import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeAttributeKey
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.apiv2.CatalogV2Api
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
@@ -40,7 +44,6 @@ import org.siloserver.silo.network.api.DefaultMetadataAiApi
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.subtitleTrackFingerprint
 import org.siloserver.silo.repository.CatalogRepository
@@ -50,6 +53,8 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.port.LocalTrackSelection
 import org.siloserver.silo.repository.port.OutboxHandle
+import org.siloserver.silo.repository.port.PersonalWrite
+import org.siloserver.silo.repository.port.PersonalWriteHandle
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.tv.testing.FakePlayerSettingsStore
@@ -718,19 +723,24 @@ class TvNextUpSelectionHandoffTest {
     private fun createFixture(scenario: Scenario): Fixture {
         val identityTransitions = DefaultIdentityTransitionBarrier()
         val tokenManager = FakeTokenManager(identityTransitions)
-        val client = scenario.client()
-        val userState = RecordingUserItemState()
+        val client = scenario.client(tokenManager)
+        val userState = RecordingUserItemState(tokenManager)
+        // Queued snapshots below control handoff races. Personal writes capture
+        // the same current identity without consuming those handoff checkpoints.
+        val personalTokens = object : TokenManager by tokenManager {
+            override suspend fun snapshotCurrentScope() = tokenManager.currentScope()
+        }
         val catalogRepository = CatalogRepository(
-            catalogApi = CatalogApi(client),
+            catalogApi = CatalogApi(client, CatalogV2Api(client, ApiV2Gate.Unrestricted, tokenManager)),
             identityTransitions = identityTransitions,
         )
         val personalDataRepository = PersonalDataRepository(
-            personalDataApi = PersonalDataApi(client),
+            personalDataApi = PersonalDataApi(client, tokenManager = personalTokens),
             userItemStatePort = userState,
             identityTransitions = identityTransitions,
         )
         val profileRepository = ProfileRepository(
-            profileApi = ProfileApi(client),
+            profileApi = ProfileApi(client, ApiV2Gate.Unrestricted, tokenManager),
             tokenManager = tokenManager,
             identityTransitions = identityTransitions,
         )
@@ -742,7 +752,7 @@ class TvNextUpSelectionHandoffTest {
             },
             profileRepository = profileRepository,
             profileSettings = ProfileSettingsController(SettingsRepository(UnavailableSettingsApi())),
-            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client)),
+            metadataAiRepository = MetadataAiRepository(DefaultMetadataAiApi(client, gate = ApiV2Gate.Unrestricted)),
             contentId = scenario.seriesId,
             userItemState = userState,
             tokenManager = tokenManager,
@@ -806,40 +816,50 @@ class TvNextUpSelectionHandoffTest {
         var episodeOneDefaultVersions = oldVersions
         val episodeOneResponses = ConcurrentLinkedDeque<DetailResponse>()
 
-        fun client(): HttpClient = HttpClient(
+        fun client(tokenManager: FakeTokenManager): HttpClient = HttpClient(
             MockEngine { request ->
+                if (request.url.encodedPath.startsWith("/api/v2/")) {
+                    // The engine runs handlers on its own threads, so a request
+                    // issued before an identity transition can be evaluated after
+                    // it and legitimately carries the old owner. Only a request
+                    // issued under the live generation must match the live scope.
+                    val owner = request.attributes[AuthScopeAttributeKey]
+                    if (owner.identityGeneration == tokenManager.liveGeneration()) {
+                        assertTrue(owner.isSameIdentityAs(tokenManager.currentScope()))
+                    }
+                }
                 fun json(content: String) = respond(
                     content = content,
                     status = HttpStatusCode.OK,
                     headers = JSON_HEADERS,
                 )
                 when (request.url.encodedPath) {
-                    "/api/v1/catalog/items/$seriesId" -> json(
-                        """{"content_id":"$seriesId","type":"$seriesType","title":"Series"}""",
+                    "/api/v2/catalog/items/$seriesId" -> json(
+                        """{"content_id":"$seriesId","type":"$seriesType","title":"Series","cast":[],"crew":[],"versions":[],"subtitles":[]}""",
                     )
-                    "/api/v1/catalog/series/$seriesId/seasons" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons" -> {
                         seasonsRequests.incrementAndGet()
                         seasonsGate?.await()
                         json(
-                            """{"seasons":[
+                            """{"items":[
                                 {"content_id":"season-1$suffix","season_number":1,"title":"Season 1"},
                                 {"content_id":"season-2$suffix","season_number":2,"title":"Season 2"}
                             ]}""".trimIndent(),
                         )
                     }
-                    "/api/v1/catalog/series/$seriesId/seasons/1/episodes" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons/1/episodes" -> {
                         seasonOneEpisodesGate?.await()
                         json(episodesJson())
                     }
-                    "/api/v1/catalog/series/$seriesId/seasons/2/episodes" -> {
+                    "/api/v2/catalog/series/$seriesId/seasons/2/episodes" -> {
                         seasonTwoEpisodesGate?.await()
                         json(
-                            """{"episodes":[
+                            """{"items":[
                                 {"content_id":"$seasonTwoEpisodeId","season_number":2,"episode_number":1,"title":"Season Two"}
                             ]}""".trimIndent(),
                         )
                     }
-                    "/api/v1/catalog/items/$episodeOneId" -> {
+                    "/api/v2/catalog/items/$episodeOneId" -> {
                         val queued = episodeOneResponses.pollFirst()
                         if (queued == null) {
                             json(itemDetailJson(episodeOneId, episodeOneDefaultVersions, oldLastFileId))
@@ -849,24 +869,24 @@ class TvNextUpSelectionHandoffTest {
                             json(queued.json)
                         }
                     }
-                    "/api/v1/catalog/items/$episodeTwoId" -> {
+                    "/api/v2/catalog/items/$episodeTwoId" -> {
                         episodeTwoRequests.incrementAndGet()
                         episodeTwoGate?.await()
                         json(itemDetailJson(episodeTwoId, newVersions, newLastFileId))
                     }
-                    "/api/v1/catalog/items/$seasonTwoEpisodeId" ->
+                    "/api/v2/catalog/items/$seasonTwoEpisodeId" ->
                         json(itemDetailJson(seasonTwoEpisodeId, newVersions, newLastFileId))
-                    "/api/v1/watched/$episodeOneId" -> {
+                    "/api/v2/watched/$episodeOneId" -> {
                         episodeOneWatchGate?.await()
                         episodeOneWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
                     }
-                    "/api/v1/watched/$episodeTwoId" -> {
+                    "/api/v2/watched/$episodeTwoId" -> {
                         episodeTwoWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
                     }
-                    "/api/v1/profiles" -> json(
-                        """{"profiles":[{"id":"profile-1","name":"Profile"}]}""",
+                    "/api/v2/profiles" -> json(
+                        """{"items":[{"id":"profile-1","name":"Profile","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]}""",
                     )
                     else -> respond(
                         content = """{"error":"not_found","message":"not found"}""",
@@ -880,19 +900,23 @@ class TvNextUpSelectionHandoffTest {
         }
 
         private fun episodesJson(): String =
-            """{"episodes":[
+            """{"items":[
                 {"content_id":"$episodeOneId","season_number":1,"episode_number":1,"title":"One","user_data":{"played":$episodeOneWatched}},
                 {"content_id":"$episodeTwoId","season_number":1,"episode_number":2,"title":"Two","user_data":{"played":$episodeTwoWatched}}
             ]}""".trimIndent()
     }
 
-    private class RecordingUserItemState : UserItemStatePort {
+    private class RecordingUserItemState(private val tokens: FakeTokenManager) : UserItemStatePort {
         data class Write(val contentId: String, val fileId: Int, val kind: String, val fingerprint: String?)
 
         val saved = ConcurrentHashMap<Pair<String, Int>, LocalTrackSelection>()
         val writes = CopyOnWriteArrayList<Write>()
         val readGates = ConcurrentHashMap<Pair<String, Int>, CompletableDeferred<Unit>>()
         val startedReads: MutableSet<Pair<String, Int>> = ConcurrentHashMap.newKeySet()
+
+        private var nextPersonalWrite = 0L
+        override suspend fun beginPersonalWrite(command: PersonalWrite) =
+            PersonalWriteHandle(++nextPersonalWrite, tokens.currentScope(), command)
 
         override suspend fun recordWatched(contentId: String, watched: Boolean) = OutboxHandle.NONE
         override suspend fun recordFavorite(contentId: String, favorite: Boolean) = OutboxHandle.NONE
@@ -950,6 +974,8 @@ class TvNextUpSelectionHandoffTest {
             this.serverId = serverId.orEmpty()
         }
         override suspend fun signOutCurrentServer() = Unit
+        fun liveGeneration(): Long = identityTransitions.generation.value
+
         fun currentScope(profileId: String? = this.profileId) = AuthScopeSnapshot(
             serverId = serverId,
             profileId = profileId,
@@ -966,9 +992,9 @@ class TvNextUpSelectionHandoffTest {
         }
     }
 
-    private class UnavailableSettingsApi : SettingsApi(HttpClient()) {
-        override suspend fun getContractCapabilities(): SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.ServerUpgradeRequired
+    private class UnavailableSettingsApi : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
+        override suspend fun getContractCapabilities(): ApiResult<org.siloserver.silo.model.settings.SettingsContractCapabilities> =
+            ApiResult.Error(404, "not_found", "404 page not found")
     }
 
     private data class DetailResponse(val gate: CompletableDeferred<Unit>?, val json: String)
@@ -1016,12 +1042,12 @@ class TvNextUpSelectionHandoffTest {
             versions: List<VersionFixture>,
             lastFileId: Int? = null,
         ): String =
-            """{"content_id":"$contentId","type":"episode","title":"Episode","user_data":{"last_file_id":$lastFileId},"versions":[${versions.joinToString(",", transform = ::versionJson)}]}"""
+            """{"content_id":"$contentId","type":"episode","title":"Episode","cast":[],"crew":[],"subtitles":[],"user_data":{"last_file_id":${lastFileId?.let { "\"$it\"" } ?: "null"}},"versions":[${versions.joinToString(",", transform = ::versionJson)}]}"""
 
         private fun jsonString(value: String?): String = value?.let { "\"$it\"" } ?: "null"
 
         private fun versionJson(version: VersionFixture): String =
-            """{"file_id":${version.fileId},"resolution":"${version.resolution}","codec_video":${jsonString(version.codec)},"container":${jsonString(version.container)},"subtitle_tracks":[${version.subtitles.joinToString(",", transform = ::subtitleJson)}],"audio_tracks":[${version.audio.joinToString(",", transform = ::audioJson)}]}"""
+            """{"file_id":"${version.fileId}","resolution":"${version.resolution}","codec_video":${jsonString(version.codec)},"container":${jsonString(version.container)},"subtitle_tracks":[${version.subtitles.joinToString(",", transform = ::subtitleJson)}],"audio_tracks":[${version.audio.joinToString(",", transform = ::audioJson)}]}"""
 
         private fun subtitleJson(track: SubtitleTrack): String =
             """{"index":${track.index},"codec":"${track.codec}","language":"${track.language}","title":${track.title?.let { "\"$it\"" } ?: "null"},"forced":${track.forced},"external":${track.external}}"""

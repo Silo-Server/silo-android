@@ -30,7 +30,8 @@ data class OutboxOperation(
 ) {
     /** Payload for [SET_EBOOK_PROGRESS]; serialized (CFI [location] needs escaping). */
     @Serializable
-    data class EbookProgress(val fileId: Int, val location: String, val progress: Double)
+    data class EbookProgress(val fileId: Int, val location: String, val progress: Double,
+        val updatedAt: String? = null, val loginId: String? = null, val origin: String? = null)
 
     /** Resume row cleared optimistically by a watched-state mutation. */
     @Serializable
@@ -120,8 +121,9 @@ data class OutboxOperation(
             return position to duration
         }
 
-        fun encodeEbookProgressPayload(fileId: Int, location: String, progress: Double): String =
-            json.encodeToString(EbookProgress(fileId, location, progress))
+        fun encodeEbookProgressPayload(fileId: Int, location: String, progress: Double, updatedAt: String? = null,
+            loginId: String? = null, origin: String? = null): String =
+            json.encodeToString(EbookProgress(fileId, location, progress, updatedAt, loginId, origin))
 
         fun decodeEbookProgressPayload(payloadJson: String): EbookProgress =
             json.decodeFromString(payloadJson)

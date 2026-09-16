@@ -443,7 +443,7 @@ private fun SectionItem.shelfTitle(showProgress: Boolean): String {
 
 private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
     if (showProgress) {
-        val tag = formatShelfEpisodeTag(seasonNumber, episodeNumber)
+        val tag = tvEpisodeTag(seasonNumber, episodeNumber)
         return listOfNotNull(tag, title.takeIf { it.isNotBlank() }).joinToString(" • ").ifBlank { null }
     }
     return when {
@@ -454,9 +454,3 @@ private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
     }
 }
 
-private fun formatShelfEpisodeTag(season: Int?, episode: Int?): String? {
-    if (season == null && episode == null) return null
-    val s = season?.let { "S${it}" } ?: ""
-    val e = episode?.let { "E${it}" } ?: ""
-    return "$s $e".trim().ifBlank { null }
-}

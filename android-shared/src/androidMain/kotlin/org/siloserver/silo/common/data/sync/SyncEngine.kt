@@ -4,8 +4,6 @@ import android.util.Log
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.DirtyOperationEntity
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
-import org.siloserver.silo.model.personal.SyncProgressItem
-import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.EbookReaderApi
@@ -13,29 +11,7 @@ import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.WriteOutcome
 import org.siloserver.silo.repository.port.toWriteOutcome
 
-/**
- * Drains the `dirty_operations` outbox to the server (Track B). Replays each
- * pending op through the **raw [PersonalDataApi]** — never [PersonalDataRepository],
- * which would re-enter the local-first port and re-enqueue the op forever.
- *
- * Every send is **pinned** to the scope captured at drain start via
- * [AuthScopeSnapshot]: the auth plugin binds the request to that server URL,
- * profile, and exact live credential slot, so a scope switch mid-drain can't
- * send an op to the wrong account, and continuing to drain the captured scope
- * after a switch is correct.
- *
- * Correctness still rests on:
- * - **Atomic claim** ([DirtyOperationDao.claim]) — a row is sent at most once.
- * - **Reclaim** at drain start — in-flight rows stranded by a crash are dropped
- *   if a newer pending op supersedes them, else returned to pending.
- * - **Atomic supersede-or-record** on transient failure.
- * - **Per-item FIFO** — an op is held back while an older op for the same
- *   content id is still queued, so backoff can't reorder a watched/position pair.
- *
- * Transient failures (no network / 401 / 408 / 429 / 5xx) are kept indefinitely
- * with capped backoff — offline data is never dropped on a retry cap. Only
- * terminal 4xx, unknown op kinds, and superseded rows are dropped.
- */
+/** Drains typed membership and ebook writes. Legacy personal-data rows remain unchanged and unsent. */
 class SyncEngine(
     db: SiloDatabase,
     private val personalDataApi: PersonalDataApi,
@@ -43,6 +19,8 @@ class SyncEngine(
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val now: () -> Long = { System.currentTimeMillis() },
     private val batchLimit: Int = 50,
+    private val memberships: org.siloserver.silo.repository.port.MembershipPort? = null,
+    private val ebookAuthorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
 ) {
     private val dao = db.dirtyOperationDao()
     private val contentDao = db.contentItemStateDao()
@@ -68,6 +46,7 @@ class SyncEngine(
      * fully drains in one run.
      */
     suspend fun drainOnce(): DrainResult {
+        memberships?.dispatch(batchLimit.coerceAtMost(100))
         val scope = snapshotProvider() ?: return DrainResult()
         val serverId = scope.serverId
         // Ops are always enqueued with a profile; no profile → nothing to drain.
@@ -91,6 +70,18 @@ class SyncEngine(
             if (batch.isEmpty()) break
 
             for (op in batch) {
+                if (ebookAuthorities != null && op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) {
+                    val payload = runCatching { OutboxOperation.decodeEbookProgressPayload(op.payloadJson) }.getOrNull()
+                    val authority = ebookAuthorities.snapshotDurableLoginAuthority()
+                    if (authority == null || !authority.scope.isSameIdentityAs(scope))
+                        return DrainResult(synced, dropped, retriable + 1,
+                            dao.runnableLegacyCountForScope(serverId, profileId) + (memberships?.readyCount() ?: 0))
+                    if (op.opVersion < 2 || payload?.updatedAt == null || payload.loginId != authority.loginId ||
+                        payload.origin != scope.serverUrl) {
+                        dao.quarantineEbookProgress(op.id)
+                        continue
+                    }
+                }
                 if (dao.claim(op.id) != 1) continue // lost the claim; skip
 
                 val outcome = try {
@@ -149,15 +140,16 @@ class SyncEngine(
         // land between the drain and the count. Including the end scope covers an
         // activation enqueue dropped by ExistingWorkPolicy.KEEP while this worker
         // was running.
-        var remaining = dao.countForScope(serverId, profileId)
+        var remaining = dao.runnableLegacyCountForScope(serverId, profileId)
         val endScope = snapshotProvider()
         val endProfileId = endScope?.profileId
         if (endScope != null && endProfileId != null &&
             (endScope.serverId != serverId || endProfileId != profileId)
         ) {
-            remaining += dao.countForScope(endScope.serverId, endProfileId)
+            remaining += dao.runnableLegacyCountForScope(endScope.serverId, endProfileId)
         }
 
+        remaining += memberships?.readyCount() ?: 0
         return DrainResult(
             synced = synced,
             dropped = dropped,
@@ -167,54 +159,8 @@ class SyncEngine(
     }
 
     private suspend fun dispatch(op: DirtyOperationEntity, scope: AuthScopeSnapshot): WriteOutcome {
-        val contentId = op.targetContentId
-        val result = when (op.opKind) {
-            OutboxOperation.SET_WATCHED -> {
-                val watched = OutboxOperation.decodeBooleanPayload(op.payloadJson)
-                if (watched) personalDataApi.markWatched(contentId, scope) else personalDataApi.markUnwatched(contentId, scope)
-            }
-
-            OutboxOperation.SET_FAVORITE -> {
-                val favorite = OutboxOperation.decodeBooleanPayload(op.payloadJson)
-                if (favorite) personalDataApi.addFavorite(contentId, scope) else personalDataApi.removeFavorite(contentId, scope)
-            }
-
-            OutboxOperation.SET_RATING -> {
-                val rating = OutboxOperation.decodeRatingPayload(op.payloadJson)
-                if (rating == null) personalDataApi.deleteRating(contentId, scope) else personalDataApi.setRating(contentId, rating, scope)
-            }
-
-            OutboxOperation.SET_POSITION -> {
-                // Replay happens after the playback session is gone, so use the
-                // sessionless content-level sync. force_overwrite=false → the
-                // server takes GREATEST(position), so a stale offline replay
-                // never rewinds a further position from another device.
-                val (position, duration) = OutboxOperation.decodePositionPayload(op.payloadJson)
-                personalDataApi.syncProgress(
-                    SyncProgressRequest(
-                        items = listOf(
-                            SyncProgressItem(
-                                mediaItemId = contentId,
-                                position = position,
-                                duration = duration ?: 0.0,
-                                forceOverwrite = false,
-                            ),
-                        ),
-                    ),
-                    scope,
-                )
-            }
-
-            OutboxOperation.SET_EBOOK_PROGRESS -> return dispatchEbookProgress(op, contentId, scope)
-
-            else -> {
-                // This engine version cannot send this kind. Drop it rather than
-                // retry forever.
-                Log.w(TAG, "Dropping un-replayable outbox op kind=${op.opKind} id=${op.id}")
-                return WriteOutcome.TERMINAL
-            }
-        }
-        return result.toWriteOutcome()
+        check(op.opKind == OutboxOperation.SET_EBOOK_PROGRESS) { "Legacy personal-data intents must remain held" }
+        return dispatchEbookProgress(op, op.targetContentId, scope)
     }
 
     /**
@@ -234,7 +180,17 @@ class SyncEngine(
             fileId = payload.fileId,
             location = payload.location,
             progress = payload.progress,
+            updatedAt = payload.updatedAt,
         )
+        if (ebookAuthorities != null) {
+            val authority = ebookAuthorities.snapshotDurableLoginAuthority()
+            if (payload.loginId != authority?.loginId || authority?.scope?.isSameIdentityAs(scope) != true)
+                return WriteOutcome.RETRIABLE
+            // The server orders the original event time, including newer backward moves.
+            val result = ebookReaderApi.saveProgress(contentId, request, scope)
+            return if (result is ApiResult.Error && result.code == 0) WriteOutcome.RETRIABLE
+                else result.toWriteOutcome()
+        }
         return when (val server = ebookReaderApi.getProgress(contentId, scope)) {
             is ApiResult.Success ->
                 if (payload.progress > server.data.progress) {

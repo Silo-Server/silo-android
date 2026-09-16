@@ -50,7 +50,7 @@ class NotificationModelsSerializationTest {
         assertEquals("dlv-1", row.id)
         assertEquals(NotificationType.EpisodeAvailable, row.type)
         assertEquals("prof-7", row.profileId)
-        assertEquals(3, row.libraryId)
+        assertEquals("3", row.libraryId)
         assertEquals("series-9", row.seriesId)
         assertEquals("ep-101", row.episodeId)
         assertEquals("Severance", row.seriesTitle)

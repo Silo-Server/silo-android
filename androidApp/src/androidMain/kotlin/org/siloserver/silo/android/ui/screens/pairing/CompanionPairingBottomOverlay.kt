@@ -41,6 +41,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -58,6 +59,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
@@ -278,13 +280,30 @@ private fun ServerPicker(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
-                    Text(
-                        text = server.displayName,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = server.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        val address = companionServerAddressLabel(server.url)
+                        // Two servers can share a display name, so the address is
+                        // what actually tells them apart. Skipped when the name is
+                        // already the address and the line would just repeat it.
+                        if (address != null && !address.equals(server.displayName, ignoreCase = true)) {
+                            Text(
+                                text = address,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LocalContentColor.current.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
                     Checkbox(checked = selected, onCheckedChange = null)
                 }
             }
@@ -304,6 +323,23 @@ private fun ServerPicker(
             Text("Cancel")
         }
     }
+}
+
+/**
+ * Strips the parts of a server URL that carry no information for the reader.
+ * `https://` goes because it is the default; a plain `http://` stays because
+ * it is the exception worth noticing. The port and path survive — they are
+ * often the only difference between two servers on one host.
+ */
+internal fun companionServerAddressLabel(url: String): String? {
+    val trimmed = url.trim().trimEnd('/')
+    if (trimmed.isBlank()) return null
+    val withoutScheme = if (trimmed.startsWith("https://", ignoreCase = true)) {
+        trimmed.substring("https://".length)
+    } else {
+        trimmed
+    }
+    return withoutScheme.takeIf { it.isNotBlank() }
 }
 
 @Composable

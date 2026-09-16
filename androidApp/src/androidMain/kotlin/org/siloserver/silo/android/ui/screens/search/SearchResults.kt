@@ -46,6 +46,7 @@ import org.siloserver.silo.model.catalog.BrowseItem
 fun SearchResults(
     results: List<BrowseItem>,
     total: Int,
+    totalExact: Boolean = true,
     isSearching: Boolean,
     hasMore: Boolean,
     onItemClick: (String) -> Unit,
@@ -94,7 +95,7 @@ fun SearchResults(
         // Result count header
         item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-result-count") {
             Text(
-                text = "$total result${if (total == 1) "" else "s"}",
+                text = "${if (totalExact) "" else "About "}$total result${if (total == 1) "" else "s"}",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 // The grid's own contentPadding supplies the 16.dp gutters, so

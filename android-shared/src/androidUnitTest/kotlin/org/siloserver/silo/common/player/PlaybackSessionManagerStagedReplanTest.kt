@@ -13,38 +13,46 @@ import io.ktor.serialization.kotlinx.json.json
 import java.io.File
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
-import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
 import org.siloserver.silo.model.playback.NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE
+import org.siloserver.silo.model.playback.PLAYBACK_PLAN_V3_FEATURE
 import org.siloserver.silo.model.playback.PlaybackDecisionOutcome
 import org.siloserver.silo.model.playback.PlaybackDecisionResponseV3
 import org.siloserver.silo.model.playback.PlaybackDelivery
-import org.siloserver.silo.model.playback.PlaybackEmbeddedSubtitleV3
-import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.PlaybackEmbeddedSubtitleV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.PlaybackPlanV3
+import org.siloserver.silo.model.playback.PlaybackSourceDescriptorV3
 import org.siloserver.silo.model.playback.PlaybackStreamProtocol
 import org.siloserver.silo.model.playback.PlaybackStreamV3
 import org.siloserver.silo.model.playback.PlaybackSubtitleArtifactV3
@@ -56,16 +64,19 @@ import org.siloserver.silo.model.playback.PlaybackTrackIdentityV3
 import org.siloserver.silo.model.playback.SelectedPlaybackTracksV3
 import org.siloserver.silo.model.playback.SubtitleFidelityPreference
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.AuthScopeAttributeKey
 import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.DurableLoginAuthority
+import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
-import org.siloserver.silo.network.api.PlaybackApi
+import org.siloserver.silo.network.apiv2.PlaybackV2Api
+import org.siloserver.silo.network.apiv2.SEQUENCED_PROGRESS_FEATURE
+import org.siloserver.silo.repository.PlaybackJournalEntry
+import org.siloserver.silo.repository.PlaybackJournalStore
 import org.siloserver.silo.repository.PlaybackRepository
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertIs
-import kotlin.test.assertTrue
+import org.siloserver.silo.repository.SequencedPlayback
 
 class PlaybackSessionManagerStagedReplanTest {
     @Test
@@ -97,7 +108,8 @@ class PlaybackSessionManagerStagedReplanTest {
             val releaseFirstCleanup = CompletableDeferred<Unit>()
             val oldAttempts = AtomicInteger()
             val harness = Harness(
-                replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+                startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+                replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
                 stopBehavior = { sessionId ->
                     if (sessionId == "s1" && oldAttempts.incrementAndGet() == 1) {
                         firstCleanupEntered.complete(Unit)
@@ -106,11 +118,8 @@ class PlaybackSessionManagerStagedReplanTest {
                 },
             )
             harness.start()
-            val staged = harness.stageSidecar()
-            harness.manager.commitStagedVideoReplan(
-                staged = staged,
-                deferPublication = true,
-            )
+            val replacement = harness.startReady(fileId = 84, deferPublication = true)
+            assertEquals("s2", replacement.session.sessionId)
 
             assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
             firstCleanupEntered.await()
@@ -118,15 +127,18 @@ class PlaybackSessionManagerStagedReplanTest {
 
             // stopSession drains the same orphan ledger while confirmation's
             // asynchronous cleanup still owns its first network attempt.
-            harness.manager.stopSession("s2")
+            val stop = async(start = CoroutineStart.UNDISPATCHED) { harness.manager.stopSession("s2") }
+            assertFalse(stop.isCompleted)
+            assertEquals(listOf("s1"), harness.stopAttempts)
             releaseFirstCleanup.complete(Unit)
+            stop.await()
             withWallClockAwaitTimeout {
                 while (harness.manager.orphanedSessionIdsForTest().isNotEmpty()) {
                     yield()
                 }
             }
 
-            assertTrue(oldAttempts.get() >= 2)
+            assertEquals(1, oldAttempts.get())
             assertEquals(emptySet(), harness.manager.orphanedSessionIdsForTest())
             assertTrue("s1" in harness.stoppedSessions)
             assertTrue("s2" in harness.stoppedSessions)
@@ -135,9 +147,9 @@ class PlaybackSessionManagerStagedReplanTest {
     @Test
     fun `staging replacement does not swap attempt or stop old session`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
-        harness.start()
+        val original = harness.startReady()
 
         val staged = harness.manager.stageActiveVideoSessionReplan(
             classification = "subtitle_track_changed",
@@ -147,7 +159,11 @@ class PlaybackSessionManagerStagedReplanTest {
         )
 
         val candidate = assertIs<ApiResult.Success<StagedVideoReplan>>(staged).data
-        assertEquals("s2", candidate.candidateSessionId)
+        assertEquals("s1", candidate.candidateSessionId)
+        assertEquals("plan-s2", candidate.candidate.plan.planId)
+        assertEquals(candidate.basePlaybackAttemptId, candidate.candidate.playbackAttemptId)
+        assertEquals(original.playbackAttemptId, candidate.basePlaybackAttemptId)
+        assertEquals(original.planAttemptId, candidate.basePlanAttemptId)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(emptyList(), harness.stoppedSessions)
     }
@@ -155,7 +171,7 @@ class PlaybackSessionManagerStagedReplanTest {
     @Test
     fun stagedReplacementExposesTheOutputContextTheCandidateWasPlannedAgainst() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
 
@@ -184,7 +200,7 @@ class PlaybackSessionManagerStagedReplanTest {
     @Test
     fun materialOutputRouteChangeRestartsFallbackHistory() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
 
@@ -213,9 +229,9 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `commit swaps once then stops old session`() = runTest {
+    fun `commit replaces plan once without stopping the session`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
         val staged = assertIs<ApiResult.Success<StagedVideoReplan>>(
@@ -230,26 +246,27 @@ class PlaybackSessionManagerStagedReplanTest {
         val committed = harness.manager.commitStagedVideoReplan(staged)
 
         assertEquals(
-            "s2",
+            "s1",
             assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(committed).data.session.sessionId,
         )
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
-        harness.awaitStopped("s1")
-        assertEquals(listOf("s1"), harness.stoppedSessions)
+        assertEquals("plan-s2", assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(committed).data.plan.planId)
+        assertEquals(staged.basePlaybackAttemptId, committed.data.playbackAttemptId)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
 
         val consumed = harness.manager.commitStagedVideoReplan(staged)
         assertEquals(409, assertIs<ApiResult.Error>(consumed).code)
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s1"), harness.stoppedSessions)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
     fun `native failure retry waits for publication rollback and preserves explicit subtitle index`() = runTest {
-        val native = sidecarPlan("s2").let { plan ->
+        val native = replanPlan("s2").let { plan ->
             plan.copy(
                 delivery = PlaybackDelivery.ORIGINAL_HTTP,
                 stream = PlaybackStreamV3(
-                    url = "/stream/s2",
+                    url = "/api/v2/stream/s1",
                     protocol = PlaybackStreamProtocol.HTTP_PROGRESSIVE,
                     container = "mp4",
                     mimeType = "video/mp4",
@@ -265,7 +282,7 @@ class PlaybackSessionManagerStagedReplanTest {
         }
         val harness = Harness(
             replanResponse = { index, _ ->
-                response(if (index == 0) native else sidecarPlan("s3"))
+                response(if (index == 0) native else replanPlan("s3"))
             },
         )
         harness.start()
@@ -286,24 +303,24 @@ class PlaybackSessionManagerStagedReplanTest {
         }
         assertFalse(retry.isCompleted)
         assertEquals(listOf("s1"), harness.replanBaseSessions)
-        assertTrue(harness.manager.rollbackUnpublishedVideoSession("s2"))
+        assertTrue(harness.manager.rollbackUnpublishedVideoSession("s1"))
 
         val recovered = assertIs<ApiResult.Success<VideoSessionStartV3>>(retry.await()).data
-        assertEquals("s3", assertIs<VideoSessionStartV3.Ready>(recovered).session.sessionId)
+        assertEquals("s1", assertIs<VideoSessionStartV3.Ready>(recovered).session.sessionId)
         assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
         val request = harness.replanBodies[1]
         assertEquals("subtitle_embedded_failed", request["failure"]!!.jsonObject["classification"]!!.jsonPrimitive.content)
         val subtitle = request["selected_tracks"]!!.jsonObject["subtitle"]!!.jsonObject
         assertEquals(4, subtitle["index"]!!.jsonPrimitive.int)
         assertEquals("file:42:subtitle:4", subtitle["id"]!!.jsonPrimitive.content)
-        assertEquals(1, harness.stoppedSessions.count { it == "s2" })
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
     fun `deferred staged commit rollback restores base and unblocks replan from base`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                response(replanPlan(planId = if (index == 0) "s2" else "s3"))
             },
         )
         val renderedBase = harness.startReady()
@@ -315,7 +332,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 deferPublication = true,
             ),
         )
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(emptyList(), harness.stoppedSessions)
 
         val reverseMutation = async {
@@ -330,14 +347,14 @@ class PlaybackSessionManagerStagedReplanTest {
         assertFalse(reverseMutation.isCompleted)
         assertEquals(listOf("s1"), harness.replanBaseSessions)
 
-        harness.manager.rollbackUnpublishedVideoSession("s2")
+        harness.manager.rollbackUnpublishedVideoSession("s1")
         val stagedFromBase =
             assertIs<ApiResult.Success<StagedVideoReplan>>(reverseMutation.await()).data
 
-        assertEquals("s3", stagedFromBase.candidateSessionId)
+        assertEquals("s1", stagedFromBase.candidateSessionId)
         assertEquals(listOf("s1", "s1"), harness.replanBaseSessions)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
-        assertEquals(mapOf("s2" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+        assertEquals(emptyMap(), harness.stoppedSessions.groupingBy { it }.eachCount())
 
         val serverCursor = replacement.candidate
         val secondRequest = harness.replanBodies[1]
@@ -356,9 +373,9 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `deferred staged commit confirmation retains replacement and stops base once`() = runTest {
+    fun `deferred staged confirmation retains replacement without stopping the session`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
         val replacement = harness.stageSidecar()
@@ -369,15 +386,14 @@ class PlaybackSessionManagerStagedReplanTest {
                 deferPublication = true,
             ),
         )
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(emptyList(), harness.stoppedSessions)
 
-        harness.manager.confirmVideoSessionPublication("s2")
-        harness.manager.confirmVideoSessionPublication("s2")
+        harness.manager.confirmVideoSessionPublication("s1")
+        harness.manager.confirmVideoSessionPublication("s1")
 
-        harness.awaitStopped("s1")
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
-        assertEquals(mapOf("s1" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyMap(), harness.stoppedSessions.groupingBy { it }.eachCount())
     }
 
     @Test
@@ -385,21 +401,17 @@ class PlaybackSessionManagerStagedReplanTest {
         val cleanupEntered = CompletableDeferred<Unit>()
         val releaseCleanup = CompletableDeferred<Unit>()
         val harness = Harness(
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
             committedSessionCleanupScope = backgroundScope,
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = {
                 cleanupEntered.complete(Unit)
                 releaseCleanup.await()
             },
         )
         harness.start()
-        val replacement = harness.stageSidecar()
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(
-                staged = replacement,
-                deferPublication = true,
-            ),
-        )
+        val replacement = harness.startReady(fileId = 84, deferPublication = true)
+        assertEquals("s2", replacement.session.sessionId)
 
         assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
         assertEquals(emptyList(), harness.stoppedSessions)
@@ -415,56 +427,52 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `commit returns after active swap without waiting for cancellable old session cleanup`() = runTest {
+    fun `fresh start confirmation returns without waiting for cancellable predecessor cleanup`() = runTest {
         val cleanupEntered = CompletableDeferred<Unit>()
         val releaseCleanup = CompletableDeferred<Unit>()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = {
                 cleanupEntered.complete(Unit)
                 releaseCleanup.await()
             },
         )
         harness.start()
-        val staged = harness.stageSidecar()
+        val replacement = harness.startReady(fileId = 84, deferPublication = true)
 
-        val commit = async { harness.manager.commitStagedVideoReplan(staged) }
+        val commit = async { harness.manager.confirmVideoSessionPublication("s2") }
         cleanupEntered.await()
 
         assertTrue(
             commit.isCompleted,
             "Once the active attempt swaps, old-session cleanup must not keep commit cancellable.",
         )
-        assertEquals(
-            "s2",
-            assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(commit.await())
-                .data.session.sessionId,
-        )
+        assertTrue(commit.await())
+        assertEquals("s2", replacement.session.sessionId)
         assertEquals("s2", harness.manager.activeSessionIdForTest())
 
         releaseCleanup.cancel(CancellationException("cleanup cancelled"))
     }
 
     @Test
-    fun `throwing old session cleanup cannot escape after active swap`() = runTest {
+    fun `throwing predecessor cleanup cannot escape fresh start confirmation`() = runTest {
         val cleanupEntered = CompletableDeferred<Unit>()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = {
                 cleanupEntered.complete(Unit)
                 throw AssertionError("old-session cleanup exploded")
             },
         )
         harness.start()
-        val staged = harness.stageSidecar()
+        val replacement = harness.startReady(fileId = 84, deferPublication = true)
 
-        val committed = harness.manager.commitStagedVideoReplan(staged)
+        val committed = harness.manager.confirmVideoSessionPublication("s2")
 
-        assertEquals(
-            "s2",
-            assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(committed)
-                .data.session.sessionId,
-        )
+        assertTrue(committed)
+        assertEquals("s2", replacement.session.sessionId)
         assertEquals("s2", harness.manager.activeSessionIdForTest())
         cleanupEntered.await()
     }
@@ -473,24 +481,28 @@ class PlaybackSessionManagerStagedReplanTest {
     fun `failed bounded cleanup remains orphaned until later stop drains it`() = runTest {
         val oldAttempts = AtomicInteger()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            committedSessionCleanupScope = backgroundScope,
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = { sessionId ->
-                if (sessionId == "s1" && oldAttempts.incrementAndGet() <= 2) {
+                if (sessionId == "s1" && oldAttempts.incrementAndGet() <= 6) {
                     throw IllegalStateException("transient delete failure")
                 }
             },
         )
         harness.start()
-        val staged = harness.stageSidecar()
+        harness.start(fileId = 84, deferPublication = true)
 
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(staged),
-        )
-        harness.awaitStopAttempts("s1", count = 2)
+        assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
+        backgroundScope.coroutineContext[Job]!!.children.toList().forEach { it.join() }
+        assertEquals(6, oldAttempts.get())
+        assertEquals(setOf("s1"), harness.manager.orphanedSessionIdsForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
 
         harness.manager.stopSession("s2")
 
-        assertEquals(3, oldAttempts.get())
+        assertEquals(7, oldAttempts.get())
+        assertEquals(1, harness.stopBodies.filterIndexed { index, _ -> harness.stopAttempts[index] == "s1" }.distinct().size)
         assertTrue("s1" in harness.stoppedSessions)
         assertTrue("s2" in harness.stoppedSessions)
     }
@@ -501,9 +513,10 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             startResponses = listOf(
                 response(basePlan(sessionId = "s1", fileId = 42)),
+                response(basePlan(sessionId = "s2", fileId = 63)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = { sessionId ->
                 if (sessionId == "s1" && oldAttempts.incrementAndGet() == 1) {
                     throw CancellationException("cleanup cancelled")
@@ -511,9 +524,8 @@ class PlaybackSessionManagerStagedReplanTest {
             },
         )
         harness.start(fileId = 42)
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(harness.stageSidecar()),
-        )
+        harness.start(fileId = 63, deferPublication = true)
+        assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
         harness.awaitStopAttempts("s1", count = 1)
 
         harness.start(fileId = 84)
@@ -527,21 +539,24 @@ class PlaybackSessionManagerStagedReplanTest {
     fun `candidate stop exception cannot skip requested stop and is retained for drain`() = runTest {
         val candidateAttempts = AtomicInteger()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = { sessionId ->
-                if (sessionId == "s2" && candidateAttempts.incrementAndGet() == 1) {
+                if (sessionId == "s2" && candidateAttempts.incrementAndGet() <= 3) {
                     throw IllegalStateException("candidate stop failed")
                 }
             },
         )
         harness.start()
-        harness.stageSidecar()
+        harness.start(fileId = 84, deferPublication = true)
 
         assertIs<ApiResult.Success<Unit>>(harness.manager.stopSession("s1"))
 
         assertTrue("s1" in harness.stoppedSessions)
         assertTrue("s2" in harness.stoppedSessions)
-        assertEquals(2, candidateAttempts.get())
+        assertEquals(4, candidateAttempts.get())
+        assertEquals(listOf("s2", "s2", "s2", "s1", "s2"), harness.stopAttempts)
+        assertEquals(1, harness.stopBodies.filterIndexed { index, _ -> harness.stopAttempts[index] == "s2" }.distinct().size)
     }
 
     @Test
@@ -549,10 +564,12 @@ class PlaybackSessionManagerStagedReplanTest {
         val oldAttempts = AtomicInteger()
         val requestedAttempts = AtomicInteger()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            committedSessionCleanupScope = backgroundScope,
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = { sessionId ->
                 when {
-                    sessionId == "s1" && oldAttempts.incrementAndGet() <= 2 ->
+                    sessionId == "s1" && oldAttempts.incrementAndGet() <= 6 ->
                         throw IllegalStateException("old cleanup failed")
                     sessionId == "s2" && requestedAttempts.incrementAndGet() == 1 ->
                         throw CancellationException("requested stop cancelled locally")
@@ -560,14 +577,17 @@ class PlaybackSessionManagerStagedReplanTest {
             },
         )
         harness.start()
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(harness.stageSidecar()),
-        )
-        harness.awaitStopAttempts("s1", count = 2)
+        harness.start(fileId = 84, deferPublication = true)
+        assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
+        backgroundScope.coroutineContext[Job]!!.children.toList().forEach { it.join() }
+        assertEquals(6, oldAttempts.get())
+        assertEquals(setOf("s1"), harness.manager.orphanedSessionIdsForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
 
-        assertIs<ApiResult.NetworkError>(harness.manager.stopSession("s2"))
+        assertFailsWith<CancellationException> { harness.manager.stopSession("s2") }
 
-        assertEquals(3, oldAttempts.get())
+        assertEquals(7, oldAttempts.get())
+        assertEquals(1, harness.stopBodies.filterIndexed { index, _ -> harness.stopAttempts[index] == "s1" }.distinct().size)
         assertTrue("s1" in harness.stoppedSessions)
         assertTrue("s2" in harness.stoppedSessions)
     }
@@ -577,7 +597,8 @@ class PlaybackSessionManagerStagedReplanTest {
         val candidateEntered = CompletableDeferred<Unit>()
         val releaseCandidate = CompletableDeferred<Unit>()
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            startResponses = listOf(response(basePlan()), response(basePlan(sessionId = "s2", fileId = 84))),
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
             stopBehavior = { sessionId ->
                 if (sessionId == "s2") {
                     candidateEntered.complete(Unit)
@@ -586,7 +607,7 @@ class PlaybackSessionManagerStagedReplanTest {
             },
         )
         harness.start()
-        harness.stageSidecar()
+        harness.start(fileId = 84, deferPublication = true)
 
         val stopJob = launch {
             harness.manager.stopSession("s1")
@@ -602,9 +623,9 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `discard stops only candidate and consumes handle`() = runTest {
+    fun `discard consumes handle without stopping the shared session`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
         val staged = assertIs<ApiResult.Success<StagedVideoReplan>>(
@@ -620,76 +641,69 @@ class PlaybackSessionManagerStagedReplanTest {
         harness.manager.discardStagedVideoReplan(staged)
 
         assertEquals("s1", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
         assertEquals(
             409,
             assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(staged)).code,
         )
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
-    fun `suspended discard cleanup does not hold staged ownership mutex`() = runTest {
+    fun `suspended replacement rollback releases publication before serialized cleanup`() = runTest {
         val firstStopStarted = CompletableDeferred<Unit>()
-        val secondStopStarted = CompletableDeferred<Unit>()
         val releaseFirstStop = CompletableDeferred<Unit>()
         val harness = Harness(
-            replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
-            },
+            startResponses = listOf(response(basePlan()), response(basePlan("s2", 84)), response(basePlan("s3", 126))),
+            replanResponse = { _, _ -> error("No replan expected") },
             stopBehavior = { sessionId ->
-                when (sessionId) {
-                    "s2" -> {
-                        firstStopStarted.complete(Unit)
-                        releaseFirstStop.await()
-                    }
-                    "s3" -> secondStopStarted.complete(Unit)
+                if (sessionId == "s2") {
+                    firstStopStarted.complete(Unit)
+                    releaseFirstStop.await()
                 }
             },
         )
         harness.start()
-        val first = harness.stageSidecar()
-        val second = harness.stageSidecar()
-
-        val firstDiscard = launch { harness.manager.discardStagedVideoReplan(first) }
+        harness.start(84, deferPublication = true)
+        val rollback = async { harness.manager.rollbackUnpublishedVideoSession("s2") }
         firstStopStarted.await()
-        val secondDiscard = launch { harness.manager.discardStagedVideoReplan(second) }
-        try {
-            withWallClockAwaitTimeout { secondStopStarted.await() }
-            assertFalse(firstDiscard.isCompleted)
-            assertTrue("s3" in harness.stopAttempts)
-        } finally {
-            releaseFirstStop.complete(Unit)
-        }
-        firstDiscard.join()
-        secondDiscard.join()
-
-        assertEquals(setOf("s2", "s3"), harness.stoppedSessions.toSet())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertFalse(harness.manager.confirmVideoSessionPublication("s2"))
+        val next = async(start = CoroutineStart.UNDISPATCHED) { harness.start(126, deferPublication = true) }
+        assertFalse(next.isCompleted)
+        assertEquals(listOf("s2"), harness.stopAttempts)
+        releaseFirstStop.complete(Unit)
+        assertTrue(rollback.await())
+        next.await()
+        assertEquals("s3", harness.manager.activeSessionIdForTest())
+        assertEquals(listOf("s2"), harness.stoppedSessions)
+        harness.manager.rollbackUnpublishedVideoSession("s3")
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(listOf("s2", "s3"), harness.stoppedSessions)
     }
 
     @Test
     fun `stale handle cannot replace newer committed candidate`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                response(replanPlan(planId = if (index == 0) "s2" else "s3"))
             },
         )
         harness.start()
         val first = harness.stageSidecar()
         val second = harness.stageSidecar()
 
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
+        val committed = assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
             harness.manager.commitStagedVideoReplan(second),
-        )
+        ).data
+        assertEquals(second.candidate.plan.planId, committed.plan.planId)
+        assertEquals(second.candidate.planAttemptId, committed.planAttemptId)
         val stale = harness.manager.commitStagedVideoReplan(first)
 
-        harness.awaitStopped("s1")
-        harness.awaitStopped("s2")
         assertEquals(409, assertIs<ApiResult.Error>(stale).code)
-        assertEquals("s3", harness.manager.activeSessionIdForTest())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1),
-            harness.stoppedSessions.groupingBy { it }.eachCount(),
+            emptyMap(), harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
 
@@ -700,7 +714,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         val staged = harness.stageSidecar()
@@ -710,7 +724,7 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertEquals(409, assertIs<ApiResult.Error>(stale).code)
         assertEquals("s3", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
@@ -718,13 +732,13 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { _, _ ->
                 response(
-                    sidecarPlan(sessionId = "s2").copy(
+                    replanPlan(planId = "s2").copy(
                         subtitle = PlaybackSubtitleDecisionV3(
                             mode = PlaybackSubtitleModeV3.BURN_IN,
                             trackId = subtitleTrackId(fileId = 42, index = 4),
                             inventory = subtitleInventory(
                                 fileId = 42,
-                                sessionId = "s2",
+                                sessionId = "s1",
                                 maxIndex = 4,
                                 burnInIndex = 4,
                             ),
@@ -739,9 +753,8 @@ class PlaybackSessionManagerStagedReplanTest {
         val committed = harness.manager.commitStagedVideoReplan(staged)
 
         assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(committed)
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
-        harness.awaitStopped("s1")
-        assertEquals(listOf("s1"), harness.stoppedSessions)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
@@ -749,14 +762,14 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { _, _ ->
                 response(
-                    sidecarPlan(sessionId = "s2").copy(
+                    replanPlan(planId = "s2").copy(
                         subtitle = PlaybackSubtitleDecisionV3(
                             mode = PlaybackSubtitleModeV3.CONVERT,
                             trackId = subtitleTrackId(fileId = 42, index = 4),
                             artifact = null,
                             inventory = subtitleInventory(
                                 fileId = 42,
-                                sessionId = "s2",
+                                sessionId = "s1",
                                 maxIndex = 4,
                             ),
                         ),
@@ -775,7 +788,7 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertIs<ApiResult.Error>(staged)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
@@ -783,7 +796,7 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { _, _ ->
                 response(
-                    sidecarPlan(sessionId = "s2").copy(
+                    replanPlan(planId = "s2").copy(
                         selectedTracks = SelectedPlaybackTracksV3(
                             audio = audioTrack(fileId = 42),
                             subtitle = PlaybackTrackIdentityV3(
@@ -794,10 +807,10 @@ class PlaybackSessionManagerStagedReplanTest {
                         subtitle = PlaybackSubtitleDecisionV3(
                             mode = PlaybackSubtitleModeV3.RENDER,
                             trackId = subtitleTrackId(fileId = 42, index = 5),
-                            artifact = sidecarArtifact(sessionId = "s2", index = 5),
+                            artifact = sidecarArtifact(sessionId = "s1", index = 5),
                             inventory = subtitleInventory(
                                 fileId = 42,
-                                sessionId = "s2",
+                                sessionId = "s1",
                                 maxIndex = 5,
                             ),
                         ),
@@ -816,12 +829,12 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertIs<ApiResult.Error>(staged)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
     fun `sidecar identity may be remapped when server adapts to another edition`() = runTest {
-        val remapped = sidecarPlan(sessionId = "s2").copy(
+        val remapped = replanPlan(planId = "s2").copy(
             requestedMediaFileId = 42,
             effectiveMediaFileId = 84,
             selectedTracks = SelectedPlaybackTracksV3(
@@ -834,10 +847,10 @@ class PlaybackSessionManagerStagedReplanTest {
             subtitle = PlaybackSubtitleDecisionV3(
                 mode = PlaybackSubtitleModeV3.CONVERT,
                 trackId = subtitleTrackId(fileId = 84, index = 1),
-                artifact = sidecarArtifact(sessionId = "s2", index = 1),
+                artifact = sidecarArtifact(sessionId = "s1", index = 1),
                 inventory = subtitleInventory(
                     fileId = 84,
-                    sessionId = "s2",
+                    sessionId = "s1",
                     maxIndex = 1,
                 ),
             ),
@@ -860,7 +873,7 @@ class PlaybackSessionManagerStagedReplanTest {
     @Test
     fun `immediate replan wrapper stages and commits replacement`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
 
@@ -872,14 +885,13 @@ class PlaybackSessionManagerStagedReplanTest {
         )
 
         assertEquals(
-            "s2",
+            "s1",
             assertIs<VideoSessionStartV3.Ready>(
                 assertIs<ApiResult.Success<VideoSessionStartV3>>(replanned).data,
             ).session.sessionId,
         )
-        assertEquals("s2", harness.manager.activeSessionIdForTest())
-        harness.awaitStopped("s1")
-        assertEquals(listOf("s1"), harness.stoppedSessions)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
@@ -899,7 +911,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 }
                 starts[index]
             },
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
 
@@ -927,7 +939,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -951,7 +963,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     message = "No compatible route.",
                 ),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
 
@@ -972,7 +984,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     message = "No compatible route.",
                 ),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
 
@@ -996,7 +1008,7 @@ class PlaybackSessionManagerStagedReplanTest {
             ),
             replanResponse = { _, _ ->
                 terminalResponse(
-                    sessionId = "s4",
+                    sessionId = "s3",
                     reason = "adaptation_unavailable",
                     message = "No compatible route.",
                 )
@@ -1008,7 +1020,7 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s3" to 1, "s4" to 1),
+            mapOf("s3" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
@@ -1020,7 +1032,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -1040,7 +1052,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -1061,7 +1073,8 @@ class PlaybackSessionManagerStagedReplanTest {
         harness.manager.rollbackUnpublishedVideoSession("s3")
         val staged = assertIs<ApiResult.Success<StagedVideoReplan>>(reverseMutation.await()).data
 
-        assertEquals("s2", staged.candidateSessionId)
+        assertEquals("s1", staged.candidateSessionId)
+        assertEquals("plan-s2", staged.candidate.plan.planId)
         assertEquals(listOf("s1"), harness.replanBaseSessions)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
     }
@@ -1075,7 +1088,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s3", fileId = 84)),
                 response(basePlan(sessionId = "s4", fileId = 126)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -1112,7 +1125,7 @@ class PlaybackSessionManagerStagedReplanTest {
             ),
             pendingPublicationSettleTimeoutMs =
                 PlaybackSessionManager.PENDING_PUBLICATION_SETTLE_TIMEOUT_MS,
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
         val replacement = harness.stageSidecar()
@@ -1129,15 +1142,15 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertEquals("s9", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s2" to 1),
+            emptyMap(),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
             "the abandoned publication should be rolled back exactly once",
         )
-        assertFalse(harness.manager.rollbackUnpublishedVideoSession("s2"))
-        assertFalse(harness.manager.confirmVideoSessionPublication("s2"))
+        assertFalse(harness.manager.rollbackUnpublishedVideoSession("s1"))
+        assertFalse(harness.manager.confirmVideoSessionPublication("s1"))
         assertTrue(harness.manager.rollbackCurrentPendingVideoPublication())
         assertEquals(
-            mapOf("s2" to 1),
+            emptyMap(),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
             "late settlement must not issue a second stop",
         )
@@ -1150,7 +1163,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -1169,7 +1182,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 response(basePlan(sessionId = "s1", fileId = 42)),
                 response(basePlan(sessionId = "s3", fileId = 84)),
             ),
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start(fileId = 42)
         harness.start(fileId = 84, deferPublication = true)
@@ -1190,10 +1203,10 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     @Test
-    fun `stop session invalidates and stops every distinct staged candidate`() = runTest {
+    fun `stop invalidates every staged plan and stops their shared session once`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                response(replanPlan(planId = if (index == 0) "s2" else "s3"))
             },
         )
         harness.start()
@@ -1204,22 +1217,22 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
         assertEquals(409, assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(first)).code)
         assertEquals(409, assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(second)).code)
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
 
     @Test
-    fun `stopping active replacement drains stale older base handle`() = runTest {
+    fun `stopping replacement invalidates a stale older plan handle`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                response(replanPlan(planId = if (index == 0) "s2" else "s3"))
             },
         )
         harness.start()
@@ -1228,17 +1241,12 @@ class PlaybackSessionManagerStagedReplanTest {
         assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
             harness.manager.commitStagedVideoReplan(replacement),
         )
-        harness.awaitStopped("s1")
 
-        harness.manager.stopSession("s3")
-        // Stopping s3 also drains the stale candidate s2 it still owns, and that
-        // cleanup lands asynchronously. Only s1 was awaited, so on a contended
-        // runner the count assertion below raced it and saw {s1:1, s3:1}.
-        harness.awaitStopped("s2")
+        harness.manager.stopSession("s1")
 
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
         assertEquals(
@@ -1246,7 +1254,7 @@ class PlaybackSessionManagerStagedReplanTest {
             assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(stale)).code,
         )
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
@@ -1254,67 +1262,52 @@ class PlaybackSessionManagerStagedReplanTest {
     @Test
     fun `delayed stop for stale session leaves active staged transaction untouched`() = runTest {
         val harness = Harness(
-            replanResponse = { index, _ ->
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
-            },
+            startResponses = listOf(response(basePlan()), response(basePlan("s2", 84))),
+            replanResponse = { _, _ -> response(replanPlan("candidate", sessionId = "s2")) },
         )
         harness.start()
-        val replacement = harness.stageSidecar()
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(replacement),
-        )
+        harness.start(84, deferPublication = true)
+        assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
         harness.awaitStopped("s1")
         val stagedFromS2 = harness.stageSidecar()
 
         harness.manager.stopSession("s1")
 
         assertEquals("s2", harness.manager.activeSessionIdForTest())
-        assertEquals(mapOf("s1" to 2), harness.stoppedSessions.groupingBy { it }.eachCount())
+        assertEquals(mapOf("s1" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
 
         assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
             harness.manager.commitStagedVideoReplan(stagedFromS2),
         )
-        harness.awaitStopped("s2")
-        assertEquals("s3", harness.manager.activeSessionIdForTest())
+        assertEquals("s2", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 2, "s2" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
 
     @Test
-    fun `stale stop drains only matching base owner of shared candidate`() = runTest {
+    fun `stale stop and staged discard preserve the current session`() = runTest {
         val harness = Harness(
-            replanResponse = { index, _ ->
-                response(
-                    sidecarPlan(
-                        sessionId = when (index) {
-                            1 -> "s2"
-                            else -> "s3"
-                        },
-                    ),
-                )
-            },
+            startResponses = listOf(response(basePlan()), response(basePlan("s2", 84))),
+            replanResponse = { _, _ -> response(replanPlan("candidate", sessionId = "s2")) },
         )
         harness.start()
-        harness.stageSidecar()
-        val replacement = harness.stageSidecar()
-        assertIs<ApiResult.Success<VideoSessionStartV3.Ready>>(
-            harness.manager.commitStagedVideoReplan(replacement),
-        )
+        harness.start(84, deferPublication = true)
+        assertTrue(harness.manager.confirmVideoSessionPublication("s2"))
         harness.awaitStopped("s1")
         val stagedFromS2 = harness.stageSidecar()
 
         harness.manager.stopSession("s1")
 
         assertEquals("s2", harness.manager.activeSessionIdForTest())
-        assertEquals(mapOf("s1" to 2), harness.stoppedSessions.groupingBy { it }.eachCount())
+        assertEquals(mapOf("s1" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
 
         harness.manager.discardStagedVideoReplan(stagedFromS2)
 
         assertEquals("s2", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 2, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
@@ -1329,7 +1322,7 @@ class PlaybackSessionManagerStagedReplanTest {
                     firstEntered.complete(Unit)
                     releaseFirst.await()
                 }
-                response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                response(replanPlan(planId = if (index == 0) "s2" else "s3"))
             },
         )
         harness.start()
@@ -1356,26 +1349,23 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertIs<ApiResult.Success<VideoSessionStartV3>>(first.await())
         assertIs<ApiResult.Success<VideoSessionStartV3>>(second.await())
-        harness.awaitStopped("s1")
-        harness.awaitStopped("s2")
-        assertEquals("s3", harness.manager.activeSessionIdForTest())
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1),
-            harness.stoppedSessions.groupingBy { it }.eachCount(),
+            emptyMap(), harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
 
     @Test
     fun `native subtitle recovery rejection keeps the active session usable for another retry`() = runTest {
         val rejectedResponses = listOf(
-            terminalResponse("s2", "adaptation_unavailable", "No subtitle route."),
-            response(sidecarPlan(sessionId = "s2")).copy(protocolVersion = 2),
-            response(sidecarPlan(sessionId = "s2").copy(runtimeCorrections = listOf("future_runtime_fix"))),
+            terminalResponse("s1", "adaptation_unavailable", "No subtitle route."),
+            response(replanPlan(planId = "s2")).copy(protocolVersion = 2),
+            response(replanPlan(planId = "s2").copy(runtimeCorrections = listOf("future_runtime_fix"))),
         )
         for (rejectedResponse in rejectedResponses) {
             val harness = Harness(
                 replanResponse = { index, _ ->
-                    if (index == 0) rejectedResponse else response(sidecarPlan(sessionId = "s3"))
+                    if (index == 0) rejectedResponse else response(replanPlan(planId = "s3"))
                 },
             )
             harness.start()
@@ -1389,7 +1379,7 @@ class PlaybackSessionManagerStagedReplanTest {
 
             assertIs<ApiResult.Error>(rejected)
             assertEquals("s1", harness.manager.activeSessionIdForTest())
-            assertEquals(listOf("s2"), harness.stoppedSessions)
+            assertEquals(emptyList(), harness.stoppedSessions)
 
             val retried = harness.manager.replanActiveVideoSession(
                 classification = "subtitle_embedded_failed",
@@ -1398,9 +1388,8 @@ class PlaybackSessionManagerStagedReplanTest {
                 subtitleTrackIndex = 4,
             )
             assertIs<VideoSessionStartV3.Ready>(assertIs<ApiResult.Success<VideoSessionStartV3>>(retried).data)
-            harness.awaitStopped("s1")
-            assertEquals("s3", harness.manager.activeSessionIdForTest())
-            assertEquals(mapOf("s1" to 1, "s2" to 1), harness.stoppedSessions.groupingBy { it }.eachCount())
+                assertEquals("s1", harness.manager.activeSessionIdForTest())
+            assertEquals(emptyMap(), harness.stoppedSessions.groupingBy { it }.eachCount())
         }
     }
 
@@ -1409,10 +1398,10 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { index, _ ->
                 if (index == 0) {
-                    response(sidecarPlan(sessionId = "s2"))
+                    response(replanPlan(planId = "s2"))
                 } else {
                     terminalResponse(
-                        sessionId = "s3",
+                        sessionId = "s1",
                         reason = "adaptation_unavailable",
                         message = "No compatible route.",
                     )
@@ -1435,14 +1424,14 @@ class PlaybackSessionManagerStagedReplanTest {
         assertEquals("adaptation_unavailable", terminal.reason)
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
 
         harness.manager.stopSession("s1")
 
         assertEquals(
-            mapOf("s1" to 2, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
         assertEquals(
@@ -1450,7 +1439,7 @@ class PlaybackSessionManagerStagedReplanTest {
             assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(staged)).code,
         )
         assertEquals(
-            mapOf("s1" to 2, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
@@ -1460,7 +1449,7 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { _, _ ->
                 terminalResponse(
-                    sessionId = "s2",
+                    sessionId = "s1",
                     reason = "adaptation_unavailable",
                     message = "No compatible route.",
                 )
@@ -1477,14 +1466,14 @@ class PlaybackSessionManagerStagedReplanTest {
 
         assertIs<ApiResult.Error>(result)
         assertEquals("s1", harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
     }
 
     @Test
     fun `immediate incompatible response preserves server upgrade outcome`() = runTest {
         val harness = Harness(
             replanResponse = { index, _ ->
-                val response = response(sidecarPlan(sessionId = if (index == 0) "s2" else "s3"))
+                val response = response(replanPlan(planId = if (index == 0) "s2" else "s3"))
                 if (index == 0) response else response.copy(protocolVersion = 2)
             },
         )
@@ -1502,12 +1491,12 @@ class PlaybackSessionManagerStagedReplanTest {
             assertIs<ApiResult.Success<VideoSessionStartV3>>(result).data,
         )
         assertEquals(null, harness.manager.activeSessionIdForTest())
-        assertEquals(listOf("s3"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
 
         harness.manager.stopSession("s1")
 
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
         assertEquals(
@@ -1515,7 +1504,7 @@ class PlaybackSessionManagerStagedReplanTest {
             assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(staged)).code,
         )
         assertEquals(
-            mapOf("s1" to 1, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
@@ -1525,10 +1514,10 @@ class PlaybackSessionManagerStagedReplanTest {
         val harness = Harness(
             replanResponse = { index, _ ->
                 if (index == 0) {
-                    response(sidecarPlan(sessionId = "s2"))
+                    response(replanPlan(planId = "s2"))
                 } else {
                     response(
-                        sidecarPlan(sessionId = "s3").copy(
+                        replanPlan(planId = "s3").copy(
                             runtimeCorrections = listOf("future_runtime_fix"),
                         ),
                     )
@@ -1551,14 +1540,14 @@ class PlaybackSessionManagerStagedReplanTest {
         assertEquals(PlaybackSessionManager.UNEXECUTABLE_ROUTE_REASON, terminal.reason)
         assertEquals(null, harness.manager.activeSessionIdForTest())
         assertEquals(
-            mapOf("s1" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
 
         harness.manager.stopSession("s1")
 
         assertEquals(
-            mapOf("s1" to 2, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
         assertEquals(
@@ -1566,15 +1555,15 @@ class PlaybackSessionManagerStagedReplanTest {
             assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(staged)).code,
         )
         assertEquals(
-            mapOf("s1" to 2, "s2" to 1, "s3" to 1),
+            mapOf("s1" to 1),
             harness.stoppedSessions.groupingBy { it }.eachCount(),
         )
     }
 
     @Test
-    fun `shared candidate session remains alive until last staged owner discards`() = runTest {
+    fun `shared session remains alive after every staged owner discards`() = runTest {
         val harness = Harness(
-            replanResponse = { _, _ -> response(sidecarPlan(sessionId = "s2")) },
+            replanResponse = { _, _ -> response(replanPlan(planId = "s2")) },
         )
         harness.start()
         val first = harness.stageSidecar()
@@ -1584,7 +1573,35 @@ class PlaybackSessionManagerStagedReplanTest {
         assertEquals(emptyList(), harness.stoppedSessions)
 
         harness.manager.discardStagedVideoReplan(second)
-        assertEquals(listOf("s2"), harness.stoppedSessions)
+        assertEquals(emptyList(), harness.stoppedSessions)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(409, assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(first)).code)
+        assertEquals(409, assertIs<ApiResult.Error>(harness.manager.commitStagedVideoReplan(second)).code)
+    }
+
+    @Test
+    fun `foreign replan session stays unowned and blocks another replan until stop`() = runTest {
+        val harness = Harness(replanResponse = { _, _ -> response(replanPlan("foreign", sessionId = "s2")) })
+        harness.start()
+        val first = harness.manager.stageActiveVideoSessionReplan(
+            classification = "subtitle_track_changed", positionSeconds = 42.0,
+            audioTrackIndex = 0, subtitleTrackIndex = 4,
+        )
+        assertEquals("invalid_decision", assertIs<ApiResult.Error>(first).error)
+        assertEquals("s1", harness.manager.activeSessionIdForTest())
+        assertEquals(emptyList(), harness.stoppedSessions)
+        val second = harness.manager.stageActiveVideoSessionReplan(
+            classification = "subtitle_track_changed", positionSeconds = 43.0,
+            audioTrackIndex = 0, subtitleTrackIndex = 4,
+        )
+        assertEquals("replan_pending", assertIs<ApiResult.Error>(second).error)
+        assertEquals(1, harness.replanBodies.size)
+        assertEquals(emptyList(), harness.stoppedSessions)
+        harness.manager.stopSession("s1")
+        harness.manager.stopSession("s1")
+        assertEquals(listOf("s1"), harness.stoppedSessions)
+        assertEquals(listOf("s1"), harness.stopAttempts)
+        assertEquals(null, harness.manager.activeSessionIdForTest())
     }
 
     private class Harness(
@@ -1606,57 +1623,69 @@ class PlaybackSessionManagerStagedReplanTest {
         private val routeEventSignals = Channel<Unit>(Channel.UNLIMITED)
         private val startIndex = AtomicInteger()
         private val replanIndex = AtomicInteger()
+        private val identity = StagedReplanIdentity()
+        private val journal = object : PlaybackJournalStore {
+            var entries = emptyList<PlaybackJournalEntry>()
+            override suspend fun read() = entries
+            override suspend fun write(entries: List<PlaybackJournalEntry>) {
+                this.entries = SiloJson.decodeFromString(SiloJson.encodeToString(entries))
+            }
+        }
+        val stopBodies: MutableList<JsonObject> = Collections.synchronizedList(mutableListOf())
         private val client = HttpClient(
             MockEngine { request ->
                 val path = request.url.encodedPath
-                val response = when {
-                    path == "/api/v1/playback/start" -> {
+                assertEquals(identity.scope, request.attributes[AuthScopeAttributeKey])
+                fun reply(body: String, status: HttpStatusCode = HttpStatusCode.OK) = respond(
+                    body, status, headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+                when {
+                    path == "/api/v2/playback/capabilities" -> reply(
+                        """{"installation_id":"11111111-1111-4111-8111-111111111111","revision":"1","state":"available","allowed":true,"protocol_versions":[3],"features":["sequenced_progress_v1"],"deliveries":["server_remux_hls"]}""",
+                    )
+                    path == "/api/v2/account/me" -> reply(
+                        """{"id":"account-1","username":"test","email":"","role":"user"}""",
+                    )
+                    path == "/api/v2/playback/start" -> {
                         val index = startIndex.getAndIncrement()
-                        startResponseOverride?.invoke(index) ?: startResponses[index]
+                        reply(wireDecision(startResponseOverride?.invoke(index) ?: startResponses[index]), HttpStatusCode.Created)
                     }
-                    path.endsWith("/replan") -> {
-                        replanBaseSessions += path
-                            .substringBeforeLast("/replan")
-                            .substringAfterLast('/')
-                        val body = SiloJson.parseToJsonElement(
-                            request.body.toByteArray().decodeToString(),
-                        ).jsonObject
+                    path.endsWith("/replan") && path.startsWith("/api/v2/playback/") -> {
+                        replanBaseSessions += path.substringBeforeLast("/replan").substringAfterLast('/')
+                        val body = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
                         replanBodies += body
-                        replanResponse(replanIndex.getAndIncrement(), body)
+                        reply(wireDecision(replanResponse(replanIndex.getAndIncrement(), body)))
                     }
-                    path == "/api/v1/playback/route-events" -> {
-                        routeEvents += SiloJson.parseToJsonElement(
-                            request.body.toByteArray().decodeToString(),
-                        ).jsonObject
+                    path == "/api/v2/playback/route-events" -> {
+                        val body = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        routeEvents += body
                         routeEventSignals.send(Unit)
-                        null
+                        reply("""{"event_id":${body["event_id"]},"outcome":"accepted"}""", HttpStatusCode.Accepted)
                     }
-                    request.method == HttpMethod.Delete && path.startsWith("/api/v1/playback/") -> {
+                    request.method == HttpMethod.Delete && path.startsWith("/api/v2/playback/") -> {
                         val sessionId = path.substringAfterLast('/')
+                        val body = SiloJson.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        stopBodies += body
+                        assertEquals(body["stop_id"]!!.jsonPrimitive.content,
+                            journal.entries.single { it.sessionId == sessionId }.stop?.stopId)
                         stopAttempts += sessionId
                         stopAttemptEvents.send(sessionId)
                         stopBehavior(sessionId)
                         stoppedSessions += sessionId
                         stoppedEvents.send(sessionId)
-                        null
+                        reply("""{"stop_id":${body["stop_id"]},"outcome":"stopped"}""")
                     }
-                    else -> null
+                    else -> error("Unexpected request ${request.method.value} $path")
                 }
-                respond(
-                    content = response?.let(SiloJson::encodeToString) ?: "{}",
-                    status = HttpStatusCode.OK,
-                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                )
             },
-        ) {
-            install(ContentNegotiation) { json(SiloJson) }
+        ) { install(ContentNegotiation) { json(SiloJson) } }
+        private val sequenced = SequencedPlayback(PlaybackV2Api(client, ApiV2Gate.Unrestricted), identity, identity, journal) {
+            java.util.UUID.randomUUID().toString()
         }
         val manager = PlaybackSessionManager(
-            playbackRepository = PlaybackRepository(PlaybackApi(client)),
-            tokenManager = StagedReplanNoOpTokenManager,
-            // runTest advances virtual time whenever the scheduler idles. The
-            // production timeout would therefore self-heal publications inside
-            // tests that are deliberately asserting the unresolved state.
+            playbackRepository = PlaybackRepository(sequenced),
+            tokenManager = identity,
+            // Unresolved publication tests settle explicitly instead of using virtual-time self healing.
             pendingPublicationSettleTimeoutMs = pendingPublicationSettleTimeoutMs,
             committedSessionCleanupScope = committedSessionCleanupScope,
         )
@@ -1740,6 +1769,20 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 
     private companion object {
+        fun wireDecision(response: PlaybackDecisionResponseV3): String {
+            fun wire(value: JsonElement, key: String = ""): JsonElement = when (value) {
+                is JsonObject -> JsonObject(value.mapValues { (name, child) -> wire(child, name) })
+                is JsonArray -> JsonArray(value.map { wire(it) })
+                is JsonPrimitive -> if (key in setOf("requested_media_file_id", "effective_media_file_id", "media_file_id"))
+                    JsonPrimitive(value.content) else value
+            }
+            return wire(SiloJson.parseToJsonElement(SiloJson.encodeToString(response))).toString()
+        }
+
+        fun replanPlan(planId: String, sessionId: String = "s1") = sidecarPlan(sessionId).copy(
+            planId = "plan-$planId", planAttemptKey = "v3:test:$planId",
+        )
+
         fun basePlan(
             sessionId: String = "s1",
             fileId: Int = 42,
@@ -1749,7 +1792,7 @@ class PlaybackSessionManagerStagedReplanTest {
             sessionId = sessionId,
             delivery = PlaybackDelivery.SERVER_REMUX_HLS,
             stream = PlaybackStreamV3(
-                url = "/stream/$sessionId/master.m3u8",
+                url = "/api/v2/stream/$sessionId/master.m3u8",
                 protocol = PlaybackStreamProtocol.HLS,
                 container = "mpegts",
                 mimeType = "application/x-mpegURL",
@@ -1796,13 +1839,13 @@ class PlaybackSessionManagerStagedReplanTest {
                 combinedIndex = index,
                 source = "embedded",
                 delivery = if (burnIn) "burn_in_only" else "sidecar",
-                url = if (burnIn) null else "/stream/$sessionId/subtitles/$index.vtt",
+                url = if (burnIn) null else "/api/v2/stream/$sessionId/subtitles/$index.vtt",
             )
         }
 
         fun sidecarArtifact(sessionId: String, index: Int): PlaybackSubtitleArtifactV3 =
             PlaybackSubtitleArtifactV3(
-                url = "/stream/$sessionId/subtitles/$index.vtt",
+                url = "/api/v2/stream/$sessionId/subtitles/$index.vtt",
                 mimeType = "text/vtt",
                 format = "webvtt",
             )
@@ -1819,6 +1862,7 @@ class PlaybackSessionManagerStagedReplanTest {
                 serverFeatures = listOf(
                     PLAYBACK_PLAN_V3_FEATURE,
                     NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                    SEQUENCED_PROGRESS_FEATURE,
                 ),
                 outcome = PlaybackDecisionOutcome.PLAYABLE,
                 sessionId = plan.sessionId,
@@ -1834,6 +1878,7 @@ class PlaybackSessionManagerStagedReplanTest {
             serverFeatures = listOf(
                 PLAYBACK_PLAN_V3_FEATURE,
                 NEUTRAL_PLAYBACK_V3_CONTRACT_FEATURE,
+                SEQUENCED_PROGRESS_FEATURE,
             ),
             outcome = PlaybackDecisionOutcome.ADAPTATION_UNAVAILABLE,
             sessionId = sessionId,
@@ -1846,23 +1891,11 @@ class PlaybackSessionManagerStagedReplanTest {
     }
 }
 
-private object StagedReplanNoOpTokenManager : TokenManager {
-    override val sessionExpired: SharedFlow<Unit> = MutableSharedFlow()
-    override suspend fun getAccessToken(): String? = null
-    override suspend fun getRefreshToken(): String? = null
-    override suspend fun saveTokens(accessToken: String, refreshToken: String, expiresIn: Long) {}
-    override suspend fun clearTokens() {}
-    override suspend fun invalidateSession() {}
-    override suspend fun getProfileId(): String? = null
-    override suspend fun setProfileId(profileId: String?) {}
-    override suspend fun getProfileToken(): String? = null
-    override suspend fun setProfileToken(token: String?) {}
-    override suspend fun getServerUrl(): String = ""
-    override suspend fun setServerUrl(url: String) {}
-    override suspend fun getCurrentServerId(): String? = null
-    override suspend fun switchActiveServer(serverId: String?) {}
-    override suspend fun signOutCurrentServer() {}
-    override suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
+private class StagedReplanIdentity : TokenManager by org.siloserver.silo.network.TokenManagerImpl(), DurableLoginAuthorityProvider {
+    val scope = AuthScopeSnapshot("server-1", "profile-1", "https://example.invalid", "proof",
+        identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
+    override suspend fun snapshotCurrentScope() = scope
+    override suspend fun snapshotDurableLoginAuthority() = DurableLoginAuthority("login-1", scope)
 }
 
 /**

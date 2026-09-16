@@ -19,7 +19,7 @@ data class DiscoverResponse(
 )
 
 /**
- * `/api/v1/recommendations/similar/{itemId}` returns scored references —
+ * `/api/v2/recommendations/similar/{itemId}` returns scored references —
  * each carries only the media item ID, a relevance score, and a short reason.
  * Clients resolve each ID to a catalog item to render poster cards.
  */

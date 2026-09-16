@@ -1,5 +1,9 @@
 package org.siloserver.silo.model.catalog
 
+import kotlinx.serialization.Transient
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
+import org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2
+
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -80,7 +84,9 @@ data class CatalogResponse(
      * `sort` is sent) echo the resolved field here, so a client that sent
      * nothing can still say what it is looking at.
      */
-    @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null
+    @SerialName("effective_sort") val effectiveSort: CatalogEffectiveSort? = null,
+    @Transient val continuation: CatalogContinuationV2? = null,
+    @Transient val searchDiagnostics: CatalogSearchDiagnosticsV2? = null,
 )
 
 @Serializable
@@ -119,6 +125,7 @@ data class AudiobookGroupsResponse(
     @SerialName("total_exact") val totalExact: Boolean? = null,
     @SerialName("has_more") val hasMore: Boolean = false,
     val groups: List<AudiobookGroup> = emptyList(),
+    @Transient val continuation: CatalogContinuationV2? = null,
 )
 
 @Serializable
@@ -134,7 +141,8 @@ data class CatalogFiltersResponse(
     @SerialName("original_languages") val originalLanguages: List<String>? = null,
     val authors: List<String>? = null,
     val narrators: List<String>? = null,
-    val series: List<String>? = null
+    val series: List<String>? = null,
+    @Transient val facetScope: org.siloserver.silo.network.apiv2.CatalogFacetScopeV2? = null,
 )
 
 // --- Item Detail ---
@@ -198,7 +206,7 @@ data class ItemDetail(
     val recap: TimeRange? = null,
     val preview: TimeRange? = null,
     /** Populated only when [type] is "audiobook". Forward-compat — the
-     *  server may stop returning it once a dedicated /api/v1/audiobooks
+     *  server may stop returning it once a dedicated /api/v2/audiobooks
      *  endpoint lands; until then it rides on ItemDetail. */
     val audiobook: org.siloserver.silo.model.audiobook.AudiobookMetadata? = null,
     /** Legacy fallback for older servers that emitted book-like metadata. */

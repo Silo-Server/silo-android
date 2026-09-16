@@ -4,9 +4,9 @@ import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.newSettingMutationId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,12 +24,9 @@ interface ServerSettingsFlusher {
      * Queue one device-scoped write. Values arrive as the store's plain
      * strings and are encoded to the contract's JSON type on the wire.
      *
-     * Each logical write gets one idempotency id ([newSettingMutationId])
-     * that is held for every retry of that write — the server replays the
-     * recorded receipt for a repeated id, so a retry after a dropped
-     * response cannot double-apply. Enqueueing a *different* value for the
-     * same key replaces the pending op and mints a fresh id, because
-     * reusing an id for different content is a 409 conflict by design.
+     * Pending work is in memory and retains its captured [authority]. Retries
+     * converge the desired value; API v2 does not replay mutation receipts and
+     * can advance revision on each attempt. Process death loses this queue.
      *
      * [serverUrl] is the server the value was authored against. This flusher
      * is application-scoped and its requests are relative — they go to
@@ -38,10 +35,10 @@ interface ServerSettingsFlusher {
      * (profileId, key). See [ServerSettingsFlusher] implementations for what
      * happens to an op whose origin is no longer active.
      */
-    fun enqueue(profileId: String, key: String, value: String, serverUrl: String)
+    fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: AuthScopeSnapshot? = null)
 
     /** Queue clearing the device-scoped value, so the setting inherits again. */
-    fun enqueueDelete(profileId: String, key: String, serverUrl: String)
+    fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: AuthScopeSnapshot? = null)
 
     /**
      * Cancel any in-flight debounce, drain every pending op, and suspend
@@ -71,40 +68,22 @@ interface ServerSettingsFlusher {
 private sealed class PendingOp {
     /** The server this op was authored against; it may not still be active. */
     abstract val serverUrl: String
+    abstract val authority: AuthScopeSnapshot?
 
     data class Set(
         val value: String,
-        val mutationId: String,
         override val serverUrl: String,
+        override val authority: AuthScopeSnapshot?,
     ) : PendingOp()
 
-    data class Delete(override val serverUrl: String) : PendingOp()
+    data class Delete(override val serverUrl: String, override val authority: AuthScopeSnapshot?) : PendingOp()
 }
 
 /**
- * Debounced writer for the canonical settings API
- * (`PUT/DELETE /api/v1/settings/values/{key}?scope=profile_device`).
- *
- * Failure handling is the point, not an afterthought: a write that fails
- * for a transient reason (network, 5xx, 429/408/401) stays queued and is
- * retried with the SAME mutation id, first on a capped backoff schedule and
- * after that on the next enqueue/flushNow trigger — it is never silently
- * dropped, which is how a server hiccup used to turn settings
- * non-persistent. Only a response that proves retrying is pointless (the
- * contract rejected the value or key, or the mutation id was reused for
- * different content) drops the op, and every failure is logged at warning
- * level with the key and status.
- *
- * That retention is bounded by the server the op was authored against.
- * [SettingsApi] requests are relative and this flusher is application-scoped,
- * so they address whichever server is active when they are sent — while a
- * server switch is one `onSelect` away and clears nothing. A retained op
- * whose origin is no longer active is therefore dropped rather than sent:
- * replaying it would write one server's device setting to another (a
- * restored or cloned server can hold the same profile id), and leaving it
- * queued would let a later enqueue revive it against a third. Persistence is
- * worth a lot, but not worth writing a value to a server the user never
- * authored it against.
+ * Application-scoped, in-memory desired-state queue. Only the latest pending
+ * value per key survives a drain. Transient failures receive bounded retries;
+ * a replaced account/profile/PIN drops the old intent before another send.
+ * No disk journal, stored receipt replay or cross-client ordering guarantee.
  */
 class DefaultServerSettingsFlusher(
     private val settingsApi: SettingsApi,
@@ -112,10 +91,10 @@ class DefaultServerSettingsFlusher(
     private val debounceMs: Long = 750,
     /**
      * The server requests currently address. Null (no active server, e.g.
-     * mid-logout) parks the queue rather than dropping it: there is nothing
-     * to compare against yet, and a switch has not been observed.
+     * mid-logout) is rejected by the production authority check below.
      */
     private val getServerUrl: suspend () -> String? = { null },
+    private val getAuthScope: (suspend () -> AuthScopeSnapshot?)? = null,
 ) : ServerSettingsFlusher {
 
     private val lock = Any()
@@ -125,26 +104,22 @@ class DefaultServerSettingsFlusher(
     private var retryAttempts: Int = 0
     private val flushMutex = Mutex()
 
-    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String) {
+    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: AuthScopeSnapshot?) {
         scheduleDebounced(profileId, key) { existing ->
-            // Re-enqueueing the identical value keeps the pending op (and
-            // its mutation id): it is the same logical write, and the
-            // server treats a replayed id + content as already done. A match
-            // has to agree on the origin too — the same key and value bound
-            // for a different server is a different write.
+            // Identical pending intent may coalesce only under the same owner.
             if (existing is PendingOp.Set &&
                 existing.value == value &&
-                existing.serverUrl == serverUrl
+                existing.serverUrl == serverUrl && existing.authority == authority
             ) {
                 existing
             } else {
-                PendingOp.Set(value, newSettingMutationId(), serverUrl)
+                PendingOp.Set(value, serverUrl, authority)
             }
         }
     }
 
-    override fun enqueueDelete(profileId: String, key: String, serverUrl: String) {
-        scheduleDebounced(profileId, key) { PendingOp.Delete(serverUrl) }
+    override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: AuthScopeSnapshot?) {
+        scheduleDebounced(profileId, key) { PendingOp.Delete(serverUrl, authority) }
     }
 
     private fun scheduleDebounced(
@@ -162,7 +137,8 @@ class DefaultServerSettingsFlusher(
             flushJob?.cancel()
             flushJob = scope.launch {
                 delay(debounceMs)
-                drainAndFlush()
+                // Once admitted, a newer enqueue must not cancel an active send.
+                scope.launch { drainAndFlush() }
             }
         }
     }
@@ -226,7 +202,7 @@ class DefaultServerSettingsFlusher(
                 if (retryAttempts >= MAX_AUTO_RETRIES) {
                     // Out of automatic retries: the ops stay queued and the
                     // next enqueue or flushNow (app foreground, player exit)
-                    // tries again with the same mutation ids.
+                    // tries the retained desired state again.
                     null
                 } else {
                     ++retryAttempts
@@ -241,17 +217,24 @@ class DefaultServerSettingsFlusher(
             retryJob?.cancel()
             retryJob = scope.launch {
                 delay(retryDelayMs(attempt))
-                drainAndFlush()
+                // Once admitted, a newer enqueue must not cancel an active send.
+                scope.launch { drainAndFlush() }
             }
         }
     }
 
     /**
      * Sends one op. Returns true when it must stay queued for retry —
-     * with its mutation id unchanged, so the retry is an idempotent replay
-     * rather than a second write.
+     * under the same captured authority. A retry can increment revision again.
      */
     private suspend fun flushOne(profileId: String, key: String, op: PendingOp): Boolean {
+        if (getAuthScope != null) {
+            val owner = op.authority ?: return false
+            val now = getAuthScope.invoke()
+            if (!owner.isSameIdentityAs(now) || owner.profileId != now?.profileId ||
+                owner.profileToken != now?.profileToken || owner.serverUrl != op.serverUrl ||
+                owner.profileId != profileId) return false
+        }
         val active = runCatching { getServerUrl() }.getOrNull()
         if (active != null && active != op.serverUrl) {
             // The user switched servers while this op was queued. Requests are
@@ -276,7 +259,7 @@ class DefaultServerSettingsFlusher(
         return try {
             when (op) {
                 is PendingOp.Set -> flushSet(profileId, key, op)
-                is PendingOp.Delete -> flushDelete(profileId, key)
+                is PendingOp.Delete -> flushDelete(profileId, key, op)
             }
         } catch (t: Throwable) {
             // Includes cancellation of a superseded flush: the op goes back
@@ -297,8 +280,8 @@ class DefaultServerSettingsFlusher(
                 key = key,
                 scope = SettingScopeIdentity.profileDevice(),
                 value = encoded,
-                mutationId = op.mutationId,
                 profileId = profileId,
+                authority = op.authority,
             )
         ) {
             is ApiResult.Success -> false
@@ -311,12 +294,13 @@ class DefaultServerSettingsFlusher(
         }
     }
 
-    private suspend fun flushDelete(profileId: String, key: String): Boolean {
+    private suspend fun flushDelete(profileId: String, key: String, op: PendingOp.Delete): Boolean {
         return when (
             val result = settingsApi.deleteValue(
                 key = key,
                 scope = SettingScopeIdentity.profileDevice(),
                 profileId = profileId,
+                authority = op.authority,
             )
         ) {
             is ApiResult.Success -> false
@@ -352,15 +336,12 @@ class DefaultServerSettingsFlusher(
         val REMOTE_KEYS: Set<String> = SettingKeys.REMOTE.toSet()
 
         /**
-         * Retrying can help: the request never arrived, the server fell
-         * over, throttled us, timed out, or the session token was mid
-         * refresh. Everything else is the contract refusing the write —
-         * invalid value, unknown key, scope not allowed, or a mutation id
-         * reused for different content (409) — where a retry would fail
-         * identically forever.
+         * Network, server and throttling failures retain desired state. The
+         * transport handles scoped auth refresh; a remaining 401 requires user
+         * recovery. Invalid key/value/scope and stale authority are terminal.
          */
         fun isTransientHttp(code: Int): Boolean =
-            code >= 500 || code == 408 || code == 429 || code == 401
+            code >= 500 || code == 408 || code == 429
 
         const val MAX_AUTO_RETRIES = 5
         const val RETRY_BASE_DELAY_MS = 1_000L

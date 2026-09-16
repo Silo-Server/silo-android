@@ -27,6 +27,10 @@ data class CatalogCacheWriteLease(val identityGeneration: Long)
  * network-only. Scope `(serverId, profileId)` is resolved inside the impl.
  */
 interface CatalogCachePort {
+    /** V2 library-section cache entries require the exact initiating authority. */
+    suspend fun cacheLibrarySectionsV2(libraryId: Int, sections: List<ResolvedSection>, owner: org.siloserver.silo.network.AuthScopeSnapshot) {}
+    suspend fun getCachedLibrarySectionsV2(libraryId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot): List<ResolvedSection>? = null
+
     suspend fun cacheLibraries(libraries: List<UserLibrary>) {}
     suspend fun cacheLibraries(libraries: List<UserLibrary>, lease: CatalogCacheWriteLease) {
         cacheLibraries(libraries)

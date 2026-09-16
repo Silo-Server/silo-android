@@ -7,6 +7,14 @@ import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.download.DownloadsListResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.repository.port.NoOpUserItemStatePort
+import org.siloserver.silo.repository.port.PersonalWrite
+import org.siloserver.silo.repository.port.PersonalWriteHandle
+import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.DownloadsApi
 import org.siloserver.silo.network.api.EbookReaderApi
@@ -19,14 +27,27 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.RecommendationRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
+import io.ktor.client.engine.mock.MockEngineConfig
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import sun.misc.Unsafe
@@ -41,8 +62,9 @@ class MobileDetailActionsTest {
     fun watchedTogglePersistsOptimisticStateOnSuccess() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
         )
-        val viewModel = itemDetailViewModel(repository)
+        val viewModel = itemDetailViewModel(repository, contentId = "movie-1")
         viewModel.seedDetail(played = false)
 
         viewModel.toggleWatched()
@@ -62,8 +84,10 @@ class MobileDetailActionsTest {
                 },
                 { ApiResult.Error(500, "failed", "second failed") },
             ),
+            // The first reply's delay must be virtual time so the second toggle overtakes it.
+            engineDispatcher = StandardTestDispatcher(testScheduler),
         )
-        val viewModel = itemDetailViewModel(repository)
+        val viewModel = itemDetailViewModel(repository, contentId = "movie-1")
         viewModel.seedDetail(played = false)
 
         viewModel.toggleWatched()
@@ -111,6 +135,7 @@ class MobileDetailActionsTest {
 
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
         )
         val viewModel = itemDetailViewModel(repository)
         viewModel.seedSeriesDetail()
@@ -130,6 +155,7 @@ class MobileDetailActionsTest {
     fun episodePageHeroRepaintsAfterLongPressWatchedChange() = runItemDetailTest {
         val repository = RecordingPersonalDataRepository(
             mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
         )
         val viewModel = itemDetailViewModel(repository)
         viewModel.seedEpisodeDetail()
@@ -145,6 +171,7 @@ class MobileDetailActionsTest {
     fun selectingSeriesEpisodeImmediatelyResetsItsPlaybackOverrides() = runItemDetailTest {
         val viewModel = itemDetailViewModel(
             personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
+            catalogRepository = pendingCatalogRepository(),
         )
         viewModel.seedSeriesDetail()
 
@@ -152,6 +179,8 @@ class MobileDetailActionsTest {
         viewModel.selectAudioTrack(2)
         viewModel.selectSubtitle(3)
         viewModel.selectSeriesEpisode("season-1-episode-1")
+        // uiState is a derived flow; let it observe the synchronous reset.
+        runCurrent()
 
         val state = viewModel.uiState.value
         assertEquals("season-1-episode-1", state.selectedEpisodeContentId)
@@ -165,31 +194,48 @@ class MobileDetailActionsTest {
         assertFalse(state.hasExplicitSubtitleSelection)
     }
 
+    private val viewModels = mutableListOf<ViewModel>()
+
+    /**
+     * Every mock engine in a test runs on the scheduler dispatcher, so no
+     * response can arrive from a real thread after Main is reset — that
+     * dispatches into a missing Main dispatcher and fails the test at random.
+     */
     private fun runItemDetailTest(block: suspend kotlinx.coroutines.test.TestScope.() -> Unit) = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
             block()
         } finally {
+            viewModels.forEach { it.viewModelScope.cancel() }
+            viewModels.clear()
             Dispatchers.resetMain()
         }
     }
 
-    private fun itemDetailViewModel(
+    /** A catalog client that never answers, so a selection's loading flag stays observable. */
+    private fun kotlinx.coroutines.test.TestScope.pendingCatalogRepository(): CatalogRepository = CatalogRepository(
+        CatalogApi(dummyHttpClient(StandardTestDispatcher(testScheduler)) { CompletableDeferred<Unit>().await(); respond("{}") }),
+    )
+
+    private fun kotlinx.coroutines.test.TestScope.itemDetailViewModel(
         personalDataRepository: RecordingPersonalDataRepository,
-        catalogRepository: CatalogRepository = CatalogRepository(CatalogApi(dummyHttpClient())),
-    ): ItemDetailViewModel =
-        ItemDetailViewModel(
-            catalogRepository = catalogRepository,
+        catalogRepository: CatalogRepository? = null,
+        contentId: String? = null,
+    ): ItemDetailViewModel {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return ItemDetailViewModel(
+            catalogRepository = catalogRepository ?: CatalogRepository(CatalogApi(dummyHttpClient(dispatcher))),
             personalDataRepository = personalDataRepository,
-            downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
+            downloadsRepository = DownloadsRepository(EmptyDownloadsApi(dispatcher)),
             downloadEnqueuer = unsafeInstance(),
-            ebookReaderRepository = EbookReaderRepository(EbookReaderApi(dummyHttpClient())),
-            recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient())),
+            ebookReaderRepository = dummyEbookReaderRepository(dispatcher),
+            recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient(dispatcher))),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
-                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient()),
+                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(dispatcher), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
             ),
-            savedStateHandle = SavedStateHandle(),
-        )
+            savedStateHandle = SavedStateHandle(contentId?.let { mapOf("contentId" to it) } ?: emptyMap()),
+        ).also { viewModels += it }
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun ItemDetailViewModel.seedSeriesDetail() {
@@ -271,20 +317,77 @@ class MobileDetailActionsTest {
         )
     }
 
-    private class RecordingPersonalDataRepository(
+    /**
+     * Watched writes are v2 personal writes: the repository pins a
+     * [PersonalWriteHandle] from the port, then PUTs/DELETEs
+     * `/api/v2/watched/{id}` under that scope. Each queued response answers
+     * one write in order; anything else is a 204.
+     */
+    private class RecordingPersonalDataRepository private constructor(
         private val responses: MutableList<suspend () -> ApiResult<Unit>>,
-    ) : PersonalDataRepository(PersonalDataApi(dummyHttpClient())) {
-        val watchedCalls = mutableListOf<Boolean>()
-
-        override suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> {
-            watchedCalls += watched
-            return responses.removeFirstOrNull()?.invoke() ?: ApiResult.Success(Unit)
-        }
+        private val scope: AuthScopeSnapshot,
+        private val engineDispatcher: kotlinx.coroutines.CoroutineDispatcher?,
+        val watchedCalls: MutableList<Boolean>,
+    ) : PersonalDataRepository(
+        personalDataApi = PersonalDataApi(
+            HttpClient(
+                MockEngine(
+                    MockEngineConfig().apply {
+                        engineDispatcher?.let { dispatcher = it }
+                        addHandler { request ->
+                            if (!request.url.encodedPath.startsWith("/api/v2/watched/")) {
+                                return@addHandler respond("", HttpStatusCode.NotFound)
+                            }
+                            watchedCalls += request.method == HttpMethod.Post
+                            when (val outcome = responses.removeFirstOrNull()?.invoke() ?: ApiResult.Success(Unit)) {
+                                is ApiResult.Success -> respond("", HttpStatusCode.NoContent)
+                                is ApiResult.Error -> respond(
+                                    """{"type":"about:blank","title":"${outcome.error}","status":${outcome.code},"detail":"${outcome.message}"}""",
+                                    HttpStatusCode.fromValue(outcome.code),
+                                    headersOf(HttpHeaders.ContentType, "application/problem+json"),
+                                )
+                                is ApiResult.NetworkError -> throw outcome.exception
+                            }
+                        }
+                    },
+                ),
+            ) { install(ContentNegotiation) { json(SiloJson) } },
+            tokenManager = object : TokenManager by TokenManagerImpl() {
+                override suspend fun snapshotCurrentScope() = scope
+            },
+        ),
+        userItemStatePort = object : UserItemStatePort by NoOpUserItemStatePort {
+            override suspend fun beginPersonalWrite(command: PersonalWrite) = PersonalWriteHandle(1L, scope, command)
+        },
+    ) {
+        constructor(
+            responses: MutableList<suspend () -> ApiResult<Unit>>,
+            engineDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null,
+        ) : this(
+            responses,
+            AuthScopeSnapshot("s1", "p1", "https://silo.example", "pt", identityGeneration = 1),
+            engineDispatcher,
+            mutableListOf(),
+        )
     }
 
-    private class EmptyDownloadsApi : DownloadsApi(dummyHttpClient()) {
-        override suspend fun list(): ApiResult<DownloadsListResponse> =
+    private object NoDevices : org.siloserver.silo.network.DeviceMetadataProvider {
+        override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
+    }
+
+    private class EmptyDownloadsApi(dispatcher: CoroutineDispatcher) : DownloadsApi(
+        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+        tokens = org.siloserver.silo.network.TokenManagerImpl(),
+        creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
+            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+    ) {
+        override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
             ApiResult.Success(DownloadsListResponse())
+    }
+
+    private fun dummyEbookReaderRepository(dispatcher: CoroutineDispatcher): EbookReaderRepository {
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)
+        return EbookReaderRepository(EbookReaderApi(v2), v2)
     }
 
     private inline fun <reified T : Any> unsafeInstance(): T {
@@ -294,7 +397,9 @@ class MobileDetailActionsTest {
     }
 
     companion object {
-        private fun dummyHttpClient(): HttpClient =
-            HttpClient(MockEngine { respond("{}") })
+        private fun dummyHttpClient(
+            dispatcher: CoroutineDispatcher,
+            handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData = { respond("{}") },
+        ): HttpClient = HttpClient(MockEngine(MockEngineConfig().apply { this.dispatcher = dispatcher; addHandler(handler) }))
     }
 }

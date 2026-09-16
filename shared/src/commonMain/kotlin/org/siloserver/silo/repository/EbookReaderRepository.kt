@@ -1,14 +1,15 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.model.ebook.SaveEbookAnnotationRequest
+import org.siloserver.silo.model.ebook.EbookAnnotation
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.apiv2.EbookReaderV2Api
 import org.siloserver.silo.model.ebook.SaveEbookProgressRequest
-import org.siloserver.silo.model.ebook.SaveEbookReaderConfigRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.EbookReaderApi
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-class EbookReaderRepository(private val api: EbookReaderApi) {
+class EbookReaderRepository(private val api: EbookReaderApi, private val annotations: EbookReaderV2Api) {
     // Session-cached Kindle->EPUB capability. This repo is a DI singleton, so the
     // result is shared across the detail and reader screens and fetched at most
     // once per session. Defaults to false on any error (old server / offline).
@@ -17,9 +18,6 @@ class EbookReaderRepository(private val api: EbookReaderApi) {
 
     fun readPath(contentId: String, fileId: Int): String =
         api.readPath(contentId, fileId)
-
-    suspend fun getConversionCapability() =
-        api.getConversionCapability()
 
     suspend fun isKindleConversionAvailable(): Boolean {
         cachedKindleConversion?.let { return it }
@@ -35,30 +33,18 @@ class EbookReaderRepository(private val api: EbookReaderApi) {
         }
     }
 
-    suspend fun getProgress(contentId: String) =
-        api.getProgress(contentId)
+    suspend fun getProgress(contentId: String, scope: org.siloserver.silo.network.AuthScopeSnapshot? = null) =
+        api.getProgress(contentId, scope)
 
     suspend fun saveProgress(contentId: String, request: SaveEbookProgressRequest) =
         api.saveProgress(contentId, request)
 
-    suspend fun getReaderConfig(contentId: String) =
-        api.getReaderConfig(contentId)
+    suspend fun listAnnotations(contentId: String, scope: AuthScopeSnapshot) =
+        annotations.list(contentId, scope)
 
-    suspend fun saveReaderConfig(contentId: String, request: SaveEbookReaderConfigRequest) =
-        api.saveReaderConfig(contentId, request)
+    suspend fun createBookmark(contentId: String, id: String, location: String, scope: AuthScopeSnapshot) =
+        annotations.createBookmark(contentId, id, location, scope)
 
-    suspend fun listAnnotations(contentId: String) =
-        api.listAnnotations(contentId)
-
-    suspend fun createBookmark(contentId: String, location: String) =
-        api.createAnnotation(
-            contentId = contentId,
-            request = SaveEbookAnnotationRequest(kind = "bookmark", location = location),
-        )
-
-    suspend fun updateAnnotation(contentId: String, annotationId: String, request: SaveEbookAnnotationRequest) =
-        api.updateAnnotation(contentId, annotationId, request)
-
-    suspend fun deleteAnnotation(contentId: String, annotationId: String) =
-        api.deleteAnnotation(contentId, annotationId)
+    suspend fun deleteAnnotation(contentId: String, annotation: EbookAnnotation, scope: AuthScopeSnapshot) =
+        annotations.delete(contentId, annotation, scope)
 }

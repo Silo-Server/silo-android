@@ -4,6 +4,9 @@ import org.siloserver.silo.model.notifications.NotificationCapability
 import org.siloserver.silo.model.notifications.NotificationPreferences
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.notifications.NotificationRow
+import org.siloserver.silo.network.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.NotificationRealtimeEvent
 import org.siloserver.silo.network.NotificationsRealtimeClient
@@ -90,6 +93,7 @@ fun applyEvent(state: NotificationsState, event: NotificationRealtimeEvent): Not
             val merged = (event.rows + state.rows).dedupeById().sortedNewestFirst()
             state.copy(rows = merged, unreadCount = recomputeUnread(merged))
         }
+        NotificationRealtimeEvent.Invalidate -> state
         is NotificationRealtimeEvent.Closed -> state
     }
 
@@ -115,7 +119,32 @@ internal fun NotificationRealtimeEvent.isAuthClose(): Boolean =
 class NotificationsRepository(
     private val api: NotificationsApi,
     private val realtimeFactory: () -> NotificationsRealtimeClient? = { null },
+    private val tokens: TokenManager? = null,
+    private val authorities: DurableLoginAuthorityProvider? = null,
+    private val checkpoints: NotificationSyncStore? = null,
+    private val identityTransitions: IdentityTransitionBarrier? = null,
 ) {
+    private var epoch = 0L
+    private var readCutoff: String? = null
+    private var cutoffViewer: AuthScopeSnapshot? = null
+    private val refreshMutex = Mutex()
+    private data class Viewer(val epoch: Long, val scope: AuthScopeSnapshot?, val api: NotificationsApi)
+    private suspend fun viewer(): Viewer {
+        val scope = tokens?.snapshotCurrentScope()
+        return Viewer(epoch, scope, if (scope != null) api.forScope(scope) else api)
+    }
+    private suspend fun current(viewer: Viewer): Boolean = viewer.epoch == epoch &&
+        (tokens == null || viewer.scope?.isSameIdentityAs(tokens.snapshotCurrentScope()) == true)
+    private suspend fun publishFor(viewer: Viewer, block: () -> Unit) {
+        if (!current(viewer)) return
+        val barrier = identityTransitions
+        if (barrier != null && viewer.scope != null)
+            barrier.withCurrentGeneration(viewer.scope.identityGeneration) { if (viewer.epoch == epoch) block() }
+        else block()
+    }
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error = _error.asStateFlow()
     private val _state = MutableStateFlow(NotificationsState())
 
     private val _unreadCount = MutableStateFlow(0)
@@ -162,6 +191,12 @@ class NotificationsRepository(
      */
     val resetSignals: SharedFlow<Unit> = _resetSignals.asSharedFlow()
 
+    init {
+        identityTransitions?.installGate { transition ->
+            if (transition.phase == IdentityTransitionPhase.WILL_CHANGE && transition.affectsCurrentIdentity) reset()
+        }
+    }
+
     private fun publish(state: NotificationsState) {
         _state.value = state
         _rows.value = state.rows
@@ -180,77 +215,113 @@ class NotificationsRepository(
         _unreadCount.value = next.unreadCount
     }
 
-    /** Foreground / inbox-open refresh: unread count + first page. */
-    suspend fun refresh() {
-        when (val r = api.unreadCount()) {
-            is ApiResult.Success -> _unreadCount.value = r.data.count
-            else -> { /* keep last value on failure (spec: badge is silent) */ }
+    /** Foreground refresh and reconnect always reread authoritative counts and the displayed cutoff. */
+    suspend fun refresh() = refreshMutex.withLock {
+        val viewer = viewer()
+        if (!current(viewer)) return@withLock
+        publishFor(viewer) { _error.value = null }
+        val count = viewer.api.unreadCount()
+        val page = viewer.api.list(limit = 25, unreadOnly = false, before = null)
+        if (page is ApiResult.Success) publishFor(viewer) {
+            publish(NotificationsState(rows = page.data.notifications.dedupeById(),
+                unreadCount = (count as? ApiResult.Success)?.data?.count ?: _unreadCount.value))
+            _nextCursor.value = page.data.nextCursor
+            readCutoff = page.data.readCutoff
+            cutoffViewer = viewer.scope
         }
-        when (val r = api.list(limit = 25, unreadOnly = false, before = null)) {
-            is ApiResult.Success -> {
-                val rows = r.data.notifications.dedupeById()
-                publish(NotificationsState(rows = rows, unreadCount = _unreadCount.value))
-                _nextCursor.value = r.data.nextCursor
-            }
-            else -> { /* surfaced by the caller via ApiResult */ }
+        if (page !is ApiResult.Success || count !is ApiResult.Success) publishFor(viewer) {
+            _error.value = "Notifications could not be refreshed. Retry when connected."
         }
+        syncForward(viewer)
     }
 
-    /** Appends the next page; dedupes by id; updates the cursor. */
-    suspend fun loadMore(cursor: String) {
-        when (val r = api.list(limit = 25, unreadOnly = false, before = cursor)) {
-            is ApiResult.Success -> {
-                val incoming = r.data.notifications
-                mutate { current ->
-                    val merged = (current.rows + incoming).dedupeById()
-                    current.copy(rows = merged, unreadCount = recomputeUnread(merged))
+    private suspend fun syncForward(viewer: Viewer) {
+        val store = checkpoints ?: return
+        val authority = authorities?.snapshotDurableLoginAuthority() ?: return
+        if (!authority.scope.isSameIdentityAs(viewer.scope)) return
+        val key = SiloJson.encodeToString(listOf(authority.scope.serverId, authority.scope.serverUrl,
+            authority.loginId, authority.scope.profileId, "50"))
+        try {
+            var cursor = store.read(key)
+            // Bounded per wake; the saved checkpoint resumes a large backlog on the next wake.
+            repeat(20) {
+                if (!current(viewer)) return
+                val result = viewer.api.sync(cursor, 50)
+                if (result !is ApiResult.Success) {
+                    publishFor(viewer) { _error.value = "Notification catch-up is incomplete. Retry to continue." }
+                    return
                 }
-                _nextCursor.value = r.data.nextCursor
+                val page = result.data
+                val checkpoint = page.syncCursor ?: return
+                if (!current(viewer)) return
+                publishFor(viewer) {
+                    mutate { old -> old.copy(rows = (page.notifications + old.rows).dedupeById().sortedNewestFirst(),
+                        unreadCount = page.unreadCount) }
+                }
+                // Retain the forward checkpoint even for an empty or final page.
+                store.write(key, checkpoint)
+                if (!page.hasMore) return
+                cursor = page.nextCursor ?: return
             }
-            else -> { /* surfaced by the caller */ }
+        } catch (e: CancellationException) { throw e }
+        catch (_: Exception) { publishFor(viewer) { _error.value = "Notification catch-up could not save its checkpoint. Retry to continue." } }
+    }
+
+    suspend fun loadMore(cursor: String) {
+        val viewer = viewer()
+        if (cursor != _nextCursor.value) return
+        val result = viewer.api.list(25, false, cursor)
+        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = "Older notifications could not be loaded. Retry to continue." }
+        if (result is ApiResult.Success) publishFor(viewer) {
+            if (cursor != _nextCursor.value) return@publishFor
+            mutate { old -> old.copy(rows = (old.rows + result.data.notifications).dedupeById()) }
+            _nextCursor.value = result.data.nextCursor
         }
     }
 
-    /** Direct row lookup used by data-only push handling before rendering a system notification. */
-    suspend fun get(id: String): ApiResult<NotificationRow> =
-        api.get(id)
-
-    /** Optimistic mark-read with revert on failure. */
-    suspend fun markRead(id: String) {
-        val before = _state.value
-        mutate { applyEvent(it, NotificationRealtimeEvent.Read(id)) }
-        val r = api.markRead(id)
-        if (r !is ApiResult.Success) publish(before)
+    suspend fun get(id: String): ApiResult<NotificationRow> {
+        val viewer = viewer()
+        val result = viewer.api.get(id)
+        return if (current(viewer)) result else ApiResult.Error(0, "identity_changed", "The active viewer changed.")
     }
 
-    /** Optimistic mark-all-read with revert on failure. */
+    suspend fun markRead(id: String) {
+        val viewer = viewer()
+        if (viewer.api.markRead(id) is ApiResult.Success) {
+            publishFor(viewer) { mutate { applyEvent(it, NotificationRealtimeEvent.Read(id)) } }
+        } else publishFor(viewer) { _error.value = "Notification read status could not be confirmed." }
+    }
+
     suspend fun markAllRead() {
-        val before = _state.value
-        mutate { applyEvent(it, NotificationRealtimeEvent.ReadAll) }
-        val r = api.markAllRead()
-        if (r !is ApiResult.Success) publish(before)
+        val viewer = viewer()
+        val cutoff = readCutoff // Freeze the displayed boundary before sending this user intent.
+        if (cutoff == null || cutoffViewer?.isSameIdentityAs(viewer.scope) != true) {
+            publishFor(viewer) { _error.value = "Refresh the inbox before marking it read." }
+            return
+        }
+        val result = viewer.api.markAllRead(cutoff)
+        if (result !is ApiResult.Success) publishFor(viewer) { _error.value = "Mark all read could not be confirmed. Refresh before trying again." }
+        if (result is ApiResult.Success && current(viewer)) refresh()
     }
 
     suspend fun loadPreferences() {
-        when (val r = api.getPreferences()) {
-            is ApiResult.Success -> _preferences.value = r.data
-            else -> { /* hidden settings on failure (spec) */ }
-        }
+        val viewer = viewer()
+        val result = viewer.api.getPreferences()
+        if (result is ApiResult.Success) publishFor(viewer) { _preferences.value = result.data }
     }
 
-    suspend fun updatePreferences(
-        update: NotificationPreferencesUpdate,
-    ): ApiResult<NotificationPreferences> {
-        val r = api.updatePreferences(update)
-        if (r is ApiResult.Success) _preferences.value = r.data
-        return r
+    suspend fun updatePreferences(update: NotificationPreferencesUpdate): ApiResult<NotificationPreferences> {
+        val viewer = viewer()
+        val result = viewer.api.updatePreferences(update)
+        if (!current(viewer)) return ApiResult.Error(0, "identity_changed", "The active viewer changed.")
+        if (result is ApiResult.Success) publishFor(viewer) { _preferences.value = result.data }
+        return result
     }
 
     suspend fun loadCapability() {
-        when (val r = api.capability()) {
-            is ApiResult.Success -> _capability.value = r.data
-            else -> { /* hidden settings on failure (spec) */ }
-        }
+        val viewer = viewer()
+        val result = viewer.api.capability()
+        if (result is ApiResult.Success) publishFor(viewer) { _capability.value = result.data }
     }
 
     /**
@@ -260,6 +331,10 @@ class NotificationsRepository(
      * [tryEmit] into the buffered flow never suspends.
      */
     fun reset() {
+        epoch++
+        _error.value = null
+        readCutoff = null
+        cutoffViewer = null
         publish(NotificationsState())
         _nextCursor.value = null
         _preferences.value = null
@@ -280,8 +355,10 @@ class NotificationsRepository(
         while (true) {
             var established = false // true once the first non-Closed event of this connection arrives
             var authFailed = false  // set inside collect, checked after to break the loop
+            val connectionViewer = viewer()
             try {
                 client.connect().collect { event ->
+                    if (!current(connectionViewer)) return@collect
                     // Auth-class closes are terminal — stop reconnecting.
                     if (event.isAuthClose()) {
                         _realtimeFatal.value = true
@@ -294,7 +371,11 @@ class NotificationsRepository(
                         backoffMs = INITIAL_BACKOFF_MS
                         established = true
                     }
-                    mutate { applyEvent(it, event) }
+                    // The connection snapshot is the reconnect moment, and a signed read
+                    // cutoff from another device cannot be folded locally: both reread the
+                    // authoritative counts and displayed cutoff. Every other event folds.
+                    if (event is NotificationRealtimeEvent.Snapshot || event is NotificationRealtimeEvent.Invalidate) refresh()
+                    else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
                 }
             } catch (e: CancellationException) {
                 throw e

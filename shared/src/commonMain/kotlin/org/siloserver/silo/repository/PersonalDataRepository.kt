@@ -1,23 +1,22 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.model.catalog.CatalogResponse
-import org.siloserver.silo.model.personal.ProgressListResponse
-import org.siloserver.silo.model.personal.RatingEntry
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.model.personal.SyncProgressItem
-import org.siloserver.silo.model.personal.SyncProgressRequest
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.network.apiv2.HistoryContinuationV2
+import org.siloserver.silo.network.apiv2.HistoryPageV2
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.identityChanged
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.CatalogCacheWriteLease
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.repository.port.canServeCache
-import org.siloserver.silo.repository.port.toWriteOutcome
 
 open class PersonalDataRepository(
     private val personalDataApi: PersonalDataApi,
@@ -31,7 +30,10 @@ open class PersonalDataRepository(
     /** Offline read cache for the library list (Track B). No-op by default. */
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
+    membershipPort: org.siloserver.silo.repository.port.MembershipPort? = null,
 ) {
+    val memberships = MembershipActions(membershipPort, identityTransitions)
+
     // -- Libraries --
 
     /** Lists the libraries visible to the current user (offline: last cached list). */
@@ -52,125 +54,80 @@ open class PersonalDataRepository(
 
     // -- Favorites --
 
-    /** Lists the user's favorite items with pagination. */
-    suspend fun listFavorites(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listFavorites(offset, limit)
-
-    /** Checks whether a specific item is in the user's favorites. */
     suspend fun isFavorite(itemId: String): ApiResult<Boolean> =
-        personalDataApi.checkFavorite(itemId)
+        memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
 
-    /**
-     * Adds or removes an item from the user's favorites.
-     * @param isFavorite true to add, false to remove.
-     */
-    suspend fun toggleFavorite(itemId: String, isFavorite: Boolean): ApiResult<Unit> {
-        val handle = userItemStatePort.recordFavorite(itemId, isFavorite)
-        val result = if (isFavorite) {
-            personalDataApi.addFavorite(itemId, handle.scope)
-        } else {
-            personalDataApi.removeFavorite(itemId, handle.scope)
-        }
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
-    }
-
-    // -- Watchlist --
-
-    /** Lists the user's watchlist items with pagination. */
-    suspend fun listWatchlist(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listWatchlist(offset, limit)
-
-    /** Checks whether a specific item is on the user's watchlist. */
     suspend fun isInWatchlist(itemId: String): ApiResult<Boolean> =
-        personalDataApi.checkWatchlist(itemId)
-
-    /**
-     * Adds or removes an item from the user's watchlist.
-     * @param isInWatchlist true to add, false to remove.
-     */
-    suspend fun toggleWatchlist(itemId: String, isInWatchlist: Boolean): ApiResult<Unit> =
-        if (isInWatchlist) {
-            personalDataApi.addToWatchlist(itemId)
-        } else {
-            personalDataApi.removeFromWatchlist(itemId)
-        }
+        memberships.read(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST)
 
     // -- History --
 
     /** Lists the user's watch history with pagination. */
-    suspend fun listHistory(offset: Int = 0, limit: Int = 40): ApiResult<CatalogResponse> =
-        personalDataApi.listHistory(offset, limit)
+    suspend fun listHistory(continuation: HistoryContinuationV2? = null, limit: Int = 40): ApiResult<HistoryPageV2> =
+        personalDataApi.listHistory(continuation, limit)
 
     // -- Progress --
 
-    /** Lists all in-progress items for the current user. */
-    suspend fun listProgress(): ApiResult<ProgressListResponse> =
-        personalDataApi.listProgress()
-
-    /** Syncs local progress state with the server. */
+    /** Legacy sessionless convenience path: admitted playback uses sequenced v2 progress. */
     open suspend fun syncProgress(items: List<SyncProgressItem>): ApiResult<Unit> =
-        personalDataApi.syncProgress(SyncProgressRequest(items = items))
+        ApiResult.Error(0, "playback_unavailable", "Progress needs an admitted v2 playback session. Start playback again.")
 
     // -- Ratings --
 
-    /** Lists all ratings the current user has set. */
-    suspend fun listRatings(): ApiResult<List<RatingEntry>> =
-        personalDataApi.listRatings().map { it.ratings }
-
-    /** Gets the user's rating for a specific item. */
-    suspend fun getRating(itemId: String): ApiResult<RatingEntry> =
-        personalDataApi.getRating(itemId)
-
     /** Sets or updates the user's star rating (integer 1-5) for a specific item. */
-    suspend fun setRating(itemId: String, rating: Int): ApiResult<Unit> {
-        val handle = userItemStatePort.recordRating(itemId, rating)
-        val result = personalDataApi.setRating(itemId, rating, handle.scope)
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
-    }
+    suspend fun setRating(itemId: String, rating: Int): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, rating))
 
-    /** Removes the user's rating for a specific item. */
-    suspend fun deleteRating(itemId: String): ApiResult<Unit> {
-        val handle = userItemStatePort.recordRating(itemId, null)
-        val result = personalDataApi.deleteRating(itemId, handle.scope)
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
-    }
+    suspend fun deleteRating(itemId: String): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, null))
 
-    // -- Watched --
+    open suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> =
+        writePersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
 
-    /**
-     * Toggle the watched state for an item. The server resolves leaf
-     * targets, so passing a series / season ID marks the appropriate
-     * episodes.
-     */
-    open suspend fun setWatched(itemId: String, watched: Boolean): ApiResult<Unit> {
-        val handle = userItemStatePort.recordWatched(itemId, watched)
-        val result = if (watched) {
-            personalDataApi.markWatched(itemId, handle.scope)
-        } else {
-            personalDataApi.markUnwatched(itemId, handle.scope)
+    private val personalDispatchMutex = Mutex()
+    private val consumedPersonalIntents = mutableSetOf<Long>()
+    private var personalSequence = 0L
+    private val latestPersonalIntents = mutableMapOf<Pair<String, String>, org.siloserver.silo.repository.port.PersonalWriteIntent>()
+
+    private fun personalIntentKey(command: org.siloserver.silo.repository.port.PersonalWrite) = command.itemId to
+        when (command) {
+            is org.siloserver.silo.repository.port.PersonalWrite.Watched -> "watched"
+            is org.siloserver.silo.repository.port.PersonalWrite.Rating -> "rating"
         }
-        userItemStatePort.resolve(handle, result.toWriteOutcome())
-        return result
+
+    fun beginWatched(itemId: String, watched: Boolean) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Watched(itemId, watched))
+    fun beginRating(itemId: String, rating: Int?) = beginPersonal(org.siloserver.silo.repository.port.PersonalWrite.Rating(itemId, rating))
+    private fun beginPersonal(command: org.siloserver.silo.repository.port.PersonalWrite) =
+        org.siloserver.silo.repository.port.PersonalWriteIntent(command, identityTransitions.generation.value, ++personalSequence)
+            .also { latestPersonalIntents[personalIntentKey(command)] = it }
+    fun isCurrent(intent: org.siloserver.silo.repository.port.PersonalWriteIntent) =
+        intent.identityGeneration == identityTransitions.generation.value && latestPersonalIntents[personalIntentKey(intent.command)] == intent
+
+    private suspend fun writePersonal(command: org.siloserver.silo.repository.port.PersonalWrite): ApiResult<Unit> =
+        performPersonalWrite(beginPersonal(command))
+
+    suspend fun performPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent): ApiResult<Unit> {
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return identityChanged()
+        val admitted = personalDispatchMutex.withLock { consumedPersonalIntents.add(intent.sequence) }
+        if (!admitted) return ApiResult.Error(0, "personal_write_consumed", "This action was already submitted. Its outcome will not be replayed.")
+        return dispatchPersonalWrite(intent)
     }
 
-    // -- Continue Watching dismissals --
-
-    /** Hide an item from the home Continue Watching row. */
-    open suspend fun dismissContinueWatching(
-        itemId: String,
-        progressUpdatedAt: String
-    ): ApiResult<Unit> =
-        personalDataApi.dismissContinueWatching(itemId, progressUpdatedAt)
-
-    /** Undo a Continue Watching dismissal. */
-    open suspend fun undismissContinueWatching(itemId: String): ApiResult<Unit> =
-        personalDataApi.undismissContinueWatching(itemId)
-
-    open suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> =
-        personalDataApi.dismissNextUp(itemId, seriesId)
+    private suspend fun dispatchPersonalWrite(intent: org.siloserver.silo.repository.port.PersonalWriteIntent): ApiResult<Unit> {
+        val command = intent.command
+        if (!command.valid()) return ApiResult.Error(422, "validation_failed", "Invalid personal-data command.")
+        val handle = userItemStatePort.beginPersonalWrite(command)
+            ?: return ApiResult.Error(0, "personal_write_pending", "This item needs an active saved account with no unresolved personal-data writes.")
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return identityChanged()
+        val result = personalDataApi.writePersonal(handle)
+        if (intent.identityGeneration != identityTransitions.generation.value)
+            return identityChanged()
+        if (result is ApiResult.Success) userItemStatePort.completePersonalWrite(handle)
+        else userItemStatePort.abandonPersonalWrite(handle)
+        return result
+    }
 
     private suspend fun writeIfIdentityUnchanged(
         requestGeneration: Long,

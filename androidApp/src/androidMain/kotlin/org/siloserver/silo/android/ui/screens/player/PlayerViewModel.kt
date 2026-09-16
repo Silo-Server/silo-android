@@ -315,8 +315,6 @@ class PlayerViewModel(
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
-        private val ON_DECK_SECTION_TYPES = setOf("continue_watching", "in_progress", "next_up")
-        private const val ON_DECK_MAX_ITEMS = 12
         // Stored orientation-mode values — raw-value parity with iOS
         // `PlayerOrientationMode` so the device-scoped setting round-trips.
         private const val ORIENTATION_MODE_LANDSCAPE_LOCKED = "landscapeLocked"
@@ -952,6 +950,7 @@ class PlayerViewModel(
         // Exact capability/context snapshot used only for a 404 renewal.
         recoveryStartParams: StartParams? = null,
     ) {
+        aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
         routeIntentState.beginLoad(
             contentId = contentId,
@@ -1039,6 +1038,8 @@ class PlayerViewModel(
                     Log.w(TAG, "Could not refresh player settings before playback", e)
                 }
                 if (!ownsLoad(loadOwner)) return@launch
+                val readyWatchOwner = catalogRepository.captureWatchAuthority()
+                if (!ownsLoad(loadOwner)) return@launch
                 when (val playbackState = videoPlaybackCoordinator.start(
                     VideoPlaybackStartRequest(
                         contentId = contentId,
@@ -1075,6 +1076,7 @@ class PlayerViewModel(
                             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
                             isSessionRenewal = recoveryStartParams != null,
                             loadOwner = loadOwner,
+                            watchOwner = readyWatchOwner,
                         )
                         unpublishedReadySessionId = null
                     }
@@ -1172,12 +1174,13 @@ class PlayerViewModel(
         initialSubtitleTrackIndex: Int?,
         isSessionRenewal: Boolean,
         loadOwner: MobilePlayerLoadOwner,
+        watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
     ) {
-        val watchDetail = when (val r = catalogRepository.getWatchDetail(playbackState.contentId)) {
-            is ApiResult.Success -> r.data
-            else -> null
-        }
-        if (!ownsLoad(loadOwner)) {
+        val watchMetadata = ReadyWatchMetadata(
+            catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl,
+        ) { ownsLoad(loadOwner) }
+        val watchDetail = watchMetadata.read()
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1236,7 +1239,7 @@ class PlayerViewModel(
         val localTrackSelection = version?.fileId
             ?.takeIf { initialAudioTrackIndex == null || !explicitSubtitlePickResolved }
             ?.let { fileId -> userItemStatePort.localTrackSelection(playbackState.contentId, fileId) }
-        if (!ownsLoad(loadOwner)) {
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1256,7 +1259,7 @@ class PlayerViewModel(
             authoritativeInventory = playbackState.playbackPlan != null,
             loadDownloadedSubtitles = subtitlesRepository::list,
         )
-        if (!ownsLoad(loadOwner)) {
+        if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return
         }
@@ -1305,6 +1308,10 @@ class PlayerViewModel(
             null
         }
 
+        if (!watchMetadata.current()) {
+            stopStaleReadySession(playbackState.sessionId)
+            return
+        }
         val published = loadOwners.runIfOwned(loadOwner) {
             val mountGeneration = expectNextMediaMount()
             _uiState.update {
@@ -1811,7 +1818,7 @@ class PlayerViewModel(
                         } else {
                             emptyList()
                         }
-                        val recoveredSubtitles = authoritativeSubtitles + downloaded
+                        val recoveredSubtitles = authoritativeSubtitles + downloaded.filter { it.url.isNotBlank() }
                         val returnedSubtitleOrdinal = returnedSubtitleIndex?.let { serverIndex ->
                             recoveredSubtitles.indexOfFirst { it.index == serverIndex }.takeIf { it >= 0 }
                         } ?: -1
@@ -1884,7 +1891,7 @@ class PlayerViewModel(
                                 playbackPlan = decision.session.playbackPlan,
                                 delivery = decision.plan.delivery,
                                 streamUrl = decision.plan.stream.url,
-                                requestHeaders = decision.plan.stream.headers,
+                                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                                 container = decision.plan.stream.container
                                     ?: effectiveVersion?.container
                                     ?: current.container.takeIf { effectiveFileId == fileId },
@@ -2223,6 +2230,7 @@ class PlayerViewModel(
 
     /** [force] bypasses the time-throttle (used on pause/stop to capture the exact spot). */
     private fun maybeRecordPosition(positionSec: Double, durationSec: Double, force: Boolean = false) {
+        if (_uiState.value.sessionId?.let(playbackSessionManager::isSequenced) == true) return
         if (positionSec < 0.0) return
         val contentId = _uiState.value.contentId.takeIf { it.isNotBlank() } ?: return
         val fileId = currentFileId() ?: return
@@ -2849,7 +2857,7 @@ class PlayerViewModel(
                 playbackPlan = decision.session.playbackPlan,
                 delivery = decision.plan.delivery,
                 streamUrl = decision.plan.stream.url,
-                requestHeaders = decision.plan.stream.headers,
+                requestHeaders = decision.plan.stream.effectiveRequestHeaders,
                 container = decision.plan.stream.container ?: current.container,
                 startPosition = decision.plan.timeline.playerStartSeconds,
                 mediaMountGeneration = mountGeneration,
@@ -3113,7 +3121,7 @@ class PlayerViewModel(
                 playbackPlan = ready.session.playbackPlan,
                 delivery = ready.plan.delivery,
                 streamUrl = ready.plan.stream.url,
-                requestHeaders = ready.plan.stream.headers,
+                requestHeaders = ready.plan.stream.effectiveRequestHeaders,
                 container = ready.plan.stream.container
                     ?: effectiveVersion.container
                     ?: current.container.takeIf { effectiveFileId == predecessorFileId },
@@ -3153,7 +3161,8 @@ class PlayerViewModel(
     private suspend fun recoverFromSubtitleAdoptionFailure(detail: String) {
         val state = _uiState.value
         showVersionSwitchMessage("Couldn't finish the subtitle change — restarting playback.")
-        sessionLifecycle.stop()
+        val outgoingSession = retainedOwnedSessionId ?: state.sessionId
+        if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return
         loadContent(
             contentId = state.contentId,
             preferredFileId = state.mediaFileId,
@@ -3521,10 +3530,15 @@ class PlayerViewModel(
     }
 
     /** Download a search result; on success merge + auto-select the new track. */
+    private var subtitleDownloadGeneration = 0L
+
     fun downloadSubtitle(result: SubtitleResult) {
         val mediaFileId = _uiState.value.mediaFileId ?: return
+        val sessionId = _uiState.value.sessionId
+        if (_subtitleTools.value.downloadingKey != null) return
         val key = "${result.provider}:${result.id}"
         _subtitleTools.update { it.copy(downloadingKey = key, searchError = null) }
+        val generation = ++subtitleDownloadGeneration
         viewModelScope.launch {
             val request = SubtitleDownloadRequest(
                 mediaFileId = mediaFileId,
@@ -3536,9 +3550,12 @@ class PlayerViewModel(
                 score = result.score,
                 hearingImpaired = result.hearingImpaired,
             )
-            when (val r = subtitlesRepository.download(request)) {
+            val r = subtitlesRepository.download(request)
+            if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
+            when (r) {
                 is ApiResult.Success -> {
                     doRefreshSubtitles(autoSelectSubtitleId = r.data.subtitle.id)
+                    if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleTools.update { it.copy(downloadingKey = null, downloadCompleted = true) }
                 }
                 is ApiResult.Error, is ApiResult.NetworkError -> _subtitleTools.update {
@@ -3654,11 +3671,14 @@ class PlayerViewModel(
     /** Refresh the transcription quota; non-limited / failed lookups hide the counter (web parity). */
     fun refreshAiQuota() {
         viewModelScope.launch {
+            val owner = subtitlesRepository.captureJobAuthority() ?: return@launch
             val quota = when (val r = subtitlesRepository.aiQuota()) {
                 is ApiResult.Success -> r.data.takeIf { it.limited }
                 else -> null
             }
-            _subtitleTools.update { it.copy(quota = quota) }
+            val now = subtitlesRepository.captureJobAuthority()
+            if (owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken)
+                _subtitleTools.update { it.copy(quota = quota) }
         }
     }
 
@@ -3668,13 +3688,29 @@ class PlayerViewModel(
      * poll for completion instead of streaming live cues
      * (SubtitleTranslateRequest doc).
      */
+    private var aiPlaybackGeneration = 0L
+    private var aiCreationInFlight = false
+    private var aiCancelOwner: Pair<Long, org.siloserver.silo.network.AuthScopeSnapshot>? = null
+
     fun startAiJob(kind: String, sourceIndex: Int, sourceLanguage: String, targetLanguage: String) {
+        val generation = aiPlaybackGeneration
         val state = _uiState.value
         val mediaFileId = state.mediaFileId ?: return
-        if (_subtitleTools.value.activeJob != null || _subtitleTools.value.translateSubmitting) return
+        if (aiCreationInFlight || _subtitleTools.value.activeJob != null || _subtitleTools.value.translateSubmitting) return
+        aiCreationInFlight = true
         _subtitleTools.update { it.copy(translateSubmitting = true, translateError = null, jobJustCompleted = false) }
         aiJobHandle?.cancel()
-        aiJobHandle = viewModelScope.launch {
+        aiJobHandle = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            val owner = subtitlesRepository.captureJobAuthority() ?: run {
+                _subtitleTools.update { it.copy(translateSubmitting = false, translateError = "Sign in before starting subtitle processing.") }
+                return@launch
+            }
+            fun samePlayback() = generation == aiPlaybackGeneration && _uiState.value.mediaFileId == mediaFileId && _uiState.value.sessionId == state.sessionId
+            suspend fun ownsRequest(): Boolean {
+                val now = subtitlesRepository.captureJobAuthority()
+                return samePlayback() && owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
+            }
+            if (!ownsRequest()) return@launch
             val result = subtitlesRepository.translate(
                 SubtitleTranslateRequest(
                     mediaFileId = mediaFileId,
@@ -3684,18 +3720,24 @@ class PlayerViewModel(
                     targetLanguage = targetLanguage.ifBlank { null },
                     startPosition = state.position,
                 ),
+                owner,
             )
+            if (!ownsRequest()) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    val job = result.data.job
-                    _subtitleTools.update { it.copy(translateSubmitting = false, activeJob = job) }
-                    val outcome = subtitlesRepository.pollJob(job.id) { update ->
-                        _subtitleTools.update { it.copy(activeJob = update) }
+                    val job = result.data.job.let { job ->
+                        if (!result.data.liveDeliveryAttached && job.progressMessage.isBlank()) job.copy(progressMessage = "Processing in background") else job
                     }
+                    aiCancelOwner = job.id to owner
+                    _subtitleTools.update { it.copy(translateSubmitting = false, activeJob = job) }
+                    val outcome = subtitlesRepository.pollJob(job.id, expectedScope = owner) { update ->
+                        if (samePlayback()) _subtitleTools.update { it.copy(activeJob = update) }
+                    }
+                    if (!ownsRequest()) return@launch
                     when (outcome) {
                         is SubtitlesRepository.SubtitleJobOutcome.Completed -> {
                             doRefreshSubtitles(autoSelectSubtitleId = outcome.resultSubtitleId)
-                            _subtitleTools.update { it.copy(activeJob = null, jobJustCompleted = true) }
+                            if (ownsRequest()) _subtitleTools.update { it.copy(activeJob = null, jobJustCompleted = true) }
                         }
                         is SubtitlesRepository.SubtitleJobOutcome.Failed -> _subtitleTools.update {
                             it.copy(activeJob = null, translateError = outcome.message ?: "Job failed")
@@ -3717,17 +3759,19 @@ class PlayerViewModel(
                     it.copy(translateSubmitting = false, translateError = result.errorMessage("Failed to start AI job"))
                 }
             }
-        }
+        }.also { job -> job.invokeOnCompletion { aiCreationInFlight = false } }
     }
 
     /** Cancel the in-flight AI job server-side; the poll loop then sees the terminal cancelled status. */
     fun cancelAiJob() {
         val job = _subtitleTools.value.activeJob ?: return
-        viewModelScope.launch { subtitlesRepository.cancelJob(job.id) }
+        val owner = aiCancelOwner?.takeIf { it.first == job.id }?.second ?: return
+        viewModelScope.launch { subtitlesRepository.cancelJob(job.id, owner) }
     }
 
     /** Search sheet dismissed — clear transient search state (results survive reopen). */
     fun onSearchSheetClosed() {
+        subtitleDownloadGeneration++
         searchJob?.cancel()
         _subtitleTools.update {
             it.copy(searchLoading = false, downloadingKey = null, downloadCompleted = false, searchError = null)
@@ -3772,46 +3816,23 @@ class PlayerViewModel(
      * the current item and anything from the same series, deduped, capped at
      * 12, and dropped when no 16:9 art exists.
      */
+    private var onDeckGeneration = 0L
+
     private fun loadOnDeckItems() {
+        val run = ++onDeckGeneration
         val repository = sectionRepository ?: return
         val forContentId = _uiState.value.contentId
         val currentSeriesId = _uiState.value.seriesId
+        val sessionId = _uiState.value.sessionId
+        _uiState.update { it.copy(onDeckItems = emptyList()) }
+        fun stillCurrent() = run == onDeckGeneration && _uiState.value.contentId == forContentId && _uiState.value.sessionId == sessionId
         viewModelScope.launch {
-            val sections = (repository.getHomeSections() as? ApiResult.Success)
-                ?.data?.sections ?: return@launch
-            val pool = sections
-                .filter { it.sectionType in ON_DECK_SECTION_TYPES }
-                .flatMap { it.items }
-                .filter { item ->
-                    item.contentId != forContentId &&
-                        (currentSeriesId == null || item.seriesId != currentSeriesId)
+            val owner = repository.captureHomeAuthority() ?: return@launch
+            repository.loadScopedHomeSections(owner, ::stillCurrent) { sections ->
+                val pool = sections.toOnDeckItems(forContentId, currentSeriesId)
+                _uiState.update {
+                    if (!stillCurrent()) it else it.copy(onDeckItems = pool)
                 }
-                .filter { !it.backdropUrl.isNullOrBlank() }
-                .distinctBy { it.contentId }
-                .take(ON_DECK_MAX_ITEMS)
-                .map { item ->
-                    val progress = item.positionSeconds?.let { pos ->
-                        item.durationSeconds?.takeIf { it > 0 }?.let { dur ->
-                            (pos / dur).toFloat().coerceIn(0f, 1f)
-                        }
-                    }
-                    OnDeckItem(
-                        contentId = item.contentId,
-                        title = item.seriesTitle ?: item.title,
-                        subtitle = when {
-                            item.seasonNumber != null && item.episodeNumber != null ->
-                                "S${item.seasonNumber}·E${item.episodeNumber}" +
-                                    (item.title.takeIf { it.isNotBlank() }?.let { " — $it" } ?: "")
-                            item.year > 0 -> item.year.toString()
-                            else -> null
-                        },
-                        artUrl = item.backdropUrl,
-                        artThumbhash = item.backdropThumbhash,
-                        progressFraction = progress,
-                    )
-                }
-            _uiState.update {
-                if (it.contentId != forContentId) it else it.copy(onDeckItems = pool)
             }
         }
     }
@@ -3824,7 +3845,8 @@ class PlayerViewModel(
         upNextCountdownJob = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(contentId = contentId)
         }
     }
@@ -4039,7 +4061,8 @@ class PlayerViewModel(
         val nextContentId = _uiState.value.nextEpisode?.contentId ?: return
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(
                 contentId = nextContentId,
                 resumePositionOverride = 0.0,
@@ -4166,7 +4189,8 @@ class PlayerViewModel(
                 )
             }
         viewModelScope.launch {
-            sessionLifecycle.stop()
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
             loadContent(
                 contentId = state.contentId,
                 preferredFileId = version.fileId,
@@ -4291,7 +4315,7 @@ class PlayerViewModel(
         val cid = state.contentId.takeIf { it.isNotBlank() }
         val fid = currentFileId()
         val scope = finalPositionScope
-        if (scope != null && cid != null && fid != null) {
+        if (ownedSessionId?.let(playbackSessionManager::isSequenced) != true && scope != null && cid != null && fid != null) {
             finalPlaybackPositionWriter.submit(
                 FinalPlaybackPosition(
                     scope = scope,
@@ -4380,6 +4404,8 @@ class PlayerViewModel(
         resumePositionOverride: Double?,
         loadOwner: MobilePlayerLoadOwner,
     ): Boolean {
+        val watchOwner = catalogRepository.captureWatchAuthority()
+        if (!ownsLoad(loadOwner)) return false
         val media = withContext(Dispatchers.IO) {
             val (serverId, profileId) = resolveDownloadScope()
             offlineMediaResolver.findLocalMedia(
@@ -4397,10 +4423,11 @@ class PlayerViewModel(
         // Best-effort online metadata (richer fields: intro/credits/chapters).
         // Network failure is fine; the sidecar already has title + poster
         // so airplane-mode playback still has something to render.
-        val watchDetail = when (val r = catalogRepository.getWatchDetail(contentId)) {
-            is ApiResult.Success -> r.data
-            else -> null
-        }
+        val localPos = userItemStatePort.localPosition(contentId, fileId)
+        if (!ownsLoad(loadOwner)) return false
+        val watchDetail = loadLocalWatchMetadata(
+            catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
+        ) { ownsLoad(loadOwner) }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title
         val subtitle = watchDetail?.let { buildSubtitle(it) } ?: sidecar.subtitle.orEmpty()
@@ -4413,8 +4440,6 @@ class PlayerViewModel(
         // Offline-safe resume: the server's watchDetail may be stale or absent in
         // airplane mode, so fold in the locally-recorded position and take the
         // furthest of the two (matches the server's GREATEST semantics).
-        val localPos = userItemStatePort.localPosition(contentId, fileId)
-        if (!ownsLoad(loadOwner)) return false
         val detailPos = listOfNotNull(watchDetail?.userData?.positionSeconds, localPos).maxOrNull()
         val startPos = resolvePlaybackStartPosition(
             overridePosition = resumePositionOverride,

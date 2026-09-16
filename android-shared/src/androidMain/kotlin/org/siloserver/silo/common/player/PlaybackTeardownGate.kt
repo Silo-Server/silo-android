@@ -43,10 +43,10 @@ class PlaybackTeardownGate(private val lifecycle: PlaybackSessionLifecycle) {
      * outlives the screen and which a later start awaits through
      * [PlaybackSessionLifecycle.acquireOwnershipEpoch].
      */
-    suspend fun stopOrdered(expectedSessionId: String?) {
-        if (!claimed.compareAndSet(false, true)) return
+    suspend fun stopOrdered(expectedSessionId: String?): Boolean {
+        if (!claimed.compareAndSet(false, true)) return false
         try {
-            lifecycle.stop(expectedSessionId = expectedSessionId)
+            return lifecycle.stop(expectedSessionId = expectedSessionId)
         } catch (t: Throwable) {
             lifecycle.stopAsync(expectedSessionId = expectedSessionId)
             throw t

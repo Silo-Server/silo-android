@@ -28,6 +28,8 @@ import org.siloserver.silo.model.playback.TRACK_CHANGE_V3_OPERATION
 import org.siloserver.silo.model.playback.playbackClientFeaturesV3
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.acceptsMetadataOwner
 import org.siloserver.silo.repository.PlaybackRepository
 import java.util.IdentityHashMap
 import java.util.UUID
@@ -294,7 +296,10 @@ open class PlaybackSessionManager(
         subtitleFidelityPreference: SubtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
         progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
         deferPublication: Boolean = false,
+        expectedMetadataOwner: AuthScopeSnapshot? = null,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
+        if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+            return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
         /**
          * The session this call is currently answerable for.
          *
@@ -332,11 +337,17 @@ open class PlaybackSessionManager(
                 )
             }
             beginContentReset()
+            if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val predecessorForPublication = videoAttemptMutex.withLock {
                 activeVideoAttempt.get()
             }
-            val playbackAttemptId = UUID.randomUUID().toString()
+            if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
             val network = networkEvidenceProvider.snapshot()
+            if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
+            val playbackAttemptId = UUID.randomUUID().toString()
             val request = PlaybackStartRequestV3(
                 fileId = fileId,
                 profileId = profileId,
@@ -365,10 +376,14 @@ open class PlaybackSessionManager(
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
             )
-            return@withLock when (val result = playbackRepository.startPlaybackV3(request)) {
+            if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
+            return@withLock when (val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner)) {
                 is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                     is PlaybackV3Validation.Playable -> {
                         leasedSessionId = validated.sessionId
+                        if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                            return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed after playback admission.")
                         val planAttemptId = UUID.randomUUID().toString()
                         val active = newActiveAttempt(
                             request = request,
@@ -379,6 +394,8 @@ open class PlaybackSessionManager(
                             planAttemptId = planAttemptId,
                         )
                         videoAttemptMutex.withLock {
+                            if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
+                                throw CancellationException("The metadata viewer changed before playback publication.")
                             installActiveVideoAttemptLocked(
                                 replacement = active,
                                 predecessor = predecessorForPublication,
@@ -2556,6 +2573,8 @@ open class PlaybackSessionManager(
         internal const val UNEXECUTABLE_ROUTE_MESSAGE =
             "The server returned a playback route this client cannot execute."
     }
+
+    open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
 
     /**
      * Reports the current playback position to the server.

@@ -3,6 +3,7 @@ package org.siloserver.silo.network
 import android.content.SharedPreferences
 import android.util.Base64
 import java.net.URI
+import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,6 +98,15 @@ class AndroidServerRegistry(
                 if (entry.id == serverId) {
                     entry.copy(userOverrideName = userOverrideName?.trim()?.takeIf { it.isNotBlank() })
                 } else entry
+            }
+            persistAndApplyLocked(updated, _activeServerId.value)
+        }
+    }
+
+    override suspend fun setContract(serverId: String, contract: ServerContract) {
+        mutex.withLock {
+            val updated = _entries.value.map { entry ->
+                if (entry.id == serverId) entry.copy(contract = contract) else entry
             }
             persistAndApplyLocked(updated, _activeServerId.value)
         }
@@ -212,6 +222,7 @@ class AndroidServerRegistry(
             val state = RegistryState(entries = updated, activeServerId = serverId)
             val editor = prefs.edit()
                 .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_LOGIN_ID), java.util.UUID.randomUUID().toString())
                 .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN), accessToken)
                 .putString(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN), refreshToken)
                 .putLong(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY), expiryEpochMs)
@@ -234,6 +245,7 @@ class AndroidServerRegistry(
             val state = RegistryState(entries = updated, activeServerId = _activeServerId.value)
             val editor = prefs.edit()
                 .putString(KEY_REGISTRY_STATE, json.encodeToString(state))
+                .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_LOGIN_ID))
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN))
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN))
                 .remove(serverScopedKey(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY))

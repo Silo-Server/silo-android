@@ -2,9 +2,7 @@ package org.siloserver.silo.common.player.video
 
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.HealthStatus
-import io.ktor.client.HttpClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runCurrent
@@ -93,7 +91,12 @@ class PlaybackReachabilityGateTest {
         probe: Boolean = true,
     ): ServerReachabilityMonitor {
         val monitor = ServerReachabilityMonitor(
-            healthApi = FakeHealthApi(probeResult),
+            probe = {
+                if (probeResult == null || probeResult is ApiResult.Success)
+                    org.siloserver.silo.network.apiv2.ApiV2ProbeResult.V2(org.siloserver.silo.network.apiv2.SystemInfo("test", 2, "digest", org.siloserver.silo.network.apiv2.SystemInfoLinks("/openapi", "/capabilities")))
+                else org.siloserver.silo.network.apiv2.ApiV2ProbeResult.Failure(org.siloserver.silo.network.apiv2.ApiV2ProbeResult.Kind.CONNECTION)
+            },
+            captureTarget = { org.siloserver.silo.common.network.ReachabilityTarget("s", "https://example.invalid", 1) },
             scope = scope,
         )
         if (probe) {
@@ -102,11 +105,4 @@ class PlaybackReachabilityGateTest {
         }
         return monitor
     }
-}
-
-private class FakeHealthApi(
-    private val result: ApiResult<HealthStatus>?,
-) : HealthApi(client = HttpClient()) {
-    override suspend fun checkHealth(): ApiResult<HealthStatus> =
-        result ?: ApiResult.Success(HealthStatus(status = "ok"))
 }

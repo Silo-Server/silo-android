@@ -41,7 +41,7 @@ class PersonalDataRepositoryCacheTest {
                 requestEntered.complete(Unit)
                 releaseResponse.await()
                 respond(
-                    """[{"id":1,"name":"Profile A","type":"movie"}]""",
+                    """{"items":[{"id":"1","name":"Profile A","type":"movie","sort_order":0}]}""",
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )

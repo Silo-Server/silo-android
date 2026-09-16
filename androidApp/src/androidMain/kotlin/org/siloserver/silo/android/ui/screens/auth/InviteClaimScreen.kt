@@ -102,6 +102,24 @@ fun InviteClaimScreen(
         Spacer(Modifier.height(30.dp))
 
         when {
+            state.signInRequiredUsername != null || state.acceptanceUncertain -> {
+                Text(if (state.signInRequiredUsername != null) "Account created" else "Check sign-in",
+                    color = Color(0xFFF3EFE9), fontSize = 30.sp)
+                Spacer(Modifier.height(16.dp))
+                Text(if (state.signInRequiredUsername != null)
+                    "Sign in to $serverUrl as ${state.signInRequiredUsername} using the password you chose. Use Change server on the sign-in screen if needed."
+                    else state.error.orEmpty(), color = Color.White.copy(alpha = 0.8f))
+                Spacer(Modifier.height(24.dp))
+                AuroraPrimaryButton(label = "Go to sign in", onClick = onNavigateToLogin,
+                    modifier = Modifier.fillMaxWidth())
+            }
+
+            state.acceptanceUnavailable || state.invitation?.acceptanceAvailable == false -> {
+                Text("Invitation acceptance is unavailable on this server.", color = Color(0xFFF3EFE9))
+                Spacer(Modifier.height(24.dp))
+                AuroraGhostButton(label = "Back to sign in", onClick = onNavigateToLogin, fillMaxWidth = true)
+            }
+
             state.isLoadingInvitation -> {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
@@ -116,7 +134,7 @@ fun InviteClaimScreen(
                 AuroraEyebrow(text = "Invitation", centered = true)
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = "Couldn't reach the server",
+                    text = "Couldn't check the invitation",
                     fontSize = 30.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFF3EFE9),

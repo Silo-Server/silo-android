@@ -8,6 +8,10 @@ import org.siloserver.silo.model.auth.DeviceLoginCapabilityResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartRequest
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.network.map
+import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.authScope
@@ -119,66 +123,73 @@ private fun <T> unsupportedScopedDeviceLoginOperation(): ApiResult<T> = ApiResul
 )
 
 /**
- * Ktor-backed implementation. Funnels both calls through [safeApiCall]
+ * Ktor-backed implementation. Uses [safeApiV2Call]
  * for unified error handling, matching [AuthApi]'s pattern.
  */
-class DefaultDeviceLoginApi(private val client: HttpClient) : DeviceLoginApi {
+class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: ApiV2Gate) : DeviceLoginApi {
 
     override suspend fun startDeviceLogin(
         deviceName: String?,
         devicePlatform: String?,
-    ): ApiResult<DeviceLoginStartResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/start") {
+    ): ApiResult<DeviceLoginStartResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/start") {
+            skipSiloAuth()
+            singleAttempt()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginStartRequest(deviceName, devicePlatform))
-        }
+        }.requireAuthStatus(201)
     }
 
-    override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/poll") {
+    override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> = safeApiV2Call<DevicePollV2>(gate) {
+        client.post("/api/v2/auth/device/poll") {
+            skipSiloAuth()
+            singleAttempt()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginPollRequest(deviceCode))
-        }
-    }
+        }.requireAuthStatus(200)
+    }.map { it.domain() }
 
     override suspend fun startDeviceLoginAt(
         serverUrl: String,
         deviceName: String?,
         devicePlatform: String?,
-    ): ApiResult<DeviceLoginStartResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/auth/device/start") {
+    ): ApiResult<DeviceLoginStartResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
+        client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/start") {
             skipSiloAuth()
+            singleAttempt()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginStartRequest(deviceName, devicePlatform))
-        }
+        }.requireAuthStatus(201)
     }
 
     override suspend fun pollDeviceLoginAt(
         serverUrl: String,
         deviceCode: String,
-    ): ApiResult<DeviceLoginPollResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/auth/device/poll") {
+    ): ApiResult<DeviceLoginPollResponse> = safeApiV2Call<DevicePollV2>(ApiV2Gate.Unrestricted) {
+        client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/poll") {
             skipSiloAuth()
+            singleAttempt()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginPollRequest(deviceCode))
-        }
-    }
+        }.requireAuthStatus(200)
+    }.map { it.domain() }
 
     override suspend fun remotePlaybackCapabilityAt(
         serverUrl: String,
-    ): ApiResult<DeviceLoginCapabilityResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/device/capability") {
+    ): ApiResult<DeviceLoginCapabilityResponse> = safeApiV2Call<DeviceCapabilityV2>(ApiV2Gate.Unrestricted) {
+        client.get("${serverUrl.trimEnd('/')}/api/v2/auth/device/capability") {
             skipSiloAuth()
-        }
-    }
+        }.requireAuthStatus(200)
+    }.map { it.domain() }
 
     override suspend fun startRemotePlaybackAt(
         serverUrl: String,
         deviceName: String?,
         devicePlatform: String?,
-    ): ApiResult<DeviceLoginStartResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/auth/device/start") {
+    ): ApiResult<DeviceLoginStartResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
+        client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/start") {
             skipSiloAuth()
+            singleAttempt()
             contentType(ContentType.Application.Json)
             setBody(
                 DeviceLoginStartRequest(
@@ -188,86 +199,88 @@ class DefaultDeviceLoginApi(private val client: HttpClient) : DeviceLoginApi {
                     temporary = true,
                 ),
             )
-        }
+        }.requireAuthStatus(201)
     }
 
     override suspend fun lookupDeviceLogin(
         token: String?,
         code: String?,
-    ): ApiResult<DeviceLoginLookupResponse> = safeApiCall {
-        client.get("/api/v1/auth/device") {
+    ): ApiResult<DeviceLoginLookupResponse> = safeApiV2Call(gate) {
+        client.get("/api/v2/auth/device") {
+            skipSiloAuth()
             parameter("token", token?.takeIf { it.isNotBlank() })
             parameter("code", code?.takeIf { it.isNotBlank() })
-        }
+        }.requireAuthStatus(200)
     }
 
     override suspend fun approveDeviceLogin(
         token: String?,
         code: String?,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/approve") {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/approve") {
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(token = token, code = code))
-        }
+        }.requireAuthStatus(200)
     }
 
     override suspend fun denyDeviceLogin(
         token: String?,
         code: String?,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/deny") {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/deny") {
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(token = token, code = code))
-        }
+        }.requireAuthStatus(200)
     }
 
     override suspend fun lookupDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginLookupResponse> = safeApiCall {
-        client.get("/api/v1/auth/device") {
+    ): ApiResult<DeviceLoginLookupResponse> = safeApiV2Call(gate) {
+        client.get("/api/v2/auth/device") {
+            skipSiloAuth()
             authScope(scope)
             parameter("code", code)
-        }
+        }.requireAuthStatus(200)
     }
 
     override suspend fun approveDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/approve") {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/approve") {
             authScope(scope)
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
-        }
+        }.requireAuthStatus(200)
     }
 
     override suspend fun approveRemotePlaybackForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/approve-handoff") {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/approve-handoff") {
             authScope(scope)
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
-        }
+        }.requireAuthStatus(200)
     }
 
-    override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/auth/logout") {
+    override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/logout") {
             authScope(scope)
             contentType(ContentType.Application.Json)
-        }
+        }.requireAuthStatus(204)
     }
 
     override suspend fun denyDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiCall {
-        client.post("/api/v1/auth/device/deny") {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+        client.post("/api/v2/auth/device/deny") {
             authScope(scope)
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
-        }
+        }.requireAuthStatus(200)
     }
 }

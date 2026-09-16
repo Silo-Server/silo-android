@@ -3,7 +3,6 @@ package org.siloserver.silo.common.downloads
 import io.ktor.http.HttpStatusCode
 import java.io.IOException
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertFalse
@@ -37,37 +36,11 @@ class DownloadWorkerHttpStatusTest {
         assertIs<IOException>(downloadHttpStatusFailure(HttpStatusCode.ServiceUnavailable))
     }
 
-    // ── 409 preparing detection (issue #20 GAP 1) ────────────────────────────
-    // A 409 with error `download_inactive` means the remux/transcode artifact is
-    // still preparing — the worker treats that as retriable (wait for `ready`)
-    // rather than deleting the download. Other 409s stay fatal via
-    // downloadHttpStatusFailure (Conflict is not in its retriable set).
-
+    // A 409 never reaches downloadHttpStatusFailure: the worker intercepts it
+    // first as "not ready yet" (bounded preparing retry), because the v2 file
+    // route sends one bare conflict problem for every non-active state.
     @Test
-    fun `extractDownloadErrorCode reads the flat error envelope`() {
-        assertEquals(
-            DOWNLOAD_INACTIVE_ERROR,
-            extractDownloadErrorCode("""{"error":"download_inactive","message":"still preparing"}"""),
-        )
-        // Whitespace / key ordering variations still parse.
-        assertEquals(
-            "download_inactive",
-            extractDownloadErrorCode("""{ "message":"x", "error" : "download_inactive" }"""),
-        )
-    }
-
-    @Test
-    fun `extractDownloadErrorCode returns null when no error code present`() {
-        assertNull(extractDownloadErrorCode("""{"message":"nope"}"""))
-        assertNull(extractDownloadErrorCode(""))
-        assertNull(extractDownloadErrorCode("not json"))
-    }
-
-    @Test
-    fun `a non-preparing conflict is not the download_inactive code`() {
-        // A different 409 error code must not be mistaken for "still preparing".
-        assertEquals("revoked", extractDownloadErrorCode("""{"error":"revoked"}"""))
-        // And a bare Conflict without the preparing code is still fatal.
+    fun `a conflict that escapes the preparing intercept is a permanent failure`() {
         assertIs<IllegalStateException>(downloadHttpStatusFailure(HttpStatusCode.Conflict))
     }
 }

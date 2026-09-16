@@ -8,6 +8,9 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.RecommendationRepository
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,31 +32,31 @@ class RecommendationsViewModel(
     private val _uiState = MutableStateFlow(RecommendationsUiState())
     val uiState: StateFlow<RecommendationsUiState> = _uiState.asStateFlow()
 
-    init {
-        loadRecommendations()
+    private var loadGeneration = 0L
+    private var loadJob: kotlinx.coroutines.Job? = null
+
+    init { loadRecommendations() }
+
+    fun loadRecommendations() = startLoad(refreshing = false)
+    fun refresh() = startLoad(refreshing = true)
+
+    private fun startLoad(refreshing: Boolean) {
+        val run = ++loadGeneration
+        loadJob?.cancel()
+        _uiState.update { it.copy(isLoading = !refreshing, isRefreshing = refreshing, tasteProfile = null, error = null) }
+        loadJob = viewModelScope.launch { fetchRecommendations(run) }
     }
 
-    fun loadRecommendations() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            fetchRecommendations()
+    private suspend fun fetchRecommendations(run: Long) = coroutineScope {
+        val owner = recommendationRepository.captureDiscoverAuthority()
+        if (run != loadGeneration || !currentCoroutineContext().isActive) return@coroutineScope
+        if (owner == null) {
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, sections = emptyList(), error = "Sign in to load recommendations.") }
+            return@coroutineScope
         }
-    }
-
-    fun refresh() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, error = null) }
-            fetchRecommendations()
-            _uiState.update { it.copy(isRefreshing = false) }
-        }
-    }
-
-    private suspend fun fetchRecommendations() {
-        val discoverResultDeferred = viewModelScope.async {
-            recommendationRepository.getDiscover()
-        }
-        val tasteProfileResultDeferred = viewModelScope.async {
-            recommendationRepository.getTasteProfile()
+        val discoverResultDeferred = async { recommendationRepository.getDiscover(owner) }
+        val tasteProfileResultDeferred = async {
+            recommendationRepository.getTasteProfile(owner)
         }
 
         val discoverResult = discoverResultDeferred.await()
@@ -62,6 +65,12 @@ class RecommendationsViewModel(
             else -> null
         }
 
+        val mayPublish = recommendationRepository.isDiscoverAuthorityCurrent(owner)
+        if (run != loadGeneration || !currentCoroutineContext().isActive) return@coroutineScope
+        if (!mayPublish) {
+            _uiState.update { it.copy(isLoading = false, isRefreshing = false, tasteProfile = null, sections = emptyList()) }
+            return@coroutineScope
+        }
         when (discoverResult) {
             is ApiResult.Success -> {
                 val sections = discoverResult.data.rows.toResolvedSections()
@@ -69,6 +78,7 @@ class RecommendationsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        isRefreshing = false,
                         sections = sections,
                         tasteProfile = tasteProfile,
                         error = null,
@@ -80,6 +90,7 @@ class RecommendationsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        isRefreshing = false,
                         tasteProfile = tasteProfile,
                         error = discoverResult.message.ifBlank {
                             "Failed to load recommendations"
@@ -92,6 +103,7 @@ class RecommendationsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
+                        isRefreshing = false,
                         tasteProfile = tasteProfile,
                         error = "Network error. Check your connection.",
                     )

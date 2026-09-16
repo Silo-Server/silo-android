@@ -75,10 +75,7 @@ import java.time.Instant
  * (series → episode → library id). Scrolling near the end pages in the next
  * cursor.
  *
- * State mirrors the mobile inbox (M3): the repository has no loading/error flow,
- * so the screen owns only a first-load spinner while the list is empty. After a
- * refresh an empty list is the genuine empty state — there is no failure signal,
- * so no error/retry path is wired here.
+ * Failed reads retain cached rows and expose an explicit retry.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -92,6 +89,7 @@ fun TvInboxScreen(
     val rows by repository.rows.collectAsState()
     val unreadCount by repository.unreadCount.collectAsState()
     val nextCursor by repository.nextCursor.collectAsState()
+    val error by repository.error.collectAsState()
 
     var isRefreshing by remember { mutableStateOf(false) }
     var isLoadingMore by remember { mutableStateOf(false) }
@@ -200,9 +198,15 @@ fun TvInboxScreen(
             )
         }
 
+        if (error != null) {
+            Card(onClick = { scope.launch { repository.refresh() } }) {
+                Text("${error} Retry", modifier = Modifier.padding(16.dp))
+            }
+        }
         when {
             isRefreshing && cards.isEmpty() -> TvLoadingScreen()
-            cards.isEmpty() -> InboxEmptyState()
+            cards.isEmpty() && error == null -> InboxEmptyState()
+            cards.isEmpty() -> Unit
             else -> LazyColumn(
                 state = listState,
                 modifier = Modifier

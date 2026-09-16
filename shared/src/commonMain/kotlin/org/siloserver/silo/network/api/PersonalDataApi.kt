@@ -3,155 +3,67 @@ package org.siloserver.silo.network.api
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.http.*
-import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.model.personal.*
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.singleAttempt
+import org.siloserver.silo.network.requireSiloAuth
+import org.siloserver.silo.network.apiv2.HistoryV2Api
+import org.siloserver.silo.network.apiv2.HistoryContinuationV2
+import org.siloserver.silo.network.apiv2.HistoryPageV2
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.UserLibrariesV2
+import org.siloserver.silo.network.apiv2.identityChanged
+import org.siloserver.silo.network.apiv2.ownedV2Call
+import org.siloserver.silo.network.apiv2.safeApiV2Call
 
-class PersonalDataApi(private val client: HttpClient) {
+class PersonalDataApi(
+    private val client: HttpClient,
+    private val apiV2Gate: ApiV2Gate = ApiV2Gate.Unrestricted,
+    /**
+     * Source of the identity a multi-request operation is pinned to. Null
+     * (single-scope tests) leaves each request on the globally-active scope.
+     */
+    private val tokenManager: TokenManager? = null,
+) {
+
+    suspend fun writePersonal(handle: org.siloserver.silo.repository.port.PersonalWriteHandle): ApiResult<Unit> {
+        val scope = handle.scope
+        if (tokenManager == null || scope != tokenManager.snapshotCurrentScope())
+            return identityChanged()
+        val command = handle.command
+        if (!command.valid()) return ApiResult.Error(422, "validation_failed", "Invalid personal-data command.")
+        val result = safeApiV2Call<Unit>(apiV2Gate) {
+            client.request(command.path) {
+                method = HttpMethod.parse(command.method)
+                authScope(scope)
+                requireSiloAuth()
+                singleAttempt()
+                command.body?.let { contentType(ContentType.Application.Json); setBody(it) }
+            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.NoContent) }
+        }
+        if (scope != tokenManager.snapshotCurrentScope())
+            return identityChanged()
+        return result
+    }
 
     // --- User Libraries ---
 
-    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> = safeApiCall {
-        client.get("/api/v1/user/libraries")
-    }
-
-    // --- Favorites ---
-
-    suspend fun listFavorites(
-        offset: Int = 0,
-        limit: Int = 40
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/favorites") {
-            parameter("offset", offset)
-            parameter("limit", limit)
-        }
-    }
-
-    suspend fun checkFavorite(itemId: String): ApiResult<Boolean> = safeStatusCall {
-        client.get("/api/v1/favorites/$itemId")
-    }
-
-    suspend fun addFavorite(itemId: String, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/favorites/$itemId") { scope?.let { authScope(it) } }
-    }
-
-    suspend fun removeFavorite(itemId: String, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/favorites/$itemId") { scope?.let { authScope(it) } }
-    }
-
-    // --- Watchlist ---
-
-    suspend fun listWatchlist(
-        offset: Int = 0,
-        limit: Int = 40
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/watchlist") {
-            parameter("offset", offset)
-            parameter("limit", limit)
-        }
-    }
-
-    suspend fun checkWatchlist(itemId: String): ApiResult<Boolean> = safeStatusCall {
-        client.get("/api/v1/watchlist/$itemId")
-    }
-
-    suspend fun addToWatchlist(itemId: String): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/watchlist/$itemId")
-    }
-
-    suspend fun removeFromWatchlist(itemId: String): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/watchlist/$itemId")
+    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
+        val scope = tokenManager?.snapshotCurrentScope()
+        if (tokenManager != null && scope == null) return identityChanged()
+        // A captured account with no profile is valid for preselection discovery.
+        return ownedV2Call<UserLibrariesV2, List<UserLibrary>>(apiV2Gate, tokenManager, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.get("/api/v2/user/libraries") { owner?.let { authScope(it) }; requireSiloAuth() }
+        }) { it.project() }
     }
 
     // --- History ---
 
-    suspend fun listHistory(
-        offset: Int = 0,
-        limit: Int = 40
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/history") {
-            parameter("offset", offset)
-            parameter("limit", limit)
-        }
-    }
+    private val historyV2 = HistoryV2Api(client, apiV2Gate, tokenManager)
 
-    // --- Progress ---
-
-    suspend fun listProgress(): ApiResult<ProgressListResponse> = safeApiCall {
-        client.get("/api/v1/progress")
-    }
-
-    suspend fun syncProgress(
-        request: SyncProgressRequest,
-        scope: AuthScopeSnapshot? = null,
-    ): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/sync/progress") {
-            scope?.let { authScope(it) }
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
-
-    // --- Ratings ---
-
-    suspend fun listRatings(): ApiResult<RatingsResponse> = safeApiCall {
-        client.get("/api/v1/ratings")
-    }
-
-    suspend fun getRating(itemId: String): ApiResult<RatingEntry> = safeApiCall {
-        client.get("/api/v1/ratings/$itemId")
-    }
-
-    suspend fun setRating(itemId: String, rating: Int, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/ratings/$itemId") {
-            scope?.let { authScope(it) }
-            contentType(ContentType.Application.Json)
-            setBody(SetRatingRequest(rating))
-        }
-    }
-
-    suspend fun deleteRating(itemId: String, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/ratings/$itemId") { scope?.let { authScope(it) } }
-    }
-
-    // --- Watched ---
-
-    /** Mark an item (movie / series / season / episode) as watched. Server resolves leaf targets. */
-    suspend fun markWatched(itemId: String, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/watched/$itemId") { scope?.let { authScope(it) } }
-    }
-
-    /** Mark an item as unwatched. */
-    suspend fun markUnwatched(itemId: String, scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/watched/$itemId") { scope?.let { authScope(it) } }
-    }
-
-    // --- Continue Watching dismissals ---
-
-    /** Hide an item from the home Continue Watching row without deleting progress. */
-    suspend fun dismissContinueWatching(
-        itemId: String,
-        progressUpdatedAt: String
-    ): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/home/dismissals/continue_watching/$itemId") {
-            contentType(ContentType.Application.Json)
-            setBody(ContinueWatchingDismissalRequest(progressUpdatedAt))
-        }
-    }
-
-    /** Undo a Continue Watching dismissal. */
-    suspend fun undismissContinueWatching(itemId: String): ApiResult<Unit> = safeApiCall {
-        client.delete("/api/v1/home/dismissals/continue_watching/$itemId")
-    }
-
-    /** Hide a Next Up episode that is presented inside a Continue Watching row. */
-    suspend fun dismissNextUp(itemId: String, seriesId: String): ApiResult<Unit> = safeApiCall {
-        client.put("/api/v1/home/dismissals/next_up/$itemId") {
-            contentType(ContentType.Application.Json)
-            setBody(NextUpDismissalRequest(seriesId))
-        }
-    }
+    suspend fun listHistory(continuation: HistoryContinuationV2? = null, limit: Int = 40): ApiResult<HistoryPageV2> =
+        historyV2.page(limit = limit, continuation = continuation)
 }

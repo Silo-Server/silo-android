@@ -1387,7 +1387,7 @@ private fun MobileSubtitleCommittedPlayback.withRebasedDownloads(
             .filter(downloadedPredicate)
             .map { track ->
                 track.copy(url = rebaseDownloadedSubtitleUrl(track.url, sessionId))
-            }
+            }.filter { it.url.isNotBlank() }
     } else {
         emptyList()
     }

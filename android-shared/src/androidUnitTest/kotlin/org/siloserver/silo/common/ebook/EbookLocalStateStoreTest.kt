@@ -8,6 +8,23 @@ import kotlin.test.assertNull
 
 class EbookLocalStateStoreTest {
 
+    @Test
+    fun `create identities and delete intent survive reopen`() {
+        val root = tmp.newFolder("journal")
+        val store = EbookLocalStateStore(root)
+        val first = store.addBookmark("srv", "prof", "book", "page:3", 10, "login", "https://reader.example")
+        val second = store.addBookmark("srv", "prof", "book", "page:4", 10, "login", "https://reader.example")
+        kotlin.test.assertNotEquals(first.id, second.id)
+        assertEquals(first, EbookLocalStateStore(root).listBookmarks("srv", "prof", "book").first())
+        val tombstone = store.markBookmarkDelete("srv", "prof", "book", first.id, first.location,
+            "login", "https://reader.example", "\"original-validator\"")
+        val reopened = EbookLocalStateStore(root).listBookmarks("srv", "prof", "book")
+        assertEquals(tombstone, reopened.first { it.id == first.id })
+        assertEquals("\"original-validator\"", tombstone.deleteETag)
+        assertEquals("login", tombstone.loginId)
+        assertEquals(second, reopened.first { it.id == second.id })
+    }
+
     @get:Rule
     val tmp = TemporaryFolder()
 

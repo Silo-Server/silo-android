@@ -19,7 +19,6 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,7 +39,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun browseLetterSelectionUsesServerNamePrefixAndResetsPagination() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = BrowseViewModel(
             catalogRepository = repositories.catalog,
             savedStateHandle = SavedStateHandle(mapOf("libraryId" to "1")),
@@ -55,14 +54,14 @@ class CatalogLetterIndexViewModelTest {
 
         val lastCatalogRequest = requests.lastCatalogRequest()
         assertEquals("M", lastCatalogRequest.query["name_prefix"])
-        assertEquals("0", lastCatalogRequest.query["offset"])
+        assertEquals(null, lastCatalogRequest.query["cursor"])
         assertEquals("M", viewModel.uiState.value.selectedNamePrefix)
     }
 
     @Test
     fun browseDensitySelectionUpdatesLayoutWithoutReloadingCatalog() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = BrowseViewModel(
             catalogRepository = repositories.catalog,
             savedStateHandle = SavedStateHandle(mapOf("libraryId" to "1")),
@@ -79,7 +78,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun librariesBrowseLetterSelectionUsesServerNamePrefix() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = LibrariesViewModel(
             personalDataRepository = repositories.personal,
             sectionRepository = repositories.sections,
@@ -100,7 +99,7 @@ class CatalogLetterIndexViewModelTest {
     @Test
     fun librariesDensitySelectionUpdatesLayoutWithoutReloadingCatalog() = runCatalogTest {
         val requests = mutableListOf<RequestRecord>()
-        val repositories = repositoriesFor(requests, StandardTestDispatcher(testScheduler))
+        val repositories = repositoriesFor(requests)
         val viewModel = LibrariesViewModel(
             personalDataRepository = repositories.personal,
             sectionRepository = repositories.sections,
@@ -172,21 +171,14 @@ class CatalogLetterIndexViewModelTest {
     )
 
     private fun MutableList<RequestRecord>.lastCatalogRequest(): RequestRecord =
-        lastOrNull { it.path == "/api/v1/catalog" }
+        lastOrNull { it.path == "/api/v2/catalog" }
             ?: error("Expected a catalog request, got $this")
 
     private fun List<RequestRecord>.catalogRequestCount(): Int =
-        count { it.path == "/api/v1/catalog" }
+        count { it.path == "/api/v2/catalog" }
 
-    /**
-     * [homeRequestDispatcher] is the seam that makes this deterministic.
-     * SectionRepository otherwise fans its library requests out on
-     * Dispatchers.Default, which is a real thread pool the test scheduler
-     * cannot see or wait for.
-     */
     private fun repositoriesFor(
         requests: MutableList<RequestRecord>,
-        homeRequestDispatcher: CoroutineDispatcher,
     ): Repositories {
         val client = HttpClient(
             MockEngine { request ->
@@ -195,14 +187,14 @@ class CatalogLetterIndexViewModelTest {
                     query = request.url.parameters.names().associateWith { request.url.parameters[it] },
                 )
                 when (request.url.encodedPath) {
-                    "/api/v1/user/libraries" -> respondJson(
-                        """[{"id":1,"name":"Books","type":"ebooks","sort_order":0}]""",
+                    "/api/v2/user/libraries" -> respondJson(
+                        """{"items":[{"id":"1","name":"Books","type":"ebooks","sort_order":0}],"page":{"has_more":false}}""",
                     )
-                    "/api/v1/library/1/sections" -> respondJson("""{"sections":[]}""")
-                    "/api/v1/catalog/filters" -> respondJson(
-                        """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[]}""",
+                    "/api/v2/library/1/sections" -> respondJson("""{"sections":[]}""")
+                    "/api/v2/catalog/filters" -> respondJson(
+                        """{"genres":[],"studios":[],"networks":[],"countries":[],"content_ratings":[],"original_languages":[],"authors":[],"narrators":[],"series":[]}""",
                     )
-                    "/api/v1/catalog" -> respondJson(catalogBody(request.url.parameters["name_prefix"], request.url.parameters["offset"]))
+                    "/api/v2/catalog" -> respondJson(catalogBody(request.url.parameters["name_prefix"], request.url.parameters["cursor"]))
                     else -> error("Unexpected path ${request.url.encodedPath}")
                 }
             },
@@ -211,7 +203,7 @@ class CatalogLetterIndexViewModelTest {
         }
         return Repositories(
             personal = PersonalDataRepository(PersonalDataApi(client)),
-            sections = SectionRepository(SectionApi(client), homeRequestDispatcher = homeRequestDispatcher),
+            sections = SectionRepository(SectionApi(client)),
             catalog = CatalogRepository(CatalogApi(client)),
         )
     }
@@ -222,13 +214,15 @@ class CatalogLetterIndexViewModelTest {
         headers = headersOf(HttpHeaders.ContentType, "application/json"),
     )
 
-    private fun catalogBody(prefix: String?, offset: String?): String {
+    private fun catalogBody(prefix: String?, cursor: String?): String {
         val normalizedPrefix = prefix?.lowercase()?.takeIf { it.isNotBlank() } ?: "all"
-        val page = (offset?.toIntOrNull() ?: 0) + 1
+        val page = if (cursor == null) 1 else 2
         return """
             {
               "total": 2,
-              "has_more": ${offset == null || offset == "0"},
+              "total_exact":true,
+              "window_cursor":"window",
+              "page":{"has_more":${cursor == null}${if (cursor == null) ",\"next_cursor\":\"next\"" else ""}},
               "title": "Catalog",
               "items": [
                 {"content_id":"$normalizedPrefix-$page","title":"${normalizedPrefix.uppercase()} $page","type":"movie"}

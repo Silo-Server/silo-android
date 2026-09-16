@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -21,6 +23,10 @@ import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.apiv2.HomeSectionsV2Api
 import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -34,6 +40,9 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HomeViewModelCacheIdentityTest {
+    private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
+    private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
+
 
     private val dispatcher = UnconfinedTestDispatcher()
 
@@ -68,8 +77,7 @@ class HomeViewModelCacheIdentityTest {
         val cache = RecordingHomeCache()
         val viewModel = HomeViewModel(
             sectionRepository = SectionRepository(
-                sectionApi = SectionApi(client),
-                identityTransitions = identityTransitions,
+                sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
             ),
             mediaActions = mediaActions(),
             homeCache = cache,
@@ -77,7 +85,7 @@ class HomeViewModelCacheIdentityTest {
         )
 
         requestEntered.await()
-        identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) { }
+        identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) { owner = owner.copy(profileToken = "new") }
         releaseResponse.complete(Unit)
         viewModel.uiState.first { !it.isLoading }
 
@@ -99,7 +107,7 @@ class HomeViewModelCacheIdentityTest {
         }
         val observations = mutableListOf<HomeLoadObservation>()
         val viewModel = HomeViewModel(
-            sectionRepository = SectionRepository(SectionApi(client)),
+            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
             mediaActions = mediaActions(),
             diagnostics = HomeDiagnosticsObserver(observations::add),
         )
@@ -120,7 +128,7 @@ class HomeViewModelCacheIdentityTest {
     private class RecordingHomeCache : HomeCachePort {
         var sections: List<ResolvedSection>? = null
 
-        override suspend fun cacheHome(sections: List<ResolvedSection>) {
+        override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
             this.sections = sections
         }
     }

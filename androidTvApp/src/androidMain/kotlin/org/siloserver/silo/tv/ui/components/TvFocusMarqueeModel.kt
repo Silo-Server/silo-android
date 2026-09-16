@@ -133,7 +133,7 @@ data class TvMarqueeContent(
         }
 
         private fun episodeToken(season: Int?, episode: Int?): String? = when {
-            season != null && episode != null -> "S$season E$episode"
+            season != null && episode != null -> tvEpisodeTag(season, episode)
             season != null -> "Season $season"
             episode != null -> "Episode $episode"
             else -> null

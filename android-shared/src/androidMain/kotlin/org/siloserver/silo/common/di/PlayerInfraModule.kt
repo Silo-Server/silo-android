@@ -44,6 +44,18 @@ import org.koin.dsl.module
  * lifecycle here is wired but unused until Phase 1+ migrations.
  */
 val playerInfraModule = module {
+    single<org.siloserver.silo.repository.NotificationSyncStore> {
+        org.siloserver.silo.common.data.sync.AndroidNotificationSyncStore(androidContext())
+    }
+    single<org.siloserver.silo.repository.PlaybackJournalStore> {
+        org.siloserver.silo.common.player.AndroidPlaybackJournalStore(androidContext())
+    }
+    single { org.siloserver.silo.network.apiv2.PlaybackV2Api(get(), get()) }
+    single {
+        org.siloserver.silo.repository.SequencedPlayback(get(), get(), get(), get()) {
+            java.util.UUID.randomUUID().toString()
+        }
+    }
     // Shares the active session Player with the in-process UI so the video
     single { ActivePlayerHolder() }
 
@@ -77,6 +89,7 @@ val playerInfraModule = module {
             // retained retry can tell whether the server it was authored
             // against is still the one requests would reach.
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
         )
     }
 
@@ -100,6 +113,7 @@ val playerInfraModule = module {
             legacyCache = get(),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
             serverSettingsFlusher = get(),
             profileChangeSignal = profileChangeSignal,
             serverChangeSignal = serverChangeSignal,
@@ -154,8 +168,17 @@ val playerInfraModule = module {
     }
 
     single {
+        val registry = get<ServerRegistry>()
+        val transitions = get<org.siloserver.silo.network.IdentityTransitionBarrier>()
+        val discovery = get<org.siloserver.silo.network.apiv2.ApiV2Probe>()
         ServerReachabilityMonitor(
-            healthApi = get(),
+            probe = discovery::probeFresh,
+            captureTarget = {
+                registry.activeEntry.value?.let { entry ->
+                    org.siloserver.silo.common.network.ReachabilityTarget(entry.id, entry.url, transitions.generation.value)
+                }
+            },
+            targetChanges = kotlinx.coroutines.flow.combine(registry.activeEntry, transitions.generation) { entry, generation -> entry?.id to generation },
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             onServerReconnected = {
                 get<ServerDrivenConfigRefresher>().forceRefresh()

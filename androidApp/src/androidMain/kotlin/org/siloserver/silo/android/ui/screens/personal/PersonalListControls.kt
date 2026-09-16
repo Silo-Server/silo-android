@@ -72,7 +72,7 @@ fun PersonalListControlsViewModel.currentQuery(): PersonalListQuery {
 @Composable
 fun PersonalListControlsRow(
     controls: PersonalListControlsViewModel,
-    total: Int,
+    total: Int?,
     modifier: Modifier = Modifier,
 ) {
     val state by controls.uiState.collectAsState()
@@ -98,7 +98,7 @@ fun PersonalListControlsRow(
         showReset = state.isCustomised,
         onReset = controls::resetAll,
         trailing = {
-            if (total > 0) {
+            if (total != null && total > 0) {
                 Text(
                     text = if (total == 1) "1 title" else "$total titles",
                     fontSize = 12.sp,

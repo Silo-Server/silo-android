@@ -32,27 +32,36 @@ private fun stubRecord(
 /**
  * Stand-in `DownloadsApi` for repo tests. Inherits the real class so the
  * type matches what `DownloadsRepository` expects, but overrides the three
- * public suspending methods with controllable test fakes.
+ * scope-taking suspending methods with controllable test fakes.
  */
+private object RepoTestNoDevices : org.siloserver.silo.network.DeviceMetadataProvider {
+    override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
+}
+
 private open class FakeDownloadsApi(
     private val initialList: List<DownloadRecord> = emptyList(),
     private val createResult: ((DownloadRequest) -> ApiResult<DownloadRecord>)? = null,
-) : org.siloserver.silo.network.api.DownloadsApi(client = HttpClient()) {
+) : org.siloserver.silo.network.api.DownloadsApi(
+    registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+    tokens = org.siloserver.silo.network.TokenManagerImpl(),
+    creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices,
+        org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), RepoTestNoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+) {
 
     var listCalls = 0
     var deleteCalls = mutableListOf<String>()
 
-    override suspend fun list(): ApiResult<DownloadsListResponse> {
+    override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> {
         listCalls++
         return ApiResult.Success(DownloadsListResponse(initialList))
     }
 
-    override suspend fun create(request: DownloadRequest): ApiResult<DownloadRecord> {
+    override suspend fun create(request: DownloadRequest, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadRecord> {
         val factory = createResult ?: return ApiResult.NetworkError(IllegalStateException("no fake"))
         return factory(request)
     }
 
-    override suspend fun delete(id: String): ApiResult<Unit> {
+    override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
         deleteCalls += id
         return ApiResult.Success(Unit)
     }
@@ -106,7 +115,7 @@ class DownloadsRepositoryTest {
     fun `delete tolerates 404 on second call`() = runTest {
         val a = stubRecord("a", 1)
         val api = object : FakeDownloadsApi(initialList = listOf(a)) {
-            override suspend fun delete(id: String): ApiResult<Unit> {
+            override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
                 deleteCalls += id
                 return if (deleteCalls.size == 1) ApiResult.Success(Unit)
                        else ApiResult.Error(code = 404, error = "not_found", message = "gone")
@@ -127,7 +136,7 @@ class DownloadsRepositoryTest {
         // must suppress it so the row doesn't ghost back into the UI.
         val ghost = stubRecord("ghost", 1, status = "downloading")
         val api = object : FakeDownloadsApi(initialList = listOf(ghost)) {
-            override suspend fun delete(id: String): ApiResult<Unit> {
+            override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
                 deleteCalls += id
                 return ApiResult.Success(Unit)
             }
@@ -187,7 +196,7 @@ class DownloadsRepositoryTest {
         // record back pointing at deleted files. Failure must be a no-op.
         val a = stubRecord("a", 1)
         val api = object : FakeDownloadsApi(initialList = listOf(a)) {
-            override suspend fun delete(id: String): ApiResult<Unit> {
+            override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
                 deleteCalls += id
                 return ApiResult.NetworkError(IllegalStateException("offline"))
             }
@@ -211,7 +220,7 @@ class DownloadsRepositoryTest {
         // the caller keeps the bytes and surfaces the error.
         val a = stubRecord("a", 1)
         val api = object : FakeDownloadsApi(initialList = listOf(a)) {
-            override suspend fun delete(id: String): ApiResult<Unit> {
+            override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
                 deleteCalls += id
                 return if (deleteCalls.size == 1) ApiResult.Success(Unit)
                        else ApiResult.Error(code = 500, error = "server_error", message = "boom")
@@ -236,7 +245,7 @@ class DownloadsRepositoryTest {
         // caller may proceed with local file cleanup.
         val a = stubRecord("a", 1)
         val api = object : FakeDownloadsApi(initialList = listOf(a)) {
-            override suspend fun delete(id: String): ApiResult<Unit> {
+            override suspend fun delete(id: String, scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<Unit> {
                 deleteCalls += id
                 return ApiResult.Error(code = 404, error = "not_found", message = "gone")
             }

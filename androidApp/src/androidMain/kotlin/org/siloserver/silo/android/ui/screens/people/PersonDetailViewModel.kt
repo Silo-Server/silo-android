@@ -8,6 +8,11 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.isReadingMediaType
 import org.siloserver.silo.model.catalog.personWorksFiltersForMobile
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManager
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,13 +61,12 @@ data class PersonDetailUiState(
 )
 
 /**
- * Person detail viewmodel. Loads the person profile and their
- * filmography from `/api/v1/catalog?source=person&person_id=…`,
- * mirroring iOS's `PersonDetailViewModel`.
+ * Loads viewer person detail and their paginated works.
  */
 class PersonDetailViewModel(
     private val catalogRepository: CatalogRepository,
     savedStateHandle: SavedStateHandle,
+    private val tokenManager: TokenManager? = null,
 ) : ViewModel() {
 
     private val personId: Long =
@@ -76,18 +80,33 @@ class PersonDetailViewModel(
     private val _uiState = MutableStateFlow(PersonDetailUiState())
     val uiState: StateFlow<PersonDetailUiState> = _uiState.asStateFlow()
 
-    init {
-        if (personId > 0L) reload()
+    private var metadataRefreshJob: kotlinx.coroutines.Job? = null
+    private var detailJob: kotlinx.coroutines.Job? = null
+    private var detailGeneration = 0L
+    private var refreshRequestedForPerson = false
+
+    init { if (personId > 0L) reload() }
+
+    private suspend fun current(run: Long, owner: AuthScopeSnapshot?): Boolean {
+        val now = tokenManager?.snapshotCurrentScope()
+        // Check the run after the suspendable authority lookup, immediately before publication.
+        return run == detailGeneration && currentCoroutineContext().isActive &&
+            (if (tokenManager == null) owner == null else owner != null && owner.isSameIdentityAs(now) &&
+                owner.serverUrl == now?.serverUrl && owner.profileId == now?.profileId &&
+                owner.profileToken == now?.profileToken && owner.credentialGenerationId == now?.credentialGenerationId)
     }
 
-    private var metadataRefreshJob: kotlinx.coroutines.Job? = null
-    private var refreshRequestedForPerson = false
-    private var refreshExhaustedForPerson = false
-
     fun reload() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            when (val result = catalogRepository.getPerson(personId)) {
+        val run = ++detailGeneration
+        detailJob?.cancel()
+        metadataRefreshJob?.cancel()
+        _uiState.update { it.copy(isLoading = true, isRefreshingMetadata = false, error = null) }
+        detailJob = viewModelScope.launch {
+            val owner = tokenManager?.snapshotCurrentScope()
+            if (!current(run, owner)) return@launch
+            val result = if (owner != null) catalogRepository.getPerson(personId, owner) else catalogRepository.getPerson(personId)
+            if (!current(run, owner)) return@launch
+            when (result) {
                 is ApiResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -97,7 +116,7 @@ class PersonDetailViewModel(
                         )
                     }
                     loadItems(_uiState.value.selectedFilter, reset = true)
-                    scheduleMetadataRefreshIfNeeded(result.data)
+                    scheduleMetadataRefreshIfNeeded(result.data, run, owner)
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
@@ -126,18 +145,18 @@ class PersonDetailViewModel(
     }
 
     private var itemsGeneration = 0
-    private var nextOffset = 0
-    private var snapshotAt: String? = null
+    private var continuation: CatalogContinuationV2? = null
+
+    fun retryItems() = loadItems(_uiState.value.selectedFilter, reset = true)
 
     fun loadMoreIfNeeded() {
         val state = _uiState.value
-        if (!state.hasMore || state.isLoadingItems) return
+        if (state.pagingError != null || !state.hasMore || state.isLoadingItems) return
         loadItems(state.selectedFilter, reset = false)
     }
 
     private fun resetPaging() {
-        nextOffset = 0
-        snapshotAt = null
+        continuation = null
     }
 
     private fun loadItems(filter: PersonMediaFilter, reset: Boolean) {
@@ -156,17 +175,15 @@ class PersonDetailViewModel(
             val result = catalogRepository.getPersonItems(
                 personId = personId,
                 mediaType = filter.mediaType,
-                offset = nextOffset,
+                continuation = continuation,
                 limit = PersonWorksPageSize,
-                snapshotAt = snapshotAt,
             )
             // Drop a stale response from a superseded filter selection so a
             // slower earlier load can't overwrite the newer one's results.
             if (gen != itemsGeneration) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    if (snapshotAt == null) snapshotAt = result.data.snapshot
-                    nextOffset += result.data.items.size
+                    continuation = result.data.continuation
                     val visibleItems = result.data.items.filter(filter.clientPredicate)
                     _uiState.update {
                         it.copy(
@@ -198,56 +215,42 @@ class PersonDetailViewModel(
         }
     }
 
-    /**
-     * iOS PersonDetailViewModel parity: a person with a blank bio, photo, or
-     * birth date queues one server-side metadata refresh
-     * (POST /people/{id}/refresh) and polls GET /people/{id} every 3s until
-     * the metadata is complete, 5 consecutive polls come back unchanged
-     * (server has nothing more), or the 120s window expires.
-     */
-    private fun scheduleMetadataRefreshIfNeeded(person: Person) {
-        if (!person.isMetadataIncomplete()) return
-        if (metadataRefreshJob?.isActive == true || refreshExhaustedForPerson) return
+    /** One POST decision per view, followed only by bounded authorized detail reads. */
+    private fun scheduleMetadataRefreshIfNeeded(person: Person, run: Long, owner: AuthScopeSnapshot?) {
+        if (owner == null || !person.isMetadataIncomplete() || refreshRequestedForPerson) return
+        refreshRequestedForPerson = true // Consumed even if dispatch/receipt is cancelled or uncertain.
         _uiState.update { it.copy(isRefreshingMetadata = true) }
         metadataRefreshJob = viewModelScope.launch {
             try {
-                if (!refreshRequestedForPerson) {
-                    refreshRequestedForPerson = true
-                    catalogRepository.refreshPerson(personId)
-                }
+                if (!current(run, owner)) return@launch
+                if (catalogRepository.refreshPerson(personId, owner) !is ApiResult.Success) return@launch
+                if (!current(run, owner)) return@launch
                 var unchangedPolls = 0
-                var current = person
-                val deadlineMark = kotlin.time.TimeSource.Monotonic.markNow() +
-                    METADATA_REFRESH_WINDOW
-                while (deadlineMark.hasNotPassedNow()) {
-                    kotlinx.coroutines.delay(METADATA_REFRESH_POLL_INTERVAL)
-                    val updated = (catalogRepository.getPerson(personId) as? ApiResult.Success)
-                        ?.data ?: continue
-                    if (updated == current) {
-                        unchangedPolls += 1
-                        if (unchangedPolls >= METADATA_REFRESH_SETTLED_POLLS) {
-                            refreshExhaustedForPerson = true
-                            return@launch
-                        }
-                        continue
+                var previous = person
+                val deadline = kotlin.time.TimeSource.Monotonic.markNow() + kotlin.time.Duration.parse("120s")
+                // Keep both the elapsed window and a finite read count; HTTP has its own timeout.
+                repeat(40) {
+                    if (deadline.hasPassedNow()) return@launch
+                    kotlinx.coroutines.delay(3_000)
+                    if (deadline.hasPassedNow() || !current(run, owner)) return@launch
+                    val result = catalogRepository.getPerson(personId, owner)
+                    if (!current(run, owner)) return@launch
+                    val updated = (result as? ApiResult.Success)?.data ?: return@launch
+                    if (updated == previous) {
+                        if (++unchangedPolls >= 5) return@launch // UI bound, not proof of queue completion.
+                    } else {
+                        unchangedPolls = 0
+                        previous = updated
+                        _uiState.update { it.copy(person = updated) }
+                        if (!updated.isMetadataIncomplete()) return@launch
                     }
-                    unchangedPolls = 0
-                    current = updated
-                    _uiState.update { it.copy(person = updated) }
-                    if (!updated.isMetadataIncomplete()) return@launch
                 }
             } finally {
-                _uiState.update { it.copy(isRefreshingMetadata = false) }
+                if (current(run, owner)) _uiState.update { it.copy(isRefreshingMetadata = false) }
             }
         }
     }
 
     private fun Person.isMetadataIncomplete(): Boolean =
         bio.isNullOrBlank() || photoUrl.isNullOrBlank() || birthDate.isNullOrBlank()
-
-    private companion object {
-        val METADATA_REFRESH_WINDOW = kotlin.time.Duration.parse("120s")
-        val METADATA_REFRESH_POLL_INTERVAL = kotlin.time.Duration.parse("3s")
-        const val METADATA_REFRESH_SETTLED_POLLS = 5
-    }
 }

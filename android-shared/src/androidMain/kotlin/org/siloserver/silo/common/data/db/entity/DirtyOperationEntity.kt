@@ -51,6 +51,9 @@ data class DirtyOperationEntity(
     val lastAttemptAtMs: Long? = null,
     val nextAttemptAtMs: Long = 0,
     val lastError: String? = null,
+    val membershipAuthority: String? = null,
+    val membershipClaim: String? = null,
+    val membershipOwner: String? = null,
 ) {
     companion object {
         const val STATE_PENDING = "pending"

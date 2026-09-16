@@ -119,7 +119,7 @@ class WatchTogetherModelsSerializationTest {
             {
               "id": "sug-1",
               "room_id": "room-1",
-              "suggester_user_id": 5,
+              "suggester_user_id": "5",
               "suggester_profile_id": "prof-5",
               "content_id": "tt-3",
               "content_type": "movie",
@@ -136,7 +136,7 @@ class WatchTogetherModelsSerializationTest {
         val sug = json.decodeFromString(Suggestion.serializer(), payload)
         assertEquals("sug-1", sug.id)
         assertEquals("room-1", sug.roomId)
-        assertEquals(5, sug.suggesterUserId)
+        assertEquals("5", sug.suggesterUserId)
         assertEquals("prof-5", sug.suggesterProfileId)
         assertEquals("movie", sug.contentType)
         assertEquals("Arrival", sug.title)
@@ -148,7 +148,7 @@ class WatchTogetherModelsSerializationTest {
     fun `suggestion defaults voted_by_me false and tolerates missing optionals`() {
         val payload = """
             {
-              "id": "sug-2", "room_id": "room-1", "suggester_user_id": 1,
+              "id": "sug-2", "room_id": "room-1", "suggester_user_id": "1",
               "suggester_profile_id": "p", "content_id": "tt-1", "content_type": "episode",
               "title": "Pilot", "vote_count": 0, "created_at": "2026-06-12T08:00:00Z"
             }
@@ -219,9 +219,10 @@ class WatchTogetherModelsSerializationTest {
 
     @Test
     fun `decodes suggestions response wrapper`() {
-        val payload = """{"suggestions":[{"id":"s1","room_id":"r","suggester_user_id":1,
+        val payload = """{"items":[{"id":"s1","room_id":"r","suggester_user_id":"1",
             "suggester_profile_id":"p","content_id":"c","content_type":"movie","title":"T",
-            "vote_count":1,"voted_by_me":false,"created_at":"2026-06-12T08:00:00Z"}]}"""
+            "vote_count":1,"voted_by_me":false,"created_at":"2026-06-12T08:00:00Z"}],
+            "page":{"has_more":false}}"""
         val r = json.decodeFromString(SuggestionsResponse.serializer(), payload)
         assertEquals(1, r.suggestions.size)
         assertEquals("s1", r.suggestions.first().id)

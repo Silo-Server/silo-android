@@ -1,5 +1,7 @@
 package org.siloserver.silo.viewmodel
 
+import kotlinx.coroutines.flow.stateIn
+
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -7,6 +9,7 @@ import org.siloserver.silo.model.catalog.CatalogEffectiveSort
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,13 +42,16 @@ data class PersonalListQuery(
  * Shared UI state for paginated personal lists (favorites, watchlist, history).
  */
 data class PersonalListUiState(
+    val membershipReadWitnesses: Map<String, Set<org.siloserver.silo.repository.MembershipActions.Intent>> = emptyMap(),
     val items: List<BrowseItem> = emptyList(),
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val isRefreshing: Boolean = false,
     val error: String? = null,
     val hasMore: Boolean = false,
-    val total: Int = 0,
+    val total: Int? = null,
+    /** History retains the watched witness even when its card represents a series. */
+    val historyWatches: Map<String, org.siloserver.silo.network.apiv2.HistoryWatchV2> = emptyMap(),
     val query: PersonalListQuery = PersonalListQuery(),
     /** What the server says it sorted by, when it reports one. */
     val effectiveSort: CatalogEffectiveSort? = null,
@@ -58,10 +64,18 @@ data class PersonalListUiState(
  */
 abstract class PersonalListViewModel(
     private val pageSize: Int = 40,
+    private val memberships: org.siloserver.silo.repository.MembershipActions? = null,
+    private val membershipKind: org.siloserver.silo.repository.port.MembershipPort.Kind? = null,
 ) : ViewModel() {
 
     protected val _uiState = MutableStateFlow(PersonalListUiState())
-    val uiState: StateFlow<PersonalListUiState> = _uiState.asStateFlow()
+    val uiState: StateFlow<PersonalListUiState> = if (memberships == null) _uiState.asStateFlow() else
+        kotlinx.coroutines.flow.combine(_uiState, memberships.actions) { state, actions ->
+            val removed = actions.values.filter { it.baseline != null && it.baseline !in state.membershipReadWitnesses[it.intent.key.itemId].orEmpty() && memberships.current(it.intent) &&
+                it.intent.key.kind == membershipKind && !it.baseline!!.present }.map { it.intent.key.itemId }.toSet()
+            val items = state.items.filterNot { it.contentId in removed }
+            state.copy(items = items, total = state.total?.let { (it - (state.items.size - items.size)).coerceAtLeast(0) })
+        }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, PersonalListUiState())
 
     /**
      * True once the `init` load has settled with content on screen (a successful
@@ -80,10 +94,13 @@ abstract class PersonalListViewModel(
     protected var query: PersonalListQuery = PersonalListQuery()
         private set
 
+    private var continuation: CatalogContinuationV2? = null
+
     protected abstract suspend fun fetchPage(
         offset: Int,
         limit: Int,
         query: PersonalListQuery,
+        continuation: CatalogContinuationV2?,
     ): ApiResult<CatalogResponse>
 
     protected fun loadInitial() {
@@ -109,7 +126,7 @@ abstract class PersonalListViewModel(
         val state = _uiState.value
         // isRefreshing too: refresh reloads from offset zero, so a page fetched
         // alongside it uses an offset the replacement invalidates.
-        if (state.isLoading || state.isLoadingMore || state.isRefreshing || !state.hasMore) return
+        if (state.error != null || state.isLoading || state.isLoadingMore || state.isRefreshing || !state.hasMore) return
         load(reset = false)
     }
 
@@ -153,7 +170,8 @@ abstract class PersonalListViewModel(
         _uiState.update { it.copy(isRefreshing = true, error = null) }
         viewModelScope.launch {
             val offset = 0
-            val result = fetchPage(offset, pageSize, query)
+            val membershipWitnesses = memberships?.readWitnesses().orEmpty()
+            val result = fetchPage(offset, pageSize, query, null)
             // A newer replacement started while this refresh was in flight.
             // Release isRefreshing unless a newer REFRESH has re-claimed it —
             // a superseding reset owns isLoading instead and would not clear
@@ -166,6 +184,7 @@ abstract class PersonalListViewModel(
             }
             when (val r = result) {
                 is ApiResult.Success -> {
+                    continuation = r.data.continuation
                     // A refresh that publishes content has loaded once, whatever
                     // the initial load did. Screens gate their resume re-fetch
                     // on this flag, so leaving it false when a refresh overtakes
@@ -175,6 +194,7 @@ abstract class PersonalListViewModel(
                     _uiState.update {
                     it.copy(
                         items = r.data.items,
+                        membershipReadWitnesses = r.data.items.associate { item -> item.contentId to membershipWitnesses },
                         hasMore = r.data.hasMore,
                         total = r.data.total,
                         effectiveSort = r.data.effectiveSort,
@@ -210,8 +230,10 @@ abstract class PersonalListViewModel(
         // Captured with the offset: a query swap mid-flight must not make this
         // page's items describe a different list from the one it asked for.
         val requestQuery = query
+        val cursor = if (reset) null else continuation
         viewModelScope.launch {
-            val result = fetchPage(offset, pageSize, requestQuery)
+            val membershipWitnesses = memberships?.readWitnesses().orEmpty()
+            val result = fetchPage(offset, pageSize, requestQuery, cursor)
             // Superseded WHILE IN FLIGHT: something replaced the list, so this
             // page's offset no longer describes anything. Checked here rather
             // than before the fetch — before it, there is nothing to be stale
@@ -234,11 +256,14 @@ abstract class PersonalListViewModel(
             }
             when (val r = result) {
                 is ApiResult.Success -> {
+                    continuation = r.data.continuation
                     hasLoadedOnce = true
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             isLoadingMore = false,
+                            membershipReadWitnesses = (if (reset) emptyMap() else it.membershipReadWitnesses) +
+                                r.data.items.associate { item -> item.contentId to membershipWitnesses },
                             items = if (reset) r.data.items else it.items + r.data.items,
                             hasMore = r.data.hasMore,
                             total = r.data.total,
@@ -275,7 +300,7 @@ abstract class PersonalListViewModel(
 class FavoritesViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val catalogRepository: CatalogRepository,
-) : PersonalListViewModel() {
+) : PersonalListViewModel(memberships = personalDataRepository.memberships, membershipKind = org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE) {
 
     init {
         loadInitial()
@@ -284,36 +309,29 @@ class FavoritesViewModel(
     // Always the catalog resolver, even for the default query: it returns the
     // same stored list order as the legacy `/favorites` route but also reports
     // `total`, so an item count is available before any sort is applied.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
         catalogRepository.browse(
             source = "favorites",
             mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             queryGroups = query.queryGroups,
             match = query.match,
         )
 
     fun toggleFavorite(itemId: String) {
-        viewModelScope.launch {
-            personalDataRepository.toggleFavorite(itemId, false)
-            // Optimistically remove from list
-            _uiState.update { state ->
-                state.copy(
-                    items = state.items.filter { it.contentId != itemId },
-                    total = (state.total - 1).coerceAtLeast(0),
-                )
-            }
-        }
+        val intent = personalDataRepository.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE, false)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
+
 }
 
 class WatchlistViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val catalogRepository: CatalogRepository,
-) : PersonalListViewModel() {
+) : PersonalListViewModel(memberships = personalDataRepository.memberships, membershipKind = org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST) {
 
     init {
         loadInitial()
@@ -322,40 +340,21 @@ class WatchlistViewModel(
     // Always the catalog resolver, even for the default query: it returns the
     // same stored list order as the legacy `/watchlist` route but also reports
     // `total`, so an item count is available before any sort is applied.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
+    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery, continuation: CatalogContinuationV2?) =
         catalogRepository.browse(
             source = "watchlist",
             mediaType = query.mediaType,
             sort = query.sort,
             order = query.order,
-            offset = offset,
+            continuation = continuation,
             limit = limit,
             queryGroups = query.queryGroups,
             match = query.match,
         )
 
     fun removeFromWatchlist(itemId: String) {
-        viewModelScope.launch {
-            personalDataRepository.toggleWatchlist(itemId, false)
-            _uiState.update { state ->
-                state.copy(
-                    items = state.items.filter { it.contentId != itemId },
-                    total = (state.total - 1).coerceAtLeast(0),
-                )
-            }
-        }
-    }
-}
-
-class HistoryViewModel(
-    private val personalDataRepository: PersonalDataRepository,
-) : PersonalListViewModel() {
-
-    init {
-        loadInitial()
+        val intent = personalDataRepository.memberships.begin(itemId, org.siloserver.silo.repository.port.MembershipPort.Kind.WATCHLIST, false)
+        viewModelScope.launch { personalDataRepository.memberships.perform(intent) }
     }
 
-    // History has no sort/filter surface, so the query is always the default.
-    override suspend fun fetchPage(offset: Int, limit: Int, query: PersonalListQuery) =
-        personalDataRepository.listHistory(offset = offset, limit = limit)
 }

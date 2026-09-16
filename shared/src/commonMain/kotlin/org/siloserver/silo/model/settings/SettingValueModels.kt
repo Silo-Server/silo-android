@@ -6,8 +6,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 
 /**
- * Wire models for the canonical settings API (`/api/v1/settings/contract`
- * and the `/api/v1/settings/values` routes).
+ * Wire models for the canonical settings API (`/api/v2/settings/contract`
+ * and the `/api/v2/settings/values` routes).
  *
  * These mirror the server's `settings_values.go` handler shapes exactly. The
  * older models in [SettingsModels.kt] speak the legacy string-only endpoints;
@@ -32,12 +32,9 @@ enum class SettingScope(val wire: String) {
 /**
  * The scope identity a write or delete addresses.
  *
- * Only the content ids travel with the request: `scope` plus `library_id` /
- * `series_id` go in the query string. The profile and device parts of the
- * identity come from the session headers (`X-Profile-Id`, `X-Silo-Device-Id`)
- * that the auth interceptor already attaches — the server reads them from
- * there deliberately, so one profile cannot write another's settings by
- * naming it in the query.
+ * Content IDs and an optional target profile travel in query parameters.
+ * Acting profile/PIN, device and client-family authority stay in the captured
+ * session headers; the server authorizes any distinct target profile.
  *
  * The init block enforces the fields each scope requires — the same check the
  * server's identity validation makes — so an invalid identity fails at
@@ -89,23 +86,23 @@ data class SettingScopeIdentity(
 
 /**
  * `GET /api/v1/settings/contract/capabilities` — what the connected server
- * supports, for feature detection rather than version sniffing. Compare
- * [revision] against the generated [SettingKeys.REVISION] to hide definitions
- * the server does not know yet.
+ * supports, for feature detection rather than version sniffing. [revision]
+ * is the opaque capability digest; compare [manifestRevision] against the
+ * generated [SettingKeys.REVISION] to hide definitions the server does not know yet.
  */
 @Serializable
 data class SettingsContractCapabilities(
     @SerialName("api_version") val apiVersion: Int = 0,
-    val revision: Int = 0,
+    val revision: String = "",
+    @SerialName("manifest_revision") val manifestRevision: Int = 0,
     @SerialName("contract_etag") val contractEtag: String = "",
     @SerialName("definition_count") val definitionCount: Int = 0,
     val scopes: List<String> = emptyList(),
     @SerialName("client_families") val clientFamilies: List<String> = emptyList(),
     @SerialName("supports_batched_effective") val supportsBatchedEffective: Boolean = false,
-    @SerialName("supports_idempotent_writes") val supportsIdempotentWrites: Boolean = false,
 )
 
-/** Body for `PUT /api/v1/settings/values/{key}`: `{"value": …}`. */
+/** Body for `PUT /api/v2/settings/values/{key}`: `{"value": …}`. */
 @Serializable
 data class SettingValueWriteRequest(
     val value: JsonElement,
@@ -113,14 +110,14 @@ data class SettingValueWriteRequest(
 
 /**
  * One explicit stored value: the receipt returned by a PUT, and the shape a
- * GET at one scope returns. An idempotent replay of a PUT returns the
- * recorded receipt, which omits [revision] and [updatedAt] — treat them as
- * informational, not as fields every response carries.
+ * GET at one scope returns. API v2 advances revision on each write; no
+ * mutation-ID receipt replay or If-Match guard is declared.
  */
 @Serializable
 data class StoredSettingValue(
     val key: String,
     val scope: String,
+    @SerialName("client_family") val clientFamily: String? = null,
     @SerialName("profile_id") val profileId: String? = null,
     @SerialName("device_id") val deviceId: String? = null,
     @SerialName("library_id") val libraryId: Int? = null,
@@ -163,7 +160,7 @@ data class EffectiveSettingValue(
 }
 
 /**
- * `GET /api/v1/settings/values/effective`. [revision] names the contract
+ * `GET /api/v2/settings/values/effective`. [revision] names the contract
  * revision the resolution was computed at, so definitions, scopes and enum
  * members can be filtered against it.
  */

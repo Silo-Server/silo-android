@@ -109,7 +109,7 @@ class SubtitleManagerTrackSelectionTest {
                 label = "English",
                 source = "embedded",
                 forced = false,
-                url = "/stream/s2/subtitles/7.vtt",
+                url = "/api/v2/stream/s2/subtitles/7.vtt",
             ),
         )
 
@@ -121,8 +121,8 @@ class SubtitleManagerTrackSelectionTest {
     fun serverArtifactConfigurationsCarryStableCombinedIndexes() {
         val configurations = SubtitleManager().buildSubtitleConfigurations(
             subtitles = listOf(
-                PlayerSubtitleInfo(3, "en", "webvtt", "Server subtitle", "server_artifact", true, "/3.vtt"),
-                PlayerSubtitleInfo(4, "en", "webvtt", "Server subtitle", "server_artifact", false, "/4.vtt"),
+                PlayerSubtitleInfo(3, "en", "webvtt", "Server subtitle", "server_artifact", true, "/api/v2/stream/s1/subtitles/3.vtt"),
+                PlayerSubtitleInfo(4, "en", "webvtt", "Server subtitle", "server_artifact", false, "/api/v2/stream/s1/subtitles/4.vtt"),
             ),
             serverUrl = "https://silo.example",
         )
@@ -137,7 +137,7 @@ class SubtitleManagerTrackSelectionTest {
     fun serverAndDownloadedConfigurationsUseDisjointStableIds() {
         val configurations = SubtitleManager().buildSubtitleConfigurations(
             subtitles = listOf(
-                PlayerSubtitleInfo(3, "en", "webvtt", "English", "server_artifact", false, "/3.vtt"),
+                PlayerSubtitleInfo(3, "en", "webvtt", "English", "server_artifact", false, "/api/v2/stream/s1/subtitles/3.vtt"),
                 PlayerSubtitleInfo(
                     index = 4,
                     language = "en",
@@ -145,7 +145,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = "downloaded",
                     forced = false,
-                    url = "/4.vtt",
+                    url = "/api/v2/stream/s1/subtitles/4.vtt",
                     downloadId = 312,
                 ),
                 PlayerSubtitleInfo(
@@ -155,7 +155,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = null,
                     forced = false,
-                    url = "/5.vtt",
+                    url = "/api/v2/stream/s1/subtitles/5.vtt",
                     catalogSource = "downloaded",
                     downloadId = 313,
                 ),
@@ -166,7 +166,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = "server_artifact",
                     forced = false,
-                    url = "/6.vtt",
+                    url = "/api/v2/stream/s1/subtitles/6.vtt",
                     catalogSource = "downloaded",
                     downloadId = 314,
                 ),
@@ -197,7 +197,7 @@ class SubtitleManagerTrackSelectionTest {
                         label = "Downloaded English",
                         source = "downloaded",
                         forced = false,
-                        url = "/$index.vtt",
+                        url = "/api/v2/stream/s1/subtitles/$index.vtt",
                         downloadId = 312,
                     ),
                 ),
@@ -220,7 +220,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "Legacy downloaded English",
                     source = "downloaded",
                     forced = false,
-                    url = "/4.vtt",
+                    url = "/api/v2/stream/s1/subtitles/4.vtt",
                 ),
             ),
             serverUrl = "https://silo.example",
@@ -258,7 +258,7 @@ class SubtitleManagerTrackSelectionTest {
                 label = "Legacy English",
                 source = "downloaded",
                 forced = false,
-                url = "/4.vtt",
+                url = "/api/v2/stream/s1/subtitles/4.vtt",
             ),
         )
 
@@ -290,7 +290,7 @@ class SubtitleManagerTrackSelectionTest {
                 label = "English",
                 source = "server_artifact",
                 forced = false,
-                url = "/4.vtt",
+                url = "/api/v2/stream/s1/subtitles/4.vtt",
                 catalogSource = "downloaded",
                 downloadId = 312,
             ),
@@ -317,7 +317,7 @@ class SubtitleManagerTrackSelectionTest {
 
         val selection = resolveSubtitleSelection(
             tracks,
-            PlayerSubtitleInfo(4, "en", "webvtt", "Server subtitle", "server_artifact", false, "/4.vtt"),
+            PlayerSubtitleInfo(4, "en", "webvtt", "Server subtitle", "server_artifact", false, "/api/v2/stream/s1/subtitles/4.vtt"),
         )
 
         assertSame(full, selection?.mediaTrackGroup)
@@ -325,9 +325,9 @@ class SubtitleManagerTrackSelectionTest {
     }
 
     @Test
-    fun relativeServerSubtitleUrlsResolveThroughApiStreamMount() {
+    fun relativeSubtitleUrlsWithoutApiMountResolveAgainstOrigin() {
         assertEquals(
-            "https://silo.example/api/v1/stream/session-1/subtitles/0.srt",
+            "https://silo.example/stream/session-1/subtitles/0.srt",
             resolveSubtitleUrl("https://silo.example", "/stream/session-1/subtitles/0.srt"),
         )
     }
@@ -335,8 +335,8 @@ class SubtitleManagerTrackSelectionTest {
     @Test
     fun apiRelativeStreamUrlsAreNotDoublePrefixed() {
         assertEquals(
-            "https://silo.example/api/v1/stream/session-1/subtitles/0.srt",
-            resolveSubtitleUrl("https://silo.example", "/api/v1/stream/session-1/subtitles/0.srt"),
+            "https://silo.example/api/v2/stream/session-1/subtitles/0.srt",
+            resolveSubtitleUrl("https://silo.example", "/api/v2/stream/session-1/subtitles/0.srt"),
         )
     }
 
@@ -406,7 +406,7 @@ class SubtitleManagerTrackSelectionTest {
                 label = "The Day of the Jackal (2024) - S01E02 [Bluray-1080p Remux]-SiCFoI.en.sdh.srt",
                 source = "external",
                 forced = null,
-                url = "/stream/session-1/subtitles/3.vtt",
+                url = "/api/v2/stream/session-1/subtitles/3.vtt",
             ),
         )
 
@@ -448,7 +448,7 @@ class SubtitleManagerTrackSelectionTest {
                 label = "English",
                 source = "external",
                 forced = null,
-                url = "/stream/session-1/subtitles/6.vtt",
+                url = "/api/v2/stream/session-1/subtitles/6.vtt",
             ),
         )
 
@@ -496,7 +496,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = "external",
                     forced = null,
-                    url = "/stream/session-1/subtitles/0.vtt",
+                    url = "/api/v2/stream/session-1/subtitles/0.vtt",
                 )
             ),
             serverUrl = "https://silo.example",
@@ -516,7 +516,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = "external",
                     forced = null,
-                    url = "/stream/session-1/subtitles/0.srt",
+                    url = "/api/v2/stream/session-1/subtitles/0.srt",
                 )
             ),
             serverUrl = "https://silo.example",
@@ -536,7 +536,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English",
                     source = "external",
                     forced = null,
-                    url = "/stream/session-1/subtitles/0.vtt",
+                    url = "/api/v2/stream/session-1/subtitles/0.vtt",
                 ),
                 PlayerSubtitleInfo(
                     index = 1,
@@ -545,7 +545,7 @@ class SubtitleManagerTrackSelectionTest {
                     label = "English (PGS)",
                     source = "embedded",
                     forced = null,
-                    url = "/stream/session-1/subtitles/1.sup",
+                    url = "/api/v2/stream/session-1/subtitles/1.sup",
                 ),
             ),
             serverUrl = "https://silo.example",

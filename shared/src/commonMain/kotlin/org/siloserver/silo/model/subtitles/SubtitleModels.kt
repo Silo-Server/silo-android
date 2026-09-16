@@ -11,7 +11,7 @@ object SubtitleProvider {
     const val Subsource = "subsource"
 }
 
-/** `kind` values for POST /api/v1/subtitles/ai/translate. */
+/** `kind` values for POST /api/v2/subtitles/ai/translate. */
 object SubtitleAiJobKind {
     const val Translate = "translate"
     const val Transcribe = "transcribe"
@@ -27,7 +27,7 @@ object SubtitleAiJobStatus {
     const val Cancelled = "cancelled"
 }
 
-/** Body for POST /api/v1/subtitles/search. */
+/** Body for POST /api/v2/subtitles/search. */
 @Serializable
 data class SubtitleSearchRequest(
     @SerialName("media_file_id") val mediaFileId: Int,
@@ -55,7 +55,7 @@ data class SubtitleSearchResponse(
     val warnings: List<String> = emptyList(),
 )
 
-/** Body for POST /api/v1/subtitles/download — echoes the chosen [SubtitleResult]. */
+/** Body for POST /api/v2/subtitles/download — echoes the chosen [SubtitleResult]. */
 @Serializable
 data class SubtitleDownloadRequest(
     @SerialName("media_file_id") val mediaFileId: Int,
@@ -68,7 +68,7 @@ data class SubtitleDownloadRequest(
     @SerialName("hearing_impaired") val hearingImpaired: Boolean,
 )
 
-/** A subtitle stored server-side, listed by GET /api/v1/subtitles/{media_file_id}. */
+/** A subtitle stored server-side, listed by GET /api/v2/subtitles/{media_file_id}. */
 @Serializable
 data class DownloadedSubtitle(
     val id: Int,
@@ -82,17 +82,17 @@ data class DownloadedSubtitle(
     @SerialName("created_at") val createdAt: String = "",
 )
 
-/** Envelope for POST /api/v1/subtitles/download. */
+/** Envelope for POST /api/v2/subtitles/download. */
 @Serializable
 data class SubtitleDownloadResponse(val subtitle: DownloadedSubtitle)
 
-/** Envelope for GET /api/v1/subtitles/{media_file_id}. */
+/** Envelope for GET /api/v2/subtitles/{media_file_id}. */
 @Serializable
 data class DownloadedSubtitlesResponse(
     val subtitles: List<DownloadedSubtitle> = emptyList(),
 )
 
-/** GET /api/v1/subtitles/ai/status — both false when AI is unconfigured. */
+/** GET /api/v2/subtitles/ai/status — both false when AI is unconfigured. */
 @Serializable
 data class SubtitleAiStatus(
     val enabled: Boolean = false,
@@ -100,7 +100,7 @@ data class SubtitleAiStatus(
 )
 
 /**
- * GET /api/v1/subtitles/ai/quota — transcribe-kind budget. Exempt callers
+ * GET /api/v2/subtitles/ai/quota — transcribe-kind budget. Exempt callers
  * (admins) and disabled quotas get the zero value with `limited = false`;
  * the remaining fields are only meaningful when `limited` is true.
  */
@@ -115,7 +115,7 @@ data class SubtitleAiQuota(
 )
 
 /**
- * Body for POST /api/v1/subtitles/ai/translate.
+ * Input for subtitle AI creation. The v2 adapter emits required strings and a string file ID.
  *
  * Deliberately has NO `session_id` field: the web sends one to receive live
  * cue streaming over the playback websocket; Android polls the job instead
@@ -162,7 +162,10 @@ data class SubtitleAiJob(
 
 /** Envelope for translate (202) and GET /ai/jobs/{id}. */
 @Serializable
-data class SubtitleAiJobResponse(val job: SubtitleAiJob)
+data class SubtitleAiJobResponse(
+    val job: SubtitleAiJob,
+    @SerialName("live_delivery_attached") val liveDeliveryAttached: Boolean = false,
+)
 
 /** Envelope for GET /ai/jobs?media_file_id=N. */
 @Serializable

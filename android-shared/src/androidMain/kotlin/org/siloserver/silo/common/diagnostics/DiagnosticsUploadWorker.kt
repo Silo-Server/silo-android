@@ -29,6 +29,7 @@ class DiagnosticsUploadWorker(
             is DiagnosticsUploadDecision.Uploaded,
             DiagnosticsUploadDecision.KeptTooLarge,
             DiagnosticsUploadDecision.KeptServerUpdateRequired,
+            DiagnosticsUploadDecision.KeptUncertain,
             DiagnosticsUploadDecision.KeptInvalid,
             -> Result.success()
             DiagnosticsUploadDecision.KeptConsentReviewRequired -> {

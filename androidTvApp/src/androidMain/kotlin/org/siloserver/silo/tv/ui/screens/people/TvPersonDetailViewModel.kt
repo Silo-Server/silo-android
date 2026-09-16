@@ -7,6 +7,7 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.personWorksFiltersForTv
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.async
@@ -119,9 +120,7 @@ class TvPersonDetailViewModel(
                         val result = catalogRepository.getPersonItems(
                             personId = personId,
                             mediaType = filter.mediaType,
-                            offset = 0,
                             limit = 1,
-                            snapshotAt = null,
                         )
                         filter to (result as? ApiResult.Success)?.data?.total
                     }
@@ -200,18 +199,16 @@ class TvPersonDetailViewModel(
     }
 
     private var itemsGeneration = 0
-    private var nextRawOffset = 0
-    private var snapshotAt: String? = null
+    private var continuation: CatalogContinuationV2? = null
 
     fun loadMoreIfNeeded() {
         val state = _uiState.value
-        if (!state.hasMore || state.isLoadingItems) return
+        if (state.pagingError != null || !state.hasMore || state.isLoadingItems) return
         loadItems(state.selectedFilter, reset = false)
     }
 
     private fun resetPaging() {
-        nextRawOffset = 0
-        snapshotAt = null
+        continuation = null
     }
 
     private fun loadItems(filter: TvPersonMediaFilter, reset: Boolean) {
@@ -231,16 +228,14 @@ class TvPersonDetailViewModel(
             val result = catalogRepository.getPersonItems(
                 personId = personId,
                 mediaType = filter.mediaType,
-                offset = nextRawOffset,
+                continuation = continuation,
                 limit = TvPersonWorksPageSize,
-                snapshotAt = snapshotAt,
             )
             // Drop a stale response from a superseded filter selection.
             if (gen != itemsGeneration) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    if (snapshotAt == null) snapshotAt = result.data.snapshot
-                    nextRawOffset += result.data.items.size
+                    continuation = result.data.continuation
                     val visibleItems = result.data.items
                         .visibleOnTv()
                         .filter { allowAudiobooks || !isAudiobookItemType(it.type) }

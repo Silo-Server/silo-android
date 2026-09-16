@@ -9,7 +9,6 @@ import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
-import org.siloserver.silo.network.api.SettingsCapabilitiesResult
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.test.runTest
@@ -30,36 +29,35 @@ class ProfileSettingsControllerTest {
     }
 
     private class FakeSettingsApi(
-        val capabilities: SettingsCapabilitiesResult =
-            SettingsCapabilitiesResult.Available(SettingsContractCapabilities(revision = 1)),
+        val capabilities: ApiResult<SettingsContractCapabilities> =
+            ApiResult.Success(SettingsContractCapabilities(manifestRevision = 1)),
         val effective: ApiResult<EffectiveSettingValuesResponse> =
             ApiResult.Success(EffectiveSettingValuesResponse()),
         val putResult: (String) -> ApiResult<StoredSettingValue> = {
             ApiResult.Success(StoredSettingValue(key = it, scope = "profile"))
         },
         val deleteResult: ApiResult<Unit> = ApiResult.Success(Unit),
-    ) : SettingsApi(HttpClient()) {
+    ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
         val calls = mutableListOf<Call>()
-        val mutationIds = mutableListOf<String>()
 
-        override suspend fun getContractCapabilities(): SettingsCapabilitiesResult = capabilities
+        override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
         override suspend fun getEffectiveValues(
             keys: List<String>,
             libraryIds: List<Int>,
             seriesIds: List<String>,
+            authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> = effective
 
         override suspend fun putValue(
             key: String,
             scope: SettingScopeIdentity,
             value: JsonElement,
-            mutationId: String,
             profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<StoredSettingValue> {
             calls += Call.Put(key, scope.scope, value)
-            mutationIds += mutationId
             return putResult(key)
         }
 
@@ -67,6 +65,7 @@ class ProfileSettingsControllerTest {
             key: String,
             scope: SettingScopeIdentity,
             profileId: String?,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
         ): ApiResult<Unit> {
             calls += Call.Delete(key, scope.scope)
             return deleteResult
@@ -77,7 +76,7 @@ class ProfileSettingsControllerTest {
         ProfileSettingsController(SettingsRepository(api))
 
     @Test
-    fun `writes address scope profile with a mutation id`() = runTest {
+    fun `writes address scope profile`() = runTest {
         val api = FakeSettingsApi()
         controllerFor(api).setSubtitleMode("always")
 
@@ -91,7 +90,6 @@ class ProfileSettingsControllerTest {
             ),
             api.calls,
         )
-        assertTrue(api.mutationIds.single().isNotBlank(), "a write must carry an idempotency id")
     }
 
     @Test
@@ -194,11 +192,11 @@ class ProfileSettingsControllerTest {
     }
 
     @Test
-    fun `an old server reports upgrade required and no snapshot`() = runTest {
-        val api = FakeSettingsApi(capabilities = SettingsCapabilitiesResult.ServerUpgradeRequired)
+    fun `a failed contract probe reports unavailable and no snapshot`() = runTest {
+        val api = FakeSettingsApi(capabilities = ApiResult.Error(404, "not_found", "404 page not found"))
         val result = controllerFor(api).load()
 
-        assertEquals(ProfileSettingsController.Availability.SERVER_UPGRADE_REQUIRED, result.availability)
+        assertEquals(ProfileSettingsController.Availability.UNAVAILABLE, result.availability)
         assertEquals(null, result.snapshot, "values must not be invented for a server that has none")
     }
 

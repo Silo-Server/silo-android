@@ -10,6 +10,7 @@ import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.LibraryCollectionsResponse
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.tvCatalogMediaTypeFor
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * Library content sections committed by the Skyline cascade. The extra browse
@@ -202,6 +204,8 @@ class TvLibraryDetailViewModel(
     private var loadedCollections = false
     private var loadedFilters = false
     private var browseGeneration = 0
+    private var browseContinuation: CatalogContinuationV2? = null
+    private var audiobookContinuation: CatalogContinuationV2? = null
     private var browseSnapshot: String? = null
 
     // Raw (pre-visibleOnTv-filter) loaded count = the server offset for the next
@@ -315,14 +319,14 @@ class TvLibraryDetailViewModel(
 
     fun loadMoreBrowse() {
         val state = _uiState.value
-        if (state.browseLoading || state.browseLoadingMore || !state.browseHasMore) return
+        if (state.browseError != null || state.browseLoading || state.browseLoadingMore || !state.browseHasMore) return
         loadBrowse(reset = false)
     }
 
     fun loadMoreAudiobookGroups() {
         val state = _uiState.value
         val groupBy = state.selectedTab.audiobookGroupBy ?: return
-        if (state.audiobookGroupsLoading || state.audiobookGroupsLoadingMore || !state.audiobookGroupsHasMore) return
+        if (state.audiobookGroupsError != null || state.audiobookGroupsLoading || state.audiobookGroupsLoadingMore || !state.audiobookGroupsHasMore) return
         loadAudiobookGroups(groupBy = groupBy, reset = false)
     }
 
@@ -395,12 +399,33 @@ class TvLibraryDetailViewModel(
         }
     }
 
+    private var recommendedGeneration = 0L
+
     private fun loadRecommended() {
+        val run = ++recommendedGeneration
         loadedRecommended = true
         viewModelScope.launch {
             _uiState.update { it.copy(recommendedLoading = true, recommendedError = null) }
 
-            val layout = when (val layoutResult = sectionRepository.getLibrarySections(libraryId)) {
+            val owner = sectionRepository.captureLibrarySectionAuthority()
+            if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@launch
+            if (owner == null) {
+                loadedRecommended = false
+                _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false, recommendedError = "Sign in to load library sections.") }
+                return@launch
+            }
+            suspend fun mayPublish(): Boolean {
+                val valid = sectionRepository.isLibrarySectionAuthorityCurrent(owner)
+                if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return false
+                if (!valid) {
+                    loadedRecommended = false
+                    _uiState.update { it.copy(sections = emptyList(), recommendedLoading = false) }
+                }
+                return valid
+            }
+            val layoutResult = sectionRepository.getLibrarySections(libraryId, owner)
+            if (!mayPublish()) return@launch
+            val layout = when (layoutResult) {
                 is ApiResult.Success -> layoutResult.data
                 is ApiResult.Error -> {
                     loadedRecommended = false
@@ -443,8 +468,9 @@ class TvLibraryDetailViewModel(
             } else {
                 val resolvedById = unresolved.map { section ->
                     async {
+                        if (run != recommendedGeneration || !kotlinx.coroutines.currentCoroutineContext().isActive) return@async section.id to section
                         section.id to when (
-                            val result = sectionRepository.getLibrarySectionItems(libraryId, section.id)
+                            val result = sectionRepository.getLibrarySectionItems(libraryId, section.id, owner)
                         ) {
                             is ApiResult.Success -> result.data.section ?: section
                             else -> section
@@ -454,6 +480,7 @@ class TvLibraryDetailViewModel(
                 sections.map { section -> resolvedById[section.id] ?: section }
             }
 
+            if (!mayPublish()) return@launch
             _uiState.update {
                 it.copy(
                     sections = resolved.visibleOnTv(),
@@ -526,12 +553,11 @@ class TvLibraryDetailViewModel(
                 genre = filter.genre,
                 sort = filter.sort,
                 order = filter.order,
-                offset = offset,
+                continuation = if (reset) null else browseContinuation,
                 limit = pageSize,
                 namePrefix = filter.namePrefix,
                 yearMin = filter.yearMin,
                 yearMax = filter.yearMax,
-                snapshotAt = browseSnapshot,
                 queryGroups = filter.queryGroups + facetGroups,
                 match = if (facetGroups.isNotEmpty()) {
                     if (filter.facetSelection.matchAll) "all" else "any"
@@ -545,6 +571,7 @@ class TvLibraryDetailViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    browseContinuation = response.continuation
                     if (browseSnapshot == null) {
                         browseSnapshot = response.snapshot
                     }
@@ -629,12 +656,13 @@ class TvLibraryDetailViewModel(
                     libraryId = libraryId,
                     groupBy = groupBy,
                     sort = "name",
-                    offset = offset,
+                    continuation = if (reset) null else audiobookContinuation,
                     limit = pageSize,
                 )
             ) {
                 is ApiResult.Success -> {
                     if (generation != audiobookGroupsGeneration) return@launch
+                    audiobookContinuation = result.data.continuation
                     val response = result.data
                     _uiState.update {
                         it.copy(

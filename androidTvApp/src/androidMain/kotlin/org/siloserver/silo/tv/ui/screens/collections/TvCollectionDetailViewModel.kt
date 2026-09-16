@@ -4,6 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
+import org.siloserver.silo.network.map
+import org.siloserver.silo.network.api.CollectionContinuation
+import org.siloserver.silo.network.api.CollectionEditor
+import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.repository.CollectionRepository
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,12 +46,11 @@ class TvCollectionDetailViewModel(
     private val _uiState = MutableStateFlow(UiState(name = initialTitle))
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    private var deleteEditor: CollectionEditor<Collection>? = null
     private val pageSize = 40
 
-    // Raw (pre-visibleOnTv-filter) loaded count = the next-page server offset.
-    // Using filtered items.size would skip/duplicate when a page has hidden
-    // (ebook) entries.
-    private var rawLoaded = 0
+    private var pagingJob: kotlinx.coroutines.Job? = null
+    private var continuation: CollectionContinuation? = null
 
     init {
         load(reset = true)
@@ -54,7 +58,7 @@ class TvCollectionDetailViewModel(
 
     fun loadMore() {
         val state = _uiState.value
-        if (state.isLoading || state.isLoadingMore || !state.hasMore) return
+        if (state.isLoading || state.isLoadingMore || !state.hasMore || state.error != null) return
         load(reset = false)
     }
 
@@ -62,14 +66,25 @@ class TvCollectionDetailViewModel(
 
     // --- Delete manageable user collections ---
 
-    fun showDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
+    fun showDeleteConfirm() {
+        viewModelScope.launch {
+            when (val result = collectionRepository.getCollection(collectionId)) {
+                is ApiResult.Success -> {
+                    deleteEditor = result.data
+                    _uiState.update { it.copy(showDeleteConfirm = true, deleteError = null) }
+                }
+                else -> _uiState.update { it.copy(error = result.errorMessage("Could not load collection")) }
+            }
+        }
+    }
     fun hideDeleteConfirm() = _uiState.update { it.copy(showDeleteConfirm = false, deleteError = null) }
 
     fun delete() {
         if (_uiState.value.isDeleting) return
+        val editor = deleteEditor ?: return
         viewModelScope.launch {
             _uiState.update { it.copy(isDeleting = true, deleteError = null) }
-            when (val r = collectionRepository.deleteCollection(collectionId)) {
+            when (val r = collectionRepository.deleteCollection(collectionId, editor)) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(isDeleting = false, showDeleteConfirm = false, deleted = true)
                 }
@@ -86,17 +101,16 @@ class TvCollectionDetailViewModel(
     }
 
     private fun load(reset: Boolean) {
-        if (reset) rawLoaded = 0
-        viewModelScope.launch {
+        if (reset) continuation = null
+        pagingJob?.cancel()
+        pagingJob = viewModelScope.launch {
             val state = _uiState.value
-            val offset = if (reset) 0 else rawLoaded
             _uiState.update {
-                if (reset) it.copy(isLoading = true, error = null)
+                if (reset) it.copy(isLoading = true, isLoadingMore = false, error = null)
                 else it.copy(isLoadingMore = true)
             }
-            when (val r = collectionRepository.getItems(collectionId, offset, pageSize)) {
+            when (val r = collectionRepository.getItems(collectionId, continuation, pageSize).map { continuation = it.continuation; it.catalog }) {
                 is ApiResult.Success -> _uiState.update {
-                    rawLoaded = if (reset) r.data.items.size else rawLoaded + r.data.items.size
                     val visible = r.data.items.visibleOnTv()
                     it.copy(
                         isLoading = false,

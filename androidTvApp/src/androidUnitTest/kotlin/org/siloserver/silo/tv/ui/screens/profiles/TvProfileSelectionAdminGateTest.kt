@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.profiles
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -146,15 +148,15 @@ class TvProfileSelectionAdminGateTest {
         }
         val tokenManager = TokenManagerImpl(DefaultIdentityTransitionBarrier())
         return AuthRepository(
-            authApi = AuthApi(client),
+            authApi = AuthApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
         )
     }
 
     private fun createProfileRepository(profiles: List<Profile>): ProfileRepository {
         val jsonString = buildString {
-            append("""{"profiles":[""")
-            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}"}""" })
+            append("""{"items":[""")
+            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""" })
             append("""]}""")
         }
         val engine = MockEngine {
@@ -169,7 +171,7 @@ class TvProfileSelectionAdminGateTest {
         }
         val tokenManager = TokenManagerImpl(DefaultIdentityTransitionBarrier())
         return ProfileRepository(
-            profileApi = ProfileApi(client),
+            profileApi = ProfileApi(client, ApiV2Gate.Unrestricted),
             tokenManager = tokenManager,
         )
     }

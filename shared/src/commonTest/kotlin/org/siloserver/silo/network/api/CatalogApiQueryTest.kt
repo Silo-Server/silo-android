@@ -1,6 +1,8 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.HttpClient
+import io.ktor.http.content.TextContent
+import kotlinx.serialization.json.*
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -28,8 +30,8 @@ class CatalogApiQueryTest {
                     {
                       "total": 1,
                       "total_exact": true,
-                      "has_more": false,
-                      "groups": [
+                      "page": {"has_more":false},
+                      "items": [
                         {
                           "name": "Andy Weir",
                           "item_count": 2,
@@ -48,7 +50,6 @@ class CatalogApiQueryTest {
             libraryId = 7,
             groupBy = "author",
             sort = "count",
-            offset = 40,
             limit = 20,
             query = "weir",
         )
@@ -59,7 +60,7 @@ class CatalogApiQueryTest {
         assertEquals("7", requests.single()["library_id"])
         assertEquals("author", requests.single()["group_by"])
         assertEquals("count", requests.single()["sort"])
-        assertEquals("40", requests.single()["offset"])
+        assertEquals(null, requests.single()["offset"])
         assertEquals("20", requests.single()["limit"])
         assertEquals("weir", requests.single()["q"])
     }
@@ -70,7 +71,7 @@ class CatalogApiQueryTest {
         val api = CatalogApi(
             client = clientFor(
                 requests = requests,
-                body = """{"total":0,"has_more":false,"items":[]}""",
+                body = """{"total":0,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[]}""",
             ),
         )
 
@@ -86,10 +87,13 @@ class CatalogApiQueryTest {
         )
 
         val query = requests.single()
-        assertEquals("all", query["groups[0][match]"])
-        assertEquals("author", query["groups[0][rules][0][field]"])
-        assertEquals("is", query["groups[0][rules][0][op]"])
-        assertEquals("Andy Weir", query["groups[0][rules][0][value]"])
+        val groups = SiloJson.parseToJsonElement(query.getValue("body")!!).jsonObject.getValue("groups").jsonArray
+        assertEquals("all", groups.single().jsonObject["match"]?.jsonPrimitive?.content)
+        val rule = groups.single().jsonObject.getValue("rules").jsonArray.single().jsonObject
+        assertEquals("author", rule["field"]?.jsonPrimitive?.content)
+        assertEquals("is", rule["op"]?.jsonPrimitive?.content)
+        assertEquals("Andy Weir", rule["value"]?.jsonPrimitive?.content)
+
     }
 
     private fun clientFor(
@@ -97,7 +101,8 @@ class CatalogApiQueryTest {
         body: String,
     ): HttpClient = HttpClient(
         MockEngine { request ->
-            requests += request.url.parameters.names().associateWith { request.url.parameters[it] }
+            requests += request.url.parameters.names().associateWith { request.url.parameters[it] } +
+                mapOf("body" to (request.body as? TextContent)?.text)
             respond(
                 content = body,
                 status = HttpStatusCode.OK,

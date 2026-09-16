@@ -11,7 +11,9 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import org.siloserver.silo.common.settings.AndroidServerSettingsCache
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
-import org.siloserver.silo.model.settings.EffectiveSetting
+import org.siloserver.silo.model.settings.EffectiveSettingValue
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SubtitleAppearance
@@ -21,37 +23,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * One-shot import of the legacy `tv_prefs` DataStore (owned by the removed
- * `TvPreferences` class) into the stores that replaced it:
- *
- * - Playback settings (`playback_quality`, `auto_play_next`,
- *   `auto_skip_intro`, `auto_skip_credits`, `subtitle_size`) →
- *   [PlayerSettingsStore] device overrides — but only for keys the server
- *   reports no existing device override for, exactly like the migration
- *   main's TvSettingsViewModel ran. Reuses main's sentinel scope
- *   ("android-tv-settings") so devices that already migrated never rerun.
- *
- * - `libraries_selected_library_id` (legacy *global* int) → the currently
- *   active profile's slot in [TvLibrarySelectionStore] (the new model is
- *   per-profile). Seeded once, only when that profile has no stored
- *   selection; other profiles fall back to TvLibrariesViewModel's default
- *   (first visible library). Gated by its own sentinel
- *   ("android-tv-library-selection"), which stays unmarked — and the pass
- *   is retried on a later call — until a profile is active.
- *
- * The legacy DataStore file is only opened if it exists on disk; fresh
- * installs mark both sentinels immediately. A blank server URL (pre-auth)
- * defers everything to a later call. Safe to call from multiple
- * ViewModels — sentinel-gated, and a [Mutex] serializes concurrent calls.
+ * One-shot local legacy import. Historical server-scoped sentinels remain
+ * authoritative. An incomplete/failed v2 read is never proof of absence;
+ * original account/profile/PIN ownership is retained through every suspension.
+ * No sentinel is marked until the corresponding import is acknowledged.
  */
 class LegacyTvPrefsMigration(
     private val context: Context,
     private val settingsCache: AndroidServerSettingsCache,
     private val playerSettingsStore: PlayerSettingsStore,
     private val librarySelectionStore: TvLibrarySelectionStore,
-    private val getServerUrl: suspend () -> String,
-    private val getProfileId: suspend () -> String?,
-    private val getEffectiveSettings: suspend (keys: List<String>) -> Map<String, EffectiveSetting>,
+    private val getAuthority: suspend () -> AuthScopeSnapshot?,
+    private val getEffectiveSettings: suspend (keys: List<String>, authority: AuthScopeSnapshot) -> ApiResult<Map<String, EffectiveSettingValue>>,
     private val legacyStoreProvider: (Context) -> DataStore<Preferences>? = { ctx ->
         val file = ctx.preferencesDataStoreFile(LEGACY_STORE_NAME)
         if (file.exists()) {
@@ -69,27 +52,30 @@ class LegacyTvPrefsMigration(
     private var legacyStore: DataStore<Preferences>? = null
     private var legacyStoreResolved = false
 
-    suspend fun migrateIfNeeded() {
-        mutex.withLock {
-            val serverUrl = getServerUrl()
-            if (serverUrl.isBlank()) return
+    private suspend fun current(owner: AuthScopeSnapshot): Boolean {
+        val now = getAuthority()
+        return owner.isSameIdentityAs(now) && owner.profileId == now?.profileId && owner.profileToken == now?.profileToken
+    }
 
-            val playbackDone = settingsCache.isMigrationComplete(serverUrl, PLAYBACK_SCOPE)
-            val libraryDone = settingsCache.isMigrationComplete(serverUrl, LIBRARY_SCOPE)
-            if (playbackDone && libraryDone) return
-
-            val store = resolveLegacyStore()
-            if (store == null) {
-                // Fresh install — nothing to import. Mark complete so future
-                // calls short-circuit before the file-existence check.
-                settingsCache.markMigrationComplete(serverUrl, PLAYBACK_SCOPE)
-                settingsCache.markMigrationComplete(serverUrl, LIBRARY_SCOPE)
-                return
-            }
-
-            val prefs = store.data.first()
-            if (!playbackDone) migratePlaybackSettings(serverUrl, prefs)
-            if (!libraryDone) migrateLibrarySelection(serverUrl, prefs)
+    suspend fun migrateIfNeeded() = mutex.withLock {
+        val owner = getAuthority() ?: return
+        if (owner.serverUrl.isBlank() || owner.profileId.isNullOrBlank()) return
+        val playbackDone = settingsCache.isMigrationComplete(owner.serverUrl, PLAYBACK_SCOPE)
+        val libraryDone = settingsCache.isMigrationComplete(owner.serverUrl, LIBRARY_SCOPE)
+        if (playbackDone && libraryDone) return
+        val store = resolveLegacyStore()
+        if (store == null) {
+            if (!current(owner)) return
+            settingsCache.markMigrationComplete(owner.serverUrl, PLAYBACK_SCOPE)
+            settingsCache.markMigrationComplete(owner.serverUrl, LIBRARY_SCOPE)
+            return
+        }
+        val prefs = store.data.first()
+        if (!current(owner)) return
+        if (!playbackDone) migratePlaybackSettings(owner, prefs)
+        if (!libraryDone && current(owner) &&
+            librarySelectionStore.seedLegacySelection(owner, prefs[LegacySelectedLibraryIdKey]) && current(owner)) {
+            settingsCache.markMigrationComplete(owner.serverUrl, LIBRARY_SCOPE)
         }
     }
 
@@ -101,102 +87,52 @@ class LegacyTvPrefsMigration(
         return legacyStore
     }
 
-    private suspend fun migratePlaybackSettings(serverUrl: String, prefs: Preferences) {
-        val legacyQuality = PlaybackQuality.fromWire(prefs[LegacyPlaybackQualityKey]).wireValue
-        val legacySubtitleSize = SubtitleSize.fromLabel(prefs[LegacySubtitleSizeKey])
-        val legacyAutoPlayNext = prefs[LegacyAutoPlayNextKey] ?: true
-        val legacyAutoSkipIntro = prefs[LegacyAutoSkipIntroKey] ?: false
-        val legacyAutoSkipCredits = prefs[LegacyAutoSkipCreditsKey] ?: false
-
-        // Push each legacy value only when the server reports no existing
-        // device override for the same key — same guard main's migration
-        // used, so state written by another session wins over stale local
-        // prefs. Lookup failures resolve to an empty map upstream, which
-        // means "no overrides" (also main's behavior).
-        val effective = getEffectiveSettings(
-            listOf(
-                PlaybackSettingsKeys.PreferredQuality,
-                // Quality is two rows now, and `setQuality` writes both. Asking
-                // only about the resolution would let a device that has a
-                // server-side bitrate cap but no resolution override pass the
-                // guard, and the legacy preset's bitrate — or JSON null, when
-                // the legacy value is Auto — would overwrite that cap. Both
-                // axes are queried so both can be guarded.
-                PlaybackSettingsKeys.MaxBitrateKbps,
-                PlaybackSettingsKeys.AutoPlayNext,
-                // Both spellings of the intro preference. The legacy boolean is
-                // migrated into the enum that superseded it, so an override on
-                // either one means this device has already answered the
-                // question and the stale local pref must not overwrite it.
-                PlaybackSettingsKeys.AutoSkipIntro,
-                PlaybackSettingsKeys.IntroSkipMode,
-                PlaybackSettingsKeys.AutoSkipCredits,
-                PlaybackSettingsKeys.SubtitleAppearance,
-            ),
+    private suspend fun migratePlaybackSettings(owner: AuthScopeSnapshot, prefs: Preferences) {
+        val keys = listOf(
+            PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps,
+            PlaybackSettingsKeys.AutoPlayNext, PlaybackSettingsKeys.AutoSkipIntro,
+            PlaybackSettingsKeys.IntroSkipMode, PlaybackSettingsKeys.AutoSkipCredits,
+            PlaybackSettingsKeys.SubtitleAppearance,
         )
-
-        val qualityOverridden =
-            effective[PlaybackSettingsKeys.PreferredQuality]?.hasDeviceOverride == true ||
-                effective[PlaybackSettingsKeys.MaxBitrateKbps]?.hasDeviceOverride == true
-        if (!qualityOverridden) {
-            // Both axes, never just the resolution. Quality is a
-            // (resolution, bitrate) pair now, and the legacy enum's bare
-            // "720p" carries an implied cap — the same one the server's own
-            // migration assigns it (internal/settingsmigrate/plan.go
-            // decomposes 720p to {720p, 2000}). Writing the resolution alone
-            // would leave a pair no preset covers, so the picker would render
-            // nothing as selected with the cursor parked on Auto, and the
-            // sentinel is marked on this pass so it could never be re-migrated.
-            //
-            // The legacy enum's wire values are exactly the base preset ids,
-            // so the id lookup lands on the same bitrate the server assigns
-            // (1080p -> 6000, 720p -> 2000, 480p -> 1500) rather than on
-            // whichever tier of that resolution happens to sort first.
-            val resolution = QualityPresets.normalizeResolution(legacyQuality)
+        if (!current(owner)) return
+        val effective = when (val result = getEffectiveSettings(keys, owner)) {
+            is ApiResult.Success -> result.data
+            is ApiResult.Error, is ApiResult.NetworkError -> return
+        }
+        // Every requested key must have a resolution. A complete default or
+        // inherited row proves no device override; an omitted row proves nothing.
+        if (!current(owner) || !effective.keys.containsAll(keys)) return
+        if (keys.any { key -> effective.getValue(key).source !in setOf(
+                "default", "account", "profile", "profile_client", "profile_device",
+            ) }) return
+        fun overridden(key: String) = effective.getValue(key).let {
+            it.scope == "profile_device" || it.source == "profile_device"
+        }
+        val values = linkedMapOf<String, String>()
+        if (!overridden(PlaybackSettingsKeys.PreferredQuality) && !overridden(PlaybackSettingsKeys.MaxBitrateKbps)) {
+            val resolution = QualityPresets.normalizeResolution(PlaybackQuality.fromWire(prefs[LegacyPlaybackQualityKey]).wireValue)
             val preset = QualityPresets.byId(resolution)
-            playerSettingsStore.setQuality(
-                preset?.resolution ?: resolution,
-                preset?.bitrateKbps,
-            )
+            values[PlaybackSettingsKeys.PreferredQuality] = preset?.resolution ?: resolution
+            values[PlaybackSettingsKeys.MaxBitrateKbps] = (preset?.bitrateKbps ?: 0).toString()
         }
-        if (effective[PlaybackSettingsKeys.AutoPlayNext]?.hasDeviceOverride != true) {
-            playerSettingsStore.setAutoPlayNext(legacyAutoPlayNext)
+        if (!overridden(PlaybackSettingsKeys.AutoPlayNext)) {
+            values[PlaybackSettingsKeys.AutoPlayNext] = (prefs[LegacyAutoPlayNextKey] ?: true).toString()
         }
-        val introSkipOverridden =
-            effective[PlaybackSettingsKeys.IntroSkipMode]?.hasDeviceOverride == true ||
-                effective[PlaybackSettingsKeys.AutoSkipIntro]?.hasDeviceOverride == true
-        if (!introSkipOverridden) {
-            // true -> always, false -> ask; the same mapping the server's own
-            // migration uses. "never" is unreachable from a boolean, which is
-            // exactly why the enum replaced it.
-            playerSettingsStore.setIntroSkipMode(
-                IntroSkipMode.fromLegacyBoolean(legacyAutoSkipIntro),
-            )
+        if (!overridden(PlaybackSettingsKeys.AutoSkipIntro) && !overridden(PlaybackSettingsKeys.IntroSkipMode)) {
+            values[PlaybackSettingsKeys.IntroSkipMode] = IntroSkipMode.fromLegacyBoolean(prefs[LegacyAutoSkipIntroKey] ?: false).wireValue
         }
-        if (effective[PlaybackSettingsKeys.AutoSkipCredits]?.hasDeviceOverride != true) {
-            playerSettingsStore.setAutoSkipCredits(legacyAutoSkipCredits)
+        if (!overridden(PlaybackSettingsKeys.AutoSkipCredits)) {
+            values[PlaybackSettingsKeys.AutoSkipCredits] = (prefs[LegacyAutoSkipCreditsKey] ?: false).toString()
         }
-        if (effective[PlaybackSettingsKeys.SubtitleAppearance]?.hasDeviceOverride != true) {
-            playerSettingsStore.setSubtitleAppearance(
-                SubtitleAppearance.DEFAULT.copy(fontSize = legacySubtitleSize.toFontSizePreset()),
-            )
+        if (!overridden(PlaybackSettingsKeys.SubtitleAppearance)) {
+            values[PlaybackSettingsKeys.SubtitleAppearance] = SubtitleAppearance.DEFAULT.copy(
+                fontSize = SubtitleSize.fromLabel(prefs[LegacySubtitleSizeKey]).toFontSizePreset(),
+            ).toJsonString()
         }
-
-        // Make sure the writes hit the server even if the user backs out
-        // before the store's debounce fires.
-        playerSettingsStore.flushPendingDeviceSettings()
-        settingsCache.markMigrationComplete(serverUrl, PLAYBACK_SCOPE)
-    }
-
-    private suspend fun migrateLibrarySelection(serverUrl: String, prefs: Preferences) {
-        // The per-profile store needs an active profile; leave the sentinel
-        // unmarked so a later call (post profile-select) retries.
-        getProfileId() ?: return
-        val legacyId = prefs[LegacySelectedLibraryIdKey]
-        if (legacyId != null && librarySelectionStore.getSelectedLibraryId() == null) {
-            librarySelectionStore.setSelectedLibraryId(legacyId)
+        if (!current(owner)) return
+        if (playerSettingsStore.importLegacyDeviceSettings(owner, values) && current(owner)) {
+            settingsCache.markMigrationComplete(owner.serverUrl, PLAYBACK_SCOPE)
         }
-        settingsCache.markMigrationComplete(serverUrl, LIBRARY_SCOPE)
     }
 
     private fun SubtitleSize.toFontSizePreset(): SubtitleFontSizePreset = when (this) {

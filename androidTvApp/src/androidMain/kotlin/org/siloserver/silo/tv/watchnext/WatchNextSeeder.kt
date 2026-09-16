@@ -71,13 +71,15 @@ class WatchNextSeeder(
     }
 
     fun clear() {
+        repository.invalidate()
         // Cancel FIRST, then wipe. Cancel BOTH the periodic refresh and any
         // in-flight one-shot seed — without cancelling before the wipe, a
         // seedNow() that's mid-flight when the user signs out (or switches
         // profile) races [WatchNextRepository.clearAll] and can re-insert the
         // previous user's tiles onto the shared launcher after the wipe. The
-        // sync worker is cooperative (checks isStopped / ensureActive), so
-        // cancelling before the delete stops it before it can repopulate.
+        // generation fence rejects old work even before WorkManager delivers
+        // cancellation. The repository orders the wipe after any dispatched
+        // write, and rejects old writers waiting behind that wipe.
         WorkManager.getInstance(context).apply {
             cancelUniqueWork(WatchNextSyncWorker.UNIQUE_NAME_PERIODIC)
             cancelUniqueWork(WatchNextSyncWorker.UNIQUE_NAME_ONESHOT)

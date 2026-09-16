@@ -1,174 +1,111 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.*
-import io.ktor.client.request.*
-import io.ktor.http.*
 import org.siloserver.silo.model.catalog.*
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.map
+import org.siloserver.silo.network.apiv2.*
+import kotlinx.serialization.json.*
 
-class CatalogApi(private val client: HttpClient) {
+/** Catalog reads on v2; the scoped delegates default to an unauthenticated token manager outside DI. */
+class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api(client, ApiV2Gate.Unrestricted),
+    private val personRefresh: PersonRefreshV2Api = PersonRefreshV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted),
+    private val watchDetail: WatchDetailV2Api = WatchDetailV2Api(client, TokenManagerImpl(), ApiV2Gate.Unrestricted)) {
 
     suspend fun getCatalog(
-        source: String? = null,
-        query: String? = null,
-        mediaType: String? = null,
-        libraryId: Int? = null,
-        genre: String? = null,
-        contentRating: String? = null,
-        sort: String? = null,
-        order: String? = null,
-        offset: Int? = null,
-        limit: Int? = null,
-        namePrefix: String? = null,
-        yearMin: Int? = null,
-        yearMax: Int? = null,
-        snapshotAt: String? = null,
-        queryGroups: List<CatalogQueryGroup> = emptyList(),
-        match: String? = null,
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/catalog") {
-            source?.let { parameter("source", it) }
-            query?.let { parameter("q", it) }
-            mediaType?.let { parameter("type", it) }
-            libraryId?.let { parameter("library_id", it) }
-            genre?.let { parameter("genre", it) }
-            contentRating?.let { parameter("content_rating", it) }
-            sort?.let { parameter("sort", it) }
-            order?.let { parameter("order", it) }
-            offset?.let { parameter("offset", it) }
-            limit?.let { parameter("limit", it) }
-            namePrefix?.let { parameter("name_prefix", it) }
-            yearMin?.let { parameter("year_min", it) }
-            yearMax?.let { parameter("year_max", it) }
-            snapshotAt?.let { parameter("snapshot", it) }
-            match?.let { parameter("match", it) }
-            catalogQueryGroupParameters(queryGroups)
+        source: String? = null, query: String? = null, mediaType: String? = null,
+        libraryId: Int? = null, genre: String? = null, contentRating: String? = null,
+        sort: String? = null, order: String? = null,
+        continuation: CatalogContinuationV2? = null, limit: Int? = null,
+        namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
+        queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
+    ): ApiResult<CatalogResponse> {
+        val groups = queryGroups.toV2Groups().toMutableList()
+        val implicit = buildList {
+            genre?.takeIf { it.isNotBlank() }?.let { add(CatalogRuleV2("genre", "contains", JsonPrimitive(it))) }
+            when {
+                yearMin != null && yearMin > 0 && yearMax != null && yearMax > 0 ->
+                    add(CatalogRuleV2("year", "between", JsonArray(listOf(JsonPrimitive(yearMin), JsonPrimitive(yearMax)))))
+                yearMin != null && yearMin > 0 -> add(CatalogRuleV2("year", "gte", JsonPrimitive(yearMin)))
+                yearMax != null && yearMax > 0 -> add(CatalogRuleV2("year", "lte", JsonPrimitive(yearMax)))
+            }
         }
-    }
-
-    suspend fun getAudiobookGroups(
-        libraryId: Int,
-        groupBy: String,
-        sort: String = "name",
-        offset: Int? = null,
-        limit: Int? = null,
-        query: String? = null,
-        includeTotal: Boolean? = null,
-    ): ApiResult<AudiobookGroupsResponse> = safeApiCall {
-        client.get("/api/v1/catalog/audiobook-groups") {
-            parameter("library_id", libraryId)
-            parameter("group_by", groupBy)
-            parameter("sort", sort)
-            offset?.let { parameter("offset", it) }
-            limit?.let { parameter("limit", it) }
-            query?.let { parameter("q", it) }
-            includeTotal?.let { parameter("include_total", it) }
+        if (implicit.isNotEmpty()) groups.add(CatalogRuleGroupV2("all", implicit))
+        contentRating?.takeIf { it.isNotBlank() }?.let {
+            groups.add(CatalogRuleGroupV2("all", listOf(CatalogRuleV2("content_rating", "is", JsonPrimitive(it)))))
         }
+        return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
+            libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
+            namePrefix = namePrefix, groups = groups, match = match), continuation).map { it.toCatalogResponse() }
     }
 
-    /**
-     * Facet vocabularies. [source]/[collectionId] scope the options to one
-     * catalog source (e.g. `source=library_collection`) so a collection's
-     * filter panel only offers values its own members actually have.
-     */
-    suspend fun getFilters(
-        libraryId: Int? = null,
-        includeTechnical: Boolean = false,
-        source: String? = null,
-        collectionId: String? = null,
-    ): ApiResult<CatalogFiltersResponse> = safeApiCall {
-        client.get("/api/v1/catalog/filters") {
-            libraryId?.let { parameter("library_id", it) }
-            if (includeTechnical) parameter("include_technical", "true")
-            source?.let { parameter("source", it) }
-            collectionId?.let { parameter("collection_id", it) }
+    suspend fun getAudiobookGroups(libraryId: Int, groupBy: String, sort: String = "name",
+        continuation: CatalogContinuationV2? = null, limit: Int? = null, query: String? = null,
+        includeTotal: Boolean? = null): ApiResult<AudiobookGroupsResponse> =
+        v2.audiobookGroups(libraryId.toString(), groupBy, sort, query, limit ?: 50,
+            includeTotal == false, continuation).map {
+            AudiobookGroupsResponse(it.total, it.totalExact, it.continuation != null, it.items, it.continuation)
         }
-    }
 
-    suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id")
-    }
+    suspend fun getFilters(libraryId: Int? = null, includeTechnical: Boolean = false,
+        source: String? = null, collectionId: String? = null): ApiResult<CatalogFiltersResponse> =
+        v2.filters(libraryId?.toString(), source, collectionId, skipTechnical = !includeTechnical).map {
+            CatalogFiltersResponse(it.genres, it.studios, it.networks, it.countries, it.contentRatings,
+                it.technical?.resolutions, it.technical?.audioLanguages, it.technical?.subtitleLanguages,
+                it.originalLanguages, it.authors, it.narrators, it.series, CatalogFacetScopeV2(libraryId?.toString(), source, collectionId))
+        }
 
-    suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id/versions")
-    }
+    suspend fun searchFacet(scope: CatalogFacetScopeV2, facet: String, prefix: String) = v2.searchFacet(scope, facet, prefix)
 
-    suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/items/$id/episodes")
-    }
+    suspend fun searchCapabilities() = v2.searchCapabilities()
 
-    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons")
-    }
+    suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = v2.itemDetail(id)
+
+    suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = v2.itemVersions(id)
+
+    suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = v2.itemEpisodes(id)
+
+    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId)
 
     suspend fun getEpisodes(
         seriesId: String,
         seasonNumber: Int
-    ): ApiResult<EpisodesResponse> = safeApiCall {
-        client.get("/api/v1/catalog/series/$seriesId/seasons/$seasonNumber/episodes")
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber)
+
+    suspend fun captureWatchAuthority() = watchDetail.capture()
+    suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
+    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot) = watchDetail.detail(id, owner)
+
+    /** Unscoped read for callers without an owner; the current viewer is captured at call time. */
+    suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> {
+        val owner = watchDetail.capture()
+            ?: return identityChanged()
+        return watchDetail.detail(id, owner)
     }
 
-    suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> = safeApiCall {
-        client.get("/api/v1/watch/$id")
-    }
+    suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = v2.people(query)
 
-    suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = safeApiCall {
-        client.get("/api/v1/people") {
-            query?.let { parameter("q", it) }
-        }
-    }
+    suspend fun getPerson(id: Long): ApiResult<Person> = v2.person(id)
 
-    suspend fun getPerson(id: Long): ApiResult<Person> = safeApiCall {
-        client.get("/api/v1/people/$id")
-    }
+    suspend fun getPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Person> = personRefresh.detail(id, owner)
 
-    /** Queues a server-side metadata refresh for a person (fire-and-forget). */
-    suspend fun refreshPerson(id: Long): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/people/$id/refresh")
-    }
+    suspend fun refreshPerson(id: Long, owner: AuthScopeSnapshot): ApiResult<Unit> = personRefresh.refresh(id, owner)
 
-    /**
-     * Filmography for a person — wraps `/api/v1/catalog?source=person&person_id=...`.
-     * Mirrors the iOS `personCatalogItems` helper.
-     */
-    suspend fun getPersonItems(
-        personId: Long,
-        mediaType: String? = null,
-        offset: Int? = null,
-        limit: Int? = null,
-        snapshotAt: String? = null,
-    ): ApiResult<CatalogResponse> = safeApiCall {
-        client.get("/api/v1/catalog") {
-            parameter("source", "person")
-            parameter("person_id", personId.toString())
-            parameter("sort", "year")
-            parameter("order", "desc")
-            mediaType?.let { parameter("type", it) }
-            offset?.let { parameter("offset", it) }
-            limit?.let { parameter("limit", it) }
-            snapshotAt?.let { parameter("snapshot", it) }
-        }
-    }
+    suspend fun getPersonItems(personId: Long, mediaType: String? = null,
+        continuation: CatalogContinuationV2? = null, limit: Int? = null): ApiResult<CatalogResponse> =
+        v2.browse(CatalogQueryV2(source = "person", personId = personId.toString(), type = mediaType,
+            sort = "year", order = "desc", limit = limit ?: 50), continuation).map { it.toCatalogResponse() }
 }
 
-/**
- * Encodes structured catalog filter groups as the server's bracketed query
- * params (`groups[g][rules][r][field]`, …). Range ops carry indexed values.
- * Shared by every `/api/v1/catalog` caller so the encoding has one definition.
- */
-internal fun HttpRequestBuilder.catalogQueryGroupParameters(groups: List<CatalogQueryGroup>) {
-    groups.forEachIndexed { groupIndex, group ->
-        parameter("groups[$groupIndex][match]", group.match)
-        group.rules.forEachIndexed { ruleIndex, rule ->
-            parameter("groups[$groupIndex][rules][$ruleIndex][field]", rule.field)
-            parameter("groups[$groupIndex][rules][$ruleIndex][op]", rule.op)
-            if (rule.values.isNotEmpty()) {
-                rule.values.forEachIndexed { valueIndex, value ->
-                    parameter("groups[$groupIndex][rules][$ruleIndex][value][$valueIndex]", value)
-                }
-            } else {
-                parameter("groups[$groupIndex][rules][$ruleIndex][value]", rule.value)
-            }
-        }
-    }
+internal fun List<CatalogQueryGroup>.toV2Groups() = map { group ->
+    CatalogRuleGroupV2(group.match, group.rules.map { rule ->
+        CatalogRuleV2(rule.field, rule.op, if (rule.values.isNotEmpty()) JsonArray(rule.values.map(::JsonPrimitive)) else JsonPrimitive(rule.value))
+    })
 }
+
+internal fun CatalogPageV2<BrowseItem>.toCatalogResponse() = CatalogResponse(
+    total = total, totalExact = totalExact, hasMore = continuation != null, items = items,
+    effectiveSort = effectiveSort, continuation = continuation, searchDiagnostics = searchDiagnostics,
+)

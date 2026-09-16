@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.room.Room
@@ -100,7 +102,6 @@ import org.siloserver.silo.network.api.CatalogApi
 import org.siloserver.silo.network.api.DefaultSubtitlesApi
 import org.siloserver.silo.network.api.HealthApi
 import org.siloserver.silo.network.api.PersonalDataApi
-import org.siloserver.silo.network.api.PlaybackApi
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
@@ -360,7 +361,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     LegacyDownloadImporter(tmp.newFolder(), db),
                 ),
                 serverRegistry = FakeServerRegistry(),
-                serverReachabilityMonitor = ServerReachabilityMonitor(healthApi, scope),
+                serverReachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null }),
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
                 sessionLifecycle = PlaybackSessionLifecycle(
@@ -370,7 +371,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     scope,
                 ),
                 sleepTimer = SleepTimerController(scope),
-                subtitlesRepository = SubtitlesRepository(DefaultSubtitlesApi(client)),
+                subtitlesRepository = SubtitlesRepository(
+                    DefaultSubtitlesApi(
+                        org.siloserver.silo.network.apiv2.SubtitleReadsV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleDownloadV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleAiReadsV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                        org.siloserver.silo.network.apiv2.SubtitleAiCreateV2Api(client, tokenManager, ApiV2Gate.Unrestricted),
+                    ),
+                ),
                 userItemStatePort = NoOpUserItemStatePort,
                 finalPlaybackPositionWriter = FinalPlaybackPositionWriter(
                     scope = scope,
@@ -431,7 +439,7 @@ class MobileVideoPlaybackStarterCancellationTest {
             val adoptionEntered = kotlinx.coroutines.CompletableDeferred<Unit>()
             var allocated = false
             val starter = MobileVideoPlaybackStarter(
-                catalogRepository = CatalogRepository(CatalogApi(client)),
+                catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager, ApiV2Gate.Unrestricted))),
                 playbackSessionManager = manager,
                 profileRepository = profileRepository,
                 capabilityDetector = PlaybackCapabilityDetector(
@@ -447,7 +455,7 @@ class MobileVideoPlaybackStarterCancellationTest {
                     PersonalDataRepository(PersonalDataApi(client)),
                     backgroundScope,
                 ),
-                reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
+                reachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
                 sessionAllocator = MobileVideoSessionAllocator {
                     allocated = true
                     ApiResult.Success(allocatedReady("allocated-session"))
@@ -490,7 +498,7 @@ class MobileVideoPlaybackStarterCancellationTest {
     private fun starterCatalogClient(): HttpClient =
         HttpClient(
             MockEngine { request ->
-                if (request.url.encodedPath == "/api/v1/watch/starter") {
+                if (request.url.encodedPath == "/api/v2/watch/starter") {
                     respond(
                         content = """
                             {
@@ -499,9 +507,9 @@ class MobileVideoPlaybackStarterCancellationTest {
                               "title": "Starter",
                               "versions": [
                                 {
-                                  "file_id": 41,
+                                  "file_id": "41",
                                   "container": "mkv",
-                                  "duration": 120.0
+                                  "duration_seconds": 120.0
                                 }
                               ]
                             }
@@ -756,7 +764,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
         val manager = RecordingPlaybackSessionManager(client, tokenManager)
         val context = ApplicationProvider.getApplicationContext<Application>()
         val starter = MobileVideoPlaybackStarter(
-            catalogRepository = CatalogRepository(CatalogApi(client)),
+            catalogRepository = CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokenManager, ApiV2Gate.Unrestricted))),
             playbackSessionManager = manager,
             profileRepository = profileRepository,
             capabilityDetector = PlaybackCapabilityDetector(
@@ -772,9 +780,10 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                 PersonalDataRepository(PersonalDataApi(client)),
                 backgroundScope,
             ),
-            reachabilityMonitor = ServerReachabilityMonitor(HealthApi(client), backgroundScope),
+            reachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
             userItemStatePort = userItemStatePort,
             sessionAllocator = {
+                assertEquals(tokenManager.metadataOwner, it.expectedMetadataOwner)
                 onAllocation(it)
                 ApiResult.Success(readyStart)
             },
@@ -803,7 +812,7 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
             .orEmpty()
         return HttpClient(
             MockEngine { request ->
-                if (request.url.encodedPath == "/api/v1/watch/starter") {
+                if (request.url.encodedPath == "/api/v2/watch/starter") {
                     respond(
                         content = """
                             {
@@ -813,9 +822,9 @@ class MobileVideoPlaybackStarterSubtitlePreferenceTest {
                               $effective
                               "versions": [
                                 {
-                                  "file_id": 41,
+                                  "file_id": "41",
                                   "container": "mkv",
-                                  "duration": 120.0
+                                  "duration_seconds": 120.0
                                   $extraVersionFields
                                 }
                               ]
@@ -880,7 +889,7 @@ private class RecordingPlaybackSessionManager(
     client: HttpClient,
     tokenManager: TokenManager,
 ) : PlaybackSessionManager(
-    PlaybackRepository(PlaybackApi(client)),
+    PlaybackRepository(testSequencedPlayback(client, tokenManager)),
     tokenManager,
 ) {
     private val stopped = mutableListOf<String>()
@@ -912,13 +921,19 @@ private class FakeProfileRepository(
     client: HttpClient,
     tokenManager: TokenManager,
     private val profile: Profile = Profile(id = PROFILE_ID, name = "Profile"),
-) : ProfileRepository(ProfileApi(client), tokenManager) {
+) : ProfileRepository(ProfileApi(client, ApiV2Gate.Unrestricted), tokenManager) {
     override suspend fun getActiveProfileId(): String = PROFILE_ID
 
     override suspend fun listProfiles(): ApiResult<List<Profile>> = ApiResult.Success(listOf(profile))
 }
 
 private class FakeTokenManager : TokenManager {
+    var metadataOwner: org.siloserver.silo.network.AuthScopeSnapshot? = org.siloserver.silo.network.AuthScopeSnapshot(SERVER_ID, PROFILE_ID, "https://silo.test", null, identityGeneration = 1, isIdentityGenerationStamped = true, credentialEpoch = 1)
+    var beforeSnapshot: suspend () -> Unit = {}
+    override suspend fun snapshotCurrentScope(): org.siloserver.silo.network.AuthScopeSnapshot? {
+        beforeSnapshot()
+        return metadataOwner
+    }
     override val sessionExpired = MutableSharedFlow<Unit>()
     override suspend fun getAccessToken(): String = "access-token"
     override suspend fun getRefreshToken(): String? = null
@@ -1106,3 +1121,155 @@ private suspend fun <T> awaitRealTime(block: suspend () -> T): T =
 private const val SERVER_ID = "server"
 private const val PROFILE_ID = "profile"
 private val JSON_HEADERS = headersOf(HttpHeaders.ContentType, "application/json")
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class MobileStartupMetadataOwnerTest {
+    @Test fun missingAndLateMetadataAuthorityCannotAllocate() = runTest {
+        for (stage in listOf("missing", "metadata")) runScenario(stage)
+    }
+    @Test fun injectedAllocatorRetainsOwnerAndLateAdoptionCannotPublish() = runTest {
+        for (stage in listOf("allocation", "adoption")) runScenario(stage)
+    }
+    private suspend fun TestScope.runScenario(stage: String) {
+        val tokens = FakeTokenManager()
+        val original = tokens.metadataOwner
+        if (stage == "missing") tokens.metadataOwner = null
+        var reads = 0
+        var allocations = 0
+        var adoptions = 0
+        val client = HttpClient(MockEngine { req ->
+            assertEquals("/api/v2/watch/starter", req.url.encodedPath)
+            reads++
+            if (stage == "metadata") tokens.metadataOwner = original!!.copy(profileToken = "replacement")
+            respond("""{"content_id":"starter","type":"movie","title":"Starter","versions":[{"file_id":"41","duration_seconds":120}]}""", HttpStatusCode.OK, JSON_HEADERS)
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val manager = RecordingPlaybackSessionManager(client, tokens)
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val starter = MobileVideoPlaybackStarter(
+                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))),
+                manager, FakeProfileRepository(client, tokens),
+                PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
+                FakePlayerSettingsStore(),
+                PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope),
+                ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
+                sessionAllocator = {
+                    allocations++
+                    assertEquals(original, it.expectedMetadataOwner)
+                    if (stage == "allocation") tokens.metadataOwner = original!!.copy(identityGeneration = 3)
+                    ApiResult.Success(allocatedReady("owner-session"))
+                },
+                sessionAdopter = { _, _ ->
+                    adoptions++
+                    if (stage == "adoption") tokens.metadataOwner = original!!.copy(credentialEpoch = 2)
+                },
+            )
+            assertTrue(starter.start(VideoPlaybackStartRequest(contentId = "starter", preferredFileId = 41, roomId = null, resumePositionOverride = null)) is VideoPlaybackStartResult.Error)
+            assertEquals(if (stage == "missing") 0 else 1, reads)
+            assertEquals(if (stage in listOf("missing", "metadata")) 0 else 1, allocations)
+            assertEquals(if (stage == "adoption") 1 else 0, adoptions)
+            assertEquals(if (allocations == 0) emptyList() else listOf("owner-session"), manager.stoppedSessions)
+        } finally { client.close() }
+    }
+}
+
+
+@OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = Application::class)
+class MobileStartupAdoptedOwnerCleanupTest {
+    @Test fun finalOwnerRejectionRetiresActualLifecycle() = runTest { scenario(false, false) }
+    @Test fun finalSnapshotCancellationRetiresActualLifecycle() = runTest { scenario(true, false) }
+    @Test fun finalOwnerRejectionProtectsNewerLifecycle() = runTest { scenario(false, true) }
+    @Test fun finalSnapshotCancellationProtectsNewerLifecycle() = runTest { scenario(true, true) }
+
+    private suspend fun TestScope.scenario(cancel: Boolean, replace: Boolean) {
+        val tokens = FakeTokenManager()
+        val entered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val release = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val client = HttpClient(MockEngine { req ->
+            // No fabricated final progress, recovery probe or extra cleanup transport.
+            assertEquals("/api/v2/watch/starter", req.url.encodedPath)
+            respond("""{"content_id":"starter","type":"movie","title":"Starter","versions":[{"file_id":"41","duration_seconds":120}]}""", HttpStatusCode.OK, JSON_HEADERS)
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val manager = RecordingPlaybackSessionManager(client, tokens)
+            val lifecycle = PlaybackSessionLifecycle(manager, HealthApi(client), PersonalDataRepository(PersonalDataApi(client)), backgroundScope)
+            fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
+                it.isAccessible = true
+                it.get(lifecycle)
+            }
+            var held = false
+            tokens.beforeSnapshot = {
+                if (!held && field("lastAdoptedSessionId") == "rejected") {
+                    held = true
+                    entered.complete(Unit)
+                    release.await()
+                }
+            }
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val starter = MobileVideoPlaybackStarter(
+                CatalogRepository(CatalogApi(client, watchDetail = org.siloserver.silo.network.apiv2.WatchDetailV2Api(client, tokens, ApiV2Gate.Unrestricted))),
+                manager, FakeProfileRepository(client, tokens),
+                PlaybackCapabilityDetector(context, AudioCapabilityManager(context), LibassBridge(false), SiloClientBuildIdentity(buildNumber = "5", channel = "release")),
+                FakePlayerSettingsStore(), lifecycle,
+                ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, backgroundScope, { null }),
+                sessionAllocator = { ApiResult.Success(allocatedReady("rejected")) },
+                // Deliberately use production lifecycle adoption, not sessionAdopter.
+            )
+            val start = async {
+                starter.start(VideoPlaybackStartRequest(contentId = "starter", preferredFileId = 41, roomId = null, resumePositionOverride = null))
+            }
+            entered.await()
+            assertTrue(lifecycle.state.value is org.siloserver.silo.common.player.SessionState.Active)
+            val oldReporter = field("reporterJob") as kotlinx.coroutines.Job
+            assertTrue(oldReporter.isActive)
+            if (replace) {
+                lifecycle.adoptActiveSession(
+                    field("lastStartParams") as org.siloserver.silo.common.player.StartParams,
+                    allocatedReady("newer").session,
+                )
+            }
+            val newerReporter = if (replace) field("reporterJob") else null
+            tokens.metadataOwner = tokens.metadataOwner!!.copy(profileToken = "replacement")
+            if (cancel) {
+                start.cancel()
+                start.join()
+                assertTrue(start.isCancelled)
+            } else {
+                release.complete(Unit)
+                assertTrue(start.await() is VideoPlaybackStartResult.Error)
+            }
+            assertEquals(listOf("rejected"), manager.stoppedSessions)
+            assertTrue(manager.stopContextsActive.all { it })
+            assertFalse(oldReporter.isActive)
+            if (replace) {
+                assertEquals("newer", field("lastAdoptedSessionId"))
+                assertTrue(lifecycle.state.value is org.siloserver.silo.common.player.SessionState.Active)
+                assertTrue(field("reporterJob") === newerReporter)
+                assertTrue((newerReporter as kotlinx.coroutines.Job).isActive)
+                assertTrue(field("lastStartParams") != null)
+            } else {
+                assertEquals(org.siloserver.silo.common.player.SessionState.Idle, lifecycle.state.value)
+                for (name in listOf("lastAdoptedSessionId", "lastStartParams", "reporterJob", "recoveryJob", "recoveringFromMissingSession", "pendingActiveSessionPublication")) {
+                    assertNull(field(name), name)
+                }
+            }
+        } finally { client.close() }
+    }
+}
+
+private fun testSequencedPlayback(client: HttpClient, tokens: TokenManager): org.siloserver.silo.repository.SequencedPlayback {
+    val journal = object : org.siloserver.silo.repository.PlaybackJournalStore {
+        var entries = emptyList<org.siloserver.silo.repository.PlaybackJournalEntry>()
+        override suspend fun read() = entries
+        override suspend fun write(entries: List<org.siloserver.silo.repository.PlaybackJournalEntry>) { this.entries = entries }
+    }
+    val authorities = object : org.siloserver.silo.network.DurableLoginAuthorityProvider {
+        override suspend fun snapshotDurableLoginAuthority(): org.siloserver.silo.network.DurableLoginAuthority? = null
+    }
+    return org.siloserver.silo.repository.SequencedPlayback(
+        org.siloserver.silo.network.apiv2.PlaybackV2Api(client, ApiV2Gate.Unrestricted), tokens, authorities, journal) { "stop" }
+}

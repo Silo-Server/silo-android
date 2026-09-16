@@ -8,61 +8,77 @@ import io.ktor.http.*
 import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.map
+import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.skipSiloAuth
+import org.siloserver.silo.network.apiv2.Account
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.SetupStatus
+import org.siloserver.silo.network.apiv2.safeApiV2Call
 
-class AuthApi(private val client: HttpClient) {
+class AuthApi(
+    private val client: HttpClient,
+    private val apiV2Gate: ApiV2Gate,
+) {
 
-    suspend fun login(request: LoginRequest): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/login") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
+    suspend fun login(request: LoginRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
+        client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/login") {
+            skipSiloAuth(); singleAttempt()
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(200)
+    }.map { it.domain() }
 
-    suspend fun refresh(request: RefreshRequest): ApiResult<RefreshResponse> = safeApiCall {
-        client.post("/api/v1/auth/refresh") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
-
-    suspend fun signup(request: SignupRequest): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/signup") {
-            contentType(ContentType.Application.Json)
-            setBody(request)
-        }
-    }
-
-    suspend fun setup(
-        username: String,
-        email: String,
-        password: String
-    ): ApiResult<LoginResponse> = safeApiCall {
-        client.post("/api/v1/auth/setup") {
-            contentType(ContentType.Application.Json)
-            setBody(SetupRequest(username = username, email = email, password = password))
-        }
-    }
-
-    suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> = safeApiCall {
-        // Public, exactly like the explicit-server variant below — which
-        // already opted out. Without this the relative form carries a bearer
-        // it never needed, and a dead session would fail it.
-        client.get("/api/v1/auth/setup") { skipSiloAuth() }
-    }
-
-    suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/setup") {
+    suspend fun refresh(request: RefreshRequest): ApiResult<RefreshResponse> = safeApiV2Call(apiV2Gate) {
+        client.post("/api/v2/auth/refresh") {
             skipSiloAuth()
-        }
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(200)
     }
 
-    suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiCall {
-        client.get("/api/v1/auth/signup") { skipSiloAuth() }
+    suspend fun signup(request: SignupRequest, serverUrl: String? = null): ApiResult<LoginResponse> = safeApiV2Call<TokenPairV2>(apiV2Gate) {
+        client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/signup") {
+            skipSiloAuth(); singleAttempt()
+            contentType(ContentType.Application.Json); setBody(request)
+        }.requireAuthStatus(201)
+    }.map { it.domain() }
+
+    suspend fun setup(username: String, email: String, password: String, serverUrl: String? = null): ApiResult<LoginResponse> =
+        safeApiV2Call<TokenPairV2>(apiV2Gate) {
+            client.post("${serverUrl?.trimEnd('/').orEmpty()}/api/v2/auth/setup") {
+                skipSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(SetupRequest(username, email, password))
+            }.requireAuthStatus(201)
+        }.map { it.domain() }
+
+    suspend fun getSetupStatus(): ApiResult<SetupStatusResponse> =
+        safeApiV2Call<SetupStatus>(apiV2Gate) {
+            // Public, exactly like the explicit-server variant below — which
+            // already opted out. Without this the relative form carries a bearer
+            // it never needed, and a dead session would fail it.
+            client.get("/api/v2/system/setup") { skipSiloAuth() }
+        }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
+
+    /**
+     * Explicit-server form: probes a candidate the app is not connected to
+     * yet, so the ACTIVE entry's verdict must not gate it — otherwise an
+     * UPDATE_REQUIRED active server would block adding (or reconnecting to)
+     * a supported one. The candidate's own gate is the contract probe the
+     * add-server flow runs before switching.
+     */
+    suspend fun getSetupStatus(serverUrl: String): ApiResult<SetupStatusResponse> =
+        safeApiV2Call<SetupStatus>(ApiV2Gate.Unrestricted) {
+            client.get("${serverUrl.trimEnd('/')}/api/v2/system/setup") {
+                skipSiloAuth()
+            }
+        }.map { status -> SetupStatusResponse(needsSetup = status.needsSetup) }
+
+    suspend fun getSignupStatus(): ApiResult<SignupStatusResponse> = safeApiV2Call(apiV2Gate) {
+        client.get("/api/v2/auth/signup") { skipSiloAuth() }
     }
 
-    suspend fun getSignupStatus(serverUrl: String): ApiResult<SignupStatusResponse> = safeApiCall {
-        client.get("${serverUrl.trimEnd('/')}/api/v1/auth/signup") {
+    suspend fun getSignupStatus(serverUrl: String): ApiResult<SignupStatusResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
+        client.get("${serverUrl.trimEnd('/')}/api/v2/auth/signup") {
             skipSiloAuth()
         }
     }
@@ -74,68 +90,36 @@ class AuthApi(private val client: HttpClient) {
     suspend fun lookupInvitation(
         serverUrl: String,
         token: String,
-    ): ApiResult<InvitationLookupResponse> = safeApiCall {
+    ): ApiResult<InvitationLookupResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
         // The token arrives from an emailed link and is not ours to trust as
         // path-safe: a '/' or '?' in it would otherwise re-shape the request.
-        client.get("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}") {
+        client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}") {
             skipSiloAuth()
+        }.requireAuthStatus(200)
+    }
+
+    suspend fun invitationCapabilities(serverUrl: String): ApiResult<InvitationCapabilities> =
+        safeApiV2Call(ApiV2Gate.Unrestricted) {
+            client.get("${serverUrl.trimEnd('/')}/api/v2/invitations/capabilities") { skipSiloAuth() }
+                .requireAuthStatus(200)
         }
+
+    suspend fun acceptInvitation(serverUrl: String, token: String, password: String): ApiResult<InvitationAcceptance> =
+        safeApiV2Call<InvitationAcceptanceV2>(ApiV2Gate.Unrestricted) {
+            client.post("${serverUrl.trimEnd('/')}/api/v2/invitations/${token.encodeURLPathPart()}/accept") {
+                skipSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(AcceptInvitationRequest(password = password))
+            }.requireAuthStatus(201)
+        }.map { it.domain() }
+
+    suspend fun getMe(): ApiResult<User> =
+        safeApiV2Call<Account>(apiV2Gate) { client.get("/api/v2/account/me") }.map { account -> account.toUser() }
+
+    suspend fun logout(): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
+        client.post("/api/v2/auth/logout").requireAuthStatus(204)
     }
 
-    /**
-     * Accepts an invitation: creates the account (username = the invitation's
-     * email) and returns a normal login response.
-     */
-    suspend fun acceptInvitation(
-        serverUrl: String,
-        token: String,
-        password: String,
-    ): ApiResult<LoginResponse> = safeApiCall {
-        client.post("${serverUrl.trimEnd('/')}/api/v1/invitations/${token.encodeURLPathPart()}/accept") {
-            skipSiloAuth()
-            contentType(ContentType.Application.Json)
-            setBody(AcceptInvitationRequest(password = password))
-        }
-    }
-
-    suspend fun getMe(): ApiResult<User> = safeApiCall {
-        client.get("/api/v1/auth/me")
-    }
-
-    suspend fun logout(): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/auth/logout")
-    }
-
-}
-
-/**
- * Checks membership endpoints that return HTTP 204 (present) / 404 (absent) with no body.
- *
- * - 2xx  → [ApiResult.Success]`(true)`
- * - 404  → [ApiResult.Success]`(false)`
- * - other HTTP errors → [ApiResult.Error]
- * - network failures  → [ApiResult.NetworkError]
- */
-internal suspend fun safeStatusCall(
-    block: suspend () -> HttpResponse
-): ApiResult<Boolean> {
-    return try {
-        val response = block()
-        when {
-            response.status.isSuccess() -> ApiResult.Success(true)
-            response.status == HttpStatusCode.NotFound -> ApiResult.Success(false)
-            else -> {
-                val error = try {
-                    response.body<ApiErrorBody>()
-                } catch (_: Exception) {
-                    ApiErrorBody()
-                }
-                ApiResult.Error(response.status.value, error.error, error.message)
-            }
-        }
-    } catch (e: Exception) {
-        ApiResult.NetworkError(e)
-    }
 }
 
 /**
@@ -170,3 +154,19 @@ internal suspend inline fun <reified T> safeApiCall(
         ApiResult.NetworkError(e)
     }
 }
+
+/** Adapts the v2 account to the v1-shaped [User] the repositories and screens consume. */
+internal fun Account.toUser(): User = User(
+    id = id,
+    username = username,
+    email = email,
+    role = role.wire,
+    downloadAllowed = downloadAllowed,
+    impersonation = impersonation?.let {
+        ImpersonationInfo(
+            active = it.active,
+            impersonatorUserId = it.impersonatorUserId,
+            impersonatorUsername = it.impersonatorUsername,
+        )
+    },
+)

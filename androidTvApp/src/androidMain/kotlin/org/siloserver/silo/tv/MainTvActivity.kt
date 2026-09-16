@@ -303,6 +303,22 @@ class MainTvActivity : ComponentActivity() {
         val activeEntry = registry.activeEntry.value
             ?: return TvRoute.ServerSetup.route
 
+        // Restored servers were probed by whichever build saved them (or never,
+        // before the v2 pilot); re-establish the contract verdict once per launch.
+        // A stored UPDATE_REQUIRED may be stale (server upgraded since), and a
+        // stored UNKNOWN (first launch after upgrading the app) passes the gate,
+        // so authenticated startup consumers would race the probe and could
+        // receive raw v2 404s from a v1-only server. Both wait (bounded) for
+        // the probe before routing; only a settled V2 skips the wait. A null
+        // result (V2, timeout, or failure) makes the name refresh re-probe.
+        val authRepository = get<AuthRepository>(AuthRepository::class.java)
+        val knownContract = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            authRepository.awaitContractRefreshIfUnsettled()
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            authRepository.refreshActiveServerName(knownContract = knownContract)
+        }
+
         val cleartextConsent = get<org.siloserver.silo.network.CleartextOriginConsent>(
             org.siloserver.silo.network.CleartextOriginConsent::class.java,
         )

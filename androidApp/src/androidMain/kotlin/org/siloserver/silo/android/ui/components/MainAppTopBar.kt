@@ -61,7 +61,7 @@ fun MainAppTopBar(
         Box(
             modifier = Modifier
                 .padding(
-                    top = statusBarPadding.calculateTopPadding() + 4.dp,
+                    top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset,
                     start = 16.dp,
                     end = 16.dp,
                     bottom = 8.dp,
@@ -85,7 +85,6 @@ fun MainAppTopBar(
                 onSwitchProfileClick = onSwitchProfileClick,
                 onSwitchServerClick = onSwitchServerClick,
                 onSignOutClick = onSignOutClick,
-                opaque = true,
             )
         }
 

@@ -29,7 +29,7 @@ class SiloAuthPluginRefreshFailureTest {
 
         assertEquals(HttpStatusCode.Unauthorized, response.status)
         assertEquals(
-            listOf("/api/v1/catalog/home", "/api/v1/auth/refresh"),
+            listOf("/api/v1/catalog/home", "/api/v2/auth/refresh"),
             paths,
         )
         assertEquals("expired-access", tokenManager.getAccessToken())

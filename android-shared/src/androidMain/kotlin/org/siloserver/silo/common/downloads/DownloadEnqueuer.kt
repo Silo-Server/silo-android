@@ -43,6 +43,9 @@ class DownloadEnqueuer(
     private val catalogRepository: CatalogRepository,
     private val storage: DownloadStorage,
     private val metadataStore: DownloadMetadataStore,
+    private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+    private val transitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
+    private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
 ) {
 
     /**
@@ -57,6 +60,8 @@ class DownloadEnqueuer(
         displayTitle: String,
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
         Log.i(TAG, "start: contentId=$contentId fileId=$fileId title=$displayTitle")
         if (activeDownloadExists(fileId)) {
             Log.i(TAG, "start: fileId=$fileId already queued/downloading — skipping duplicate")
@@ -68,13 +73,14 @@ class DownloadEnqueuer(
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),
+            expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data.also { Log.i(TAG, "start: server record id=${it.id} status=${it.status}") }
             is ApiResult.Error -> { Log.w(TAG, "start: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
             is ApiResult.NetworkError -> { Log.w(TAG, "start: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
         val sidecar = buildInitialSidecar(record, contentId, displayTitle)
-        finalizeAndEnqueue(record, sidecar, displayTitle)
+        finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         return ApiResult.Success(Unit)
     }
 
@@ -95,6 +101,8 @@ class DownloadEnqueuer(
         posterUrl: String? = null,
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
         Log.i(TAG, "startEpisode: series=$seriesContentId ep=$episodeContentId fileId=$fileId S${seasonNumber}E${episodeNumber}")
         if (activeDownloadExists(fileId)) {
             Log.i(TAG, "startEpisode: fileId=$fileId already queued/downloading — skipping duplicate")
@@ -108,6 +116,7 @@ class DownloadEnqueuer(
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),
+            expectedAuthority = authority,
         )) {
             is ApiResult.Success -> r.data
             is ApiResult.Error -> { Log.w(TAG, "startEpisode: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
@@ -129,7 +138,7 @@ class DownloadEnqueuer(
             mediaType = DownloadMediaType.TvShow.wire,
             updatedAtMs = System.currentTimeMillis(),
         )
-        finalizeAndEnqueue(record, sidecar, displayTitle)
+        finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         return ApiResult.Success(Unit)
     }
 
@@ -148,8 +157,10 @@ class DownloadEnqueuer(
         seriesContentId: String,
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
         Log.i(TAG, "startSeries: contentId=$seriesContentId")
-        val records = when (val r = repository.createBatch(
+        val created = when (val r = repository.createBatch(
             downloadRequest(
                 contentId = seriesContentId,
                 series = true,
@@ -159,12 +170,14 @@ class DownloadEnqueuer(
                 // override the caller passed (issue #20 GAP 3).
                 downloadQualityOverride = DownloadQuality.Original,
             ),
+            expectedAuthority = authority,
         )) {
-            is ApiResult.Success -> r.data.also { Log.i(TAG, "startSeries: server returned ${it.size} records") }
+            is ApiResult.Success -> r.data
             is ApiResult.Error -> { Log.w(TAG, "startSeries: server error ${r.code} ${r.message}"); return ApiResult.Error(r.code, r.error, r.message) }
             is ApiResult.NetworkError -> { Log.w(TAG, "startSeries: network error", r.exception); return ApiResult.NetworkError(r.exception) }
         }
-        if (records.isEmpty()) return ApiResult.Success(Unit)
+        val records = created.downloads
+        if (records.isEmpty()) return batchOutcome(created.skipped)
 
         val seriesDetail = (catalogRepository.getItemDetail(seriesContentId) as? ApiResult.Success)?.data
         val episodeByFileId = buildEpisodeIndexByFileId(seriesContentId)
@@ -174,7 +187,7 @@ class DownloadEnqueuer(
         for (record in records) {
             // Same duplicate guard as start/startEpisode: a second worker for
             // an already-active fileId would wipe the first one's partial.
-            if (activeDownloadExists(record.mediaFileId)) {
+            if (activeDownloadExists(record.mediaFileId) || completedLocalExists(record, authority)) {
                 Log.i(TAG, "startSeries: fileId=${record.mediaFileId} already queued/downloading — skipping duplicate")
                 continue
             }
@@ -200,9 +213,9 @@ class DownloadEnqueuer(
                 updatedAtMs = System.currentTimeMillis(),
             )
             val displayTitle = "$seriesTitle ${ep?.let { "S${it.seasonNumber}E${it.episodeNumber}" } ?: ""}".trim()
-            finalizeAndEnqueue(record, sidecar, displayTitle)
+            finalizeAndEnqueue(record, sidecar, displayTitle, authority)
         }
-        return ApiResult.Success(Unit)
+        return batchOutcome(created.skipped)
     }
 
     /**
@@ -221,6 +234,8 @@ class DownloadEnqueuer(
         seasonNumber: Int,
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
+        val authority = authorities?.snapshotDurableLoginAuthority()
+        if (authorities != null && authority == null) return ApiResult.Error(0, "identity_changed", "Downloads need a saved login.")
         Log.i(TAG, "startSeason: series=$seriesContentId season=$seasonNumber")
         val episodes = when (val r = catalogRepository.getEpisodes(seriesContentId, seasonNumber)) {
             is ApiResult.Success -> r.data.episodes
@@ -236,6 +251,7 @@ class DownloadEnqueuer(
         var firstError: ApiResult<Unit>? = null
         var queued = 0
         for (ep in episodes) {
+            if (authorities != null && authority != authorities.snapshotDurableLoginAuthority()) return ApiResult.Error(0, "identity_changed", "The download owner changed.")
             // Pick the highest-resolution file (last entry after best-pick
             // would be ideal, but the server already sorts; use first).
             val fileId = ep.files.firstOrNull()?.fileId ?: continue
@@ -261,6 +277,22 @@ class DownloadEnqueuer(
         }
         Log.i(TAG, "startSeason: queued $queued of ${episodes.size}")
         return if (queued > 0) ApiResult.Success(Unit) else (firstError ?: ApiResult.Success(Unit))
+    }
+
+    private fun batchOutcome(skipped: List<org.siloserver.silo.model.download.SkippedDownload>): ApiResult<Unit> =
+        if (skipped.isEmpty()) ApiResult.Success(Unit) else ApiResult.Error(0, "downloads_partially_skipped",
+            "${skipped.size} episodes could not be downloaded. Available episodes were queued.")
+
+    private suspend fun completedLocalExists(
+        record: org.siloserver.silo.model.download.DownloadRecord,
+        authority: org.siloserver.silo.network.DurableLoginAuthority?,
+    ): Boolean {
+        val owner = authority ?: return false
+        if (owner != authorities?.snapshotDurableLoginAuthority()) return false
+        val profile = owner.scope.profileId ?: return false
+        val local = metadataStore.readSidecar(owner.scope.serverId, profile, record.mediaFileId) ?: return false
+        return local.record.id == record.id && local.record.statusEnum() == DownloadStatus.Completed &&
+            storage.exists(owner.scope.serverId, profile, record.mediaFileId)
     }
 
     /** Builds a fileId → EpisodeListItem map across every season of [seriesContentId].
@@ -361,18 +393,21 @@ class DownloadEnqueuer(
         record: org.siloserver.silo.model.download.DownloadRecord,
         sidecar: DownloadSidecar,
         displayTitle: String,
+        authority: org.siloserver.silo.network.DurableLoginAuthority?,
     ) {
+        check(authorities == null || authority == authorities.snapshotDurableLoginAuthority()) { "The download owner changed" }
         val serverId = serverRegistry.activeServerId.value ?: DEFAULT_SERVER_ID
         val profileId = profileRepository.getActiveProfileId() ?: DEFAULT_PROFILE_ID
         val wifiOnly = playerSettingsStore.downloadsWifiOnlyFlow.first()
+        val deviceId = devices?.current()?.id
+        check(authority == null || !deviceId.isNullOrBlank()) { "The download device is unavailable" }
         // The Room metadata row is what makes the download visible in the
         // Downloads tab (it's the source of truth there). A write failure would
         // create an invisible download — log loudly. (Recovery: the worker
         // re-asserts the row on status transitions; full create-if-missing is a
         // tracked follow-up.)
-        runCatching {
-            metadataStore.writeSidecar(serverId, profileId, sidecar)
-        }.onFailure { Log.e(TAG, "finalize: writeSidecar FAILED for id=${record.id} — download will not appear in Downloads", it) }
+        suspend fun persistAndEnqueue() {
+        metadataStore.writeSidecar(serverId, profileId, sidecar)
         DownloadWorker.enqueue(
             context = context,
             downloadId = record.id,
@@ -384,7 +419,15 @@ class DownloadEnqueuer(
             mediaType = sidecar.mediaType,
             displayTitle = displayTitle,
             wifiOnly = wifiOnly,
+            deviceId = deviceId,
+            loginId = authority?.loginId,
+            origin = authority?.scope?.serverUrl,
         )
+        }
+        if (authority == null) persistAndEnqueue()
+        else check(transitions?.withCurrentGeneration(authority.scope.identityGeneration) {
+            persistAndEnqueue(); true
+        } == true) { "The download owner changed" }
     }
 
     private suspend fun buildInitialSidecar(

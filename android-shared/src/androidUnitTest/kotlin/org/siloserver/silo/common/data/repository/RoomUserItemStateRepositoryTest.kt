@@ -194,12 +194,12 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
-    fun favoriteToggleDoesNotClobberExistingRating() = runTest {
+    fun watchedToggleDoesNotClobberExistingRating() = runTest {
         repo.recordRating("c1", rating = 5)
-        repo.recordFavorite("c1", favorite = true)
+        repo.recordWatched("c1", watched = true)
         val row = db.contentItemStateDao().get("s1", "p1", "c1")
         assertEquals(5, row?.ratingValue)
-        assertEquals(true, row?.favorite)
+        assertEquals(true, row?.watched)
         // Distinct kinds do not coalesce against each other.
         assertEquals(2, db.dirtyOperationDao().count())
     }
@@ -215,34 +215,35 @@ class RoomUserItemStateRepositoryTest {
 
     @Test
     fun resolveSyncedDeletesOp() = runTest {
-        val handle = repo.recordFavorite("c1", favorite = true)
+        val handle = repo.recordRating("c1", rating = 4)
         repo.resolve(handle, WriteOutcome.SYNCED)
         assertEquals(0, db.dirtyOperationDao().count())
     }
 
     @Test
     fun resolveTerminalDropsOpAndRevertsProjection() = runTest {
-        val handle = repo.recordFavorite("c1", favorite = true)
-        assertEquals(true, db.contentItemStateDao().get("s1", "p1", "c1")?.favorite)
+        val handle = repo.recordRating("c1", rating = 4)
+        assertEquals(4, db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
         repo.resolve(handle, WriteOutcome.TERMINAL)
         assertEquals(0, db.dirtyOperationDao().count())
-        // Optimistic favorite reverted to null so the card overlay defers to server.
-        assertNull(db.contentItemStateDao().get("s1", "p1", "c1")?.favorite)
+        // Optimistic rating reverted to null so the card overlay defers to server.
+        assertNull(db.contentItemStateDao().get("s1", "p1", "c1")?.ratingValue)
     }
 
     @Test
-    fun localContentStatesReturnsOptimisticWatchedAndFavorite() = runTest {
+    fun localContentStatesReturnsOptimisticWatchedOnly() = runTest {
         repo.recordWatched("c1", watched = true)
-        repo.recordFavorite("c2", favorite = true)
+        repo.recordRating("c2", rating = 3)
         val states = repo.localContentStates(listOf("c1", "c2", "c3"))
         assertEquals(true, states["c1"]?.watched)
-        assertEquals(true, states["c2"]?.favorite)
+        // Favorites live in the durable MembershipPort; the projection never carries a local opinion.
+        assertNull(states["c2"]?.favorite)
         assertNull(states["c3"]) // no local opinion
     }
 
     @Test
     fun resolveRetriableKeepsOpPending() = runTest {
-        val handle = repo.recordFavorite("c1", favorite = true)
+        val handle = repo.recordRating("c1", rating = 4)
         repo.resolve(handle, WriteOutcome.RETRIABLE)
         assertEquals(1, db.dirtyOperationDao().count())
     }
@@ -540,7 +541,7 @@ class RoomUserItemStateRepositoryTest {
 
     @Test
     fun handleCarriesScopeForInlinePinning() = runTest {
-        val handle = repo.recordFavorite("c1", favorite = true)
+        val handle = repo.recordRating("c1", rating = 4)
         assertEquals("s1", handle.scope?.serverId)
         assertEquals("p1", handle.scope?.profileId)
         assertEquals("https://s1.example", handle.scope?.serverUrl)

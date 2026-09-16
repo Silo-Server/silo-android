@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -80,12 +82,23 @@ class AuthRepositoryServerNameTest {
         assertNull(registry.fetchedName)
     }
 
+    @Test
+    fun `refresh preserves cached name on branding failure`() = runTest {
+        val registry = RecordingServerRegistry()
+        val health = FakeHealthApi(ApiResult.Success(HealthStatus("ok", "Wrong fallback")))
+        val repository = repository(registry,
+            FakeBrandingApi(ApiResult.Error(503, "unavailable", "unavailable")), health)
+        repository.refreshActiveServerName()
+        assertNull(registry.fetchedName)
+        assertEquals(0, health.calls)
+    }
+
     private fun repository(
         registry: RecordingServerRegistry,
         branding: BrandingApi,
         health: HealthApi,
     ) = AuthRepository(
-        authApi = AuthApi(unusedClient()),
+        authApi = AuthApi(unusedClient(), ApiV2Gate.Unrestricted),
         tokenManager = FakeTokenManager,
         serverRegistry = registry,
         healthApi = health,

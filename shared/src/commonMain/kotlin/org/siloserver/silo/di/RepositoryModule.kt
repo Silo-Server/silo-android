@@ -1,8 +1,8 @@
 package org.siloserver.silo.di
 
-import org.siloserver.silo.domain.ManagePlaybackUseCase
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.OnboardingRepository
 import org.siloserver.silo.repository.CalendarRepository
@@ -53,6 +53,10 @@ val repositoryModule = module {
             serverRegistry = getOrNull(),
             healthApi = getOrNull(),
             brandingApi = getOrNull(),
+            apiV2Probe = getOrNull(),
+            // Owns the post-switch display-name refresh so a server-list
+            // spinner never waits on branding/health.
+            backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
     single { OnboardingRepository(get()) }
@@ -62,7 +66,6 @@ val repositoryModule = module {
             catalogApi = get(),
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
-            identityTransitions = get(),
         )
     }
     single { CalendarRepository(get()) }
@@ -73,11 +76,11 @@ val repositoryModule = module {
     single {
         PersonalDataRepository(
             personalDataApi = get(),
+            membershipPort = get(),
             userItemStatePort = getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>()
                 ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
-            identityTransitions = get(),
         )
     }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
@@ -87,12 +90,12 @@ val repositoryModule = module {
             sectionApi = get(),
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
-            identityTransitions = get(),
         )
     }
     single { RecommendationRepository(get()) }
     single { RequestsRepository(get()) }
     single { RequestsFeatureStore(get()) }
+    single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
@@ -101,9 +104,9 @@ val repositoryModule = module {
     // one platform cannot grow a behavior the other lacks.
     single { org.siloserver.silo.domain.settings.ProfileSettingsController(get()) }
     single { LibraryPlaybackPrefsRepository(get()) }
-    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort) }
-    single { EbookReaderRepository(get()) }
-    single { SubtitlesRepository(get()) }
+    single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
+    single { EbookReaderRepository(get(), get()) }
+    single { SubtitlesRepository(get(), get()) }
     single { PushRegistrationRepository(get()) }
 
     // REST-backed inbox state plus a realtime factory that builds the default
@@ -112,10 +115,10 @@ val repositoryModule = module {
     single {
         NotificationsRepository(
             api = get(),
+            tokens = get(), authorities = getOrNull(), checkpoints = getOrNull(), identityTransitions = get(),
             realtimeFactory = {
                 org.siloserver.silo.network.DefaultNotificationsRealtimeClient(
-                    client = get(),
-                    api = get(),
+                    socket = get(),
                 )
             },
         )
@@ -123,9 +126,9 @@ val repositoryModule = module {
 
     // One room's snapshot/suggestions state + WS lifecycle. The realtime factory
     // builds the per-room socket client from the shared HttpClient + TokenManager.
-    // Access auth is supplied by the same-origin Silo auth plugin; the room/profile
-    // query fields are a residual server contract. Lazy so a socket is only minted
-    // when connect() runs.
+    // Each connect mints a single-use v2 room ticket and upgrades with it in the
+    // subprotocol; no credential travels in the URL. Lazy so a socket is only
+    // minted when connect() runs.
     single {
         val tokenManager: TokenManager = get()
         WatchTogetherRepository(
@@ -152,7 +155,7 @@ val repositoryModule = module {
     }
 
     // Per-session playback control socket (admin remote control). Parallel to
-    // the watch-together realtime client — same HttpClient + query-param auth.
+    // the watch-together realtime client; v2 uses a single-use owner-bound ticket.
     // FACTORY, not single: the client holds one mutable socket session, so each
     // player-screen controller must get its own instance (mirrors how the WT
     // repository mints a fresh client per connect) — a shared singleton would
@@ -161,10 +164,11 @@ val repositoryModule = module {
         org.siloserver.silo.network.DefaultPlaybackRealtimeClient(
             client = get(),
             tokenManager = get(),
+            gate = get(),
+            ownerProvider = get<PlaybackRepository>()::controlOwner,
         )
     }
 
     // Domain use cases
-    single { ManagePlaybackUseCase(get(), get()) }
     single { MediaActionsCoordinator(get()) }
 }

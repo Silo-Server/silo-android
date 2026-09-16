@@ -35,6 +35,24 @@ class RoomCatalogCacheRepositoryTest {
     fun tearDown() = db.close()
 
     @Test
+    fun scopedV2SectionsExcludeLegacyAndReplacementAuthority() = runTest {
+        val owner = scope!!
+        val sections = listOf(org.siloserver.silo.model.section.ResolvedSection("row", "custom", "Row"))
+        repo.cacheLibrarySections(7, sections)
+        assertNull(repo.getCachedLibrarySectionsV2(7, owner))
+        repo.cacheLibrarySectionsV2(7, sections, owner)
+        assertEquals(sections, repo.getCachedLibrarySectionsV2(7, owner))
+        assertNull(repo.getCachedLibrarySectionsV2(8, owner))
+        scope = owner.copy(profileToken = "new")
+        assertNull(repo.getCachedLibrarySectionsV2(7, scope!!))
+        assertNull(repo.getCachedLibrarySectionsV2(7, owner))
+        repo.cacheLibrarySectionsV2(7, sections, owner)
+        assertNull(repo.getCachedLibrarySectionsV2(7, scope!!))
+        scope = owner.copy(credentialEpoch = 2)
+        assertNull(repo.getCachedLibrarySectionsV2(7, scope!!))
+    }
+
+    @Test
     fun roundTripsLibraries() = runTest {
         assertNull(repo.getCachedLibraries())
         repo.cacheLibraries(listOf(UserLibrary(id = 1, name = "Movies", type = "movie")))

@@ -7,6 +7,11 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class NotificationRealtimeDecoderTest {
+    @Test fun `cutoff read event invalidates without rounded timestamp comparisons`() {
+        val event = decodeRealtimeFrame(SiloJson, """{"type":"event","channel":"notifications","event":"notification.read","data":{"profile_id":"profile","through_created_at":"2026-09-05T12:00:00.123456Z","through_id":"cutoff"}}""")
+        assertIs<NotificationRealtimeEvent.Invalidate>(event)
+    }
+
 
     private val json = SiloJson
 

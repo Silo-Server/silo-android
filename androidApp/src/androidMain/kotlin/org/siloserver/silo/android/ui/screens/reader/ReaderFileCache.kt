@@ -98,8 +98,17 @@ internal suspend fun resolveReaderFile(
     url: String,
     serverUrl: String,
     extension: String,
+    authority: org.siloserver.silo.network.DurableLoginAuthority? = null,
+    tokenManager: org.siloserver.silo.network.TokenManager? = null,
 ): File = withContext(Dispatchers.IO) {
-    val requestUrl = resolveReaderRequestUrl(url, serverUrl)
+    val scope = authority?.scope
+    val requestUrl = resolveReaderRequestUrl(url, scope?.serverUrl ?: serverUrl)
+    val remote = readerRequestKind(url, serverUrl) == ReaderRequestKind.Remote
+    suspend fun checkScope() {
+        if (remote && (scope == null || !scope.isSameIdentityAs(tokenManager?.snapshotCurrentScope())))
+            throw IOException("The reader's account or profile changed")
+    }
+    checkScope()
     when (readerRequestKind(url, serverUrl)) {
         ReaderRequestKind.File -> {
             val file = readerFileFromFileUrl(requestUrl)
@@ -110,7 +119,8 @@ internal suspend fun resolveReaderFile(
         ReaderRequestKind.Remote -> Unit
     }
     val cacheDir = File(context.cacheDir, "readers")
-    val fileName = readerCacheFileName(url, serverUrl, extension)
+    val fileName = if (remote) readerRemoteCacheFileName(requestUrl, requireNotNull(authority), extension)
+        else readerCacheFileName(url, serverUrl, extension)
     val formatValidator = readerCacheValidatorFor(extension)
     val validate: (File) -> Boolean = { file ->
         file.length() <= MAX_READER_INPUT_BYTES &&
@@ -129,10 +139,12 @@ internal suspend fun resolveReaderFile(
             } ?: error("Could not open content reader file")
         }
     }
-    cacheReaderFile(cacheDir, fileName, validate) { out ->
-        val req = Request.Builder().url(requestUrl).build()
-        okHttp.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) error("HTTP ${resp.code} fetching reader file")
+    val file = cacheReaderFile(cacheDir, fileName, validate) { out ->
+        val req = Request.Builder().url(requestUrl)
+            .tag(org.siloserver.silo.network.AuthScopeSnapshot::class.java, scope).build()
+        okHttp.newBuilder().followRedirects(false).followSslRedirects(false).build().newCall(req).execute().use { resp ->
+            // This loader requests a complete representation, never a byte range.
+            if (resp.code != 200) error("HTTP ${resp.code} fetching reader file")
             // Kindle->EPUB conversion serves the raw original with this header on
             // failure. Never cache that body as the expected (EPUB) format.
             if (resp.header(EBOOK_CONVERSION_HEADER) == EBOOK_CONVERSION_FAILED) {
@@ -143,6 +155,15 @@ internal suspend fun resolveReaderFile(
             body.byteStream().use { input -> input.copyReaderInputTo(out) }
         }
     }
+    checkScope()
+    file
+}
+
+internal fun readerRemoteCacheFileName(url: String,
+    authority: org.siloserver.silo.network.DurableLoginAuthority, extension: String): String {
+    val scope = authority.scope
+    val identity = "$url|${scope.serverId}|${scope.profileId}|${authority.loginId}"
+    return "${readerCacheKey(identity)}.$extension"
 }
 
 internal fun InputStream.copyReaderInputTo(

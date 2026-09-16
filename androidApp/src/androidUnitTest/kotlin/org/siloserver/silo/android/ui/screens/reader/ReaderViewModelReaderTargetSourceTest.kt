@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.reader
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -27,6 +29,7 @@ import org.siloserver.silo.repository.ProfileRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
@@ -195,7 +198,7 @@ class ReaderViewModelReaderTargetSourceTest {
         assertEquals(8, state.fileId)
         assertEquals(BookFormat.Epub, state.format)
         assertEquals(EbookReadMode.InApp, state.readMode)
-        assertEquals("/api/v1/ebooks/$CONTENT_ID/files/8/read", state.fileUrl)
+        assertEquals("/api/v2/ebooks/$CONTENT_ID/files/8/read", state.fileUrl)
         assertNull(state.localUri)
         assertEquals("book.epub", state.localDisplayName)
         assertNull(state.error)
@@ -271,14 +274,71 @@ class ReaderViewModelReaderTargetSourceTest {
         assertEquals(1.0, state.progressPercent)
     }
 
+    @Test
+    fun pendingAnnotationRecoveryRetainsCreateAndDeleteIdentities() = runTest(dispatcher) {
+        val barrier = org.siloserver.silo.network.DefaultIdentityTransitionBarrier()
+        val scope = org.siloserver.silo.network.AuthScopeSnapshot(SERVER_ID, PROFILE_ID, "https://reader.example", null,
+            identityGeneration = barrier.generation.value, isIdentityGenerationStamped = true)
+        val authority = org.siloserver.silo.network.DurableLoginAuthority("login", scope)
+        val authorities = object : org.siloserver.silo.network.DurableLoginAuthorityProvider {
+            override suspend fun snapshotDurableLoginAuthority() = authority
+        }
+        val tokens = object : TokenManager by org.siloserver.silo.network.TokenManagerImpl() {
+            override suspend fun snapshotCurrentScope() = scope
+        }
+        val root = tmp.newFolder("annotation-state")
+        val state = EbookLocalStateStore(root)
+        val create = state.addBookmark(SERVER_ID, PROFILE_ID, CONTENT_ID, "page:3", loginId = "login", origin = scope.serverUrl)
+        val deletion = state.markBookmarkDelete(SERVER_ID, PROFILE_ID, CONTENT_ID, "delete-me", "page:4", "login", scope.serverUrl, "old-tag")
+        state.addBookmark(SERVER_ID, PROFILE_ID, CONTENT_ID, "page:5", loginId = "other-login", origin = scope.serverUrl)
+        val calls = mutableListOf<String>()
+        val row = """{"id":"${create.id}","content_id":"$CONTENT_ID","kind":"bookmark","location":"page:9","etag":"current"}"""
+        val client = HttpClient(MockEngine { request ->
+            calls += "${request.method.value} ${request.url.encodedPath}"
+            when (request.method) {
+                io.ktor.http.HttpMethod.Post -> {
+                    val body = kotlinx.serialization.json.Json.parseToJsonElement(request.body.toByteArray().decodeToString()).toString()
+                    assertTrue(body.contains(create.id)); assertFalse(body.contains(deletion.id))
+                    respond(row, HttpStatusCode.OK, jsonHeaders)
+                }
+                io.ktor.http.HttpMethod.Delete -> {
+                    assertEquals("old-tag", request.headers[HttpHeaders.IfMatch])
+                    assertTrue(request.url.encodedPath.endsWith("/delete-me"))
+                    respond("", HttpStatusCode.NoContent, jsonHeaders)
+                }
+                else -> respond("""{"items":[$row],"page":{"has_more":false}}""", HttpStatusCode.OK, jsonHeaders)
+            }
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        try {
+            val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(client, tokens, ApiV2Gate.Unrestricted)
+            val repository = EbookReaderRepository(EbookReaderApi(v2), v2)
+            val vm = viewModel(catalogRepository(responseBody = itemDetailJson(fileName = "book.epub", container = "epub")),
+                DownloadStorage(tmp.newFolder("annotation-downloads")), readerRepository = repository,
+                readerStore = EbookLocalStateStore(root), authorities = authorities, barrier = barrier)
+            advanceUntilIdle()
+            val loaded = vm.awaitLoaded()
+            assertEquals(listOf(create.id), loaded.bookmarks.map { it.id })
+            assertEquals("page:9", loaded.bookmarks.single().location)
+            assertEquals(listOf("other-login"), state.listBookmarks(SERVER_ID, PROFILE_ID, CONTENT_ID).map { it.loginId })
+            assertEquals(1, calls.count { it.startsWith("POST ") })
+            assertEquals(1, calls.count { it.startsWith("DELETE ") })
+        } finally { client.close() }
+    }
+
     private fun viewModel(
         catalogRepository: CatalogRepository,
         downloadStorage: DownloadStorage,
         requestedFileId: Int? = FILE_ID,
+        readerRepository: EbookReaderRepository = ebookReaderRepository(),
+        readerStore: EbookLocalStateStore = EbookLocalStateStore(tmp.newFolder("reader-state")),
+        authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
+        barrier: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
     ): ReaderViewModel =
         ReaderViewModel(
             catalogRepository = catalogRepository,
-            ebookReaderRepository = ebookReaderRepository(),
+            ebookReaderRepository = readerRepository,
+            ebookAuthorities = authorities,
+            identityTransitions = barrier,
             // Importer over an empty dir → awaitImport is a no-op; metadata is
             // written directly to Room via [metadata] in writeCompletedDownload.
             offlineMediaResolver = OfflineMediaResolver(
@@ -286,7 +346,7 @@ class ReaderViewModelReaderTargetSourceTest {
                 downloadStorage,
                 LegacyDownloadImporter(tmp.newFolder(), db),
             ),
-            localStateStore = EbookLocalStateStore(tmp.newFolder("reader-state")),
+            localStateStore = readerStore,
             serverRegistry = FakeServerRegistry(),
             profileRepository = FakeProfileRepository(),
             userItemStatePort = org.siloserver.silo.repository.port.NoOpUserItemStatePort,
@@ -329,14 +389,14 @@ class ReaderViewModelReaderTargetSourceTest {
             CatalogApi(
                 HttpClient(
                     MockEngine { request ->
-                        val body = if (request.url.encodedPath == "/api/v1/catalog/items/$CONTENT_ID") {
+                        val body = if (request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID") {
                             responseBody
                         } else {
                             """{"error":"not_found","message":"not found"}"""
                         }
                         respond(
                             content = body,
-                            status = if (request.url.encodedPath == "/api/v1/catalog/items/$CONTENT_ID") {
+                            status = if (request.url.encodedPath == "/api/v2/catalog/items/$CONTENT_ID") {
                                 status
                             } else {
                                 HttpStatusCode.NotFound
@@ -350,22 +410,24 @@ class ReaderViewModelReaderTargetSourceTest {
             ),
         )
 
-    private fun ebookReaderRepository(): EbookReaderRepository =
-        EbookReaderRepository(
-            EbookReaderApi(
-                HttpClient(
-                    MockEngine {
-                        respond(
-                            content = """{"error":"not_found","message":"not found"}""",
-                            status = HttpStatusCode.NotFound,
-                            headers = jsonHeaders,
-                        )
-                    },
-                ) {
-                    install(ContentNegotiation) { json(SiloJson) }
+    private fun ebookReaderRepository(): EbookReaderRepository {
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(
+            HttpClient(
+                MockEngine {
+                    respond(
+                        content = """{"error":"not_found","message":"not found"}""",
+                        status = HttpStatusCode.NotFound,
+                        headers = jsonHeaders,
+                    )
                 },
-            ),
+            ) {
+                install(ContentNegotiation) { json(SiloJson) }
+            },
+            FakeTokenManager(),
+            org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted,
         )
+        return EbookReaderRepository(EbookReaderApi(v2), v2)
+    }
 
     private fun itemDetailJson(fileId: Int = FILE_ID, fileName: String, container: String): String =
         """
@@ -380,9 +442,10 @@ class ReaderViewModelReaderTargetSourceTest {
               }
             ]
           },
+          "cast": [], "crew": [], "subtitles": [],
           "versions": [
             {
-              "file_id": $fileId,
+              "file_id": "$fileId",
               "file_name": "$fileName",
               "container": "$container"
             }
@@ -437,7 +500,7 @@ class ReaderViewModelReaderTargetSourceTest {
     }
 
     private class FakeProfileRepository : ProfileRepository(
-        profileApi = ProfileApi(noOpClient()),
+        profileApi = ProfileApi(noOpClient(), ApiV2Gate.Unrestricted),
         tokenManager = FakeTokenManager(),
     ) {
         override suspend fun getActiveProfileId(): String = PROFILE_ID

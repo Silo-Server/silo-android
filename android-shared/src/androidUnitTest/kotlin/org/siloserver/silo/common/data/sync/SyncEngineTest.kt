@@ -47,8 +47,25 @@ class SyncEngineTest {
         install(ContentNegotiation) { json(SiloJson) }
     }
 
+    // v2 ebook progress: GET returns the server position; PUT echoes the saved row.
+    private fun ebookClient() = HttpClient(
+        MockEngine { request ->
+            val body = if (request.method == io.ktor.http.HttpMethod.Put)
+                """{"progress":{"content_id":"c1","file_id":"7","location":"epubcfi(/6/4!/4)","progress":0.5,"updated_at":"2026-01-01T00:00:00Z"}}"""
+            else """{"progress":{"content_id":"c1","file_id":"7","location":"start","progress":0.0,"updated_at":"2026-01-01T00:00:00Z"}}"""
+            respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        },
+    ) {
+        install(ContentNegotiation) { json(SiloJson) }
+    }
+
+    private val tokens = object : org.siloserver.silo.network.TokenManager by org.siloserver.silo.network.TokenManagerImpl() {
+        override suspend fun snapshotCurrentScope() = snapshot
+    }
     private val api = PersonalDataApi(mockClient())
-    private val ebookApi = org.siloserver.silo.network.api.EbookReaderApi(mockClient())
+    private val ebookApi = org.siloserver.silo.network.api.EbookReaderApi(
+        org.siloserver.silo.network.apiv2.EbookReaderV2Api(ebookClient(), tokens, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+    )
 
     private fun engine(batchLimit: Int = 50) = SyncEngine(
         db = db,
@@ -84,180 +101,29 @@ class SyncEngineTest {
     )
 
     @Test
-    fun successSyncsAndDeletes() = runTest {
-        db.dirtyOperationDao().insert(op(idempotencyKey = "i1"))
-        status = HttpStatusCode.OK
-        val result = engine().drainOnce()
-        assertEquals(1, result.synced)
-        assertEquals(0, db.dirtyOperationDao().count())
-    }
-
-    @Test
-    fun malformedPayloadIsDroppedTerminallyInsteadOfBrickingTheDrain() = runTest {
-        // A payload that fails to decode (pre-validation rows, foreign
-        // writers) must not rethrow out of drainOnce: SyncWorker would retry
-        // forever and every other op for the scope would never sync again.
-        db.dirtyOperationDao().insert(op(idempotencyKey = "poison", payload = "{not json"))
-        db.dirtyOperationDao().insert(op(idempotencyKey = "healthy", coalesceKey = "s1|p1|c2|SET_WATCHED"))
-        status = HttpStatusCode.OK
-
-        val result = engine().drainOnce()
-
-        assertEquals(1, result.dropped)
-        assertEquals(1, result.synced)
-        assertEquals(0, db.dirtyOperationDao().count())
-    }
-
-    @Test
-    fun retriableKeepsOpAndBacksOff() = runTest {
-        db.dirtyOperationDao().insert(op(idempotencyKey = "i1"))
-        status = HttpStatusCode.InternalServerError
-        val result = engine().drainOnce()
-        assertEquals(1, result.retriable)
-        val row = db.dirtyOperationDao().dueBatch("s1", "p1", nowMs = Long.MAX_VALUE, limit = 10).single()
-        assertEquals(DirtyOperationEntity.STATE_PENDING, row.state)
-        assertEquals(1, row.attemptCount)
-        assertTrue(row.nextAttemptAtMs > clock, "backoff should push nextAttemptAtMs into the future")
-    }
-
-    @Test
-    fun newerOpForTheSameItemWaitsWhileAnOlderOpIsBackingOff() = runTest {
-        // The state after an older op fails a SECOND time: recordFailure pushes it
-        // into the future again, so the enqueue-time clamp
-        // (enqueueCoalescingRestoringItemOrder) has already been undone and cannot
-        // help. dueBatch only returns due rows, so without per-item FIFO the newer
-        // SET_POSITION drains now and the retried SET_WATCHED lands after it and
-        // clears the resume position the user just created.
+    fun legacyPersonalRowsRemainByteForByteAcrossRepeatedDrains() = runTest {
         val dao = db.dirtyOperationDao()
-        dao.insert(
-            op(
-                idempotencyKey = "watched-retrying",
-                opKind = OutboxOperation.SET_WATCHED,
-                coalesceKey = "s1|p1|c1|${OutboxOperation.SET_WATCHED}",
-                nextAttemptAtMs = clock + 30_000L,
-            ),
-        )
-        dao.insert(
-            op(
-                idempotencyKey = "position-newer",
-                opKind = OutboxOperation.SET_POSITION,
-                coalesceKey = "s1|p1|c1|${OutboxOperation.SET_POSITION}",
-                payload = """{"positionTicks":1,"playedPercentage":1.0}""",
-                nextAttemptAtMs = 0L,
-            ),
-        )
-        status = HttpStatusCode.OK
-
-        val result = engine().drainOnce()
-
-        assertEquals(0, result.synced, "newer op must not overtake an older op for the same item")
-        assertEquals(2, dao.count(), "both ops stay queued until the older one clears")
-    }
-
-    @Test
-    fun olderBackoffOutsideSqlPageStillBlocksNewerSibling() = runTest {
-        val dao = db.dirtyOperationDao()
-        dao.insert(
-            op(
-                targetContentId = "blocked",
-                idempotencyKey = "blocked-older",
-                coalesceKey = "s1|p1|blocked|${OutboxOperation.SET_WATCHED}",
-                nextAttemptAtMs = clock + 30_000L,
-            ),
-        )
-        dao.insert(
-            op(
-                targetContentId = "blocked",
-                idempotencyKey = "blocked-newer",
-                opKind = OutboxOperation.SET_POSITION,
-                coalesceKey = "s1|p1|blocked|${OutboxOperation.SET_POSITION}",
-                payload = """{"positionTicks":1,"playedPercentage":1.0}""",
-            ),
-        )
-        dao.insert(
-            op(
-                targetContentId = "independent",
-                idempotencyKey = "independent",
-                coalesceKey = "s1|p1|independent|${OutboxOperation.SET_WATCHED}",
-            ),
-        )
-        status = HttpStatusCode.OK
-
-        val result = engine(batchLimit = 2).drainOnce()
-
-        assertEquals(1, result.synced, "only the independent target may pass")
-        assertEquals(2, dao.count(), "both blocked siblings remain queued in creation order")
-    }
-
-    @Test
-    fun terminalDropsOp() = runTest {
-        db.dirtyOperationDao().insert(op(idempotencyKey = "i1"))
-        status = HttpStatusCode.Forbidden
-        val result = engine().drainOnce()
-        assertEquals(1, result.dropped)
-        assertEquals(0, db.dirtyOperationDao().count())
-    }
-
-    @Test
-    fun reclaimsCrashStrandedInFlightThenSyncs() = runTest {
-        val dao = db.dirtyOperationDao()
-        val id = dao.insert(op(idempotencyKey = "i1"))
-        assertEquals(1, dao.claim(id)) // simulate crash mid-send (left in_flight)
-        status = HttpStatusCode.OK
-        val result = engine().drainOnce()
-        assertEquals(1, result.synced)
-        assertEquals(0, dao.count())
-    }
-
-    @Test
-    fun reclaimDropsStrandedInFlightSupersededByNewerPending() = runTest {
-        val dao = db.dirtyOperationDao()
-        val key = "s1|p1|c1|${OutboxOperation.SET_WATCHED}"
-        val stranded = dao.insert(op(coalesceKey = key, idempotencyKey = "i1", payload = "true"))
-        assertEquals(1, dao.claim(stranded)) // in_flight
-        dao.insert(op(coalesceKey = key, idempotencyKey = "i2", payload = "false")) // newer pending, same key
-        status = HttpStatusCode.OK
-        engine().drainOnce()
-        // Stranded stale op dropped at reclaim; only the newer op synced.
-        assertEquals(0, dao.count())
-    }
-
-    @Test
-    fun drainIsScopedToCurrentServer() = runTest {
-        db.dirtyOperationDao().insert(op(serverId = "s2", coalesceKey = "s2|p1|c1|w", idempotencyKey = "i1"))
-        status = HttpStatusCode.OK
-        val result = engine().drainOnce()
-        assertEquals(0, result.synced)
-        // The other server's op is untouched (snapshot pins s1/p1).
-        assertEquals(1, db.dirtyOperationDao().count())
-    }
-
-    @Test
-    fun drainsBacklogLargerThanBatchLimitInOneRun() = runTest {
-        repeat(5) { i ->
-            db.dirtyOperationDao().insert(op(coalesceKey = "s1|p1|c$i|w", idempotencyKey = "i$i"))
+        val rows = listOf(OutboxOperation.SET_WATCHED, OutboxOperation.SET_RATING, OutboxOperation.SET_POSITION)
+            .flatMap { kind -> listOf("pending", "in_flight").map { state ->
+                op(idempotencyKey = "$kind-$state", opKind = kind, payload = "{unconverted legacy bytes}")
+                    .copy(state = state, attemptCount = 3, lastAttemptAtMs = 17, lastError = "uncertain")
+            } }
+        val saved = rows.map { row -> val id = dao.insert(row); row.copy(id = id) }
+        repeat(2) {
+            assertEquals(SyncEngine.DrainResult(), engine(batchLimit = 1).drainOnce())
+            assertEquals(saved, saved.map { dao.getById(it.id) })
         }
-        status = HttpStatusCode.OK
-        val result = engine(batchLimit = 2).drainOnce()
-        assertEquals(5, result.synced)
-        assertEquals(0, result.remaining)
-        assertEquals(0, db.dirtyOperationDao().count())
     }
 
     @Test
-    fun setPositionDrainsViaSyncProgress() = runTest {
-        db.dirtyOperationDao().insert(
-            op(
-                coalesceKey = "s1|p1|c1|${OutboxOperation.SET_POSITION}",
-                idempotencyKey = "i1",
-                opKind = OutboxOperation.SET_POSITION,
-                payload = OutboxOperation.encodePositionPayload(123.0, 3600.0),
-            ),
-        )
-        status = HttpStatusCode.OK
-        val result = engine().drainOnce()
-        assertEquals(1, result.synced)
-        assertEquals(0, db.dirtyOperationDao().count())
+    fun heldPersonalRowDoesNotBlockEbookForSameItem() = runTest {
+        val dao = db.dirtyOperationDao()
+        val heldId = dao.insert(op(idempotencyKey = "held"))
+        val before = dao.getById(heldId)
+        dao.insert(op(idempotencyKey = "ebook", opKind = OutboxOperation.SET_EBOOK_PROGRESS,
+            coalesceKey = "ebook", payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5, updatedAt = "2026-01-01T00:00:00Z")))
+        assertEquals(1, engine().drainOnce().synced)
+        assertEquals(before, dao.getById(heldId))
     }
 
     @Test
@@ -277,14 +143,14 @@ class SyncEngineTest {
 
     @Test
     fun ebookProgressDrainsWhenLocalAheadOfServer() = runTest {
-        // MockEngine getProgress returns "{}" → server progress 0.0; local 0.5 is
-        // ahead → saveProgress runs → 200 → synced.
+        // ebookClient GET returns server progress 0.0; local 0.5 is ahead →
+        // saveProgress runs with the retained event time → 200 → synced.
         db.dirtyOperationDao().insert(
             op(
                 coalesceKey = "s1|p1|c1|${OutboxOperation.SET_EBOOK_PROGRESS}",
                 idempotencyKey = "i1",
                 opKind = OutboxOperation.SET_EBOOK_PROGRESS,
-                payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5),
+                payload = OutboxOperation.encodeEbookProgressPayload(7, "epubcfi(/6/4!/4)", 0.5, updatedAt = "2026-01-01T00:00:00Z"),
             ),
         )
         status = HttpStatusCode.OK

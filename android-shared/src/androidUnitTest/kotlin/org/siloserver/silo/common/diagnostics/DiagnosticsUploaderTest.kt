@@ -52,6 +52,73 @@ class DiagnosticsUploaderTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
+    fun definitiveRejectionCanRetireOnlyItsOriginalAttempt() {
+        val fixture = fixture()
+        val first = assertNotNull(fixture.store.beginServerUpload(fixture.report.id))
+        fixture.store.rejectServerUpload(fixture.report.id, "other-attempt")
+        assertEquals(null, fixture.store.beginServerUpload(fixture.report.id))
+        fixture.store.rejectServerUpload(fixture.report.id, first)
+        val second = assertNotNull(fixture.store.beginServerUpload(fixture.report.id))
+        fixture.store.rejectServerUpload(fixture.report.id, first)
+        assertEquals(null, fixture.store.beginServerUpload(fixture.report.id))
+        assertTrue(first != second)
+    }
+
+    @Test
+    fun delayedPreflightFailureCannotEraseAnotherUncertainAttempt() = runTest {
+        val preflightEntered = CompletableDeferred<Unit>()
+        val failPreflight = CompletableDeferred<Unit>()
+        val sendEntered = CompletableDeferred<Unit>()
+        val loseReceipt = CompletableDeferred<Unit>()
+        var tokenCalls = 0
+        val fixture = fixture(tokens = DiagnosticsRedactionTokenProvider {
+            if (++tokenCalls == 1) {
+                preflightEntered.complete(Unit)
+                failPreflight.await()
+                error("redaction unavailable")
+            }
+            listOf("secret-token")
+        })
+        val delayed = async { fixture.uploader.upload(fixture.report.id) }
+        preflightEntered.await()
+        fixture.api.onUploadSuspending = { sendEntered.complete(Unit); loseReceipt.await() }
+        val sending = async { fixture.uploader.upload(fixture.report.id) }
+        sendEntered.await()
+        failPreflight.complete(Unit)
+        assertEquals(DiagnosticsUploadDecision.KeptRetryable, delayed.await())
+        assertEquals("delivery_uncertain", fixture.store.load(fixture.report.id)?.state?.errorCode)
+        loseReceipt.complete(Unit)
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, sending.await())
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.uploadCalls)
+        val root = fixture.report.directory.parentFile!!.parentFile!!.parentFile!!
+        val reopened = FilePendingReportStore(root, nowMs = { CAPTURED_AT }, directorySync = {}, atomicRename = ::testAtomicRename)
+        reopened.markState(fixture.report.id, PendingReportStatus.RETRYABLE, "another_failure")
+        assertEquals("delivery_uncertain", reopened.load(fixture.report.id)?.state?.errorCode)
+        assertEquals(null, reopened.beginServerUpload(fixture.report.id))
+    }
+
+    @Test
+    fun persistedUncertainDispatchPreventsSendAfterRestart() = runTest {
+        val fixture = fixture()
+        fixture.store.markState(fixture.report.id, PendingReportStatus.PERMANENT_FAILURE, "delivery_uncertain")
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.uploadAutomatically(fixture.report.id))
+        assertEquals(0, fixture.api.uploadCalls)
+    }
+
+    @Test
+    fun uncertainSelfHostedSendIsPersistedAndNeverAutomaticallyRepeated() = runTest {
+        val fixture = fixture()
+        fixture.api.result = DiagnosticsUploadResult.NetworkError(IllegalStateException("lost receipt"))
+        fixture.api.onUpload = { assertEquals("delivery_uncertain", fixture.store.load(fixture.report.id)?.state?.errorCode) }
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.upload(fixture.report.id))
+        assertEquals("delivery_uncertain", fixture.store.load(fixture.report.id)?.state?.errorCode)
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.uploadAutomatically(fixture.report.id))
+        assertEquals(DiagnosticsUploadDecision.KeptUncertain, fixture.uploader.upload(fixture.report.id))
+        assertEquals(1, fixture.api.uploadCalls)
+    }
+
+    @Test
     fun hostedWireIdCanonicalizesTheLocalUuidWithoutChangingItsIdentity() {
         assertEquals(
             "01234567-89ab-4def-8123-456789abcdef",
@@ -305,10 +372,10 @@ class DiagnosticsUploaderTest {
     @Test
     fun everyStableServerErrorHasExplicitPolicy() = runTest {
         val cases = mapOf(
-            "busy" to DiagnosticsUploadDecision.KeptRetryable,
+            "busy" to DiagnosticsUploadDecision.KeptUncertain,
             "quota_exceeded" to DiagnosticsUploadDecision.KeptRetryable,
             "rate_limited" to DiagnosticsUploadDecision.KeptRetryable,
-            "internal_error" to DiagnosticsUploadDecision.KeptRetryable,
+            "internal_error" to DiagnosticsUploadDecision.KeptUncertain,
             "too_large" to DiagnosticsUploadDecision.KeptTooLarge,
             "unsupported_schema" to DiagnosticsUploadDecision.KeptServerUpdateRequired,
             "storage_unavailable" to DiagnosticsUploadDecision.KeptUnavailable,
@@ -351,7 +418,7 @@ class DiagnosticsUploaderTest {
                 PendingReportStatus.PERMANENT_FAILURE
             }
             assertEquals(expectedStatus, state.status, code)
-            assertEquals(DiagnosticsErrorCode.fromWire(code).wire, state.errorCode, code)
+            assertEquals(if (expected == DiagnosticsUploadDecision.KeptUncertain) "delivery_uncertain" else DiagnosticsErrorCode.fromWire(code).wire, state.errorCode, code)
         }
     }
 
@@ -1002,7 +1069,7 @@ class DiagnosticsUploaderTest {
         )
     }
 
-    private fun fixture(maxBundleBytes: Long = 1_024 * 1_024): Fixture {
+    private fun fixture(maxBundleBytes: Long = 1_024 * 1_024, tokens: DiagnosticsRedactionTokenProvider = DiagnosticsRedactionTokenProvider { listOf("secret-token") }): Fixture {
         val store = FilePendingReportStore(
             noBackupFilesDir = temporaryFolder.newFolder(),
             nowMs = { CAPTURED_AT },
@@ -1031,7 +1098,7 @@ class DiagnosticsUploaderTest {
             identityTransitions = identityTransitions,
             bundleBuilder = builder,
             api = api,
-            redactionTokens = DiagnosticsRedactionTokenProvider { _ -> listOf("secret-token") },
+            redactionTokens = tokens,
             selfHostedAuthorization = DiagnosticsSelfHostedAuthorizationProvider {
                 DiagnosticsUploadAuthorization(
                     serverId = "local-server-1",

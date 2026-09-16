@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import org.siloserver.silo.model.notifications.NotificationListResponse
 import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.model.notifications.UnreadCountResponse
@@ -59,13 +61,12 @@ class ProfileRepositoryTest {
             override suspend fun sync(since: String?, limit: Int) = error("unused in this test")
             override suspend fun get(id: String) = error("unused in this test")
             override suspend fun markRead(id: String) = error("unused in this test")
-            override suspend fun markAllRead() = error("unused in this test")
+            override suspend fun markAllRead(through: String) = error("unused in this test")
             override suspend fun getPreferences() = error("unused in this test")
             override suspend fun updatePreferences(
                 update: org.siloserver.silo.model.notifications.NotificationPreferencesUpdate,
             ) = error("unused in this test")
             override suspend fun capability() = error("unused in this test")
-            override suspend fun wsTicket() = error("unused in this test")
         }
         return NotificationsRepository(api = api)
     }
@@ -80,7 +81,7 @@ class ProfileRepositoryTest {
         assertEquals(2, notificationsRepo.unreadCount.value)
 
         val profileRepo = ProfileRepository(
-            profileApi = ProfileApi(noOpClient),
+            profileApi = ProfileApi(noOpClient, ApiV2Gate.Unrestricted),
             tokenManager = TokenManagerImpl(),
             serverRegistry = null,
             notificationsRepository = notificationsRepo,
@@ -100,7 +101,7 @@ class ProfileRepositoryTest {
             // Verifies the nullable default keeps callers that don't inject
             // NotificationsRepository working without change.
             val profileRepo = ProfileRepository(
-                profileApi = ProfileApi(noOpClient),
+                profileApi = ProfileApi(noOpClient, ApiV2Gate.Unrestricted),
                 tokenManager = TokenManagerImpl(),
                 serverRegistry = null,
                 notificationsRepository = null,
@@ -115,7 +116,7 @@ class ProfileRepositoryTest {
         barrier.installObserverForTests(transitions::add)
         val tokens = TokenManagerImpl(barrier)
         val profileRepo = ProfileRepository(
-            profileApi = ProfileApi(noOpClient),
+            profileApi = ProfileApi(noOpClient, ApiV2Gate.Unrestricted),
             tokenManager = tokens,
             identityTransitions = barrier,
         )

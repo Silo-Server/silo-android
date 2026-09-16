@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -11,6 +13,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -36,6 +39,10 @@ import org.siloserver.silo.repository.DeviceLoginRepository
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import org.siloserver.silo.network.TokenManagerImpl
+import org.siloserver.silo.network.AccountSessionExpectation
 import kotlin.test.assertEquals
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -74,7 +81,7 @@ class TvLoginViewModelRaceTest {
         val deviceApi = ControlledDeviceLoginApi()
         val viewModel = track(TvLoginViewModel(
             authRepository = AuthRepository(
-                authApi = AuthApi(loginClient(tokenManager, releaseCredentialLogin, credentialLoginStarted)),
+                authApi = AuthApi(loginClient(tokenManager, releaseCredentialLogin, credentialLoginStarted), ApiV2Gate.Unrestricted),
                 tokenManager = tokenManager,
             ),
             tokenManager = tokenManager,
@@ -106,6 +113,70 @@ class TvLoginViewModelRaceTest {
         assertEquals(listOf("qr-access"), tokenManager.savedAccessTokens)
     }
 
+    @Test
+    fun identityChangeAtCredentialInstallReleasesAttemptAndAllowsRetry() = installRace(false)
+
+    @Test
+    fun identityChangeAtQrInstallReleasesAttemptAndAllowsCredentialRetry() = installRace(true)
+
+    private fun installRace(qr: Boolean) = runTest(dispatcher) {
+        val actualTokens = TokenManagerImpl()
+        actualTokens.setServerUrl("https://silo.test")
+        val installing = CompletableDeferred<Unit>()
+        val releaseInstall = CompletableDeferred<Unit>()
+        var pauseInstall = true
+        // Stop at the ViewModel's install call, after loginForTokens accepted its scope.
+        // The real store's atomic identity barrier decides whether installation is allowed.
+        val tokens = object : TokenManager by actualTokens {
+            override suspend fun replaceAccountSession(
+                serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+                expiresIn: Long, profileId: String?, profileToken: String?,
+                expectedIdentity: AccountSessionExpectation?,
+            ) {
+                if (pauseInstall) {
+                    pauseInstall = false
+                    installing.complete(Unit)
+                    releaseInstall.await()
+                }
+                actualTokens.replaceAccountSession(serverId, serverUrl, accessToken, refreshToken,
+                    expiresIn, profileId, profileToken, expectedIdentity)
+            }
+        }
+        val deviceApi = ControlledDeviceLoginApi()
+        val client = loginClient(tokens, CompletableDeferred(Unit), CompletableDeferred())
+        val viewModel = track(TvLoginViewModel(
+            AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens), tokens, DeviceLoginRepository(deviceApi),
+        ))
+        viewModel.onUsernameChanged("jim")
+        viewModel.onPasswordChanged("password")
+        advanceUntilIdle()
+        if (qr) {
+            deviceApi.completePoll(DeviceLoginPollResponse(status = "approved",
+                accessToken = "qr-access", refreshToken = "qr-refresh", expiresIn = 3600))
+        } else {
+            viewModel.onLoginClick()
+        }
+        advanceUntilIdle()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { installing.await() } }
+        actualTokens.replaceAccountSession(accessToken = "newer-access",
+            refreshToken = "newer-refresh", expiresIn = 3600)
+        releaseInstall.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("newer-access", actualTokens.getAccessToken())
+        assertEquals("newer-refresh", actualTokens.getRefreshToken())
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertFalse(viewModel.uiState.value.loginSuccess)
+        assertEquals("The account or server changed. Start sign-in again.", viewModel.uiState.value.error)
+
+        viewModel.onLoginClick()
+        advanceUntilIdle()
+        withContext(Dispatchers.Default) { withTimeout(5_000) { viewModel.uiState.first { it.loginSuccess } } }
+        assertTrue(viewModel.uiState.value.loginSuccess)
+        assertFalse(viewModel.uiState.value.isLoading)
+        assertEquals("credential-access", actualTokens.getAccessToken())
+        client.close()
+    }
+
     private fun loginClient(
         tokenManager: TokenManager,
         releaseCredentialLogin: CompletableDeferred<Unit>,
@@ -134,6 +205,9 @@ private suspend fun awaitCredentialLoginStarted(started: CompletableDeferred<Uni
 }
 
 private class ControlledDeviceLoginApi : DeviceLoginApi {
+    override suspend fun startDeviceLoginAt(serverUrl: String, deviceName: String?, devicePlatform: String?) = startDeviceLogin(deviceName, devicePlatform)
+    override suspend fun pollDeviceLoginAt(serverUrl: String, deviceCode: String) = pollDeviceLogin(deviceCode)
+
     private val pollResult = CompletableDeferred<ApiResult<DeviceLoginPollResponse>>()
 
     override suspend fun startDeviceLogin(
@@ -172,6 +246,17 @@ private class ControlledDeviceLoginApi : DeviceLoginApi {
 }
 
 private class RecordingTokenStore : TokenManager {
+    private var accountGeneration = 0L
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(accountGeneration, getCurrentServerId(), getServerUrl())
+    override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
+        expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?) {
+        check(expectedIdentity == null || expectedIdentity.generation == accountGeneration)
+        accountGeneration++
+        if (serverId != null) switchActiveServer(serverId)
+        if (serverUrl != null) setServerUrl(serverUrl)
+        saveTokens(accessToken, refreshToken, expiresIn)
+    }
+
     val savedAccessTokens = mutableListOf<String>()
     var accessToken: String? = null
     private var refreshToken: String? = null
@@ -208,7 +293,7 @@ private fun credentialLoginJson(accessToken: String, refreshToken: String): Stri
       "refresh_token": "$refreshToken",
       "expires_in": 3600,
       "user": {
-        "id": 1,
+        "id": "1",
         "username": "jim",
         "email": "jim@example.com",
         "role": "user",

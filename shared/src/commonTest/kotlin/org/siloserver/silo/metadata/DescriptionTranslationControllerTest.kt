@@ -13,7 +13,7 @@ class DescriptionTranslationControllerTest {
 
     @Test
     fun translatePollsUntilPendingLanguageClearsThenSignalsRefresh() = runTest {
-        val api = FakeApi(translateResult = ApiResult.Success(Unit))
+        val api = FakeApi(translateResult = ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))
         // Pending language stays set for two polls, then clears.
         var polls = 0
         var refreshed = false
@@ -59,7 +59,7 @@ class DescriptionTranslationControllerTest {
 
     @Test
     fun pollBudgetExhaustionFails() = runTest {
-        val api = FakeApi(translateResult = ApiResult.Success(Unit))
+        val api = FakeApi(translateResult = ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))
         var polls = 0
         val controller = DescriptionTranslationController(
             repository = MetadataAiRepository(api),
@@ -84,7 +84,7 @@ class DescriptionTranslationControllerTest {
     @Test
     fun throwingRefetchFailsInsteadOfStrandingTranslatingPhase() = runTest {
         val controller = DescriptionTranslationController(
-            repository = MetadataAiRepository(FakeApi(ApiResult.Success(Unit))),
+            repository = MetadataAiRepository(FakeApi(ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))),
             delayMs = { },
         )
 
@@ -103,7 +103,7 @@ class DescriptionTranslationControllerTest {
     @Test
     fun autoFireLatchesPerContentAndLanguage() {
         val controller = DescriptionTranslationController(
-            repository = MetadataAiRepository(FakeApi(ApiResult.Success(Unit))),
+            repository = MetadataAiRepository(FakeApi(ApiResult.Success(org.siloserver.silo.model.metadata.MetadataTranslationJob("1", "item", "movie-1", "nl", "pending")))),
             delayMs = { },
         )
 
@@ -116,7 +116,7 @@ class DescriptionTranslationControllerTest {
 }
 
 private class FakeApi(
-    private val translateResult: ApiResult<Unit>,
+    private val translateResult: ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob>,
 ) : MetadataAiApi {
     override suspend fun status(): ApiResult<MetadataAiStatus> =
         ApiResult.NetworkError(IllegalStateException("not used"))
@@ -124,5 +124,6 @@ private class FakeApi(
     override suspend fun translateDescription(
         contentId: String,
         targetLanguage: String,
-    ): ApiResult<Unit> = translateResult
+        scope: org.siloserver.silo.network.AuthScopeSnapshot?,
+    ): ApiResult<org.siloserver.silo.model.metadata.MetadataTranslationJob> = translateResult
 }

@@ -134,7 +134,6 @@ fun FavoritesGridContent(
             }
         },
         mediaType = mediaType,
-        browseOrigin = "favorites-${mediaType.name}",
         emptyTitle = "No favorites",
         emptySubtitle = "Tap the heart icon on any item to add it here",
         emptyIcon = Icons.Outlined.FavoriteBorder,
@@ -147,11 +146,6 @@ fun FavoritesGridContent(
                 onClick = { onItemClick(item.contentId) },
                 onFavoriteToggle = { viewModel.toggleFavorite(item.contentId) },
                 isFavorite = true,
-                browseContentIds = state.items.filter {
-                    if (mediaType == PersonalMediaType.Movies) it.type.equals("movie", true)
-                    else it.type.equals("series", true) || it.type.equals("show", true)
-                }.map { it.contentId },
-                browseOrigin = "favorites-${mediaType.name}",
             )
         },
     )
@@ -184,7 +178,6 @@ fun WatchlistGridContent(
             }
         },
         mediaType = mediaType,
-        browseOrigin = "watchlist-${mediaType.name}",
         emptyTitle = "Watchlist is empty",
         emptySubtitle = "Tap the bookmark icon on any item to add it here",
         emptyIcon = Icons.Outlined.BookmarkBorder,
@@ -197,11 +190,6 @@ fun WatchlistGridContent(
                 onClick = { onItemClick(item.contentId) },
                 onWatchlistToggle = { viewModel.removeFromWatchlist(item.contentId) },
                 isInWatchlist = true,
-                browseContentIds = state.items.filter {
-                    if (mediaType == PersonalMediaType.Movies) it.type.equals("movie", true)
-                    else it.type.equals("series", true) || it.type.equals("show", true)
-                }.map { it.contentId },
-                browseOrigin = "watchlist-${mediaType.name}",
             )
         },
     )
@@ -256,7 +244,6 @@ private fun PersonalMediaGridContent(
     // nothing to show. Receives the state so it can show the item count.
     header: (@Composable (PersonalListUiState) -> Unit)? = null,
     mediaType: PersonalMediaType? = null,
-    browseOrigin: String? = null,
 ) {
     val gridState = rememberLazyListState()
     val heroHandoff = LocalHeroSourceHandoff.current
@@ -283,7 +270,7 @@ private fun PersonalMediaGridContent(
         }
     }
 
-    LaunchedEffect(shouldLoadMore) {
+    LaunchedEffect(shouldLoadMore, state.hasMore, state.isLoadingMore, state.isLoading) {
         if (shouldLoadMore && state.hasMore && !state.isLoadingMore && !state.isLoading) {
             onLoadMore()
         }
@@ -301,7 +288,7 @@ private fun PersonalMediaGridContent(
                 )
             }
         }
-        state.error != null && state.items.isEmpty() -> {
+        state.error != null -> {
             Column(modifier = modifier.padding(contentPadding)) {
                 header?.let { Box(modifier = Modifier.padding(16.dp)) { it(state) } }
                 ErrorView(
@@ -404,8 +391,6 @@ fun MediaGridItem(
     isFavorite: Boolean = false,
     onWatchlistToggle: (() -> Unit)? = null,
     isInWatchlist: Boolean = false,
-    browseContentIds: List<String>? = null,
-    browseOrigin: String? = null,
 ) {
     val (actions, userState) = rememberBrowseItemCardActions(item)
     val overlayState = LocalCardOverlayUiState.current
@@ -415,10 +400,6 @@ fun MediaGridItem(
     androidx.compose.foundation.layout.Column(
         modifier = modifier.combinedClickable(
             onClick = {
-                if (browseContentIds != null) {
-                    heroHandoff?.pendingBrowseContentIds = browseContentIds
-                    heroHandoff?.pendingBrowseOrigin = browseOrigin
-                }
                 heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
                 heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
                 onClick()

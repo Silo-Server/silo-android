@@ -11,11 +11,25 @@ import org.siloserver.silo.model.personal.ReorderCollectionsRequest
 import org.siloserver.silo.model.personal.UpdateCollectionGroupRequest
 import org.siloserver.silo.model.personal.UpdateCollectionRequest
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.api.CollectionContinuation
+import org.siloserver.silo.network.api.CollectionItemsPage
 import org.siloserver.silo.network.api.CollectionApi
+import org.siloserver.silo.network.api.CollectionEditor
+import org.siloserver.silo.network.api.CollectionOrder
 
 class CollectionRepository(
     private val collectionApi: CollectionApi,
 ) {
+    suspend fun capabilities() = collectionApi.capabilities()
+    suspend fun getCollection(id: String) = collectionApi.getCollection(id)
+    suspend fun getGroup(id: String) = collectionApi.getGroup(id)
+    suspend fun getGroupsOrder() = collectionApi.getGroupsOrder()
+    suspend fun getCollectionsOrder(groupId: String? = null) = collectionApi.getCollectionsOrder(groupId)
+    suspend fun getItemsOrder(id: String) = collectionApi.getItemsOrder(id)
+
+    suspend fun reorderItems(id: String, orderedIds: List<String>, editor: CollectionEditor<CollectionOrder>) =
+        collectionApi.reorderItems(id, orderedIds, editor)
+
     /** Lists all collections and their groups for the current user. */
     suspend fun listCollections(): ApiResult<CollectionsResponse> =
         collectionApi.listCollections()
@@ -33,20 +47,21 @@ class CollectionRepository(
     suspend fun updateCollection(
         id: String,
         request: UpdateCollectionRequest,
+        editor: CollectionEditor<Collection>,
     ): ApiResult<Collection> =
-        collectionApi.updateCollection(id, request)
+        collectionApi.updateCollection(id, request, editor)
 
     /** Deletes a collection by ID. */
-    suspend fun deleteCollection(id: String): ApiResult<Unit> =
-        collectionApi.deleteCollection(id)
+    suspend fun deleteCollection(id: String, editor: CollectionEditor<*>): ApiResult<Unit> =
+        collectionApi.deleteCollection(id, editor)
 
     /** Lists items in a collection with pagination. */
     suspend fun getItems(
         collectionId: String,
-        offset: Int = 0,
+        continuation: CollectionContinuation? = null,
         limit: Int = 40,
-    ): ApiResult<CatalogResponse> =
-        collectionApi.getCollectionItems(collectionId, offset, limit)
+    ): ApiResult<CollectionItemsPage> =
+        collectionApi.getCollectionItems(collectionId, continuation, limit)
 
     /** Adds an item to a collection. */
     suspend fun addItem(collectionId: String, itemId: String): ApiResult<Unit> =
@@ -57,25 +72,25 @@ class CollectionRepository(
         collectionApi.removeItem(collectionId, itemId)
 
     /** Moves a collection into a group (or to Ungrouped when [groupId] is null). */
-    suspend fun moveCollectionToGroup(id: String, groupId: String?): ApiResult<Collection> =
-        collectionApi.moveCollectionToGroup(id, groupId)
+    suspend fun moveCollectionToGroup(id: String, groupId: String?, editor: CollectionEditor<Collection>): ApiResult<Collection> =
+        collectionApi.moveCollectionToGroup(id, groupId, editor)
 
     // --- Groups ---
 
     suspend fun createGroup(name: String): ApiResult<CollectionGroup> =
         collectionApi.createGroup(CreateCollectionGroupRequest(name = name))
 
-    suspend fun renameGroup(id: String, name: String): ApiResult<CollectionGroup> =
-        collectionApi.updateGroup(id, UpdateCollectionGroupRequest(name = name))
+    suspend fun renameGroup(id: String, name: String, editor: CollectionEditor<CollectionGroup>): ApiResult<CollectionGroup> =
+        collectionApi.updateGroup(id, UpdateCollectionGroupRequest(name = name), editor)
 
-    suspend fun deleteGroup(id: String): ApiResult<Unit> =
-        collectionApi.deleteGroup(id)
+    suspend fun deleteGroup(id: String, editor: CollectionEditor<*>): ApiResult<Unit> =
+        collectionApi.deleteGroup(id, editor)
 
-    suspend fun reorderGroups(orderedIds: List<String>): ApiResult<Unit> =
-        collectionApi.reorderGroups(ReorderCollectionGroupsRequest(orderedIds = orderedIds))
+    suspend fun reorderGroups(orderedIds: List<String>, editor: CollectionEditor<CollectionOrder>): ApiResult<Unit> =
+        collectionApi.reorderGroups(ReorderCollectionGroupsRequest(orderedIds = orderedIds), editor)
 
-    suspend fun reorderCollections(orderedIds: List<String>, groupId: String? = null): ApiResult<Unit> =
+    suspend fun reorderCollections(orderedIds: List<String>, editor: CollectionEditor<CollectionOrder>, groupId: String? = null): ApiResult<Unit> =
         collectionApi.reorderCollections(
-            ReorderCollectionsRequest(orderedIds = orderedIds, groupId = groupId)
+            ReorderCollectionsRequest(orderedIds = orderedIds, groupId = groupId), editor
         )
 }

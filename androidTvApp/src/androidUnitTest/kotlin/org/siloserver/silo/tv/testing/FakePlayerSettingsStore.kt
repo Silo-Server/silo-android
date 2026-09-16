@@ -139,6 +139,22 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {}
     override suspend fun resetDeviceSetting(key: String) {}
     override suspend fun resetAllDeviceSettings() {}
+    var importSucceeds = true
+    override suspend fun importLegacyDeviceSettings(
+        authority: org.siloserver.silo.network.AuthScopeSnapshot,
+        values: Map<String, String>,
+    ): Boolean {
+        if (!importSucceeds) return false
+        val keys = org.siloserver.silo.model.settings.PlaybackSettingsKeys
+        values[keys.PreferredQuality]?.let { setQuality(it, values[keys.MaxBitrateKbps]?.toIntOrNull()?.takeIf { n -> n > 0 }) }
+        values[keys.AutoPlayNext]?.let { setAutoPlayNext(it.toBooleanStrict()) }
+        values[keys.IntroSkipMode]?.let { setIntroSkipMode(requireNotNull(IntroSkipMode.fromWire(it))) }
+        values[keys.AutoSkipCredits]?.let { setAutoSkipCredits(it.toBooleanStrict()) }
+        values[keys.SubtitleAppearance]?.let { setSubtitleAppearance(SubtitleAppearance.decode(it)) }
+        flushPendingDeviceSettings()
+        return true
+    }
+
     override suspend fun flushPendingDeviceSettings() {
         flushCount++
     }

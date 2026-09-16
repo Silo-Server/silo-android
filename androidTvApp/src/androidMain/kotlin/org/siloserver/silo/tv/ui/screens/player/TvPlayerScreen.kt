@@ -608,7 +608,10 @@ fun TvPlayerScreen(
             // AWAIT the old session stop before navigating: the lifecycle is a
             // singleton, so a late stop() could clobber the next episode's freshly
             // adopted session, and popUpTo would otherwise cancel it mid-flight.
-            viewModel.stopSessionForExit()
+            if (!viewModel.stopSessionForExit()) {
+                exitRequested = false
+                return@collect
+            }
             onPlayNext(req.contentId, req.autoAdvanceCount, req.episodeSelectionHandoff)
         }
     }

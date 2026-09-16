@@ -3,7 +3,21 @@ package org.siloserver.silo.network
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
-import io.ktor.http.encodeURLParameter
+import io.ktor.client.request.*
+import io.ktor.http.*
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.close
+import kotlinx.coroutines.*
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.siloserver.silo.network.apiv2.ApiV2Gate
+import org.siloserver.silo.network.apiv2.OwnerPolicy
+import org.siloserver.silo.network.apiv2.matches
+import org.siloserver.silo.network.apiv2.matches
+import org.siloserver.silo.network.apiv2.stillOwns
+import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.model.notifications.WsTicketResponse
+import kotlin.time.TimeSource
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
@@ -54,16 +68,7 @@ fun decodePlaybackFrame(json: Json, raw: String): PlaybackRealtimeEvent? {
     }
 }
 
-/**
- * Per-session control socket. One [connect] = one connection to
- * `/api/v1/playback/sessions/{session_id}/control/ws`, authenticated by query
- * string (token + profile; unlike [DefaultWatchTogetherRealtimeClient], which
- * keeps the access bearer in the same-origin Authorization header). The
- * returned flow emits [PlaybackRealtimeEvent.Opened] once the socket is live,
- * then decoded frames, and ends with [PlaybackRealtimeEvent.Closed]; reconnect
- * with backoff is the controller's job. [sendHello]/[sendAck]/[sendResult]
- * write on the open session.
- */
+/** One owner-bound v2 ticket and one upgrade per collection. Controllers own reconnect. */
 interface PlaybackRealtimeClient {
     fun connect(sessionId: String): Flow<PlaybackRealtimeEvent>
     suspend fun sendHello(sessionId: String)
@@ -75,6 +80,8 @@ class DefaultPlaybackRealtimeClient(
     private val client: HttpClient,
     private val tokenManager: TokenManager,
     private val json: Json = SiloJson,
+    private val gate: ApiV2Gate,
+    private val ownerProvider: suspend (String) -> Pair<AuthScopeSnapshot, String?>? = { null },
 ) : PlaybackRealtimeClient {
 
     /**
@@ -90,6 +97,8 @@ class DefaultPlaybackRealtimeClient(
     private data class RealtimeConnection(
         val sessionId: String,
         val socket: DefaultClientWebSocketSession,
+        val owner: Pair<AuthScopeSnapshot, String?>,
+        val commands: MutableSet<String> = mutableSetOf(),
     )
 
     /**
@@ -102,29 +111,33 @@ class DefaultPlaybackRealtimeClient(
     private var connection: RealtimeConnection? = null
 
     override fun connect(sessionId: String): Flow<PlaybackRealtimeEvent> = callbackFlow {
-        val token = tokenManager.getAccessToken()
-        // The control socket is auth-only (the server mounts it outside
-        // RequireProfile — it authorizes by user + session ownership), so a
-        // missing profile must NOT block the connection. Only the access token
-        // is required; profile params are sent as optional extras.
-        if (token.isNullOrBlank()) {
-            trySend(PlaybackRealtimeEvent.Closed("missing_auth"))
+        val owner = ownerProvider(sessionId)
+        if (owner == null || !current(owner, sessionId)) {
+            trySend(PlaybackRealtimeEvent.Closed("playback_authority_unavailable"))
             close()
             return@callbackFlow
         }
-        val profileIdentity = tokenManager.getProfileIdentity()
-        val profileId = profileIdentity.profileId
-        val profileToken = profileIdentity.profileToken
-        val url = buildString {
-            append("/api/v1/playback/sessions/")
-            append(sessionId.encodeURLParameter())
-            append("/control/ws?token=").append(token.encodeURLParameter())
-            if (!profileId.isNullOrBlank()) {
-                append("&profile_id=").append(profileId.encodeURLParameter())
+        val mintedAt = TimeSource.Monotonic.markNow()
+        val proof = when (val result = safeApiV2Call<WsTicketResponse>(gate) {
+            client.post {
+                url { path("", "api", "v2", "playback", "sessions", sessionId, "control", "ws-ticket") }
+                authScope(owner.first); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject { owner.second?.let { put("installation_id", it) } })
+            }.also { check(!it.status.isSuccess() || it.status == HttpStatusCode.OK) }
+        }) {
+            is ApiResult.Success -> result.data
+            else -> {
+                trySend(PlaybackRealtimeEvent.Closed("control_ticket_unavailable"))
+                close()
+                return@callbackFlow
             }
-            if (!profileToken.isNullOrBlank()) {
-                append("&profile_token=").append(profileToken.encodeURLParameter())
-            }
+        }
+        if (!validPlaybackControlTicket(proof) || !current(owner, sessionId) ||
+            mintedAt.elapsedNow().inWholeMilliseconds >= proof.expiresIn * 1000L) {
+            trySend(PlaybackRealtimeEvent.Closed("control_ticket_unavailable"))
+            close()
+            return@callbackFlow
         }
         var owned: RealtimeConnection? = null
         // Clear on identity under the lock, never a blind null: this connection
@@ -143,20 +156,47 @@ class DefaultPlaybackRealtimeClient(
             }
         }
         try {
-            client.webSocket(urlString = url) {
-                val current = RealtimeConnection(sessionId, this)
-                owned = current
-                connectionLock.withLock { connection = current }
-                // R2: signal open AFTER the session is assigned, so the
-                // controller's hello can't race ahead of a live socket.
-                trySend(PlaybackRealtimeEvent.Opened)
-                try {
-                    for (frame in incoming) {
-                        if (frame !is Frame.Text) continue
-                        decodePlaybackFrame(json, frame.readText())?.let { trySend(it) }
+            withTimeoutOrNull(proof.maxConnectionSeconds * 1000L) {
+                client.webSocket(request = { playbackControlUpgrade(owner.first, sessionId, proof) }) {
+                    check(call.response.headers[HttpHeaders.SecWebSocketProtocol] == PLAYBACK_CONTROL_PROTOCOL)
+                    if (!current(owner, sessionId)) return@webSocket
+                    val current = RealtimeConnection(sessionId, this, owner)
+                    owned = current
+                    connectionLock.withLock { connection = current }
+                    // R2: signal open AFTER the session is assigned, so the
+                    // controller's hello can't race ahead of a live socket.
+                    trySend(PlaybackRealtimeEvent.Opened)
+                    val authorityWatcher = launch {
+                        while (isActive) {
+                            delay(1000)
+                            if (!current(owner, sessionId)) {
+                                current.socket.close(CloseReason(CloseReason.Codes.NORMAL, "Identity changed"))
+                                break
+                            }
+                        }
                     }
-                } finally {
-                    releaseIfStillOwned()
+                    try {
+                        for (frame in incoming) {
+                            if (!current(owner, sessionId)) break
+                            if (frame !is Frame.Text) continue
+                            decodePlaybackFrame(json, frame.readText())?.let {
+                                val matches = when (it) {
+                                    is PlaybackRealtimeEvent.Command -> it.sessionId == sessionId
+                                    is PlaybackRealtimeEvent.ServerEvent -> it.sessionId == sessionId
+                                    else -> false
+                                }
+                                if (matches) {
+                                    if (it is PlaybackRealtimeEvent.Command) connectionLock.withLock {
+                                        if (connection === current) current.commands.add(it.commandId)
+                                    }
+                                    trySend(it)
+                                }
+                            }
+                        }
+                    } finally {
+                        authorityWatcher.cancel()
+                        releaseIfStillOwned()
+                    }
                 }
             }
             trySend(PlaybackRealtimeEvent.Closed())
@@ -167,7 +207,7 @@ class DefaultPlaybackRealtimeClient(
             throw cancellation
         } catch (e: Throwable) {
             releaseIfStillOwned()
-            trySend(PlaybackRealtimeEvent.Closed(e.message))
+            trySend(PlaybackRealtimeEvent.Closed("control_connection_closed"))
         } finally {
             close()
         }
@@ -180,13 +220,20 @@ class DefaultPlaybackRealtimeClient(
      * socket is for a connection that has moved on — dropping it is correct, and
      * strictly better than writing it down somebody else's socket.
      */
-    private suspend fun sendText(sessionId: String, text: String) {
+    private suspend fun sendText(sessionId: String, text: String, commandId: String? = null) {
         // Resolve under the lock, then send outside it — the send is network I/O
         // and must not block a teardown trying to release the field.
         val current = connectionLock.withLock {
-            connection?.takeIf { it.sessionId == sessionId }
+            connection?.takeIf { it.sessionId == sessionId && (commandId == null || commandId in it.commands) }
         } ?: return
+        if (!current(current.owner, sessionId)) return
         current.socket.send(Frame.Text(text))
+    }
+
+    private suspend fun current(owner: Pair<AuthScopeSnapshot, String?>, sessionId: String): Boolean {
+        val live = ownerProvider(sessionId) ?: return false
+        return live.second == owner.second && owner.first.stillOwns(tokenManager, OwnerPolicy.FULL) &&
+            owner.first.matches(live.first, OwnerPolicy.PROFILE)
     }
 
     override suspend fun sendHello(sessionId: String) = sendText(
@@ -207,6 +254,7 @@ class DefaultPlaybackRealtimeClient(
             PlaybackAckEnvelope.serializer(),
             PlaybackAckEnvelope(commandId = commandId, sessionId = sessionId),
         ),
+        commandId = commandId,
     )
 
     override suspend fun sendResult(sessionId: String, commandId: String, status: String, error: String?) = sendText(
@@ -215,5 +263,29 @@ class DefaultPlaybackRealtimeClient(
             PlaybackResultEnvelope.serializer(),
             PlaybackResultEnvelope(commandId = commandId, sessionId = sessionId, status = status, error = error),
         ),
+        commandId = commandId,
     )
+}
+
+internal const val PLAYBACK_CONTROL_PROTOCOL = "silo.playback-control.v2"
+
+internal fun validPlaybackControlTicket(ticket: WsTicketResponse): Boolean =
+    ticket.protocol == PLAYBACK_CONTROL_PROTOCOL && ticket.expiresIn in 1..30 &&
+        ticket.maxConnectionSeconds in 1..14400 && ticket.ticket.isNotEmpty() &&
+        ticket.ticket.all { it.code < 128 && (it.isLetterOrDigit() || it in "!#$%&'*+-.^_`|~") }
+
+internal fun HttpRequestBuilder.playbackControlUpgrade(scope: AuthScopeSnapshot, sessionId: String, ticket: WsTicketResponse) {
+    require(validPlaybackControlTicket(ticket))
+    url {
+        takeFrom(scope.serverUrl)
+        require(protocol == URLProtocol.HTTP || protocol == URLProtocol.HTTPS)
+        require(user == null && password == null)
+        protocol = if (protocol == URLProtocol.HTTPS) URLProtocol.WSS else URLProtocol.WS
+        path("", "api", "v2", "playback", "sessions", sessionId, "control", "ws")
+        parameters.clear(); fragment = ""
+    }
+    authScope(scope); skipSiloAuth(); singleAttempt()
+    headers.remove(HttpHeaders.Authorization)
+    headers.remove("X-Profile-Id"); headers.remove("X-Profile-Token")
+    header(HttpHeaders.SecWebSocketProtocol, "$PLAYBACK_CONTROL_PROTOCOL, silo.ticket.${ticket.ticket}")
 }

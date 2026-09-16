@@ -99,7 +99,9 @@ fun TvLibraryCollectionDetailScreen(
         // reload, so a whole-surface error would take the Sort/Filter/Clear
         // pills away exactly when the viewer needs them to undo the query
         // that is failing — Retry only repeats it (Codex).
-        TvCatalogGrid(
+        if (state.error != null) {
+            TvErrorScreen(message = state.error!!, onRetry = viewModel::retry)
+        } else TvCatalogGrid(
             items = state.items,
             isLoading = state.isLoading || state.isLoadingMore,
             hasMore = state.hasMore,

@@ -82,6 +82,10 @@ internal data class DownloadItemFileState(
     val isFailed: Boolean,
 )
 
+/** Server readiness describes transfer admission; retained local completion describes the saved file. */
+internal fun downloadItemDisplayStatus(local: DownloadStatus, server: DownloadStatus?): DownloadStatus =
+    if (local == DownloadStatus.Completed) local else server ?: local
+
 internal fun downloadItemFileState(
     status: DownloadStatus,
     hasLocalMedia: Boolean,
@@ -108,7 +112,7 @@ internal fun downloadItemDisplayProgress(
     rawProgress: Float,
     hasLocalMedia: Boolean,
 ): Float {
-    if (status == DownloadStatus.Completed && !hasLocalMedia) return 0f
+    if (status == DownloadStatus.Completed) return if (hasLocalMedia) 1f else 0f
     return rawProgress.coerceIn(0f, 1f)
 }
 
@@ -442,8 +446,12 @@ class DownloadsViewModel(
             .getOrElse { emptyList() }
         for (p in pending) {
             val fileId = p.mediaFileId ?: continue
-            withContext(Dispatchers.IO) { storage.delete(p.serverId, p.profileId, fileId) }
-            metadataStore.deleteSidecar(p.serverId, p.profileId, fileId)
+            metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
+                withContext(Dispatchers.IO) {
+                    storage.delete(p.serverId, p.profileId, fileId) ||
+                        !storage.exists(p.serverId, p.profileId, fileId)
+                }
+            }
         }
     }
 
@@ -667,7 +675,7 @@ class DownloadsViewModel(
         val progress = if (knownSize > 0) {
             (rec.bytesSent.toFloat() / knownSize.toFloat()).coerceIn(0f, 1f)
         } else 0f
-        val status = rec.statusEnum()
+        val status = downloadItemDisplayStatus(record.statusEnum(), live?.statusEnum())
         val fileState = downloadItemFileState(status = status, hasLocalMedia = located != null)
         val displayProgress = downloadItemDisplayProgress(
             status = status,

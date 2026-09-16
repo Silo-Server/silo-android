@@ -91,6 +91,8 @@ interface PendingReportStore {
     fun hostedReadyReports(): List<HostedReadyReport>
     fun hostedDeletionIntents(): List<String>
     fun completeHostedDeletion(id: String)
+    fun beginServerUpload(id: String): String?
+    fun rejectServerUpload(id: String, attempt: String)
     fun markState(id: String, status: PendingReportStatus, errorCode: String? = null)
     fun hasSeenFingerprint(fingerprint: String): Boolean
     fun markThrottled(key: String, atEpochMs: Long)
@@ -313,6 +315,26 @@ class FilePendingReportStore(
         val receipts = readHostedReadyReceiptsLocked()
         if (id in receipts) writeHostedReadyReceiptsLocked(receipts - id)
         writeHostedDeletionIntentsLocked(intents - id)
+    }
+
+    override fun beginServerUpload(id: String): String? = synchronized(lock) {
+        val report = loadLocked(id) ?: return@synchronized null
+        require(report.binding.destinationKind == DiagnosticsDestinationKind.SELF_HOSTED)
+        val marker = report.directory.resolve(SERVER_ATTEMPT_FILE)
+        if (report.state.errorCode == "delivery_uncertain" || !marker.createNewFile()) return@synchronized null
+        val attempt = UUID.randomUUID().toString()
+        // Exclusive creation itself fences concurrent stores. Empty/corrupt markers
+        // also block replay if persistence fails before dispatch.
+        writeSynced(marker, attempt.encodeToByteArray())
+        attempt
+    }
+
+    override fun rejectServerUpload(id: String, attempt: String) = synchronized(lock) {
+        val report = loadLocked(id) ?: return@synchronized
+        val marker = report.directory.resolve(SERVER_ATTEMPT_FILE)
+        if (marker.readText() != attempt) return@synchronized
+        check(marker.delete()) { "unable to retire rejected upload attempt" }
+        syncDirectory(report.directory)
     }
 
     override fun markState(id: String, status: PendingReportStatus, errorCode: String?) = synchronized(lock) {
@@ -661,7 +683,10 @@ class FilePendingReportStore(
         return runCatching {
             val binding = JSON.decodeFromString<PendingReportBinding>(directory.resolve(BINDING_FILE).readText())
             val manifest = decodeDiagnosticsManifest(directory.resolve(MANIFEST_FILE).readText())
-            val state = JSON.decodeFromString<PendingReportState>(directory.resolve(STATE_FILE).readText())
+            val storedState = JSON.decodeFromString<PendingReportState>(directory.resolve(STATE_FILE).readText())
+            val state = if (directory.resolve(SERVER_ATTEMPT_FILE).exists()) storedState.copy(
+                status = PendingReportStatus.PERMANENT_FAILURE, errorCode = "delivery_uncertain",
+            ) else storedState
             require(directory.resolve(DEVICE_FILE).isFile)
             require(binding.serverInstanceId == manifest.destination.serverInstanceId)
             require(binding.profileId == manifest.report.profileId)
@@ -888,6 +913,7 @@ class FilePendingReportStore(
         const val BINDING_FILE = "binding.json"
         const val MANIFEST_FILE = "manifest.json"
         const val STATE_FILE = "state.json"
+        private const val SERVER_ATTEMPT_FILE = "server-upload-attempt"
         const val DEVICE_FILE = "device.json"
         const val HOSTED_MANIFEST_FILE = "manifest.json"
         const val HOSTED_BUNDLE_FILE = "bundle.tar.gz"

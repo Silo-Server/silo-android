@@ -4,7 +4,7 @@ import org.siloserver.silo.model.catalog.isEpisodeItemType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Server filter presets for GET /api/v1/calendar. Web exposes Following / Trending / All. */
+/** Server filter presets for GET /api/v2/calendar. Web exposes Following / Trending / All. */
 object CalendarFilter {
     const val All = "all"
     const val Everything = "everything"

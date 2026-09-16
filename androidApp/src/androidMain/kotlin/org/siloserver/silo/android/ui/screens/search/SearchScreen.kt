@@ -226,7 +226,7 @@ fun SearchScreen(
                         },
                     )
                 }
-                state.error != null && state.results.isEmpty() -> {
+                state.error != null -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -269,6 +269,7 @@ fun SearchScreen(
                     SearchResults(
                         results = state.results,
                         total = state.total,
+                        totalExact = state.totalExact,
                         isSearching = state.isSearching,
                         hasMore = state.hasMore,
                         onItemClick = onItemClick,

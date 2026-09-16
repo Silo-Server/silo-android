@@ -360,7 +360,7 @@ private fun LibraryTab(
         onRestored = onInitialContentFocus,
     )
 
-    if (state.browseError != null && state.browseItems.isEmpty()) {
+    if (state.browseError != null) {
         TvErrorScreen(
             message = state.browseError,
             onRetry = onRetry,
@@ -733,7 +733,7 @@ private fun AudiobookGroupsTab(
                         InlineLoadingState()
                     }
                 }
-                state.audiobookGroupsError != null && state.audiobookGroups.isEmpty() -> {
+                state.audiobookGroupsError != null -> {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "error") {
                         TvErrorScreen(message = state.audiobookGroupsError, onRetry = onRetry)
                     }

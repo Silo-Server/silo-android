@@ -55,6 +55,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil3.imageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
+import org.siloserver.silo.android.ui.components.TopBarRowTopInset
+import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.components.TopBarIconButton
@@ -247,7 +250,6 @@ fun HomeScreen(
     // iOS Home no longer samples the centered Continue Watching artwork; it
     // sits on the fixed page canvas so scrolling the row never recolors the
     // page (silo-apple PR #222).
-    val homeSurface = MaterialTheme.colorScheme.background
     val diagnosticsContentState = when {
         state.isLoading && regularSections.isEmpty() -> DiagnosticsHomeContentState.LOADING
         state.error != null && regularSections.isEmpty() -> DiagnosticsHomeContentState.ERROR
@@ -337,40 +339,14 @@ fun HomeScreen(
     // Home can show the same item in several rows at once. Each poster placement
     // now carries a unique hero key (see MediaCard) so duplicates never collide
     // in the shared-transition layout — no per-screen claim registry needed.
+    // iOS HomeView paints the shared SiloPageBackdrop; Home used to carry its
+    // own, much brighter wash instead (a 10%-white core against iOS's 3.5%,
+    // and a bottom edge that lightened where iOS darkens).
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(homeSurface),
+            .siloPageBackdrop(),
     ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .drawBehind {
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colorStops = arrayOf(
-                                0.00f to Color.White.copy(alpha = 0.10f),
-                                0.26f to Color.White.copy(alpha = 0.055f),
-                                0.58f to Color.White.copy(alpha = 0.018f),
-                                1.00f to Color.Transparent,
-                            ),
-                            center = Offset(size.width * 0.46f, size.height * 0.48f),
-                            radius = 470.dp.toPx(),
-                        ),
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colorStops = arrayOf(
-                                0.00f to Color.White.copy(alpha = 0.025f),
-                                0.24f to Color.Transparent,
-                                0.48f to Color.White.copy(alpha = 0.025f),
-                                0.82f to Color.Transparent,
-                                1.00f to Color.White.copy(alpha = 0.012f),
-                            ),
-                        ),
-                    )
-                },
-        )
         when {
             state.isLoading && regularSections.isEmpty() -> HomeLoadingSkeleton()
             state.error != null && regularSections.isEmpty() -> ErrorView(
@@ -465,7 +441,6 @@ fun HomeScreen(
                                                     heroHandoff?.pendingArtworkUrl = it.url
                                                     heroHandoff?.pendingArtworkThumbhash = it.thumbhash
                                                 }
-                                                heroHandoff?.pendingBrowseContentIds = listOf(seriesId)
                                             }
                                         onContinueWatchingItemClick(item)
                                     } else {
@@ -582,14 +557,13 @@ private fun HomeFloatingChrome(
     Box(modifier = Modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
-                .padding(top = statusBarPadding.calculateTopPadding())
-                .padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
+                .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset)
+                .padding(start = TopBarEdgeMargin, end = TopBarEdgeMargin, bottom = 8.dp)
                 .fillMaxWidth(),
         ) {
             // The SILO identity scrolls with the feed; only utilities remain pinned.
             TabTopBarActions(
                 modifier = Modifier.align(Alignment.CenterEnd),
-                opaque = true,
                 activeProfile = activeProfile,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
@@ -613,7 +587,6 @@ private fun HomeFloatingChrome(
                                 }
                             },
                             isActive = isRemoteControlActive,
-                            opaque = true,
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.SettingsRemote,

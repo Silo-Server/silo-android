@@ -11,7 +11,7 @@ import org.siloserver.silo.repository.MetadataAiRepository
  * Server-gated metadata AI (description translation) capability.
  *
  * Matches the Apple clients' AICapabilities metadata surface: entry points
- * start hidden, a successful `/api/v1/metadata/ai/status` probe controls
+ * start hidden, a successful `/api/v2/capabilities/metadata-ai` probe controls
  * visibility, transient failures keep the previous value, and reset hides
  * the surface before a server/profile switch can reuse stale state.
  */

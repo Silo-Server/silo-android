@@ -1,6 +1,8 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.HttpClient
+import io.ktor.http.content.TextContent
+import kotlinx.serialization.json.*
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -27,9 +29,9 @@ class SectionApiCollectionItemsTest {
     @Test
     fun omitsSortAndOrderWhenNoSortRequested() = runTest {
         val requests = mutableListOf<Map<String, String?>>()
-        val api = SectionApi(clientFor(requests, """{"total":0,"has_more":false,"items":[]}"""))
+        val api = SectionApi(clientFor(requests, """{"total":0,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[]}"""))
 
-        api.getLibraryCollectionItems("c1", offset = 0, limit = 60, order = "desc")
+        api.getLibraryCollectionItems("c1", limit = 60, order = "desc")
 
         val query = requests.single()
         assertEquals("library_collection", query["source"])
@@ -44,7 +46,7 @@ class SectionApiCollectionItemsTest {
         val api = SectionApi(
             clientFor(
                 requests,
-                """{"total":3,"has_more":false,"items":[],"effective_sort":{"field":"title","order":"asc"}}""",
+                """{"total":3,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[],"effective_sort":{"field":"title","order":"asc"}}""",
             ),
         )
 
@@ -66,13 +68,17 @@ class SectionApiCollectionItemsTest {
         assertEquals("asc", result.data.effectiveSort?.order)
 
         val query = requests.single()
-        assertEquals("title", query["sort"])
-        assertEquals("asc", query["order"])
-        assertEquals("all", query["match"])
-        assertEquals("any", query["groups[0][match]"])
-        assertEquals("genre", query["groups[0][rules][0][field]"])
-        assertEquals("contains", query["groups[0][rules][0][op]"])
-        assertEquals("Drama", query["groups[0][rules][0][value]"])
+        val body = SiloJson.parseToJsonElement(query.getValue("body")!!).jsonObject
+        assertEquals("title", body["sort"]?.jsonPrimitive?.content)
+        assertEquals("asc", body["order"]?.jsonPrimitive?.content)
+        assertEquals("all", body["match"]?.jsonPrimitive?.content)
+        val group = body.getValue("groups").jsonArray.single().jsonObject
+        assertEquals("any", group["match"]?.jsonPrimitive?.content)
+        val rule = group.getValue("rules").jsonArray.single().jsonObject
+        assertEquals("genre", rule["field"]?.jsonPrimitive?.content)
+        assertEquals("contains", rule["op"]?.jsonPrimitive?.content)
+        assertEquals("Drama", rule["value"]?.jsonPrimitive?.content)
+
     }
 
     private fun clientFor(
@@ -80,7 +86,8 @@ class SectionApiCollectionItemsTest {
         body: String,
     ): HttpClient = HttpClient(
         MockEngine { request ->
-            requests += request.url.parameters.names().associateWith { request.url.parameters[it] }
+            requests += request.url.parameters.names().associateWith { request.url.parameters[it] } +
+                mapOf("body" to (request.body as? TextContent)?.text)
             respond(
                 content = body,
                 status = HttpStatusCode.OK,

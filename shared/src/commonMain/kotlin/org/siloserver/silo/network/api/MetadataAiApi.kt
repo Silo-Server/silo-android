@@ -1,47 +1,80 @@
 package org.siloserver.silo.network.api
 
 import io.ktor.client.HttpClient
-import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import org.siloserver.silo.model.metadata.MetadataAiStatus
-import org.siloserver.silo.model.metadata.TranslateDescriptionRequest
-import org.siloserver.silo.network.ApiResult
+import io.ktor.client.request.*
+import io.ktor.http.*
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.metadata.*
+import org.siloserver.silo.network.*
+import org.siloserver.silo.network.apiv2.*
 
-/**
- * Viewer-facing metadata AI (description translation). Mirrors silo-apple's
- * ContinuumAI metadata surface; the admin metadata-translation job endpoints
- * are intentionally NOT exposed here.
- */
 interface MetadataAiApi {
-
-    /** GET /api/v1/metadata/ai/status — `{enabled:false, on_view:"off"}` when unconfigured. */
     suspend fun status(): ApiResult<MetadataAiStatus>
-
-    /**
-     * POST /api/v1/items/{id}/translate-description — 202 queues (duplicate
-     * viewers collapse onto one job); 503 unconfigured; 404 unknown item.
-     * Completion has no job endpoint: re-fetch item detail until
-     * `pending_translation_language` clears.
-     */
-    suspend fun translateDescription(contentId: String, targetLanguage: String): ApiResult<Unit>
+    suspend fun translateDescription(contentId: String, targetLanguage: String, scope: AuthScopeSnapshot? = null): ApiResult<MetadataTranslationJob>
+    suspend fun captureAuthority(): AuthScopeSnapshot? = null
+    suspend fun isCurrent(scope: AuthScopeSnapshot?): Boolean = true
+    suspend fun refreshDetail(contentId: String, scope: AuthScopeSnapshot?): ApiResult<ItemDetail> =
+        ApiResult.Error(0, "unavailable", "Detail refresh is unavailable.")
 }
 
-class DefaultMetadataAiApi(private val client: HttpClient) : MetadataAiApi {
+@Serializable private data class MetadataCapability(val state: String, @Serializable(with = DetailStringIdSerializer::class) val revision: String, @SerialName("on_view") val onView: String)
 
-    override suspend fun status(): ApiResult<MetadataAiStatus> = safeApiCall {
-        client.get("/api/v1/metadata/ai/status")
+/** Viewer on-view action only; active-job coalescing is not durable replay safety. */
+class DefaultMetadataAiApi(
+    private val client: HttpClient,
+    private val tokens: TokenManager? = null,
+    private val gate: ApiV2Gate,
+) : MetadataAiApi {
+    override suspend fun captureAuthority() = tokens?.snapshotCurrentScope()
+    override suspend fun isCurrent(scope: AuthScopeSnapshot?): Boolean =
+        scope != null && !scope.profileId.isNullOrBlank() && scope.stillOwns(tokens, OwnerPolicy.PROFILE)
+
+    override suspend fun status(): ApiResult<MetadataAiStatus> {
+        val owner = captureAuthority()?.takeIf { !it.profileId.isNullOrBlank() } ?: return identityChanged()
+        return ownedV2Call<MetadataCapability, MetadataAiStatus>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.OK, { scope ->
+            client.get("/api/v2/capabilities/metadata-ai") { authScope(scope!!); requireSiloAuth() }
+        }) { capability ->
+            val mode = when (capability.onView) {
+                "button" -> MetadataAiOnView.Button
+                "auto" -> MetadataAiOnView.Auto
+                else -> MetadataAiOnView.Off
+            }
+            MetadataAiStatus(
+                enabled = capability.state == "available",
+                state = capability.state,
+                revision = capability.revision,
+                onView = if (capability.state == "available") mode else MetadataAiOnView.Off,
+            )
+        }
     }
 
-    override suspend fun translateDescription(
-        contentId: String,
-        targetLanguage: String,
-    ): ApiResult<Unit> = safeApiCall {
-        client.post("/api/v1/items/$contentId/translate-description") {
-            contentType(ContentType.Application.Json)
-            setBody(TranslateDescriptionRequest(targetLanguage = targetLanguage))
+    override suspend fun translateDescription(contentId: String, targetLanguage: String, scope: AuthScopeSnapshot?): ApiResult<MetadataTranslationJob> {
+        val owner = (scope ?: captureAuthority())?.takeIf { !it.profileId.isNullOrBlank() } ?: return identityChanged()
+        return ownedV2Call<MetadataTranslationJob, MetadataTranslationJob>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.Accepted, { pinned ->
+            client.post("/api/v2/catalog/items/${contentId.encodeURLPathPart()}/translate-description") {
+                authScope(pinned!!); requireSiloAuth(); singleAttempt()
+                contentType(ContentType.Application.Json)
+                setBody(TranslateDescriptionRequest(targetLanguage))
+            }
+        }) { job ->
+            require(job.id.isNotBlank() && job.contentId == contentId && job.targetKind in setOf("item", "season", "episode") &&
+                job.status in setOf("pending", "running", "completed", "failed", "canceled") &&
+                job.progress.isFinite() && job.progress in 0.0..1.0) { "The server returned an unsupported metadata job." }
+            job
+        }
+    }
+
+    /** Fresh authorized detail only: a cached value cannot prove translation completed. */
+    override suspend fun refreshDetail(contentId: String, scope: AuthScopeSnapshot?): ApiResult<ItemDetail> {
+        val owner = scope?.takeIf { !it.profileId.isNullOrBlank() } ?: return identityChanged()
+        return ownedV2Call<ItemDetailReadV2, ItemDetail>(gate, tokens, owner, OwnerPolicy.PROFILE, HttpStatusCode.OK, { pinned ->
+            client.get("/api/v2/catalog/items/${contentId.encodeURLPathPart()}") { authScope(pinned!!); requireSiloAuth() }
+        }) { wire ->
+            val detail = wire.toDomain()
+            require(detail.contentId == contentId) { "The detail response did not match this item." }
+            detail
         }
     }
 }

@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
 /**
  * Wraps [PlaybackSessionManager] with a unified state machine that handles
  * both 404-session-missing recovery (consolidated from duplicate VM code)
- * and server-outage recovery via `/api/v1/health` probes with exponential
+ * and server-outage recovery via `/health` probes with exponential
  * backoff (1s -> 8s, 90s timeout — mirrors iOS `PlayerViewModel`).
  *
  * Phone and TV ViewModels were each open-coding the same 404 recovery flow
@@ -209,10 +209,13 @@ class PlaybackSessionLifecycle(
         stopSessionOnStop: Boolean = true,
         deferPublication: Boolean = false,
         isCurrent: () -> Boolean,
+        expectedMetadataOwnerCurrent: suspend () -> Boolean = { true },
     ): Boolean {
         val diagnosticsRecording = playbackSessions.recording()
         return mutex.withLock {
-            if (!isCurrent()) return@withLock false
+            val metadataCurrent = expectedMetadataOwnerCurrent()
+            currentCoroutineContext().ensureActive()
+            if (!metadataCurrent || !isCurrent()) return@withLock false
             val predecessor = if (deferPublication) {
                 pendingActiveSessionPublication?.predecessor
                     ?: captureActiveSessionSnapshot()
@@ -272,6 +275,7 @@ class PlaybackSessionLifecycle(
         stopSessionOnStop: Boolean = true,
         deferPublication: Boolean = false,
         expectedOwnershipEpoch: Long,
+        expectedMetadataOwnerCurrent: suspend () -> Boolean = { true },
     ): Boolean = try {
         currentCoroutineContext().ensureActive()
         val adopted = adoptActiveSessionIfCurrent(
@@ -281,6 +285,7 @@ class PlaybackSessionLifecycle(
             stopSessionOnStop = stopSessionOnStop,
             deferPublication = deferPublication,
             isCurrent = { stopEpoch == expectedOwnershipEpoch },
+            expectedMetadataOwnerCurrent = expectedMetadataOwnerCurrent,
         )
         if (!adopted) {
             sessionManager.stopSession(session.sessionId)
@@ -508,18 +513,25 @@ class PlaybackSessionLifecycle(
      * episode the user just started. Passing the id the caller was playing makes
      * the stop a no-op once ownership has moved on.
      */
-    suspend fun stop(expectedSessionId: String? = null) {
+    suspend fun stop(expectedSessionId: String? = null): Boolean =
+        stopOwnedSession(expectedSessionId, unpublished = false)
+
+    /** Retire a rejected startup adoption without inventing a played progress sample. */
+    suspend fun retireUnpublishedSession(sessionId: String): Boolean =
+        stopOwnedSession(sessionId, unpublished = true)
+
+    private suspend fun stopOwnedSession(expectedSessionId: String?, unpublished: Boolean): Boolean {
         DiagnosticsPlaybackLogger.sessionEvent("session stop requested")
-        mutex.withLock {
+        return mutex.withLock {
             if (expectedSessionId != null) {
                 // Read the ownership token, not the presented state: a session
                 // being reconnected or restarted is still owned, and answering
                 // "no id" there let a stale stop cancel a live recovery.
                 val activeSessionId =
                     (_state.value as? SessionState.Active)?.session?.sessionId ?: lastAdoptedSessionId
-                if (activeSessionId != null && activeSessionId != expectedSessionId) {
+                if ((unpublished || activeSessionId != null) && activeSessionId != expectedSessionId) {
                     DiagnosticsPlaybackLogger.sessionEvent("session stop skipped, ownership moved")
-                    return
+                    return@withLock false
                 }
             }
             // Past the ownership guard: this stop is going to tear down, so any
@@ -533,7 +545,7 @@ class PlaybackSessionLifecycle(
             val pendingSessionId =
                 (_state.value as? SessionState.Active)?.session?.sessionId
             if (
-                pending != null &&
+                !unpublished && pending != null &&
                 pendingSessionId != null &&
                 pending.replacementSessionId == pendingSessionId &&
                 sessionManager.rollbackUnpublishedVideoSession(pendingSessionId)
@@ -556,17 +568,24 @@ class PlaybackSessionLifecycle(
             // Fire the final snapshot regardless — even during Reconnecting we
             // want to durably record where the user was so a fresh login resumes
             // there.
-            if (flushProgressOnStop) {
+            if (!unpublished && flushProgressOnStop) {
                 flushFinalProgress()
             }
 
+            var pendingStop = false
             if (sessionId != null && stopActiveSessionOnStop) {
-                when (val r = sessionManager.stopSession(sessionId)) {
+                val r = sessionManager.stopSession(sessionId)
+                pendingStop = sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
+                when (r) {
                     is ApiResult.Error -> Log.w(TAG, "stopSession error: ${r.code} ${r.message}")
                     is ApiResult.NetworkError ->
                         Log.w(TAG, "stopSession network error: ${r.exception}")
                     else -> {}
                 }
+            }
+            if (pendingStop) {
+                _state.value = SessionState.Failed("Playback stop is pending. Retry from playback recovery.")
+                return@withLock false // Retain the old session and clocks until its terminal receipt.
             }
             lastStartParams = null
             lastReportedPosition = null
@@ -580,8 +599,9 @@ class PlaybackSessionLifecycle(
             _notice.value = null
             lastAdoptedSessionId = null
             _state.value = SessionState.Idle
+            DiagnosticsPlaybackLogger.sessionEvent("session stopped")
+            true
         }
-        DiagnosticsPlaybackLogger.sessionEvent("session stopped")
     }
 
     /**
@@ -728,6 +748,12 @@ class PlaybackSessionLifecycle(
                 // params. Left unguarded, a late answer about episode A does
                 // all of that to episode B.
                 if (!ownsProgressReply(sess.sessionId)) continue
+                if (sessionManager.isSequenced(sess.sessionId)) {
+                    if (result !is ApiResult.Success) {
+                        _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                    }
+                    continue
+                }
                 when {
                     isPlaybackSessionMissing(result) -> handleSessionMissing(sess.sessionId)
                     result is ApiResult.NetworkError -> {
@@ -912,6 +938,12 @@ class PlaybackSessionLifecycle(
     }
 
     private suspend fun flushFinalProgress() {
+        val sessionId = lastAdoptedSessionId
+        if (sessionId != null && sessionManager.isSequenced(sessionId)) {
+            val position = lastReportedPosition ?: return
+            sessionManager.reportProgress(sessionId, position, lastIsPaused)
+            return
+        }
         val params = lastStartParams ?: return
         syncProgressSnapshot(
             contentId = params.contentId,

@@ -6,9 +6,12 @@ import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
+import org.siloserver.silo.model.server.ServerContract
+import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.repository.CONTRACT_PROVEN_BY_V2_RESPONSE
 import java.net.URI
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -56,6 +59,10 @@ class ServerSetupViewModel(
     },
     private val getSignupStatus: suspend (String) -> ApiResult<SignupStatusResponse> = {
         authRepository.getSignupStatus(it)
+    },
+    /** v2 contract probe for a candidate; null when no probe is wired in. */
+    private val probeContract: suspend (String) -> ApiV2ProbeResult? = {
+        authRepository.probeServerContract(it)
     },
     private val candidateUrls: (ServerSetupUiState) -> List<String> = {
         buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
@@ -112,10 +119,24 @@ class ServerSetupViewModel(
 
             var lastError: String? = null
             for (candidate in candidates) {
+                // One contract probe per established connection: a v1-only
+                // server is reported as update-server, never retried on v1.
+                val probe = probeContract(candidate)
+                if (probe is ApiV2ProbeResult.UpdateServer) {
+                    _uiState.update {
+                        it.copy(isLoading = false, error = ServerContract.UPDATE_REQUIRED_MESSAGE)
+                    }
+                    return@launch
+                }
+                // Anything else the probe said (V2, a transient failure, or a
+                // timeout) is superseded by the v2 setup call succeeding below,
+                // which is proof of v2 on its own; a Failure must not be handed
+                // on as UNKNOWN, or a stale UPDATE_REQUIRED would survive.
+                val contract = CONTRACT_PROVEN_BY_V2_RESPONSE
                 when (val setupResult = getSetupStatus(candidate)) {
                     is ApiResult.Success -> {
                         if (setupResult.data.needsSetup) {
-                            handleSuccessfulConnection(candidate, ServerSetupDestination.Setup)
+                            handleSuccessfulConnection(candidate, ServerSetupDestination.Setup, contract)
                             return@launch
                         }
                     }
@@ -139,6 +160,7 @@ class ServerSetupViewModel(
                 handleSuccessfulConnection(
                     candidate,
                     ServerSetupDestination.Login(signupEnabled = signupEnabled),
+                    contract,
                 )
                 return@launch
             }
@@ -163,7 +185,7 @@ class ServerSetupViewModel(
             cleartextConsentStore.approve(pending.origin)
             if (pendingCleartextConnection !== pending) return@launch
             pendingCleartextConnection = null
-            persistAndNavigate(pending.serverUrl, pending.destination)
+            persistAndNavigate(pending.serverUrl, pending.destination, pending.contract)
         }
     }
 
@@ -182,6 +204,7 @@ class ServerSetupViewModel(
     private suspend fun handleSuccessfulConnection(
         serverUrl: String,
         destination: ServerSetupDestination,
+        contract: ServerContract?,
     ) {
         if (serverUrl.startsWith("http://", ignoreCase = true)) {
             val origin = cleartextOrigin(serverUrl)
@@ -197,13 +220,14 @@ class ServerSetupViewModel(
                 return
             }
             if (cleartextConsentStore.isApproved(origin)) {
-                persistAndNavigate(serverUrl, destination)
+                persistAndNavigate(serverUrl, destination, contract)
                 return
             }
             pendingCleartextConnection = PendingCleartextConnection(
                 serverUrl = serverUrl,
                 origin = origin,
                 destination = destination,
+                contract = contract,
             )
             _uiState.update {
                 it.copy(
@@ -214,14 +238,15 @@ class ServerSetupViewModel(
             }
             return
         }
-        persistAndNavigate(serverUrl, destination)
+        persistAndNavigate(serverUrl, destination, contract)
     }
 
     private suspend fun persistAndNavigate(
         serverUrl: String,
         destination: ServerSetupDestination,
+        contract: ServerContract?,
     ) {
-        authRepository.setServerUrl(serverUrl)
+        authRepository.setServerUrl(serverUrl, contract)
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -236,6 +261,7 @@ private data class PendingCleartextConnection(
     val serverUrl: String,
     val origin: String,
     val destination: ServerSetupDestination,
+    val contract: ServerContract?,
 )
 
 /**

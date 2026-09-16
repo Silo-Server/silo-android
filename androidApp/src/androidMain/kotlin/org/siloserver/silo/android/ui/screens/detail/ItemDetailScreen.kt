@@ -1,25 +1,38 @@
 package org.siloserver.silo.android.ui.screens.detail
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.CompositionLocalProvider
+import org.siloserver.silo.android.ui.theme.SiloPageBackground
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.SettingsRemote
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -41,7 +54,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -49,10 +61,9 @@ import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
 import org.siloserver.silo.android.ui.components.DetailLoadingSkeleton
 import org.siloserver.silo.android.ui.components.ErrorView
-import org.siloserver.silo.android.ui.components.rememberSwipeDownDismissState
-import org.siloserver.silo.android.ui.components.swipeBackToDismiss
-import org.siloserver.silo.android.ui.components.swipeDownToDismiss
-import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
+import org.siloserver.silo.android.ui.theme.SiloOverlayPillSurface
+import org.siloserver.silo.android.ui.theme.SiloNavPillSurface
+import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
@@ -140,11 +151,6 @@ fun ItemDetailScreen(
     val siloCastState by siloCastController.state.collectAsState()
     var showRemoteTargetPicker by remember { mutableStateOf(false) }
     var remoteMenuExpanded by remember { mutableStateOf(false) }
-    val swipeDownDismissState = rememberSwipeDownDismissState()
-    val requestDismiss: () -> Unit = {
-        swipeDownDismissState.dismiss(onBackClick)
-    }
-    BackHandler { requestDismiss() }
 
     LaunchedEffect(state.selectedEpisodeContentId) {
         if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
@@ -320,47 +326,55 @@ fun ItemDetailScreen(
         }
     }
 
+    val detailScroll = remember { DetailScrollState() }
     Box(
         modifier = modifier
             .fillMaxSize()
-            // Match iOS's large detail sheet: the rounded card begins below
-            // the status/camera safe area instead of painting behind it.
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-            .padding(top = 4.dp)
-            .shadow(
-                elevation = 20.dp,
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-                clip = false,
-            )
-            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            // Swipe right on the page to go back (iOS interactive pop) — a
-            // lighter alternative to reaching for the back arrow on a tall
-            // detail page.
-            .swipeBackToDismiss(onDismiss = onBackClick)
-            .swipeDownToDismiss(
-                state = swipeDownDismissState,
-                onDismiss = onBackClick,
-            )
+            // A full-screen page, not a card: the hero runs edge to edge under
+            // the status bar. This used to be inset below the safe area with
+            // rounded top corners, a drop shadow, and its own swipe-back and
+            // pull-down dismissals. Back is the platform's job now — the
+            // manifest opts into predictive back, so the system draws the page
+            // behind while the user drags the edge gesture.
             .background(MaterialTheme.colorScheme.background),
     ) {
+        CompositionLocalProvider(LocalDetailScrollState provides detailScroll) {
+        // The loading and loaded trees build the hero differently (fixed 16:10
+        // versus content-measured, and their own gradient stacks), so swapping
+        // them outright showed as a flash the instant metadata landed. Dissolve
+        // between them; keyed on which branch is showing, not on the detail
+        // object, so a metadata refresh does not re-run the fade.
+        val loadedBranch = when {
+            // A pending series redirect is about to replace this page's content
+            // with the parent series. Hold the skeleton rather than dissolving
+            // into a season or episode detail that is on its way out.
+            seriesRedirect != null && !seriesRedirectFailed -> "loading"
+            state.detail != null -> "detail"
+            state.error != null -> "error"
+            else -> "loading"
+        }
+        Crossfade(
+            targetState = loadedBranch,
+            animationSpec = tween(durationMillis = 180),
+            label = "detailBranch",
+        ) { branch ->
         when {
-            (state.isLoading && state.detail == null) ||
-                (seriesRedirect != null && !seriesRedirectFailed) -> {
+            branch == "loading" -> {
                 DetailLoadingSkeleton(
                     artworkUrl = openingArtworkUrl,
                     artworkThumbhash = openingArtworkThumbhash,
                 )
             }
 
-            state.error != null && state.detail == null -> {
+            branch == "error" -> {
                 ErrorView(
                     message = state.error ?: "Something went wrong",
                     onRetry = { viewModel.loadDetail() },
                 )
             }
 
-            state.detail != null -> {
-                val detail = state.detail!!
+            else -> {
+                val detail = state.detail ?: return@Crossfade
                 val metadataAiStore: MetadataAiFeatureStore = koinInject()
                 val metadataAiStatus by metadataAiStore.status.collectAsState()
                 val translationPhase by viewModel.translationPhase.collectAsState()
@@ -1018,22 +1032,89 @@ fun ItemDetailScreen(
             )
         }
 
-        // Android's non-glass counterpart to iOS's detail controls: the same
-        // faint artwork-tinted wash and white glyphs, without live blur.
+        }
+        }
+
+        // Pinned header. The strip fades in first so the controls gain a
+        // backing as the artwork leaves, then the title arrives once the hero
+        // is mostly gone — the two ranges and the smoothstep are iOS's.
+        val headerTitle = state.detail?.title.orEmpty()
+        val barAlpha = detailHeaderProgress(
+            detailScroll.offsetDp,
+            HeaderBarFadeFromDp,
+            HeaderBarFadeToDp,
+        )
+        val titleAlpha = detailHeaderProgress(
+            detailScroll.offsetDp,
+            HeaderTitleFadeFromDp,
+            HeaderTitleFadeToDp,
+        )
+        if (barAlpha > 0f) {
+            // Runs from the very top of the window, not from below the status
+            // bar: the page is edge to edge, so insetting the strip left the
+            // status-bar band uncovered above it.
+            val statusBarHeight = WindowInsets.statusBars
+                .asPaddingValues()
+                .calculateTopPadding()
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(statusBarHeight + DetailHeaderBarHeight)
+                    .graphicsLayer { alpha = barAlpha }
+                    .background(SiloPageBackground)
+                    .drawBehind {
+                        drawRect(
+                            color = Color.White.copy(alpha = 0.10f),
+                            topLeft = Offset(0f, size.height - 1f),
+                            size = Size(size.width, 1f),
+                        )
+                    },
+            )
+        }
+        if (titleAlpha > 0f && headerTitle.isNotBlank()) {
+            Text(
+                text = headerTitle,
+                color = Color.White,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .height(DetailHeaderBarHeight)
+                    .fillMaxWidth()
+                    // Clear of the back and remote controls on either side,
+                    // and centred on them: both sit in the same strip.
+                    .padding(horizontal = 72.dp)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .graphicsLayer { alpha = titleAlpha },
+            )
+        }
+
+        // These two glyphs sit on hero artwork that can be any colour, so they
+        // keep a disc — the bottom-nav pill, made translucent. A dark disc
+        // holds a white glyph over a pale poster and still lets the artwork
+        // through, which the previous white-tinted wash could not.
         IconButton(
-            onClick = requestDismiss,
+            onClick = onBackClick,
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(horizontal = 28.dp, vertical = 18.dp)
-                .size(42.dp)
+                // Same geometry as the Home header's actions: a 40dp target
+                // 16dp from the edge, sitting directly below the status bar,
+                // so the controls do not jump when moving between the two.
+                .padding(horizontal = 16.dp)
+                .size(40.dp)
                 .clip(CircleShape)
-                .background(SiloDetailActionControlActive.copy(alpha = 0.38f))
-                .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
+                .background(SiloOverlayPillSurface)
+                .border(1.dp, SiloNavPillBorder, CircleShape),
         ) {
             Icon(
-                imageVector = Icons.Filled.Close,
-                contentDescription = "Close",
+                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "Back",
                 tint = Color.White,
             )
         }
@@ -1041,7 +1122,7 @@ fun ItemDetailScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .statusBarsPadding()
-                .padding(horizontal = 28.dp, vertical = 18.dp),
+                .padding(horizontal = 16.dp),
         ) {
             IconButton(
                 onClick = {
@@ -1051,15 +1132,19 @@ fun ItemDetailScreen(
                         showRemoteTargetPicker = true
                     }
                 },
+                // Solid pill while a cast session is live, translucent at
+                // rest, so the fill still reports state.
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(
-                        SiloDetailActionControlActive.copy(
-                            alpha = if (siloCastState.hasActiveSession) 1f else 0.38f,
-                        ),
+                        if (siloCastState.hasActiveSession) {
+                            SiloNavPillSurface
+                        } else {
+                            SiloOverlayPillSurface
+                        },
                     )
-                    .border(1.dp, Color.White.copy(alpha = 0.36f), CircleShape),
+                    .border(1.dp, SiloNavPillBorder, CircleShape),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.SettingsRemote,

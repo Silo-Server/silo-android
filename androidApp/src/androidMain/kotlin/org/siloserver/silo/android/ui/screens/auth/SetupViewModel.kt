@@ -42,6 +42,7 @@ class SetupViewModel(
     }
 
     fun onCreateAccountClick() {
+        if (_uiState.value.isLoading) return
         val current = _uiState.value
 
         // Client-side validation.
@@ -51,8 +52,8 @@ class SetupViewModel(
             return
         }
 
+        _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
 
             when (val result = authRepository.setup(current.username, current.email, current.password)) {
                 is ApiResult.Success -> {

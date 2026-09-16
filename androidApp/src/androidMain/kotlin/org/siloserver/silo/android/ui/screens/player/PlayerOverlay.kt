@@ -595,6 +595,17 @@ fun PlayerOverlay(
         onSetHdrEnabled = viewModel::onSetHdrEnabled,
         dolbyVisionEnabled = viewModel.dolbyVisionEnabled.collectAsState().value,
         onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
+        qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
+        onOpenQuality = {
+            settingsSheetVisible = false
+            showQualitySelector = true
+        },
+        audioLabel = playerAudioLabel(state.audioTracks, state.selectedAudioIndex),
+        subtitleLabel = playerSubtitleLabel(state.subtitleTracks, state.selectedSubtitleIndex),
+        onOpenTracks = {
+            settingsSheetVisible = false
+            tracksSheetVisible = true
+        },
         onOpenSubtitleStyle = {
             settingsSheetVisible = false
             subtitleStyleVisible = true
@@ -725,4 +736,54 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
     "fill" -> "Fill"
     "stretch" -> "Stretch"
     else -> "Fit"
+}
+
+/**
+ * Root-list values for the gear menu. These mirror what the quality and
+ * tracks sheets show when opened, so the menu can state the current pick
+ * without the user having to open anything.
+ */
+internal fun playerQualityLabel(
+    versions: List<org.siloserver.silo.model.catalog.FileVersion>,
+    selectedIndex: Int,
+): String {
+    val version = versions.getOrNull(selectedIndex) ?: return "Auto"
+    return buildString {
+        append(version.resolution ?: "Unknown")
+        if (version.hdr) append(" HDR")
+    }
+}
+
+internal fun playerAudioLabel(
+    tracks: List<org.siloserver.silo.model.catalog.AudioTrack>,
+    selectedIndex: Int,
+): String {
+    val track = tracks.getOrNull(selectedIndex) ?: return "Default"
+    // Language first, not title: a container's audio title is often the full
+    // codec string ("ATSC A/52B (AC-3, E-AC-3)") and swamps the row.
+    val name = track.language?.takeIf { it.isNotBlank() }?.uppercase()
+        ?: track.title?.takeIf { it.isNotBlank() }
+        ?: "Audio ${selectedIndex + 1}"
+    val detail = listOfNotNull(
+        track.codec?.takeIf { it.isNotBlank() }?.uppercase(),
+        track.channels?.let(::audioChannelLabel),
+    ).joinToString(" ")
+    return if (detail.isBlank()) name else "$name · $detail"
+}
+
+private fun audioChannelLabel(channels: Int): String = when (channels) {
+    1 -> "Mono"
+    2 -> "Stereo"
+    6 -> "5.1"
+    8 -> "7.1"
+    else -> "${channels}ch"
+}
+
+internal fun playerSubtitleLabel(
+    tracks: List<org.siloserver.silo.model.playback.PlayerSubtitleInfo>,
+    selectedIndex: Int,
+): String {
+    if (selectedIndex < 0) return "Off"
+    val track = tracks.getOrNull(selectedIndex) ?: return "Off"
+    return subtitleTrackLabel(track, selectedIndex)
 }

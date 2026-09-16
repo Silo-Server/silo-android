@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.data.repository
 
+import androidx.room.withTransaction
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.common.data.db.entity.HomeCacheEntity
 import org.siloserver.silo.model.section.ResolvedSection
@@ -20,14 +21,49 @@ import kotlinx.serialization.json.Json
  * JSON decodes to null rather than crashing the home screen.
  */
 class RoomHomeCacheRepository(
-    db: SiloDatabase,
+    private val db: SiloDatabase,
     private val snapshotProvider: suspend () -> AuthScopeSnapshot?,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val now: () -> Long = { System.currentTimeMillis() },
 ) : HomeCachePort {
 
     private val dao = db.homeCacheDao()
+    private val scopedDao = db.catalogCacheDao()
     private val json = Json { ignoreUnknownKeys = true }
+
+    override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+        val profile = owner.profileId ?: return
+        if (owner != snapshotProvider()) return
+        val key = scopedKey(owner)
+        val body = json.encodeToString(sections)
+        db.withTransaction {
+            if (!stillCurrent()) return@withTransaction
+            if (body.encodeToByteArray().size > MAX_CACHE_BYTES) scopedDao.delete(owner.serverId, profile, key)
+            else scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+        }
+    }
+
+    override suspend fun cacheHomeV2IfAbsent(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
+        val profile = owner.profileId ?: return
+        if (owner != snapshotProvider()) return
+        val key = scopedKey(owner)
+        val body = json.encodeToString(sections)
+        if (body.encodeToByteArray().size > MAX_CACHE_BYTES) return
+        db.withTransaction {
+            if (!stillCurrent() || scopedDao.get(owner.serverId, profile, key) != null) return@withTransaction
+            scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
+        }
+    }
+
+    override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? {
+        val profile = owner.profileId ?: return null
+        if (owner != snapshotProvider()) return null
+        val row = runCatching { scopedDao.get(owner.serverId, profile, scopedKey(owner)) }.getOrNull()
+        if (owner != snapshotProvider()) return null
+        return row?.let { runCatching { HomeCacheSnapshot(json.decodeFromString<List<ResolvedSection>>(it.json), it.cachedAtMs) }.getOrNull() }
+    }
+
+    private fun scopedKey(owner: AuthScopeSnapshot): String = owner.identityCacheKey("home-sections-v2")
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
         cacheHome(

@@ -94,7 +94,15 @@ val androidTvModule = module {
     // commonMain in-memory TokenManager. Koin 3.1+ replaces same-key bindings
     // when the redefining module is loaded after the original — sharedModules()
     // is registered first in SiloTvApplication, so this wins.
-    single<TokenManager> { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single { EncryptedTokenManagerImpl(get(), get(), get()) }
+    single<TokenManager> { get<EncryptedTokenManagerImpl>() }
+    single<org.siloserver.silo.network.DurableLoginAuthorityProvider> { get<EncryptedTokenManagerImpl>() }
+    single<org.siloserver.silo.repository.port.MembershipPort> {
+        org.siloserver.silo.common.data.sync.RoomMembershipPort(
+            get<org.siloserver.silo.common.data.db.SiloDatabase>(),
+            get(), get(), get(), get(), get(),
+        )
+    }
 
     // Offline-first Room store (Track B). Bound after sharedModules() so the
     // commonMain PersonalDataRepository's `getOrNull<UserItemStatePort>()` picks
@@ -109,7 +117,7 @@ val androidTvModule = module {
     single<org.siloserver.silo.repository.port.UserItemStatePort> {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.repository.RoomUserItemStateRepository(
-            db = get(),
+            db = get(), ebookAuthorities = get(), identityTransitions = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
             syncScheduler = get(),
         )
@@ -131,14 +139,15 @@ val androidTvModule = module {
         )
     }
     single<org.siloserver.silo.repository.port.DownloadDeletionPort> {
-        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get())
+        org.siloserver.silo.common.data.repository.RoomDownloadDeletionStore(db = get(), authorities = get(), devices = get(), identityTransitions = get())
     }
     single {
         val tokenManager: TokenManager = get()
         org.siloserver.silo.common.data.sync.SyncEngine(
             db = get(),
             personalDataApi = get(),
-            ebookReaderApi = get(),
+            memberships = get(),
+            ebookReaderApi = get(), ebookAuthorities = get(),
             snapshotProvider = { tokenManager.snapshotCurrentScope() },
         )
     }
@@ -280,13 +289,9 @@ val androidTvModule = module {
             settingsCache = get(),
             playerSettingsStore = get(),
             librarySelectionStore = get(),
-            getServerUrl = { get<TokenManager>().getServerUrl() },
-            getProfileId = { get<TokenManager>().getProfileId() },
-            getEffectiveSettings = { keys ->
-                when (val result = get<SettingsRepository>().getEffectiveSettings(keys)) {
-                    is ApiResult.Success -> result.data
-                    is ApiResult.Error, is ApiResult.NetworkError -> emptyMap()
-                }
+            getAuthority = { get<TokenManager>().snapshotCurrentScope() },
+            getEffectiveSettings = { keys, owner ->
+                get<SettingsRepository>().getEffectiveValues(keys, authority = owner)
             },
         )
     }
@@ -313,7 +318,7 @@ val androidTvModule = module {
     // machine. A later step wires the UI to PairingReceiver.status.
     single {
         org.siloserver.silo.common.pairing.PairingReceiver(
-            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get(), get()),
+            authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get(), get(), get()),
             deviceLogin = org.siloserver.silo.common.pairing.DeviceLoginRepositoryPort(get()),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(
@@ -499,7 +504,7 @@ val androidTvModule = module {
     // Personal data grids.
     viewModel { FavoritesViewModel(get(), get()) }
     viewModel { WatchlistViewModel(get(), get()) }
-    viewModel { HistoryViewModel(get()) }
+    viewModel { HistoryViewModel(get(), get()) }
     // Sort/filter state for the favorites and watchlist grids, keyed by source.
     viewModel { params ->
         TvPersonalListControlsViewModel(

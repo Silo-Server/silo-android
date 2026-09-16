@@ -301,7 +301,7 @@ private fun TvPersonDetailContent(
                         // A failed page-0 load leaves the grid with nothing
                         // focusable below the chips. Keep retry in the scrolling
                         // header instead of dead-ending on the empty state.
-                        if (state.items.isEmpty()) {
+                        run {
                             Button(
                                 onClick = onRetryItems,
                                 contentPadding = PaddingValues(horizontal = 32.dp, vertical = 12.dp),

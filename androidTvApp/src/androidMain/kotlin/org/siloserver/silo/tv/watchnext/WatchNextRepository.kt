@@ -14,66 +14,79 @@ import kotlin.coroutines.coroutineContext
 
 @SuppressLint("RestrictedApi")
 class WatchNextRepository(private val context: Context) {
+    internal val writeGate = WatchNextWriteGate()
 
-    suspend fun diffAndApply(remoteFields: List<WatchNextProgramFields>): DiffResult =
+    fun invalidate() = writeGate.invalidate()
+
+    suspend fun diffAndApply(
+        remoteFields: List<WatchNextProgramFields>,
+        run: Long,
+        authority: suspend () -> Boolean,
+    ): DiffResult? =
         withContext(Dispatchers.IO) {
-            val resolver = context.contentResolver
-            val existing = readOurExistingPrograms()
-            // Collapse duplicate externalIds up front: without this, two remote
-            // rows sharing an externalId both hit the insert branch (measured
-            // against the same pre-loop snapshot) and the second becomes an
-            // orphan the delete pass never reaches.
-            val remote = remoteFields.distinctBy { it.externalId }
-            val remoteByExternalId = remote.associateBy { it.externalId }
+            writeGate.write(run, authority) {
+                val resolver = context.contentResolver
+                val existing = readOurExistingPrograms()
+                // Collapse duplicate externalIds up front: without this, two remote
+                // rows sharing an externalId both hit the insert branch (measured
+                // against the same pre-loop snapshot) and the second becomes an
+                // orphan the delete pass never reaches.
+                val remote = remoteFields.distinctBy { it.externalId }
+                val remoteByExternalId = remote.associateBy { it.externalId }
 
-            var inserted = 0
-            var updated = 0
-            var deleted = 0
+                var inserted = 0
+                var updated = 0
+                var deleted = 0
 
-            for (fields in remote) {
-                // Cooperative cancellation: a cancelled worker (profile switch /
-                // sign-out) stops before writing so it can't repopulate the
-                // previous profile's tiles into the shared launcher provider.
-                coroutineContext.ensureActive()
-                val existingId = existing[fields.externalId]
-                if (existingId == null) {
-                    val uri = resolver.insert(
-                        TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                        fields.toContentValues(),
-                    )
-                    if (uri != null) inserted++
-                } else {
-                    val rowUri = ContentUris.withAppendedId(
-                        TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                        existingId,
-                    )
-                    val rows = resolver.update(rowUri, fields.toContentValues(), null, null)
-                    if (rows > 0) updated++
+                for (fields in remote) {
+                    // Cooperative cancellation: a cancelled worker (profile switch /
+                    // sign-out) stops before writing so it can't repopulate the
+                    // previous profile's tiles into the shared launcher provider.
+                    coroutineContext.ensureActive()
+                    if (!writeGate.allowed(run, authority)) return@write null
+                    val existingId = existing[fields.externalId]
+                    if (existingId == null) {
+                        val uri = resolver.insert(
+                            TvContractCompat.WatchNextPrograms.CONTENT_URI,
+                            fields.toContentValues(),
+                        )
+                        if (uri != null) inserted++
+                    } else {
+                        val rowUri = ContentUris.withAppendedId(
+                            TvContractCompat.WatchNextPrograms.CONTENT_URI,
+                            existingId,
+                        )
+                        val rows = resolver.update(rowUri, fields.toContentValues(), null, null)
+                        if (rows > 0) updated++
+                    }
                 }
-            }
 
-            for ((externalId, rowId) in existing) {
-                coroutineContext.ensureActive()
-                if (externalId !in remoteByExternalId) {
-                    val rowUri = ContentUris.withAppendedId(
-                        TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                        rowId,
-                    )
-                    if (resolver.delete(rowUri, null, null) > 0) deleted++
+                for ((externalId, rowId) in existing) {
+                    coroutineContext.ensureActive()
+                    if (!writeGate.allowed(run, authority)) return@write null
+                    if (externalId !in remoteByExternalId) {
+                        val rowUri = ContentUris.withAppendedId(
+                            TvContractCompat.WatchNextPrograms.CONTENT_URI,
+                            rowId,
+                        )
+                        if (resolver.delete(rowUri, null, null) > 0) deleted++
+                    }
                 }
-            }
 
-            DiffResult(inserted = inserted, updated = updated, deleted = deleted)
+                DiffResult(inserted = inserted, updated = updated, deleted = deleted)
+            }
         }
 
     suspend fun clearAll() = withContext(Dispatchers.IO) {
-        val resolver = context.contentResolver
-        for ((_, rowId) in readOurExistingPrograms()) {
-            val rowUri = ContentUris.withAppendedId(
-                TvContractCompat.WatchNextPrograms.CONTENT_URI,
-                rowId,
-            )
-            resolver.delete(rowUri, null, null)
+        writeGate.clear {
+            val resolver = context.contentResolver
+            for ((_, rowId) in readOurExistingPrograms()) {
+                val rowUri = ContentUris.withAppendedId(
+                    TvContractCompat.WatchNextPrograms.CONTENT_URI,
+                    rowId,
+                )
+                resolver.delete(rowUri, null, null)
+            }
         }
     }
 

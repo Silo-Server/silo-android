@@ -57,7 +57,7 @@ interface ServerPurgeDao {
     @Query("DELETE FROM download_deletions WHERE serverId = :serverId")
     suspend fun deleteDownloadDeletions(serverId: String)
 
-    @Query("DELETE FROM dirty_operations WHERE serverId = :serverId")
+    @Query("DELETE FROM dirty_operations WHERE serverId = :serverId AND state != 'legacy_membership_quarantined'")
     suspend fun deleteDirtyOperations(serverId: String)
 
     @Query("DELETE FROM content_item_state WHERE serverId = :serverId")

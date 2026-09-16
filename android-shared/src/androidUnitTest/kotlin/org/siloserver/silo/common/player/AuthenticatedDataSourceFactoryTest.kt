@@ -37,9 +37,9 @@ class AuthenticatedDataSourceFactoryTest {
     }
 
     @Test
-    fun streamRelativeFallbackUsesPlaybackStreamResolver() {
+    fun streamRelativeUrlWithoutApiMountResolvesAgainstOrigin() {
         assertEquals(
-            "https://silo.example/api/v1/stream/session-1",
+            "https://silo.example/stream/session-1",
             resolveRoutedDataSourceUrl("https://silo.example", "/stream/session-1"),
         )
     }
@@ -47,8 +47,8 @@ class AuthenticatedDataSourceFactoryTest {
     @Test
     fun apiRelativeFallbackIsNotDoublePrefixed() {
         assertEquals(
-            "https://silo.example/api/v1/stream/session-1",
-            resolveRoutedDataSourceUrl("https://silo.example", "/api/v1/stream/session-1"),
+            "https://silo.example/api/v2/stream/session-1",
+            resolveRoutedDataSourceUrl("https://silo.example", "/api/v2/stream/session-1"),
         )
     }
 
@@ -175,8 +175,8 @@ class AuthenticatedDataSourceFactoryTest {
         val sessionHeaders = mapOf("Authorization" to "Bearer silo-session")
 
         listOf(
-            "/api/v1/stream/session-1",
-            "api/v1/stream/session-1/subtitles/4.srt",
+            "/api/v2/stream/session-1",
+            "api/v2/stream/session-1/subtitles/4.srt",
         ).forEach { requestUrl ->
             assertEquals(
                 sessionHeaders,
@@ -225,13 +225,13 @@ class AuthenticatedDataSourceFactoryTest {
 
     @Test
     fun srtSubtitleUrlsAreDetectedForWholeFileReads() {
-        assertTrue(shouldNormalizeSubripPath("/api/v1/stream/session/subtitles/4.srt", 0L))
+        assertTrue(shouldNormalizeSubripPath("/api/v2/stream/session/subtitles/4.srt", 0L))
     }
 
     @Test
     fun nonSrtPayloadsDoNotUseSubtitleNormalization() {
         assertFalse(shouldNormalizeSubripPath("/video/segment.ts", 0L))
-        assertFalse(shouldNormalizeSubripPath("/api/v1/stream/session/subtitles/4.srt", 512L))
+        assertFalse(shouldNormalizeSubripPath("/api/v2/stream/session/subtitles/4.srt", 512L))
     }
 
     @Test
@@ -414,7 +414,7 @@ class AuthenticatedDataSourceFactoryTest {
             MediaAuthSession(tokens, refreshClient),
         )
 
-        source.open(DataSpec(Uri.parse("https://silo.example/api/v1/stream/session")))
+        source.open(DataSpec(Uri.parse("https://silo.example/api/v2/stream/session")))
 
         assertEquals(
             "Bearer expired-access",
