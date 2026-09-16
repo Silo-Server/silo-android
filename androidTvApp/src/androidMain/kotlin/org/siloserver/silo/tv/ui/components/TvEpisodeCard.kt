@@ -187,7 +187,17 @@ fun TvEpisodeCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                val secondaryLine = if (seriesTitle != null) title else year?.toString()
+                val episodeTag = tvEpisodeTag(seasonNumber, episodeNumber)
+                // With the series on the line above, the episode number is what
+                // separates two same-named episodes in a rail, so it leads.
+                val secondaryLine = when {
+                    seriesTitle != null -> listOfNotNull(
+                        episodeTag,
+                        title.takeIf { it.isNotBlank() },
+                    ).joinToString(" \u2022 ").ifBlank { null }
+                    episodeTag != null -> episodeTag
+                    else -> year?.toString()
+                }
                 if (caption.showsMetadata && secondaryLine != null) {
                     Text(
                         text = secondaryLine,

@@ -61,7 +61,7 @@ class TvFocusMarqueeModelTest {
 
         assertEquals("The Last of Us", content.title)
         assertEquals(listOf("TV-MA"), content.badges)
-        assertEquals(listOf("S1 E3", "Long, Long Time"), content.metaParts)
+        assertEquals(listOf("S01E03", "Long, Long Time"), content.metaParts)
         assertEquals("1080P · EAC3", content.specLine)
     }
 
@@ -82,7 +82,7 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Continue Watching",
         )
 
-        assertEquals(listOf("S3 E1", "Persuader"), content.metaParts)
+        assertEquals(listOf("S03E01", "Persuader"), content.metaParts)
         assertFalse(content.metaParts.any { it.contains("left", ignoreCase = true) })
         assertFalse(content.metaParts.any { it.contains("min", ignoreCase = true) })
     }
