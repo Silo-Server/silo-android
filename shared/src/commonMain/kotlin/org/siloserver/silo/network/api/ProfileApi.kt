@@ -72,12 +72,11 @@ class ProfileApi(
     suspend fun updateProfile(
         id: String,
         update: ProfileUpdate,
-    ): ApiResult<Profile> = safeApiV2Call<ProfileV2>(apiV2Gate) {
-        client.patch("/api/v2/profiles/$id") {
+    ): ApiResult<Profile> =
+        exchange<ProfileV2>("/api/v2/profiles/${id.encodeURLPathPart()}", HttpMethod.Patch, HttpStatusCode.OK, nonRetryable = true) {
             contentType(ContentType.Application.Json)
             setBody(update.toJsonObject())
-        }
-    }.map { profile -> profile.toProfile() }
+        }.map { profile -> profile.toProfile() }
 
     suspend fun deleteProfile(id: String): ApiResult<Unit> =
         exchange("/api/v2/profiles/${id.encodeURLPathPart()}", HttpMethod.Delete, HttpStatusCode.NoContent, nonRetryable = true)
