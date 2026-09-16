@@ -86,14 +86,8 @@ class RoomCatalogCacheRepository(
         return row?.json?.let { runCatching { json.decodeFromString<List<ResolvedSection>>(it) }.getOrNull() }
     }
 
-    private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot): String {
-        val identity = json.encodeToString(listOf(owner.serverId, owner.serverUrl, owner.profileId,
-            owner.profileToken, owner.credentialGenerationId, owner.identityGeneration.toString(),
-            owner.isIdentityGenerationStamped.toString(), owner.credentialEpoch.toString()))
-        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(identity.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        return "library-sections-v2:$libraryId:$hash"
-    }
+    private fun librarySectionsV2Key(libraryId: Int, owner: AuthScopeSnapshot): String =
+        owner.identityCacheKey("library-sections-v2:$libraryId")
 
     override suspend fun cacheItemDetail(contentId: String, detail: ItemDetail) =
         cacheItemDetail(contentId, detail, currentWriteLease())

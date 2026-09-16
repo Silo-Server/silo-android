@@ -51,7 +51,6 @@ class RoomHomeCacheRepository(
         if (body.encodeToByteArray().size > MAX_CACHE_BYTES) return
         db.withTransaction {
             if (!stillCurrent() || scopedDao.get(owner.serverId, profile, key) != null) return@withTransaction
-            if (!stillCurrent()) return@withTransaction
             scopedDao.upsert(org.siloserver.silo.common.data.db.entity.CatalogCacheEntity(owner.serverId, profile, key, body, now()))
         }
     }
@@ -64,12 +63,7 @@ class RoomHomeCacheRepository(
         return row?.let { runCatching { HomeCacheSnapshot(json.decodeFromString<List<ResolvedSection>>(it.json), it.cachedAtMs) }.getOrNull() }
     }
 
-    private fun scopedKey(owner: AuthScopeSnapshot): String {
-        val identity = json.encodeToString(listOf(owner.serverId, owner.serverUrl, owner.profileId, owner.profileToken,
-            owner.credentialGenerationId, owner.identityGeneration.toString(), owner.isIdentityGenerationStamped.toString(), owner.credentialEpoch.toString()))
-        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(identity.toByteArray()).joinToString("") { "%02x".format(it) }
-        return "home-sections-v2:$hash"
-    }
+    private fun scopedKey(owner: AuthScopeSnapshot): String = owner.identityCacheKey("home-sections-v2")
 
     override suspend fun cacheHome(sections: List<ResolvedSection>) {
         cacheHome(
