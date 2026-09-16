@@ -756,8 +756,11 @@ fun resolvePlaybackStreamUrl(serverUrl: String, streamUrl: String): String {
             streamUrl.startsWith("https://") ||
             streamUrl.startsWith("file://") ||
             streamUrl.startsWith("content://") -> streamUrl // Already absolute / local offline: nothing to prefix.
-        streamUrl.startsWith("/api/") -> "$base$streamUrl"
-        else -> throw IllegalArgumentException("The server returned a playback URL without an API mount.")
+        // v2 already mounts relative delivery paths under /api/v2; any other
+        // server-relative path is resolved against the origin so an unexpected
+        // shape surfaces as a handled playback error, not a crash in preparation.
+        streamUrl.startsWith("/") -> "$base$streamUrl"
+        else -> "$base/$streamUrl"
     }
 }
 
