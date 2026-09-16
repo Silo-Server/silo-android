@@ -84,6 +84,15 @@ class CatalogApiTest {
     }
 
     @Test
+    fun `opaque content ids are encoded as one path segment`() = runTest {
+        val (api, captured) = api(responseBody = """{"content_id":"movie:a/b","type":"movie","title":"A","cast":[],"crew":[],"versions":[],"subtitles":[]}""")
+
+        api.getItemDetail("movie:a/b")
+
+        assertEquals("/api/v2/catalog/items/movie:a%2Fb", captured.path)
+    }
+
+    @Test
     fun `getItemVersions rejects numeric file ids`() = runTest {
         val (api, _) = api(responseBody = """{"items":[{"file_id":42}]}""")
 

@@ -3,6 +3,7 @@ package org.siloserver.silo.network.apiv2
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.http.HttpMethod
+import io.ktor.http.encodeURLPathPart
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -29,7 +30,7 @@ class MembershipV2Api(
     private suspend fun read(list: String, itemId: String, capturedScope: AuthScopeSnapshot?): ApiResult<MembershipEntryV2?> {
         val scope = capturedScope ?: tokenManager?.snapshotCurrentScope()
         val result = ownedV2Call<MembershipEntryV2, MembershipEntryV2?>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { owner ->
-            client.get("/api/v2/$list/$itemId") { owner?.let { authScope(it) } }
+            client.get("/api/v2/$list/${itemId.encodeURLPathPart()}") { owner?.let { authScope(it) } }
         }) { entry ->
             require(entry.itemId == itemId) { "The membership response names a different item." }
             entry
@@ -44,7 +45,7 @@ class MembershipV2Api(
         // No post-guard: do not discard a confirmed old-scope acknowledgement. The
         // caller can resolve its exact recorded command without publishing into the new UI.
         return ownedV2Call<Unit, Unit>(gate, tokenManager, null, OwnerPolicy.IDENTITY, HttpStatusCode.NoContent, { _ ->
-            client.request("/api/v2/$list/$itemId") {
+            client.request("/api/v2/$list/${itemId.encodeURLPathPart()}") {
                 method = if (present) HttpMethod.Put else HttpMethod.Delete
                 scope?.let { authScope(it) }
                 singleAttempt()

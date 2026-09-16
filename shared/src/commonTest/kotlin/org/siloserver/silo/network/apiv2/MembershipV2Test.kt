@@ -97,6 +97,19 @@ class MembershipV2Test {
         }
     }
 
+    @Test fun opaqueItemIdsAreEncodedAsOnePathSegment() = runTest {
+        val paths = mutableListOf<String>()
+        val client = HttpClient(MockEngine { request ->
+            paths += request.url.encodedPath
+            respond("""{"item_id":"movie:a/b","added_at":"2026-01-02T03:04:05.000Z"}""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        try {
+            val api = MembershipV2Api(client, ApiV2Gate.Unrestricted)
+            assertEquals("movie:a/b", assertIs<ApiResult.Success<MembershipEntryV2?>>(api.favorite("movie:a/b")).data?.itemId)
+            assertEquals(listOf("/api/v2/favorites/movie:a%2Fb"), paths)
+        } finally { client.close() }
+    }
+
     @Test fun singleAttemptNeverForwardsCredentialsToForeignOrigin() = runTest {
         val tokens = TokenManagerImpl().apply { setServerUrl("https://example.invalid"); setProfileId("p1"); saveTokens("access", "refresh", 3600) }
         var calls = 0
