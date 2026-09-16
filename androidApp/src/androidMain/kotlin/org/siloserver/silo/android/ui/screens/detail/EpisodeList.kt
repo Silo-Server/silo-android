@@ -292,16 +292,16 @@ private fun EpisodeRailCard(
                     )
                 }
             }
+            Text(
+                text = episode.title?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: "Episode ${episode.episodeNumber}",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = DetailPrimaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (showsEpisodeDetails) {
-                Text(
-                    text = episode.title?.takeIf { it.isNotBlank() }
-                        ?: "Episode ${episode.episodeNumber}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = DetailPrimaryText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
                 episodeMetadataLine(episode)?.let { metadata ->
                     Text(
                         text = metadata,

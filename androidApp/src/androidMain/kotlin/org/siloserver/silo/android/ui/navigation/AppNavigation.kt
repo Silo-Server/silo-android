@@ -21,15 +21,21 @@ import org.siloserver.silo.android.ui.screens.auth.DevicePairingUnknownServerScr
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import androidx.lifecycle.DEFAULT_ARGS_KEY
+import androidx.lifecycle.viewmodel.MutableCreationExtras
+import androidx.core.os.bundleOf
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -97,6 +103,12 @@ import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.network.TokenManager
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+
+/**
+ * Detail identity actually on screen, which a series redirect can move away
+ * from the route's own `contentId` argument.
+ */
+private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
@@ -234,8 +246,8 @@ fun AppNavigation(
                         currentDestinationRoute = navController.currentBackStackEntry
                             ?.destination?.route,
                         currentContentId = navController.currentBackStackEntry
-                            ?.arguments
-                            ?.getString("contentId"),
+                            ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
+                            ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
                         targetRoute = route,
                     )
                     navController.navigate(route) {
@@ -904,8 +916,36 @@ fun AppNavigation(
                 heroSourceHandoff.pendingArtworkUrl = null
                 heroSourceHandoff.pendingArtworkThumbhash = null
             }
-            val detailViewModel = koinViewModel<ItemDetailViewModel>()
+            // A season or episode detail replaces this page's content with its
+            // series in place, preserving the Back destination. Saved across
+            // recreation so the redirect does not have to run again.
+            var resolvedSeriesId by rememberSaveable(initialContentId) { mutableStateOf<String?>(null) }
+            var resolvedSeason by rememberSaveable(initialContentId) { mutableStateOf<Int?>(null) }
+            var resolvedEpisodeId by rememberSaveable(initialContentId) { mutableStateOf<String?>(null) }
+            val resolvedContentId = resolvedSeriesId ?: initialContentId
+            SideEffect {
+                // A redirected episode now displays Series. External links
+                // must compare against this identity, not the original args.
+                backStackEntry.savedStateHandle[DisplayedDetailContentIdKey] = resolvedContentId
+            }
+            val detailViewModel: ItemDetailViewModel = if (resolvedSeriesId == null) {
+                koinViewModel()
+            } else {
+                koinViewModel(
+                    key = "detail-${backStackEntry.id}-$resolvedContentId",
+                    extras = MutableCreationExtras(backStackEntry.defaultViewModelCreationExtras).apply {
+                        // Koin supplies SavedStateHandle from creation extras
+                        // ahead of explicit parameters, so replace its route args.
+                        set(DEFAULT_ARGS_KEY, bundleOf(
+                            "contentId" to resolvedContentId,
+                            "seasonNumber" to resolvedSeason?.toString(),
+                            "episodeContentId" to resolvedEpisodeId,
+                        ))
+                    },
+                )
+            }
             CompositionLocalProvider(LocalHeroSourceHandoff provides heroSourceHandoff) {
+            key(resolvedContentId) {
             ItemDetailScreen(
                 openingArtworkUrl = openingArtworkUrl,
                 openingArtworkThumbhash = openingArtworkThumbhash,
@@ -941,8 +981,10 @@ fun AppNavigation(
                 onSeriesClick = { seriesId ->
                     navController.navigate(Route.ItemDetail(seriesId).route)
                 },
-                onSeasonClick = { seriesId, seasonNumber ->
-                    navController.navigate(Route.ItemDetail(seriesId, seasonNumber).route)
+                onSeriesDetailReplace = { seriesId, seasonNumber, episodeId ->
+                    resolvedSeason = seasonNumber
+                    resolvedEpisodeId = episodeId
+                    resolvedSeriesId = seriesId
                 },
                 onPersonClick = { personId ->
                     personId.toLongOrNull()?.let { id ->
@@ -963,6 +1005,7 @@ fun AppNavigation(
                 },
                 viewModel = detailViewModel,
             )
+            }
             wtTarget?.let { (cid, fid) ->
                 WatchTogetherEntrySheet(
                     contentId = cid,
