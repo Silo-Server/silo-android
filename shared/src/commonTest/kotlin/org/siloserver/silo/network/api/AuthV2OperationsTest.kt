@@ -71,17 +71,18 @@ class AuthV2OperationsTest {
         } finally { client.close() }
     }
 
-    @Test fun ambiguousCollectingPollStopsUntilExplicitRestart() = runTest {
+    @Test fun transientPollFailureKeepsPollingUntilApproved() = runTest {
         var polls = 0
         val client = HttpClient(MockEngine { request ->
             if (request.url.encodedPath.endsWith("/start")) respond(start, HttpStatusCode.Created, headersOf(HttpHeaders.ContentType, "application/json"))
-            else { polls++; respond("{}", HttpStatusCode.ServiceUnavailable) }
+            else if (++polls == 1) respond("{}", HttpStatusCode.ServiceUnavailable)
+            else respond(poll("approved", ",\"tokens\":$pair"), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }) { install(ContentNegotiation) { json(SiloJson) } }
         try {
             val repo = DeviceLoginRepository(DefaultDeviceLoginApi(client, ApiV2Gate.Unrestricted))
             repo.beginAt("https://example.test", null, null)
-            assertEquals(DeviceLoginRepository.FailureReason.PollUncertain, assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(repo.state.value).reason)
-            assertEquals(1, polls)
+            assertIs<DeviceLoginRepository.DeviceLoginState.Approved>(repo.state.value)
+            assertEquals(2, polls)
         } finally { client.close() }
     }
 
