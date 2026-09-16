@@ -52,6 +52,11 @@ import org.siloserver.silo.model.ebook.ebookFormatDisplayName
 import org.siloserver.silo.model.ebook.ebookFormatSupport
 import org.siloserver.silo.model.ebook.isSupportedEbookVersion
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.LocalDensity
+import org.siloserver.silo.android.ui.screens.detail.HeaderSettledDp
+import org.siloserver.silo.android.ui.screens.detail.LocalDetailScrollState
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 
 /**
@@ -140,6 +145,20 @@ fun BookDetailContent(
     // under it (matches the audiobook detail).
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val feedState = rememberLazyListState()
+    // Feed the pinned header (see DetailScrollState).
+    val detailScroll = LocalDetailScrollState.current
+    if (detailScroll != null) {
+        val density = LocalDensity.current
+        LaunchedEffect(feedState, detailScroll, density) {
+            snapshotFlow {
+                if (feedState.firstVisibleItemIndex > 0) {
+                    HeaderSettledDp
+                } else {
+                    with(density) { feedState.firstVisibleItemScrollOffset.toDp().value }
+                }
+            }.collect { detailScroll.update(it) }
+        }
+    }
     DeferImagePresentationWhileScrolling(feedState) {
     LazyColumn(
         state = feedState,

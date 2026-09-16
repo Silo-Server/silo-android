@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
@@ -121,6 +122,7 @@ class SettingsViewModel(
     private val playerSettingsStore: PlayerSettingsStore,
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val overlayPrefsStore: OverlayPrefsStore,
+    private val activeProfileStore: ActiveProfileStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
@@ -424,6 +426,7 @@ class SettingsViewModel(
             // stale rows flash before the fresh fetch lands.
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
+            activeProfileStore.reset()
             cardPresentationStore.clear()
             _uiState.update { it.copy(loggedOut = true) }
         }

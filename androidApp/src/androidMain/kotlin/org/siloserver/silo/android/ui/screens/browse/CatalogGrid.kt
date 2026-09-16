@@ -105,10 +105,6 @@ fun CatalogGrid(
     val gridState = rememberLazyGridState()
     val heroHandoff = LocalHeroSourceHandoff.current
     val uniqueItems = remember(items) { items.distinctBy { it.contentId } }
-    val browseContentIds = remember(uniqueItems) { uniqueItems.map { it.contentId } }
-    val browseOrigin = remember(uniqueItems.firstOrNull()?.contentId) {
-        "catalog-${uniqueItems.firstOrNull()?.contentId.orEmpty()}"
-    }
     // The session density picks the base cell; the server-driven poster-size
     // preference multiplies it, shifting the adaptive column count.
     val cardWidth = viewDensity.minCardWidth * LocalCardPresentation.current.posterSize.posterScale
@@ -179,8 +175,6 @@ fun CatalogGrid(
                     type = item.type,
                     userState = userState,
                     onClick = {
-                        heroHandoff?.pendingBrowseContentIds = browseContentIds
-                        heroHandoff?.pendingBrowseOrigin = browseOrigin
                         heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
                         heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
                         onItemClick(item.contentId)

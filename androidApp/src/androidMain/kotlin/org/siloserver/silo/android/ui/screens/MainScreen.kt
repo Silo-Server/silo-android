@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
 import org.siloserver.silo.android.ui.components.TabTopBarActions
@@ -75,6 +76,7 @@ import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
+import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
@@ -155,11 +157,18 @@ fun MainScreen(
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
+    val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
+    // Drives the initial load and every re-load. Keyed on the active server
+    // and its profile, so switching either re-fetches the avatar rather than
+    // leaving the previous profile's (or none) in the header.
+    LaunchedEffect(activeEntry?.id, activeEntry?.profileId) {
+        headerViewModel.refresh()
+    }
     val mediaCapabilities by produceState(
         initialValue = MediaModeCapabilities(
             listOf(
@@ -276,6 +285,7 @@ fun MainScreen(
             // does — otherwise the next user's shell renders (and can write
             // back) the previous profile's overlays and card presentation.
             overlayPrefsStore.clear()
+            activeProfileStore.reset()
             cardPresentationStore.clear()
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
@@ -295,6 +305,7 @@ fun MainScreen(
     fun switchProfileFromMenu() {
         navController.navigate(Route.ProfileSelection.route)
         overlayPrefsStore.clear()
+        activeProfileStore.reset()
         cardPresentationStore.clear()
     }
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
@@ -381,7 +392,7 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .hazeSource(hazeState)
-                    .background(MaterialTheme.colorScheme.background),
+                    .siloPageBackdrop(),
             ) {
                 when (currentTab) {
                     Tab.Home -> {

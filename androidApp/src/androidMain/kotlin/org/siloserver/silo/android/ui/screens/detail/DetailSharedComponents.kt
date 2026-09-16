@@ -52,6 +52,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -89,14 +93,6 @@ internal val LargePadding = 24.dp
 private const val DetailArtworkCrossfadeMs = 120
 
 // ── Dynamic palette ───────────────────────────────────────────
-
-fun detailScreenBackgroundBrush(dominantColor: Color): Brush {
-    val surface = lerp(Color.Black, dominantColor, 0.42f)
-    return Brush.verticalGradient(
-        0.00f to surface,
-        1.00f to surface,
-    )
-}
 
 internal val ExpandedDetailBreakpoint = 600.dp
 
@@ -485,7 +481,6 @@ fun DetailHero(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp)
-        val pageSurface = lerp(Color.Black, dominantColor, 0.42f)
         Column(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -493,14 +488,66 @@ fun DetailHero(
                     .height(artworkHeight),
                 contentAlignment = Alignment.BottomCenter,
             ) {
-                ThumbhashImage(
-                    url = detail.backdropUrl ?: detail.posterUrl,
-                    thumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
-                    contentDescription = detail.title,
-                    contentScale = ContentScale.Crop,
-                    crossfadeMillis = DetailArtworkCrossfadeMs,
-                    modifier = Modifier.fillMaxSize(),
-                )
+                // Parallax: the artwork trails the scroll so the page reads
+                // as moving faster than the picture (iOS
+                // PhoneDetailParallaxArtwork). Only the artwork translates —
+                // the gradient below must stay pinned to the hero's bottom
+                // edge or the fade-to-surface would slide out of place.
+                val detailScroll = LocalDetailScrollState.current
+                val parallaxDp = detailScroll?.parallaxDp ?: 0f
+                val scrimAlpha = ParallaxScrimMaxAlpha *
+                    (parallaxDp / ParallaxScrimRangeDp).coerceIn(0f, 1f)
+                // Artwork + its scrim are masked as one, the way iOS masks the
+                // parallax stack. The mask is on this fixed wrapper, not on the
+                // translating image, so the fade stays pinned to the hero's
+                // bottom edge while the picture slides underneath it.
+                //
+                // It fades to TRANSPARENT so the blurred page surface behind
+                // the whole page shows through. This used to fade into an
+                // opaque lerp(black, tint, 0.42) instead — a dark slab that
+                // scrolled with the hero and sat on top of that surface, which
+                // is what made the background read as a stray black gradient.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0.00f to Color.Black,
+                                    0.72f to Color.Black,
+                                    0.84f to Color.Black.copy(alpha = 0.76f),
+                                    1.00f to Color.Transparent,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        },
+                ) {
+                    ThumbhashImage(
+                        url = detail.backdropUrl ?: detail.posterUrl,
+                        thumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
+                        contentDescription = detail.title,
+                        contentScale = ContentScale.Crop,
+                        crossfadeMillis = DetailArtworkCrossfadeMs,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                translationY = parallaxDp * ParallaxFactor * density
+                            },
+                    )
+                    // Deepens as the hero leaves, so the artwork recedes
+                    // instead of just sliding.
+                    if (scrimAlpha > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = scrimAlpha)),
+                        )
+                    }
+                }
+                // Top darkening only — keeps the back/remote controls legible
+                // over bright artwork.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -508,8 +555,6 @@ fun DetailHero(
                             Brush.verticalGradient(
                                 0.00f to Color.Black.copy(alpha = 0.34f),
                                 0.30f to Color.Transparent,
-                                0.72f to Color.Transparent,
-                                1.00f to pageSurface,
                             ),
                         ),
                 )

@@ -121,3 +121,21 @@ val DarkInverseOnSurface = SiloBackground
 val DarkInversePrimary = SiloBackground
 
 val Scrim = SiloOverlay
+
+// Bottom navigation capsule. Deliberately opaque rather than a translucent
+// wash: Compose has no live backdrop blur, so iOS's glass tab bar cannot be
+// reproduced by tinting alone. The previous 30%-white fill just lightened
+// whatever poster art scrolled underneath and swallowed the labels over bright
+// covers. The selected tab inverts to a light chip instead of a brighter wash.
+val SiloNavPillSurface = Color(0xFF15191F)
+val SiloNavPillBorder = Color.White.copy(alpha = 0.10f)
+val SiloNavPillSelected = Color(0xFFEDEDED)
+val SiloNavPillSelectedContent = Color(0xFF0B0B0C)
+val SiloNavPillContent = Color.White.copy(alpha = 0.58f)
+
+/**
+ * Detail-page overlay buttons (close, remote). The bottom-nav pill made
+ * translucent: hero artwork still reads through, but a dark disc holds a white
+ * glyph over a pale poster, which the old white-on-white wash did not.
+ */
+val SiloOverlayPillSurface = SiloNavPillSurface.copy(alpha = 0.62f)

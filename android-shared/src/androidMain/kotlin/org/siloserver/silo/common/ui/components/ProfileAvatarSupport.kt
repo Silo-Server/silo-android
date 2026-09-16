@@ -130,13 +130,20 @@ fun resolveProfileAvatar(serverUrl: String, avatar: ProfileAvatarRef): ResolvedP
     if (trimmedUrl.isNotEmpty()) {
         return ResolvedProfileAvatar(
             url = trimmedUrl,
-            // Only uploads get an override: their signature rotates. DiceBear
-            // and other query-bearing URLs must keep the query in their key —
-            // stripping it would collapse every preset onto one cache entry.
-            cacheKey = if (isUploadAvatarRef(trimmedRef)) {
-                stableUploadCacheKey(trimmedRef, trimmedUrl)
-            } else {
-                null
+            // Key by the server's own avatar ref whenever there is one: it is
+            // the stable identity of the image, while the URL is not. Only
+            // uploads used to get an override, so any other re-signed or
+            // otherwise varying `avatar_url` missed the cache on every fetch
+            // and re-downloaded the same bytes — visible as the avatar
+            // reloading each time a page composed its header.
+            //
+            // This does NOT collapse DiceBear presets onto one entry the way
+            // blindly stripping the query would: each preset carries its own
+            // distinct ref, so each keeps its own key.
+            cacheKey = when {
+                isUploadAvatarRef(trimmedRef) -> stableUploadCacheKey(trimmedRef, trimmedUrl)
+                trimmedRef.isNotEmpty() -> trimmedRef
+                else -> null
             },
         )
     }

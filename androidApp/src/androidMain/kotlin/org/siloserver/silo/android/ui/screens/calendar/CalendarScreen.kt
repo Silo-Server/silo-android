@@ -74,6 +74,7 @@ import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
@@ -168,7 +169,7 @@ fun CalendarScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .hazeSource(haze)
-                .background(MaterialTheme.colorScheme.background),
+                .siloPageBackdrop(),
             indicator = {
                 PullToRefreshDefaults.Indicator(
                     state = pullState,

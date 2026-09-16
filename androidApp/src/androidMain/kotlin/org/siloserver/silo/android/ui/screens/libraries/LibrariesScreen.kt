@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.android.ui.components.TopBarRowTopInset
+import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
@@ -843,7 +845,7 @@ fun LibrariesScreen(
                 // Background inside the source so the glass captures an
                 // opaque scene rather than compositing over the sharp content.
                 .hazeSource(chromeHaze)
-                .background(MaterialTheme.colorScheme.background)
+                .siloPageBackdrop()
                 .clipToBounds(),
         ) {
             // Hold content until the chrome has been measured once so the
@@ -1355,7 +1357,7 @@ private fun LibrariesFloatingChrome(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = statusBarPadding.calculateTopPadding() + 8.dp),
+                .padding(top = statusBarPadding.calculateTopPadding() + TopBarRowTopInset),
         ) {
         // Top row: library selector on the left, action icons on the right.
         Row(

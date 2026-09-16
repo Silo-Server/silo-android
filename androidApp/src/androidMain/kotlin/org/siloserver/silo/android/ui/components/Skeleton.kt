@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
@@ -188,10 +189,20 @@ fun DetailLoadingSkeleton(
                     crossfadeMillis = 120,
                     modifier = Modifier.fillMaxSize(),
                 )
+                // Match the loaded hero's scrim. A flat 20% wash here meant
+                // the moment detail arrived the artwork jumped from lightly
+                // dimmed to a hard left-weighted gradient — read as a flash
+                // even when the image itself never changed.
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .drawBehind { drawRect(Color.Black.copy(alpha = 0.20f)) },
+                        .background(
+                            Brush.horizontalGradient(
+                                0.00f to Color.Black.copy(alpha = 0.88f),
+                                0.48f to Color.Black.copy(alpha = 0.58f),
+                                1.00f to Color.Black.copy(alpha = 0.32f),
+                            ),
+                        ),
                 )
             }
         } else {

@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.components.TopBarEdgeMargin
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.LoadingIndicator
@@ -134,7 +135,7 @@ fun PersonDetailScreen(
             modifier = Modifier
                 .align(Alignment.TopStart)
                 .statusBarsPadding()
-                .padding(8.dp)
+                .padding(horizontal = TopBarEdgeMargin)
                 .size(40.dp)
                 .clip(CircleShape)
                 .background(Color.Black.copy(alpha = 0.45f)),

@@ -2,6 +2,7 @@ package org.siloserver.silo.di
 
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.OnboardingRepository
 import org.siloserver.silo.repository.CalendarRepository
@@ -94,6 +95,7 @@ val repositoryModule = module {
     single { RecommendationRepository(get()) }
     single { RequestsRepository(get()) }
     single { RequestsFeatureStore(get()) }
+    single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
