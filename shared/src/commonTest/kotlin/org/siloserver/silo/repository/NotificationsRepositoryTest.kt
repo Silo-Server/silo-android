@@ -277,6 +277,9 @@ class NotificationsRepositoryTest {
         assertEquals(listOf("live"), repo.rows.value.map { it.id })
         assertEquals(1, repo.unreadCount.value)
         assertEquals(0, api.listCalls)
+        events.emit(NotificationRealtimeEvent.Invalidate)
+        kotlinx.coroutines.yield()
+        assertEquals(1, api.listCalls, "a signed read cutoff cannot fold locally and must reread the inbox")
         job.cancel()
     }
 

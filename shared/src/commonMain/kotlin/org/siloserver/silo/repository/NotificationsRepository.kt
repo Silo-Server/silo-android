@@ -371,9 +371,10 @@ class NotificationsRepository(
                         backoffMs = INITIAL_BACKOFF_MS
                         established = true
                     }
-                    // The connection snapshot is the reconnect moment: reread authoritative
-                    // counts and the displayed cutoff once. Every later event folds locally.
-                    if (event is NotificationRealtimeEvent.Snapshot) refresh()
+                    // The connection snapshot is the reconnect moment, and a signed read
+                    // cutoff from another device cannot be folded locally: both reread the
+                    // authoritative counts and displayed cutoff. Every other event folds.
+                    if (event is NotificationRealtimeEvent.Snapshot || event is NotificationRealtimeEvent.Invalidate) refresh()
                     else publishFor(connectionViewer) { mutate { applyEvent(it, event) } }
                 }
             } catch (e: CancellationException) {
