@@ -35,8 +35,12 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -190,37 +194,48 @@ class MobileDetailActionsTest {
         assertFalse(state.hasExplicitSubtitleSelection)
     }
 
+    private val viewModels = mutableListOf<ViewModel>()
+
+    /**
+     * Every mock engine in a test runs on the scheduler dispatcher, so no
+     * response can arrive from a real thread after Main is reset — that
+     * dispatches into a missing Main dispatcher and fails the test at random.
+     */
     private fun runItemDetailTest(block: suspend kotlinx.coroutines.test.TestScope.() -> Unit) = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         try {
             block()
         } finally {
+            viewModels.forEach { it.viewModelScope.cancel() }
+            viewModels.clear()
             Dispatchers.resetMain()
         }
     }
 
     /** A catalog client that never answers, so a selection's loading flag stays observable. */
-    private fun pendingCatalogRepository(): CatalogRepository = CatalogRepository(
-        CatalogApi(HttpClient(MockEngine { CompletableDeferred<Unit>().await(); respond("{}") })),
+    private fun kotlinx.coroutines.test.TestScope.pendingCatalogRepository(): CatalogRepository = CatalogRepository(
+        CatalogApi(dummyHttpClient(StandardTestDispatcher(testScheduler)) { CompletableDeferred<Unit>().await(); respond("{}") }),
     )
 
-    private fun itemDetailViewModel(
+    private fun kotlinx.coroutines.test.TestScope.itemDetailViewModel(
         personalDataRepository: RecordingPersonalDataRepository,
-        catalogRepository: CatalogRepository = CatalogRepository(CatalogApi(dummyHttpClient())),
+        catalogRepository: CatalogRepository? = null,
         contentId: String? = null,
-    ): ItemDetailViewModel =
-        ItemDetailViewModel(
-            catalogRepository = catalogRepository,
+    ): ItemDetailViewModel {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        return ItemDetailViewModel(
+            catalogRepository = catalogRepository ?: CatalogRepository(CatalogApi(dummyHttpClient(dispatcher))),
             personalDataRepository = personalDataRepository,
-            downloadsRepository = DownloadsRepository(EmptyDownloadsApi()),
+            downloadsRepository = DownloadsRepository(EmptyDownloadsApi(dispatcher)),
             downloadEnqueuer = unsafeInstance(),
-            ebookReaderRepository = dummyEbookReaderRepository(),
-            recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient())),
+            ebookReaderRepository = dummyEbookReaderRepository(dispatcher),
+            recommendationRepository = RecommendationRepository(RecommendationApi(dummyHttpClient(dispatcher))),
             metadataAiRepository = org.siloserver.silo.repository.MetadataAiRepository(
-                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+                org.siloserver.silo.network.api.DefaultMetadataAiApi(dummyHttpClient(dispatcher), gate = org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
             ),
             savedStateHandle = SavedStateHandle(contentId?.let { mapOf("contentId" to it) } ?: emptyMap()),
-        )
+        ).also { viewModels += it }
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun ItemDetailViewModel.seedSeriesDetail() {
@@ -360,18 +375,18 @@ class MobileDetailActionsTest {
         override suspend fun current(): org.siloserver.silo.network.SiloDeviceMetadata? = null
     }
 
-    private class EmptyDownloadsApi : DownloadsApi(
-        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+    private class EmptyDownloadsApi(dispatcher: CoroutineDispatcher) : DownloadsApi(
+        registry = org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
         tokens = org.siloserver.silo.network.TokenManagerImpl(),
-        creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
-            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
+        creation = org.siloserver.silo.network.apiv2.DownloadCreationV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices,
+            org.siloserver.silo.network.apiv2.DownloadRegistryV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), NoDevices, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted),
     ) {
         override suspend fun list(scope: org.siloserver.silo.network.AuthScopeSnapshot?): ApiResult<DownloadsListResponse> =
             ApiResult.Success(DownloadsListResponse())
     }
 
-    private fun dummyEbookReaderRepository(): EbookReaderRepository {
-        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)
+    private fun dummyEbookReaderRepository(dispatcher: CoroutineDispatcher): EbookReaderRepository {
+        val v2 = org.siloserver.silo.network.apiv2.EbookReaderV2Api(dummyHttpClient(dispatcher), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)
         return EbookReaderRepository(EbookReaderApi(v2), v2)
     }
 
@@ -382,7 +397,9 @@ class MobileDetailActionsTest {
     }
 
     companion object {
-        private fun dummyHttpClient(): HttpClient =
-            HttpClient(MockEngine { respond("{}") })
+        private fun dummyHttpClient(
+            dispatcher: CoroutineDispatcher,
+            handler: suspend io.ktor.client.engine.mock.MockRequestHandleScope.(io.ktor.client.request.HttpRequestData) -> io.ktor.client.request.HttpResponseData = { respond("{}") },
+        ): HttpClient = HttpClient(MockEngine(MockEngineConfig().apply { this.dispatcher = dispatcher; addHandler(handler) }))
     }
 }
