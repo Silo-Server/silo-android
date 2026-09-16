@@ -283,22 +283,29 @@ class DownloadWorker(
             // worker exits and the UI re-renders.
             val pendingUri = activeUri ?: error("download target was not created")
             val finalBytes = storage.partialSize(pendingUri)
-            val finalUri = ownedWrite { storage.completeWrite(pendingUri) }
+            // Publish the file and flip the sidecar to completed under one
+            // ownership check: an identity change between the two would leave
+            // the owner's sidecar at `downloading` with a staged URI that no
+            // longer exists, and WorkManager would not retry a terminal result.
+            // The enqueuer wrote title + poster; only status, size, final URI
+            // and the (now moot) resume validator change here.
+            ownedWrite {
+                val finalUri = storage.completeWrite(pendingUri)
+                writeSidecarStatus(
+                    serverId, profileId, fileId,
+                    status = org.siloserver.silo.model.download.DownloadStatus.Completed.wire,
+                    bytesSent = finalBytes,
+                    fileSize = finalBytes,
+                    localUri = finalUri,
+                    resumeValidator = "",
+                )
+                true
+            }
             Log.i(TAG, "doWork success id=$downloadId bytes=$finalBytes")
             DiagnosticsDownloadLogger.event("download completed")
+            // Server flips status → completed when its serve handler returns;
+            // refresh so the cache reflects that before the UI re-renders.
             repository.refresh()
-            // Update the sidecar to status=completed. Enqueuer wrote the
-            // initial sidecar with title + poster; we just flip status here
-            // so it survives an offline app launch. Clear the resume validator
-            // (download is done — nothing to resume).
-            updateSidecarStatus(
-                serverId, profileId, fileId,
-                status = org.siloserver.silo.model.download.DownloadStatus.Completed.wire,
-                bytesSent = finalBytes,
-                fileSize = finalBytes,
-                localUri = finalUri,
-                resumeValidator = "",
-            )
             Result.success(workDataOf(KEY_BYTES_WRITTEN to finalBytes, KEY_TOTAL_BYTES to finalBytes))
         } catch (e: DownloadOwnerChanged) {
             // Preserve the original owner's partial; a new login cannot resume it.
@@ -420,28 +427,40 @@ class DownloadWorker(
         // null = keep existing; "" = clear (download finished/failed); else set.
         resumeValidator: String? = null,
     ) {
-        ownedWrite {
-            val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return@ownedWrite true
-            metadataStore.writeSidecar(
-                serverId, profileId,
-                existing.copy(
-                    record = existing.record.withWorkerStatus(
-                        status = status,
-                        bytesSent = bytesSent,
-                        fileSize = fileSize,
-                    ),
-                    localUri = localUri ?: existing.localUri,
-                    fileName = fileName?.takeIf { it.isNotBlank() } ?: existing.fileName,
-                    resumeValidator = when {
-                        resumeValidator == null -> existing.resumeValidator
-                        resumeValidator.isBlank() -> null
-                        else -> resumeValidator
-                    },
-                    updatedAtMs = System.currentTimeMillis(),
+        ownedWrite { writeSidecarStatus(serverId, profileId, fileId, status, bytesSent, fileSize, localUri, fileName, resumeValidator); true }
+    }
+
+    /** The sidecar write itself; callers wrap it in [ownedWrite]. */
+    private suspend fun writeSidecarStatus(
+        serverId: String,
+        profileId: String,
+        fileId: Int,
+        status: String,
+        bytesSent: Long? = null,
+        fileSize: Long? = null,
+        localUri: String? = null,
+        fileName: String? = null,
+        resumeValidator: String? = null,
+    ) {
+        val existing = metadataStore.readSidecar(serverId, profileId, fileId) ?: return
+        metadataStore.writeSidecar(
+            serverId, profileId,
+            existing.copy(
+                record = existing.record.withWorkerStatus(
+                    status = status,
+                    bytesSent = bytesSent,
+                    fileSize = fileSize,
                 ),
-            )
-            true
-        }
+                localUri = localUri ?: existing.localUri,
+                fileName = fileName?.takeIf { it.isNotBlank() } ?: existing.fileName,
+                resumeValidator = when {
+                    resumeValidator == null -> existing.resumeValidator
+                    resumeValidator.isBlank() -> null
+                    else -> resumeValidator
+                },
+                updatedAtMs = System.currentTimeMillis(),
+            ),
+        )
     }
 
     /**
