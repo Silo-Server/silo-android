@@ -18,6 +18,7 @@ class ReadyWatchMetadataTest {
     private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
     private var ownsLoad = true
     private var requests = 0
+    private val requestedLibraries = mutableListOf<String?>()
     private var code = HttpStatusCode.OK
     private var requestHook: () -> Unit = {}
     private var captureHook: suspend () -> Unit = {}
@@ -27,6 +28,7 @@ class ReadyWatchMetadataTest {
     private suspend fun scenario(block: suspend (CatalogRepository) -> Unit) {
         val client = HttpClient(MockEngine {
             requests++
+            requestedLibraries += it.url.parameters["library_id"]
             assertEquals("/api/v2/watch/movie:a", it.url.encodedPath)
             assertEquals(owner, it.attributes[AuthScopeAttributeKey])
             requestHook()
@@ -37,6 +39,14 @@ class ReadyWatchMetadataTest {
     }
     private fun lease(repo: CatalogRepository, captured: AuthScopeSnapshot? = owner, url: String = "https://example.invalid") =
         ReadyWatchMetadata(repo, captured, "movie:a", url) { ownsLoad }
+
+    @Test fun readyMetadataPreservesLibraryAndAllowsUnscopedReads() = runTest { scenario { repo ->
+        for (libraryId in listOf(7, 8, null)) {
+            val metadata = ReadyWatchMetadata(repo, owner, "movie:a", owner.serverUrl, libraryId) { ownsLoad }
+            assertNotNull(metadata.read())
+        }
+        assertEquals(listOf("7", "8", null), requestedLibraries)
+    } }
 
     @Test fun originalOwnerReadsAndNetworkFailureKeepsReadyFallbackAvailable() = runTest { scenario { repo ->
         val metadata = lease(repo)

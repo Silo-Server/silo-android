@@ -94,6 +94,37 @@ class SiloCastMessageTest {
     }
 
     @Test
+    fun scopedLaunchPreservesLibraryThroughTheWire() {
+        val message = SiloCastMessage.Launch(
+            SiloCastLaunchRequest(
+                serverId = "srv-1",
+                playback = SiloCastPlaybackRequest(
+                    contentId = "movie-42",
+                    libraryId = 8,
+                    startFromBeginning = true,
+                ),
+            ),
+        )
+        assertWireEquals(
+            """{"type":"launch","v":2,"launch":{"serverId":"srv-1","playback":{"contentId":"movie-42","startFromBeginning":true,"libraryId":8}}}""",
+            message,
+        )
+        val decoded = json.decodeFromString(
+            SiloCastMessage.serializer(), json.encodeToString(SiloCastMessage.serializer(), message),
+        )
+        assertEquals(message, decoded)
+    }
+
+    @Test
+    fun legacyLaunchWithoutLibraryRemainsUnscoped() {
+        val decoded = json.decodeFromString(
+            SiloCastMessage.serializer(),
+            """{"type":"launch","v":2,"launch":{"serverId":"srv-1","playback":{"contentId":"movie-42","startFromBeginning":true}}}""",
+        )
+        assertNull(assertIs<SiloCastMessage.Launch>(decoded).launch.playback.libraryId)
+    }
+
+    @Test
     fun controlCommandsUseAppleNamesAndFields() {
         assertWireEquals(
             """{"type":"control","v":2,"control":{"name":"play_pause"}}""",

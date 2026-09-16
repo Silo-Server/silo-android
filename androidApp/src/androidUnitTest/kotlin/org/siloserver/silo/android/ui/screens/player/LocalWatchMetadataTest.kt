@@ -16,6 +16,7 @@ class LocalWatchMetadataTest {
     private var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
     private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
     private var requests = 0
+    private val requestedLibraries = mutableListOf<String?>()
     private var hook: () -> Unit = {}
     private var current = true
     private var code = HttpStatusCode.OK
@@ -23,6 +24,7 @@ class LocalWatchMetadataTest {
     private suspend fun scenario(block: suspend (CatalogRepository) -> Unit) {
         val client = HttpClient(MockEngine {
             requests++
+            requestedLibraries += it.url.parameters["library_id"]
             assertEquals("/api/v2/watch/movie:a%2Fb", it.url.encodedPath)
             assertEquals(owner, it.attributes[AuthScopeAttributeKey])
             hook()
@@ -32,6 +34,13 @@ class LocalWatchMetadataTest {
     }
     private suspend fun read(repo: CatalogRepository, original: AuthScopeSnapshot? = owner, server: String = "s") =
         loadLocalWatchMetadata(repo, original, server, "p", "movie:a/b") { current }
+
+    @Test fun localMetadataPreservesLibraryAndAllowsUnscopedReads() = runTest { scenario { repo ->
+        for (libraryId in listOf(7, 8, null)) {
+            assertNotNull(loadLocalWatchMetadata(repo, owner, "s", "p", "movie:a/b", libraryId) { current })
+        }
+        assertEquals(listOf("7", "8", null), requestedLibraries)
+    } }
 
     @Test fun convertsExactWatchWireForExistingLocalMetadata() = runTest { scenario { repo ->
         val detail = assertNotNull(read(repo))

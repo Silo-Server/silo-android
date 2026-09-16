@@ -363,6 +363,7 @@ fun TvAppNavigation(
             val playback = request.playback
             val destination = TvRoute.Player(
                 contentId = playback.contentId,
+                libraryId = playback.libraryId,
                 fileId = playback.fileId,
                 resumePositionSeconds = if (playback.startFromBeginning) 0.0 else playback.resumePosition,
                 audioTrackIndex = playback.audioTrackIndex,
@@ -977,10 +978,9 @@ fun TvAppNavigation(
                     )
                 },
                 onItemDetail = { itemContentId ->
-                    // The helper, not a bare navigate: a DIFFERENT related
-                    // item pushes — which is what makes the return
-                    // restoration reachable — while an exact repeat is
-                    // collapsed by argument, not by destination node.
+                    // Global recommendations can belong to another library, so
+                    // open them unscoped. The helper pushes different items and
+                    // collapses exact repeats, preserving Back restoration.
                     navController.navigateToTvItemDetail(itemContentId)
                 },
                 // Season switching replaces the current detail entry so paging

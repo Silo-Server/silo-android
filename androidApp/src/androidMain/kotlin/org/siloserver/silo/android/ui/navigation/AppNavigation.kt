@@ -972,6 +972,7 @@ fun AppNavigation(
                     val launchedRemotely = siloCastController.launchOnConnectedTarget(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
+                            libraryId = libraryId,
                             fileId = fileId,
                             audioTrackIndex = audioTrackIndex,
                             subtitleTrackIndex = subtitleTrackIndex,
