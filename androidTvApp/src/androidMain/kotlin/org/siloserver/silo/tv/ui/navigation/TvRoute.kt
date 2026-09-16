@@ -66,10 +66,12 @@ sealed class TvRoute(val route: String) {
         val contentId: String,
         val seasonNumber: Int? = null,
         val episodeContentId: String? = null,
+        val libraryId: Int? = null,
     ) : TvRoute(
         buildString {
             append("item/${contentId.routeEncode()}")
             val query = buildList {
+                libraryId?.let { add("libraryId=$it") }
                 seasonNumber?.let { add("seasonNumber=$it") }
                 episodeContentId?.let { add("episodeContentId=${it.routeEncode()}") }
             }
@@ -78,7 +80,7 @@ sealed class TvRoute(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}"
+                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}&libraryId={libraryId}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_SEASON_NUMBER = "seasonNumber"
             const val ARG_EPISODE_CONTENT_ID = "episodeContentId"
@@ -119,10 +121,12 @@ sealed class TvRoute(val route: String) {
         val autoAdvanceCount: Int = 0,
         /** Opaque key for a process-only, target-bound episode selection handoff. */
         val episodeSelectionHandoffNonce: String? = null,
+        val libraryId: Int? = null,
     ) : TvRoute(
         buildString {
             append("player/${contentId.routeEncode()}")
             val query = buildList {
+                libraryId?.let { add("libraryId=$it") }
                 if (fileId != null) add("fileId=$fileId")
                 VideoPlayerRouteArgs.normalizeQuality(quality)?.let { value ->
                     add("quality=${value.routeEncode()}")
@@ -146,7 +150,7 @@ sealed class TvRoute(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "player/{contentId}?fileId={fileId}&quality={quality}&roomId={roomId}" +
+            const val ROUTE = "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&roomId={roomId}" +
                 "&audioTrackIndex={audioTrackIndex}&audioPicked={audioPicked}" +
                 "&subtitleTrackIndex={subtitleTrackIndex}" +
                 "&subtitleAutoResolved={subtitleAutoResolved}" +
@@ -175,10 +179,12 @@ sealed class TvRoute(val route: String) {
         val contentId: String,
         val fileId: Int? = null,
         val startPositionSeconds: Double? = null,
+        val libraryId: Int? = null,
     ) : TvRoute(
         buildString {
             append("audiobook/${contentId.routeEncode()}")
             val query = buildList {
+                libraryId?.let { add("libraryId=$it") }
                 if (fileId != null) add("fileId=$fileId")
                 VideoPlayerRouteArgs.encodeResumePosition(startPositionSeconds)?.let { value ->
                     add("$ARG_START_POSITION=$value")
@@ -188,7 +194,7 @@ sealed class TvRoute(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "audiobook/{contentId}?fileId={fileId}&startPosition={startPosition}"
+            const val ROUTE = "audiobook/{contentId}?libraryId={libraryId}&fileId={fileId}&startPosition={startPosition}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
             const val ARG_START_POSITION = "startPosition"

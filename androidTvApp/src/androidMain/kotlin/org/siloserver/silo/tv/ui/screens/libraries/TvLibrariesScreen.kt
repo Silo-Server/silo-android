@@ -15,7 +15,7 @@ import org.koin.compose.viewmodel.koinViewModel
 
 @Composable
 fun TvLibrariesScreen(
-    onItemClick: (contentId: String) -> Unit,
+    onItemClick: (contentId: String, libraryId: Int) -> Unit,
     onLibraryCollectionClick: (
         libraryId: Int,
         collectionId: String,
@@ -51,7 +51,7 @@ fun TvLibrariesScreen(
                     libraryId = selectedLibrary.id,
                     libraryTitle = selectedLibrary.name,
                     libraryType = selectedLibrary.type,
-                    onItemClick = onItemClick,
+                    onItemClick = { onItemClick(it, selectedLibrary.id) },
                     onCollectionClick = { collectionId, title, isUserCollection ->
                         if (isUserCollection) {
                             onUserCollectionClick(collectionId, title)

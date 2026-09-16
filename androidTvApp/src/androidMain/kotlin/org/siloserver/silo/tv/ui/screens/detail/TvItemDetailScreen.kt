@@ -177,6 +177,7 @@ internal fun ItemDetail?.isMatchingSeriesDetail(expectedContentId: String): Bool
 fun TvItemDetailScreen(
     contentId: String,
     seasonNumber: Int? = null,
+    libraryId: Int? = null,
     initialEpisodeContentId: String? = null,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
@@ -192,8 +193,8 @@ fun TvItemDetailScreen(
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
     viewModel: TvItemDetailViewModel = koinViewModel(
-        key = "item-detail-$contentId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
-        parameters = { parametersOf(contentId) },
+        key = "item-detail-$contentId-$libraryId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
+        parameters = { parametersOf(contentId, libraryId) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()

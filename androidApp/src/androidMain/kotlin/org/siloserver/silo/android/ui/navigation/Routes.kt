@@ -125,9 +125,11 @@ sealed class Route(val route: String) {
         val contentId: String,
         val seasonNumber: Int? = null,
         val episodeContentId: String? = null,
+        val libraryId: Int? = null,
     ) : Route(
         "item/${contentId.routeEncode()}" +
             listOfNotNull(
+                libraryId?.let { "libraryId=$it" },
                 seasonNumber?.let { "seasonNumber=$it" },
                 episodeContentId
                     ?.takeIf { it.isNotBlank() }
@@ -136,7 +138,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}"
+                "item/{contentId}?seasonNumber={seasonNumber}&episodeContentId={episodeContentId}&libraryId={libraryId}"
         }
     }
 
@@ -181,10 +183,12 @@ sealed class Route(val route: String) {
         val subtitleTrackIndex: Int? = null,
         val resumePositionSeconds: Double? = null,
         val roomId: String? = null,
+        val libraryId: Int? = null,
     ) : Route(
         buildString {
             append("player/${contentId.routeEncode()}")
             val queryParams = listOfNotNull(
+                libraryId?.let { "libraryId=$it" },
                 fileId?.let { "fileId=$it" },
                 // normalizeQuality is a closed wire-value set, so no URI
                 // escaping (or Android framework dependency) is needed here.
@@ -203,7 +207,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
+                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
         }
     }
 
@@ -223,9 +227,11 @@ sealed class Route(val route: String) {
         // Whole-book (global) start offset for Parts / Chapters. The player VM
         // resolves which part contains it; null resumes from the stored position.
         val startPosition: Double? = null,
+        val libraryId: Int? = null,
     ) : Route(
         "audiobook/${contentId.routeEncode()}" +
             listOfNotNull(
+                libraryId?.let { "libraryId=$it" },
                 fileId?.let { "fileId=$it" },
                 if (fromStart) "fromStart=true" else null,
                 startPosition?.takeIf { it.isFinite() && it >= 0.0 }?.let { "startPosition=$it" },
@@ -233,7 +239,7 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "audiobook/{contentId}?fileId={fileId}&fromStart={fromStart}&startPosition={startPosition}"
+                "audiobook/{contentId}?libraryId={libraryId}&fileId={fileId}&fromStart={fromStart}&startPosition={startPosition}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
             const val ARG_FROM_START = "fromStart"
@@ -242,11 +248,14 @@ sealed class Route(val route: String) {
     }
 
     // --- Book reader (fullscreen, dispatches by BookFormat) ---
-    data class BookReader(val contentId: String, val fileId: Int? = null) : Route(
-        "reader/${contentId.routeEncode()}" + fileId?.let { "?fileId=$it" }.orEmpty(),
+    data class BookReader(val contentId: String, val fileId: Int? = null, val libraryId: Int? = null) : Route(
+        "reader/${contentId.routeEncode()}" + listOfNotNull(
+            fileId?.let { "fileId=$it" },
+            libraryId?.let { "libraryId=$it" },
+        ).let { params -> if (params.isEmpty()) "" else "?" + params.joinToString("&") },
     ) {
         companion object {
-            const val ROUTE = "reader/{contentId}?fileId={fileId}"
+            const val ROUTE = "reader/{contentId}?fileId={fileId}&libraryId={libraryId}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
         }

@@ -154,7 +154,7 @@ internal class MobileVideoPlaybackStarter(
         var allocatedButUnpublishedSessionId: String? = null
         var lifecycleAdopted = false
         return try {
-            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner)) {
+            val watchDetail = when (val r = catalogRepository.getWatchDetail(request.contentId, expectedMetadataOwner, request.libraryId)) {
                 is ApiResult.Success -> r.data
                 is ApiResult.Error -> return failure(
                     request.contentId,

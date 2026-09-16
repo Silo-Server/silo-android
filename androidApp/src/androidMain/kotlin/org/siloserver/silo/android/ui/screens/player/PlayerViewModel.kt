@@ -925,6 +925,8 @@ class PlayerViewModel(
         }
     }
 
+    private var browseLibraryId: Int? = null
+
     fun loadContent(
         contentId: String,
         preferredFileId: Int? = null,
@@ -947,9 +949,11 @@ class PlayerViewModel(
         // Recovery restarts resolved media in place, but they do not change the
         // route-level auto/explicit choices used for deep-link idempotence.
         preserveRouteIntent: Boolean = false,
+        libraryId: Int? = browseLibraryId,
         // Exact capability/context snapshot used only for a 404 renewal.
         recoveryStartParams: StartParams? = null,
     ) {
+        browseLibraryId = libraryId
         aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
         routeIntentState.beginLoad(
@@ -1042,6 +1046,7 @@ class PlayerViewModel(
                 if (!ownsLoad(loadOwner)) return@launch
                 when (val playbackState = videoPlaybackCoordinator.start(
                     VideoPlaybackStartRequest(
+                        libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
                         preferredQualityOverride = effectivePreferredQuality,
@@ -1177,7 +1182,7 @@ class PlayerViewModel(
         watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
     ) {
         val watchMetadata = ReadyWatchMetadata(
-            catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl,
+            catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
         ) { ownsLoad(loadOwner) }
         val watchDetail = watchMetadata.read()
         if (!watchMetadata.current()) {
@@ -3847,7 +3852,7 @@ class PlayerViewModel(
         viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
             if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
-            loadContent(contentId = contentId)
+            loadContent(contentId = contentId, libraryId = null)
         }
     }
 
@@ -3862,15 +3867,15 @@ class PlayerViewModel(
         resolveNextEpisodeJob?.cancel()
         resolveNextEpisodeJob = viewModelScope.launch {
             val currentSeasonEpisodes =
-                (catalogRepository.getEpisodes(seriesId, curSeason) as? ApiResult.Success)
+                (catalogRepository.getEpisodes(seriesId, curSeason, libraryId = browseLibraryId) as? ApiResult.Success)
                     ?.data?.episodes ?: return@launch
             val pool = currentSeasonEpisodes.toMutableList()
-            val nextRegularSeason = (catalogRepository.getSeasons(seriesId) as? ApiResult.Success)
+            val nextRegularSeason = (catalogRepository.getSeasons(seriesId, libraryId = browseLibraryId) as? ApiResult.Success)
                 ?.data?.seasons
                 ?.filter { !it.isSpecials && it.seasonNumber > curSeason }
                 ?.minByOrNull { it.seasonNumber }
             if (nextRegularSeason != null) {
-                (catalogRepository.getEpisodes(seriesId, nextRegularSeason.seasonNumber) as? ApiResult.Success)
+                (catalogRepository.getEpisodes(seriesId, nextRegularSeason.seasonNumber, libraryId = browseLibraryId) as? ApiResult.Success)
                     ?.data?.episodes?.let { pool += it }
             }
             val next = nextEpisodeAfter(pool, curSeason, curEpisode) ?: return@launch
@@ -4427,6 +4432,7 @@ class PlayerViewModel(
         if (!ownsLoad(loadOwner)) return false
         val watchDetail = loadLocalWatchMetadata(
             catalogRepository, watchOwner, media.serverId, media.profileId, contentId,
+            libraryId = browseLibraryId,
         ) { ownsLoad(loadOwner) }
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title

@@ -191,6 +191,7 @@ fun TvMainShell(
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     onOpenItemDetail: (contentId: String) -> Unit,
+    onOpenLibraryItemDetail: (String, Int?) -> Unit,
     onOpenItemDetailSelection: (
         contentId: String,
         seasonNumber: Int?,
@@ -481,6 +482,11 @@ fun TvMainShell(
         // from an earlier return so the restorer does not reuse Home's.
         detailReturnRoot = null
         onOpenItemDetail(contentId)
+    }
+    val openLibraryItemDetail: (String, Int?) -> Unit = { contentId, libraryId ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenLibraryItemDetail(contentId, libraryId)
     }
     // Collections open outer routes too, so they need the same hand-back:
     // without it the return resume left focus to Compose's default search
@@ -1205,7 +1211,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Audio.route) {
                     TvLibrariesScreen(
-                        onItemClick = openContentItemDetail,
+                        onItemClick = openLibraryItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1213,7 +1219,7 @@ fun TvMainShell(
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
                     TvLibrariesScreen(
-                        onItemClick = openContentItemDetail,
+                        onItemClick = openLibraryItemDetail,
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1231,7 +1237,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Movies.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Movies] ?: 0,
-                        onItemClick = openContentItemDetail,
+                        onItemClick = { contentId ->
+                            openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Movies)?.id)
+                        },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1245,7 +1253,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Series.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Series] ?: 0,
-                        onItemClick = openContentItemDetail,
+                        onItemClick = { contentId ->
+                            openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Series)?.id)
+                        },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1259,7 +1269,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Music.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Music] ?: 0,
-                        onItemClick = openContentItemDetail,
+                        onItemClick = { contentId ->
+                            openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Music)?.id)
+                        },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
@@ -1273,7 +1285,9 @@ fun TvMainShell(
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Audiobooks.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
                         sectionRequestNonce = sectionRequestNonces[TvLibraryTabType.Audiobooks] ?: 0,
-                        onItemClick = openContentItemDetail,
+                        onItemClick = { contentId ->
+                            openLibraryItemDetail(contentId, activeLibrary(TvLibraryTabType.Audiobooks)?.id)
+                        },
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },

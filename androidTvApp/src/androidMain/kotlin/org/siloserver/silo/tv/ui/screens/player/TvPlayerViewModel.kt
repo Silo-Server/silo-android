@@ -638,6 +638,7 @@ data class NextEpisodeState(
 
 data class TvPlayerLaunchArgs(
     val contentId: String,
+    val libraryId: Int? = null,
     val preferredFileId: Int? = null,
     val preferredQuality: String? = null,
     val roomId: String? = null,
@@ -1911,6 +1912,7 @@ class TvPlayerViewModel(
                 )
                 val episodeSelectionHandoff = episodeSelectionHandoffLease?.handoff
                 val request = VideoPlaybackStartRequest(
+                        libraryId = launchArgs.libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileIdOverride ?: preferredFileId,
                         roomId = roomId,
@@ -3825,17 +3827,17 @@ class TvPlayerViewModel(
             // the next season and we'd skip the rest of this one. Bail (no
             // auto-advance) on failure.
             val currentSeasonEpisodes =
-                (catalogRepository.getEpisodes(seriesId, curSeason) as? ApiResult.Success)
+                (catalogRepository.getEpisodes(seriesId, curSeason, libraryId = launchArgs.libraryId) as? ApiResult.Success)
                     ?.data?.episodes ?: return@launch
             val pool = currentSeasonEpisodes.toMutableList()
             // Next regular season is best-effort — its failure just means no
             // cross-season rollover, never a skip within the current season.
-            val nextRegularSeason = (catalogRepository.getSeasons(seriesId) as? ApiResult.Success)
+            val nextRegularSeason = (catalogRepository.getSeasons(seriesId, libraryId = launchArgs.libraryId) as? ApiResult.Success)
                 ?.data?.seasons
                 ?.filter { !it.isSpecials && it.seasonNumber > curSeason }
                 ?.minByOrNull { it.seasonNumber }
             if (nextRegularSeason != null) {
-                (catalogRepository.getEpisodes(seriesId, nextRegularSeason.seasonNumber) as? ApiResult.Success)
+                (catalogRepository.getEpisodes(seriesId, nextRegularSeason.seasonNumber, libraryId = launchArgs.libraryId) as? ApiResult.Success)
                     ?.data?.episodes?.let { pool += it }
             }
             val next = nextEpisodeAfter(pool, curSeason, curEpisode) ?: return@launch

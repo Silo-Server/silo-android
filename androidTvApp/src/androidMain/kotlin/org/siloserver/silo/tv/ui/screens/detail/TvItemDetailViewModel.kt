@@ -363,6 +363,7 @@ class TvItemDetailViewModel(
     private val profileSettings: ProfileSettingsController,
     private val metadataAiRepository: org.siloserver.silo.repository.MetadataAiRepository,
     private val contentId: String,
+    private val libraryId: Int? = null,
     private val userItemState: UserItemStatePort = NoOpUserItemStatePort,
     private val recommendationRepository: org.siloserver.silo.repository.RecommendationRepository? = null,
     private val tokenManager: TokenManager,
@@ -501,10 +502,10 @@ class TvItemDetailViewModel(
      * of turning incomplete hierarchy metadata into a dead-end Series page.
      */
     suspend fun hasSeriesDetailForRedirect(seriesContentId: String): Boolean {
-        val cached = catalogRepository.getCachedItemDetail(seriesContentId)
+        val cached = catalogRepository.getCachedItemDetail(seriesContentId, libraryId = libraryId)
         if (cached.isMatchingSeriesDetail(seriesContentId)) return true
 
-        return when (val resolved = catalogRepository.getItemDetail(seriesContentId)) {
+        return when (val resolved = catalogRepository.getItemDetail(seriesContentId, libraryId = libraryId)) {
             is ApiResult.Success -> resolved.data.isMatchingSeriesDetail(seriesContentId)
             is ApiResult.Error,
             is ApiResult.NetworkError,
@@ -529,7 +530,7 @@ class TvItemDetailViewModel(
     }
 
     private suspend fun seedCachedDetail() {
-        val cached = catalogRepository.getCachedItemDetail(contentId)?.let { withLocalProgress(it) } ?: return
+        val cached = catalogRepository.getCachedItemDetail(contentId, libraryId = libraryId)?.let { withLocalProgress(it) } ?: return
         if (isTvHiddenMediaType(cached.type)) return
         _uiState.update {
             it.copy(
@@ -555,7 +556,7 @@ class TvItemDetailViewModel(
             "season", "episode" -> detail.seriesId?.takeIf { it.isNotBlank() }
             else -> null
         } ?: return
-        val cachedSeasons = catalogRepository.getCachedSeasons(seriesId) ?: return
+        val cachedSeasons = catalogRepository.getCachedSeasons(seriesId, libraryId = libraryId) ?: return
         val plan = cachedSeasons.seasons.initialSeasonDisplayPlan(detail.seasonNumber)
         if (_uiState.value.detail?.contentId != detail.contentId) return
         _uiState.update {
@@ -576,7 +577,7 @@ class TvItemDetailViewModel(
 
     /** Publishes a cached season immediately; the caller still refreshes it. */
     private suspend fun seedCachedEpisodes(seriesContentId: String, seasonNumber: Int): Boolean {
-        val cached = catalogRepository.getCachedEpisodes(seriesContentId, seasonNumber) ?: return false
+        val cached = catalogRepository.getCachedEpisodes(seriesContentId, seasonNumber, libraryId = libraryId) ?: return false
         if (_uiState.value.selectedSeason != seasonNumber) return false
         val episodes = withLocalProgress(cached.episodes.sortedBy { it.episodeNumber })
         if (_uiState.value.selectedSeason != seasonNumber) return false
@@ -601,7 +602,7 @@ class TvItemDetailViewModel(
         _uiState.update { it.copy(moreLikeThis = emptyList(), moreLikeThisLoading = false) }
         viewModelScope.launch {
             val similarOwner = recommendationRepository?.captureSimilarAuthority()
-            when (val result = catalogRepository.getItemDetail(contentId)) {
+            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                     if (isTvHiddenMediaType(detail.type)) {
@@ -708,7 +709,7 @@ class TvItemDetailViewModel(
             if (overlaid != current) {
                 _uiState.update { it.copy(detail = overlaid) }
             }
-            when (val result = catalogRepository.getItemDetail(contentId)) {
+            when (val result = catalogRepository.getItemDetail(contentId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     val detail = withLocalProgress(result.data)
                         .let { refreshed -> playbackReturn?.let(refreshed::withPlaybackReturn) ?: refreshed }
@@ -1189,7 +1190,7 @@ class TvItemDetailViewModel(
         carouselLoads[season] = viewModelScope.launch {
             _uiState.update { it.copy(carouselLoadError = false) }
             try {
-                val result = catalogRepository.getEpisodes(series.contentId, season)
+                val result = catalogRepository.getEpisodes(series.contentId, season, libraryId = libraryId)
                 if (result is ApiResult.Success) {
                     val episodes = withLocalProgress(result.data.episodes)
                     // A distant season jump can make this prefetch obsolete.
@@ -1224,7 +1225,7 @@ class TvItemDetailViewModel(
         val selectionGenerationAtRequest = seasonSelectionGeneration
         viewModelScope.launch {
             _uiState.update { it.copy(seasonsLoading = true) }
-            when (val r = catalogRepository.getSeasons(seriesContentId)) {
+            when (val r = catalogRepository.getSeasons(seriesContentId, libraryId = libraryId)) {
                 is ApiResult.Success -> {
                     val plan = r.data.seasons.initialSeasonDisplayPlan(preferredSeasonNumber)
                     val currentSelection = _uiState.value.selectedSeason
@@ -1334,7 +1335,7 @@ class TvItemDetailViewModel(
             if (!quiet) _uiState.update { it.copy(episodesLoading = true) }
             seedCachedEpisodes(seriesContentId, seasonNumber)
             if (!ownsRequest()) return@launch
-            val result = catalogRepository.getEpisodes(seriesContentId, seasonNumber)
+            val result = catalogRepository.getEpisodes(seriesContentId, seasonNumber, libraryId = libraryId)
             if (!ownsRequest()) return@launch
             when (result) {
                 is ApiResult.Success -> {
@@ -1660,7 +1661,7 @@ class TvItemDetailViewModel(
                     handoff = handoff,
                 )
             }
-            val result = catalogRepository.getItemDetail(episodeContentId)
+            val result = catalogRepository.getItemDetail(episodeContentId, libraryId = libraryId)
             if (!ownsNextUpPlaybackDetailRequest(episodeContentId, refreshGeneration)) {
                 clearPendingNextUpHandoff(episodeContentId, refreshGeneration)
                 return@launch

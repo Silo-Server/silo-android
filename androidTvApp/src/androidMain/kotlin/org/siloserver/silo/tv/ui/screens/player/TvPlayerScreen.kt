@@ -241,6 +241,7 @@ internal fun shouldShowReconnectSpinner(
 @Composable
 fun TvPlayerScreen(
     contentId: String,
+    libraryId: Int? = null,
     onExit: () -> Unit,
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
@@ -271,10 +272,11 @@ fun TvPlayerScreen(
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
     viewModel: TvPlayerViewModel = koinViewModel(
-        key = "tv-player-$contentId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}",
+        key = "tv-player-$contentId-$libraryId-${preferredFileId ?: "auto"}-${preferredQuality ?: "quality-auto"}-${roomId ?: "solo"}-${resumePositionOverride ?: "server"}-${initialAudioTrackIndex ?: "a"}-${initialSubtitleTrackIndex ?: "s"}",
         parameters = {
             parametersOf(
                 TvPlayerLaunchArgs(
+                    libraryId = libraryId,
                     contentId = contentId,
                     preferredFileId = preferredFileId,
                     preferredQuality = preferredQuality,

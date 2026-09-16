@@ -100,6 +100,7 @@ class AudiobookPlayerViewModel(
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
+    private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val contentId: String = savedStateHandle.get<String>("contentId") ?: ""
     private val requestedFileIdRaw: String? = savedStateHandle.get<String>("fileId")
     private val hasRequestedFileId: Boolean = !requestedFileIdRaw.isNullOrBlank()
@@ -321,7 +322,7 @@ class AudiobookPlayerViewModel(
         // older load can't overwrite the context of a newer one (Apple parity).
         val generation = ++startGeneration
         viewModelScope.launch {
-            when (val r = catalogRepository.getItemDetail(contentId)) {
+            when (val r = catalogRepository.getItemDetail(contentId, libraryId)) {
                 is ApiResult.Success -> {
                     if (generation != startGeneration) return@launch
                     val d = r.data

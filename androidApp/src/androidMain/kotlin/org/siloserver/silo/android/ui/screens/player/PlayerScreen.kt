@@ -190,6 +190,7 @@ private fun SubtitleIdentity.requiresMountedMobileSelection(): Boolean =
 @Composable
 fun PlayerScreen(
     contentId: String,
+    libraryId: Int? = null,
     initialFileId: Int? = null,
     initialQuality: String? = null,
     initialAudioTrackIndex: Int? = null,
@@ -591,6 +592,7 @@ fun PlayerScreen(
     LaunchedEffect(contentId, initialFileId, initialQuality, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
         if (!viewModel.claimInitialRouteLoad()) return@LaunchedEffect
         viewModel.loadContent(
+            libraryId = libraryId,
             contentId = contentId,
             preferredFileId = initialFileId,
             preferredQuality = initialQuality,

@@ -42,4 +42,5 @@ data class VideoPlaybackStartRequest(
      * context here would silently turn it into a different playback decision.
      */
     val recoveryStartParams: StartParams? = null,
+    val libraryId: Int? = null,
 )

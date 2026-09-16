@@ -61,28 +61,29 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
     suspend fun searchCapabilities() = v2.searchCapabilities()
 
-    suspend fun getItemDetail(id: String): ApiResult<ItemDetail> = v2.itemDetail(id)
+    suspend fun getItemDetail(id: String, libraryId: Int? = null): ApiResult<ItemDetail> = v2.itemDetail(id, libraryId)
 
-    suspend fun getItemVersions(id: String): ApiResult<List<FileVersion>> = v2.itemVersions(id)
+    suspend fun getItemVersions(id: String, libraryId: Int? = null): ApiResult<List<FileVersion>> = v2.itemVersions(id, libraryId)
 
-    suspend fun getItemEpisodes(id: String): ApiResult<EpisodesResponse> = v2.itemEpisodes(id)
+    suspend fun getItemEpisodes(id: String, libraryId: Int? = null): ApiResult<EpisodesResponse> = v2.itemEpisodes(id, libraryId)
 
-    suspend fun getSeasons(seriesId: String): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId)
+    suspend fun getSeasons(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> = v2.seriesSeasons(seriesId, libraryId)
 
     suspend fun getEpisodes(
         seriesId: String,
-        seasonNumber: Int
-    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber)
+        seasonNumber: Int,
+        libraryId: Int? = null,
+    ): ApiResult<EpisodesResponse> = v2.seasonEpisodes(seriesId, seasonNumber, libraryId)
 
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
-    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot) = watchDetail.detail(id, owner)
+    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot, libraryId: Int? = null) = watchDetail.detail(id, owner, libraryId)
 
-    /** Unscoped read for callers without an owner; the current viewer is captured at call time. */
-    suspend fun getWatchDetail(id: String): ApiResult<WatchDetail> {
+    /** Captures the current viewer at call time when the caller has no retained owner. */
+    suspend fun getWatchDetail(id: String, libraryId: Int? = null): ApiResult<WatchDetail> {
         val owner = watchDetail.capture()
             ?: return identityChanged()
-        return watchDetail.detail(id, owner)
+        return watchDetail.detail(id, owner, libraryId)
     }
 
     suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = v2.people(query)

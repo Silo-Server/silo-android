@@ -32,6 +32,7 @@ fun tvPlayDestinationFor(
     audioPickedThisSession: Boolean = false,
     subtitleTrackIndex: Int? = null,
     quality: String? = null,
+    libraryId: Int? = null,
 ): String = tvPlayDestinationFor(
     itemType = itemType,
     contentId = contentId,
@@ -41,6 +42,7 @@ fun tvPlayDestinationFor(
     audioPickedThisSession = audioPickedThisSession,
     subtitleSelection = explicitTvSubtitleLaunchSelection(subtitleTrackIndex),
     quality = quality,
+    libraryId = libraryId,
 )
 
 fun tvPlayDestinationFor(
@@ -52,10 +54,12 @@ fun tvPlayDestinationFor(
     audioPickedThisSession: Boolean,
     subtitleSelection: TvSubtitleLaunchSelection?,
     quality: String? = null,
+    libraryId: Int? = null,
 ): String =
     if (isAudiobookItemType(itemType)) {
         // Audiobooks have no audio/subtitle track selection — ignore the indexes.
         TvRoute.AudiobookPlayer(
+            libraryId = libraryId,
             contentId = contentId,
             fileId = fileId,
             startPositionSeconds = resumePositionSeconds,
@@ -65,6 +69,7 @@ fun tvPlayDestinationFor(
             contentId = contentId,
             fileId = fileId,
             quality = quality,
+            libraryId = libraryId,
             resumePositionSeconds = resumePositionSeconds,
             audioTrackIndex = audioTrackIndex,
             audioPickedThisSession = audioPickedThisSession,
