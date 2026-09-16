@@ -56,6 +56,11 @@ class SequencedPlayback(
     private val store: PlaybackJournalStore,
     private val newId: () -> String,
 ) {
+    private companion object {
+        /** Settled attempts retained as tombstones. Bounds the journal's size. */
+        const val SETTLED_TOMBSTONE_LIMIT = 8
+    }
+
     private val mutex = Mutex()
     private var entries: List<PlaybackJournalEntry>? = null
     private val adopted = mutableSetOf<String>()
@@ -80,12 +85,43 @@ class SequencedPlayback(
             .map { it.attemptId }
     }
     private suspend fun save(entry: PlaybackJournalEntry) {
-        val next = load().filterNot { it.attemptId == entry.attemptId } + entry
+        val next = compactSettled(load().filterNot { it.attemptId == entry.attemptId } + entry)
         store.write(next)
         entries = next
         if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
     }
+
+    /**
+     * A settled attempt keeps a tombstone, not its history.
+     *
+     * The whole journal is serialized on every write, and progress writes land
+     * every ten seconds for as long as something is playing. Carrying each
+     * finished playback's replan decisions and route telemetry forward would
+     * make every one of those writes larger than the last, with no end: the
+     * retained replan responses alone hold full subtitle inventories.
+     *
+     * The tombstone still fences attempt-id reuse and still answers [owns] for
+     * its session, which the player consults immediately after a stop. Only the
+     * most recent [SETTLED_TOMBSTONE_LIMIT] are kept — a replayed attempt
+     * arrives while it is still the current one, not hundreds of playbacks
+     * later. Nothing that still needs recovery is settled, so nothing here can
+     * drop an attempt the server may still know about.
+     */
+    private fun compactSettled(next: List<PlaybackJournalEntry>): List<PlaybackJournalEntry> {
+        if (next.count { it.terminal } <= SETTLED_TOMBSTONE_LIMIT && next.none { it.terminal && it.hasHistory() }) return next
+        var settled = 0
+        // Newest first: save() appends, so a later entry settled later.
+        return next.asReversed().mapNotNull { entry ->
+            if (!entry.terminal) return@mapNotNull entry
+            settled += 1
+            if (settled > SETTLED_TOMBSTONE_LIMIT) null
+            else entry.copy(progress = null, stop = null, replans = emptyList(), routeEvents = emptyList())
+        }.reversed()
+    }
+
+    private fun PlaybackJournalEntry.hasHistory(): Boolean =
+        progress != null || stop != null || replans.isNotEmpty() || routeEvents.isNotEmpty()
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
     private fun authorityChanged() = failure("identity_changed", "Playback authority changed.")
     private suspend fun scope(entry: PlaybackJournalEntry): AuthScopeSnapshot? {

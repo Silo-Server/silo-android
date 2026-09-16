@@ -97,6 +97,22 @@ class ActiveProfileStoreTest {
     }
 
     @Test
+    fun aFailedRefreshForAnotherProfileDoesNotKeepThePreviousOne() = runTest {
+        val repo = FakeProfileRepository()
+        val store = ActiveProfileStore(repo)
+        store.refresh()
+
+        // Session expiry routes to Login without resetting this singleton, so
+        // the next account can arrive with the previous profile still cached.
+        // Showing its name and avatar in the header is the regression.
+        repo.activeId = "p2"
+        repo.result = ApiResult.NetworkError(RuntimeException("offline"))
+        store.refresh()
+
+        assertNull(store.activeProfile.value)
+    }
+
+    @Test
     fun signedOutStateClearsTheProfile() = runTest {
         val repo = FakeProfileRepository()
         val store = ActiveProfileStore(repo)

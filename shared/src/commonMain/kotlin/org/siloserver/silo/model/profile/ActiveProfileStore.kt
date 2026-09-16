@@ -19,7 +19,8 @@ import org.siloserver.silo.repository.ProfileRepository
  * lifetimes: the first reader pays for the fetch, every later one reads the
  * cached profile synchronously. A failed refresh keeps the last known profile
  * rather than blanking it, so a dropped network does not send the header back
- * to the person glyph.
+ * to the person glyph — but only while the active profile has not changed. A
+ * cached profile is never shown for a different identity.
  */
 class ActiveProfileStore(
     private val profileRepository: ProfileRepository,
@@ -41,7 +42,17 @@ class ActiveProfileStore(
             reset()
             return false
         }
-        if (!force && loadedForProfileId == activeProfileId && _activeProfile.value != null) {
+        // The cache belongs to the profile it was loaded for, and nothing else.
+        // Drop it the moment the active profile moves: this store outlives the
+        // session-expiry path, which routes to Login without resetting it, so
+        // retaining it here would draw the previous user's name and avatar in
+        // the header of whichever account signs in next and fails its first
+        // profile fetch.
+        if (loadedForProfileId != activeProfileId) {
+            loadedForProfileId = null
+            _activeProfile.value = null
+        }
+        if (!force && _activeProfile.value != null) {
             return true
         }
 

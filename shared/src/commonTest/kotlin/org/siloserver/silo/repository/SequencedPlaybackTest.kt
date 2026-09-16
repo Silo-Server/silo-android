@@ -434,6 +434,40 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun settledAttemptsAreCompactedSoTheJournalStaysBounded() = runTest {
+        val identity = Identity()
+        // Twenty finished playbacks, each still carrying a replan decision. The
+        // whole journal is rewritten on every progress sample, so retaining
+        // these makes each write larger than the last, without end.
+        val settled = (1..20).map {
+            entry().copy(attemptId = "old-$it", sessionId = "old-session-$it", terminal = true,
+                replans = listOf(PlaybackReplanIntent(replanRequest().v2Body(installation),
+                    response = SiloJson.parseToJsonElement(adoptedDecision).jsonObject)))
+        }
+        val store = Store().apply { entries = settled }
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<*>>(runtime.start(request()))
+
+            val live = store.entries.single { !it.terminal }
+            assertEquals("attempt-1", live.attemptId)
+            // Only the newest settled attempts survive, and as tombstones.
+            val tombstones = store.entries.filter { it.terminal }
+            assertEquals(8, tombstones.size)
+            assertEquals((13..20).map { "old-$it" }, tombstones.map { it.attemptId })
+            assertTrue(tombstones.all { it.replans.isEmpty() && it.progress == null && it.stop == null })
+            // A tombstone still answers ownership for the session it settled,
+            // which the player consults right after a stop.
+            assertTrue(runtime.owns("old-session-20"))
+        } finally { c.close() }
+    }
+
     @Test fun v2DecisionCannotSelectImplicitLegacyStreamMount() {
         val body = SiloJson.parseToJsonElement(adoptedDecision.replace("/api/v2/stream/", "/stream/")).jsonObject
         assertFailsWith<IllegalArgumentException> { decodePlaybackDecisionV2(body) }
