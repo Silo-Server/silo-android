@@ -199,6 +199,7 @@ data class ItemDetail(
     /** The current user's personal star rating (1-5), when set. */
     @SerialName("user_rating") val userRating: Int? = null,
     val versions: List<FileVersion> = emptyList(),
+    @SerialName("playback_variants") val playbackVariants: List<PlaybackVariant> = emptyList(),
     val subtitles: List<SubtitleInfo> = emptyList(),
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
     val intro: TimeRange? = null,
@@ -299,6 +300,27 @@ data class FileVersion(
     @SerialName("presentation_group_key") val presentationGroupKey: String? = null,
     @SerialName("presentation_part_index") val presentationPartIndex: Int? = null,
     @SerialName("presentation_part_total") val presentationPartTotal: Int? = null
+)
+
+@Serializable
+data class PlaybackVariant(
+    @SerialName("variant_id") val variantId: String,
+    @SerialName("edition_raw") val editionRaw: String? = null,
+    @SerialName("edition_key") val editionKey: String? = null,
+    @SerialName("presentation_kind") val presentationKind: String? = null,
+    @SerialName("presentation_group_key") val presentationGroupKey: String? = null,
+    @SerialName("part_count") val partCount: Int = 0,
+    @SerialName("total_duration") val totalDuration: Double? = null,
+    @SerialName("default_file_id") val defaultFileId: Int? = null,
+    val parts: List<PlaybackVariantPart> = emptyList(),
+)
+
+@Serializable
+data class PlaybackVariantPart(
+    @SerialName("part_index") val partIndex: Int = 0,
+    @SerialName("default_file_id") val defaultFileId: Int? = null,
+    @SerialName("total_duration") val totalDuration: Double? = null,
+    val versions: List<FileVersion> = emptyList(),
 )
 
 /**

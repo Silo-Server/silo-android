@@ -25,6 +25,30 @@ class CatalogDetailReadV2Test {
         } finally { client.close() }
     }
 
+    @Test fun detailProjectsPlaybackVariantsAndNestedStringFileIds() = runTest {
+        val body = """{
+            "content_id":"m1","type":"movie","title":"Film","cast":[],"crew":[],"subtitles":[],
+            "versions":[{"file_id":"42","duration":15060}],
+            "playback_variants":[{
+                "variant_id":"directors-cut","part_count":2,"total_duration":15120,"default_file_id":"42",
+                "parts":[{"part_index":0,"default_file_id":"42","total_duration":7560,"versions":[{"file_id":"42","duration":7560}]}]
+            }]
+        }"""
+        val client = client(body)
+        try {
+            val result = assertIs<ApiResult.Success<*>>(
+                CatalogV2Api(client, ApiV2Gate.Unrestricted).itemDetail("m1"),
+            ).data as org.siloserver.silo.model.catalog.ItemDetail
+            val variant = result.playbackVariants.single()
+            assertEquals("directors-cut", variant.variantId)
+            assertEquals(2, variant.partCount)
+            assertEquals(15_120.0, variant.totalDuration)
+            assertEquals(42, variant.defaultFileId)
+            assertEquals(42, variant.parts.single().defaultFileId)
+            assertEquals(42, variant.parts.single().versions.single().fileId)
+        } finally { client.close() }
+    }
+
     @Test fun fileIdsRejectOverflowFractionSignsAndNumericWireValues() = runTest {
         for (id in listOf("\"2147483648\"", "\"9223372036854775808\"", "\"1.5\"", "\"+42\"", "\"-1\"", "\"opaque\"", "42")) {
             val client = client(detail(id))

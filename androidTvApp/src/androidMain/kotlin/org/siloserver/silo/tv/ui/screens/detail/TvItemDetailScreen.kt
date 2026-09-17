@@ -110,6 +110,7 @@ import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
+import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
@@ -629,8 +630,21 @@ private fun TvDetailContent(
     }
     val heroSourceTokens = activeSeriesEpisode?.let(TvDetailMetadata::seriesEpisodeSourceTokens)
         ?: TvDetailMetadata.sourceTokens(detail)
+    val activeSeriesSelectedVersion = activeSeriesPlaybackDetail?.let { playbackDetail ->
+        selectTvDetailDisplayVersion(
+            versions = playbackDetail.versions,
+            selectedFileId = state.selectedNextUpFileId,
+            lastFileId = playbackDetail.userData?.lastFileId,
+            preferredQuality = state.preferredQuality,
+        )
+    }
     val heroFactsLine = activeSeriesEpisode?.let { episode ->
-        TvDetailMetadata.seriesEpisodeFactsLine(episode)
+        TvDetailMetadata.seriesEpisodeFactsLine(
+            episode = episode,
+            runtimeMinutes = activeSeriesPlaybackDetail?.let { playbackDetail ->
+                selectedMediaRuntimeMinutes(playbackDetail, activeSeriesSelectedVersion)
+            } ?: episode.runtime,
+        )
     } ?: TvDetailMetadata.factsLine(
         detail = detail,
         preferredQuality = state.preferredQuality,

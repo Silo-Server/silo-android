@@ -63,6 +63,7 @@ internal data class ItemDetailReadV2(
     @SerialName("user_data") val userData: LeafItemUserDataReadV2? = null,
     @SerialName("user_rating") val userRating: Int? = null,
     val versions: List<FileVersionReadV2>,
+    @SerialName("playback_variants") val playbackVariants: List<PlaybackVariantReadV2> = emptyList(),
     val subtitles: List<SubtitleInfo>,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
     val intro: TimeRange? = null,
@@ -123,6 +124,7 @@ internal data class ItemDetailReadV2(
         userData = userData?.toDomain(),
         userRating = userRating,
         versions = versions.map { it.toDomain() },
+        playbackVariants = playbackVariants.map { it.toDomain() },
         subtitles = subtitles,
         overlaySummary = overlaySummary,
         intro = intro,
@@ -134,6 +136,48 @@ internal data class ItemDetailReadV2(
         ebook = ebook,
         videos = videos,
         extras = extras,
+    )
+}
+
+@Serializable
+internal data class PlaybackVariantReadV2(
+    @SerialName("variant_id") val variantId: String,
+    @SerialName("edition_raw") val editionRaw: String? = null,
+    @SerialName("edition_key") val editionKey: String? = null,
+    @SerialName("presentation_kind") val presentationKind: String? = null,
+    @SerialName("presentation_group_key") val presentationGroupKey: String? = null,
+    @SerialName("part_count") val partCount: Int = 0,
+    @SerialName("total_duration") val totalDuration: Double? = null,
+    @Serializable(with = DetailStringIdSerializer::class)
+    @SerialName("default_file_id") val defaultFileId: String? = null,
+    val parts: List<PlaybackVariantPartReadV2> = emptyList(),
+) {
+    fun toDomain() = PlaybackVariant(
+        variantId = variantId,
+        editionRaw = editionRaw,
+        editionKey = editionKey,
+        presentationKind = presentationKind,
+        presentationGroupKey = presentationGroupKey,
+        partCount = partCount,
+        totalDuration = totalDuration,
+        defaultFileId = defaultFileId?.let(::checkedIntId),
+        parts = parts.map { it.toDomain() },
+    )
+}
+
+@Serializable
+internal data class PlaybackVariantPartReadV2(
+    @SerialName("part_index") val partIndex: Int = 0,
+    @Serializable(with = DetailStringIdSerializer::class)
+    @SerialName("default_file_id") val defaultFileId: String? = null,
+    @SerialName("total_duration") val totalDuration: Double? = null,
+    val versions: List<FileVersionReadV2> = emptyList(),
+) {
+    fun toDomain() = PlaybackVariantPart(
+        partIndex = partIndex,
+        defaultFileId = defaultFileId?.let(::checkedIntId),
+        totalDuration = totalDuration,
+        versions = versions.map { it.toDomain() },
     )
 }
 

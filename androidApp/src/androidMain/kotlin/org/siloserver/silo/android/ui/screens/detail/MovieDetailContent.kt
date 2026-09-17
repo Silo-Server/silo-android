@@ -42,6 +42,7 @@ import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -123,7 +124,8 @@ fun MovieDetailContent(
         null
     }
     val sourceTokens = HeroMetadata.movieSourceTokens(detail)
-    val factsLine = HeroMetadata.movieFactsLine(detail)
+    val selectedRuntimeMinutes = selectedMediaRuntimeMinutes(detail, selectedVersion)
+    val factsLine = HeroMetadata.movieFactsLine(detail, selectedRuntimeMinutes)
 
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
@@ -332,7 +334,7 @@ fun MovieDetailContent(
 
         item(contentType = "detail-facts") {
             // Header renders inside DetailFactsList, gated on having facts.
-            DetailFactsList(detail = detail)
+            DetailFactsList(detail = detail, runtimeMinutes = selectedRuntimeMinutes)
         }
 
         // Hide the similar rail on episode pages — viewers usually want
