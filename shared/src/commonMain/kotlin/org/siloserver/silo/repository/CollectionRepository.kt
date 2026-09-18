@@ -60,8 +60,9 @@ class CollectionRepository(
         collectionId: String,
         continuation: CollectionContinuation? = null,
         limit: Int = 40,
+        libraryId: Int? = null,
     ): ApiResult<CollectionItemsPage> =
-        collectionApi.getCollectionItems(collectionId, continuation, limit)
+        collectionApi.getCollectionItems(collectionId, continuation, limit, libraryId)
 
     /** Adds an item to a collection. */
     suspend fun addItem(collectionId: String, itemId: String): ApiResult<Unit> =

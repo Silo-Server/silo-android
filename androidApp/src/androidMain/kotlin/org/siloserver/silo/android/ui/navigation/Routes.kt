@@ -4,6 +4,7 @@ import android.net.Uri
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
+import org.siloserver.silo.model.section.LibraryCollection
 import org.siloserver.silo.model.section.SectionItem
 
 /**
@@ -160,15 +161,19 @@ sealed class Route(val route: String) {
     data class CollectionDetail(
         val collectionId: String,
         val libraryId: Int? = null,
+        val source: String? = null,
     ) : Route(
-        if (libraryId != null) {
-            "collection/${collectionId.routeEncode()}?libraryId=$libraryId"
-        } else {
-            "collection/${collectionId.routeEncode()}"
-        }
+        buildString {
+            append("collection/${collectionId.routeEncode()}")
+            val parameters = buildList {
+                libraryId?.let { add("libraryId=$it") }
+                source?.takeIf { it.isNotBlank() }?.let { add("source=${it.routeEncode()}") }
+            }
+            if (parameters.isNotEmpty()) append("?${parameters.joinToString("&")}")
+        },
     ) {
         companion object {
-            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}"
+            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}&source={source}"
         }
     }
 
@@ -278,6 +283,19 @@ sealed class Route(val route: String) {
     }
 
 }
+
+fun libraryCollectionDetailRoute(
+    collection: LibraryCollection,
+    libraryId: Int,
+): String = Route.CollectionDetail(
+    collectionId = collection.id,
+    libraryId = libraryId,
+    source = if (collection.kind == "user_collections") {
+        "user_collection"
+    } else {
+        "library_collection"
+    },
+).route
 
 /**
  * Continue Watching episodes belong to the unified series detail surface.

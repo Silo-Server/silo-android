@@ -881,6 +881,11 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("source") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStackEntry ->
             CollectionDetailScreen(
@@ -1254,8 +1259,10 @@ fun AppNavigation(
             if (libraryId != null) {
                 LibraryCollectionsScreen(
                     onBackClick = { navController.popBackStack() },
-                    onCollectionClick = { collectionId ->
-                        navController.navigate(Route.CollectionDetail(collectionId, libraryId).route)
+                    onCollectionClick = { collection ->
+                        navController.navigate(
+                            libraryCollectionDetailRoute(collection, libraryId),
+                        )
                     },
                 )
             } else {
