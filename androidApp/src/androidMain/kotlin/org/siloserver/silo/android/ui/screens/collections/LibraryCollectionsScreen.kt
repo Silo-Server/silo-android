@@ -195,7 +195,7 @@ class LibraryCollectionsViewModel(
 @Composable
 fun LibraryCollectionsScreen(
     onBackClick: () -> Unit,
-    onCollectionClick: (String) -> Unit,
+    onCollectionClick: (LibraryCollection) -> Unit,
     viewModel: LibraryCollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -267,7 +267,7 @@ fun LibraryCollectionsScreen(
                             ) { collection ->
                                 LibraryCollectionCard(
                                     collection = collection,
-                                    onClick = { onCollectionClick(collection.id) },
+                                    onClick = { onCollectionClick(collection) },
                                 )
                             }
                         }

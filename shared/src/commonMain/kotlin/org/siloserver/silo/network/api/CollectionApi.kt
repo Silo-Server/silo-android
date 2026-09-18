@@ -51,7 +51,14 @@ data class CollectionOrder(
     @SerialName("has_more") val hasMore: Boolean = false,
 )
 
-data class CollectionContinuation(val cursor: String, val collectionId: String, val limit: Int, val scope: AuthScopeSnapshot?, val seen: Set<String> = emptySet())
+data class CollectionContinuation(
+    val cursor: String,
+    val collectionId: String,
+    val limit: Int,
+    val scope: AuthScopeSnapshot?,
+    val seen: Set<String> = emptySet(),
+    val libraryId: Int? = null,
+)
 data class CollectionItemsPage(val catalog: CatalogResponse, val continuation: CollectionContinuation?)
 
 @Serializable
@@ -161,9 +168,13 @@ class CollectionApi(
         id: String,
         continuation: CollectionContinuation? = null,
         limit: Int = 40,
+        libraryId: Int? = null,
     ): ApiResult<CollectionItemsPage> {
         val size = limit.coerceIn(1, 100)
-        if (continuation != null && (continuation.collectionId != id || continuation.limit != size))
+        if (
+            continuation != null &&
+            (continuation.collectionId != id || continuation.limit != size || continuation.libraryId != libraryId)
+        )
             return ApiResult.Error(0, "invalid_cursor", "Reload this collection to continue.")
         val scope = continuation?.scope ?: tokenManager?.snapshotCurrentScope()
         val result = ownedV2Call<CollectionCatalogResponse, CollectionCatalogResponse>(gate, tokenManager, scope, OwnerPolicy.IDENTITY, null, { owner ->
@@ -171,6 +182,7 @@ class CollectionApi(
                 owner?.let { authScope(it) }
                 parameter("source", "user_collection")
                 parameter("collection_id", id)
+                libraryId?.let { parameter("library_id", it) }
                 parameter("limit", size)
                 continuation?.let { parameter("cursor", it.cursor) }
             }
@@ -183,7 +195,14 @@ class CollectionApi(
                     ApiResult.Error(0, "invalid_cursor", "Reload this collection; the server returned invalid pagination.")
                 else ApiResult.Success(CollectionItemsPage(
                     CatalogResponse(total = body.total, totalExact = body.totalExact, hasMore = body.page.hasMore, items = body.items, effectiveSort = body.effectiveSort),
-                    if (body.page.hasMore) CollectionContinuation(cursor!!, id, size, scope, (continuation?.seen ?: emptySet()) + cursor) else null,
+                    if (body.page.hasMore) CollectionContinuation(
+                        cursor = cursor!!,
+                        collectionId = id,
+                        limit = size,
+                        scope = scope,
+                        seen = (continuation?.seen ?: emptySet()) + cursor,
+                        libraryId = libraryId,
+                    ) else null,
                 ))
             }
             is ApiResult.Error -> if (result.error == "invalid_cursor") result.copy(message = "This collection changed. Reload it to continue.") else result

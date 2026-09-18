@@ -104,6 +104,7 @@ class CollectionsV2Test {
             assertEquals("/api/v2/catalog", request.url.encodedPath)
             assertEquals("user_collection", request.url.parameters["source"])
             assertEquals("c1", request.url.parameters["collection_id"])
+            assertNull(request.url.parameters["library_id"])
             assertEquals("40", request.url.parameters["limit"])
             assertNull(request.url.parameters["offset"])
             assertNull(request.url.parameters["sort"])
@@ -115,6 +116,30 @@ class CollectionsV2Test {
         val first = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1")).data
         assertTrue(first.catalog.hasMore)
         val second = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(api.getCollectionItems("c1", first.continuation)).data
+        assertNull(second.continuation)
+        assertEquals(2, calls)
+        client.close()
+    }
+
+    @Test fun libraryScopedPersonalBrowseKeepsScopeAcrossOpaqueCursor() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("7", request.url.parameters["library_id"])
+            assertEquals(if (calls++ == 0) null else "opaque", request.url.parameters["cursor"])
+            respond(if (calls == 1) """{"items":[],"page":{"has_more":true,"next_cursor":"opaque"},"total":2}"""
+                else """{"items":[],"page":{"has_more":false},"total":2}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val api = CollectionApi(client, ApiV2Gate.Unrestricted)
+        val first = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(
+            api.getCollectionItems("c1", libraryId = 7),
+        ).data
+        assertEquals(7, first.continuation?.libraryId)
+        val mismatched = api.getCollectionItems("c1", continuation = first.continuation, libraryId = 8)
+        assertEquals("invalid_cursor", assertIs<ApiResult.Error>(mismatched).error)
+        assertEquals(1, calls)
+        val second = assertIs<ApiResult.Success<org.siloserver.silo.network.api.CollectionItemsPage>>(
+            api.getCollectionItems("c1", continuation = first.continuation, libraryId = 7),
+        ).data
         assertNull(second.continuation)
         assertEquals(2, calls)
         client.close()
