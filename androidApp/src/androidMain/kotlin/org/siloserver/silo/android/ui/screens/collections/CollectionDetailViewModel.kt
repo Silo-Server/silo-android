@@ -50,6 +50,9 @@ class CollectionDetailViewModel(
     private var deleteEditor: CollectionEditor<Collection>? = null
     private var collectionId: String = ""
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
+    private val collectionSource: String? = savedStateHandle.get<String>("source")
+    private val isLibraryUserCollection: Boolean
+        get() = libraryId != null && collectionSource == "user_collection"
     private val pageSize = 40
 
     fun initialize(id: String) {
@@ -136,12 +139,25 @@ class CollectionDetailViewModel(
                 }
             }
 
-            when (
-                val result = sectionRepository.getLibraryCollectionItems(
+            val itemsResult = if (isLibraryUserCollection) {
+                collectionRepository.getItems(
                     collectionId,
                     limit = pageSize,
-                ).map { libraryContinuation = it.continuation; it }
-            ) {
+                    libraryId = libraryId,
+                ).map {
+                    continuation = it.continuation
+                    it.catalog
+                }
+            } else {
+                sectionRepository.getLibraryCollectionItems(
+                    collectionId,
+                    limit = pageSize,
+                ).map {
+                    libraryContinuation = it.continuation
+                    it
+                }
+            }
+            when (val result = itemsResult) {
                 is ApiResult.Success -> {
                     _uiState.update {
                         it.copy(
@@ -181,7 +197,7 @@ class CollectionDetailViewModel(
         pagingJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMore = true) }
             // Library paging is migrated separately; personal collections use opaque cursors.
-            val result = if (libraryId != null) {
+            val result = if (libraryId != null && !isLibraryUserCollection) {
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
                     continuation = libraryContinuation,
@@ -192,6 +208,7 @@ class CollectionDetailViewModel(
                     collectionId,
                     continuation = continuation,
                     limit = pageSize,
+                    libraryId = libraryId,
                 ).map { continuation = it.continuation; it.catalog }
             }
             when (result) {

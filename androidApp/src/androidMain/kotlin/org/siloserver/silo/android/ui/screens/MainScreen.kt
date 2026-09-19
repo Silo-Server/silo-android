@@ -48,6 +48,7 @@ import org.siloserver.silo.android.ui.navigation.tabForRoute
 import org.siloserver.silo.android.ui.navigation.tabSwitchNavOptions
 import org.siloserver.silo.android.ui.navigation.bottomMostTabRoute
 import org.siloserver.silo.android.ui.navigation.fallbackMobileTab
+import org.siloserver.silo.android.ui.navigation.libraryCollectionDetailRoute
 import org.siloserver.silo.android.ui.navigation.scopedLocalDownloadBytes
 import org.siloserver.silo.android.ui.navigation.shouldShowDownloadsTab
 import org.siloserver.silo.android.ui.navigation.visibleMobileTabs
@@ -438,8 +439,10 @@ fun MainScreen(
                             onItemClick = { contentId, libraryId ->
                                 navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },
-                            onCollectionClick = { collectionId, libraryId ->
-                                navController.navigate(Route.CollectionDetail(collectionId, libraryId).route)
+                            onCollectionClick = { collection, libraryId ->
+                                navController.navigate(
+                                    libraryCollectionDetailRoute(collection, libraryId),
+                                )
                             },
                             viewModel = requireNotNull(librariesViewModel),
                             activeProfile = headerState.activeProfile,
