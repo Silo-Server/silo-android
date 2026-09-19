@@ -1407,9 +1407,12 @@ object HeroMetadata {
             ?.let { listOf(it.joinToString(", ")) }
             .orEmpty()
 
-    fun movieFactsLine(detail: ItemDetail): List<String> = buildList {
+    fun movieFactsLine(
+        detail: ItemDetail,
+        runtimeMinutes: Int = detail.runtime,
+    ): List<String> = buildList {
         if (detail.year > 0) add(detail.year.toString())
-        if (detail.runtime > 0) add(formatRuntime(detail.runtime))
+        if (runtimeMinutes > 0) add(formatRuntime(runtimeMinutes))
         detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
@@ -1477,9 +1480,10 @@ fun formatResumeStoppedAt(positionSeconds: Double): String {
 @Composable
 fun DetailFactsList(
     detail: ItemDetail,
+    runtimeMinutes: Int = detail.runtime,
     modifier: Modifier = Modifier,
 ) {
-    val rows = buildDetailFacts(detail)
+    val rows = buildDetailFacts(detail, runtimeMinutes)
     if (rows.isEmpty()) return
 
     SectionHeader(title = "Details")
@@ -1530,11 +1534,14 @@ fun DetailFactsList(
     }
 }
 
-private fun buildDetailFacts(detail: ItemDetail): List<Pair<String, String>> = buildList {
+private fun buildDetailFacts(
+    detail: ItemDetail,
+    runtimeMinutes: Int,
+): List<Pair<String, String>> = buildList {
     detail.releaseDate?.takeIf { it.isNotBlank() }?.let { add("Release date" to it) }
     detail.firstAirDate?.takeIf { it.isNotBlank() }?.let { add("First aired" to it) }
     detail.lastAirDate?.takeIf { it.isNotBlank() }?.let { add("Last aired" to it) }
-    if (detail.runtime > 0) add("Runtime" to runtimeText(detail.runtime))
+    if (runtimeMinutes > 0) add("Runtime" to runtimeText(runtimeMinutes))
     detail.contentRating?.takeIf { it.isNotBlank() }?.let { add("Rated" to it) }
     if (detail.studios.isNotEmpty()) add("Studio" to detail.studios.joinToString(", "))
     if (detail.networks.isNotEmpty()) add("Network" to detail.networks.joinToString(", "))

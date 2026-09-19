@@ -6,8 +6,10 @@ import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.ItemVideo
+import org.siloserver.silo.model.catalog.SubtitleInfo
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.VideoTrack
+import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import org.siloserver.silo.model.ebook.MediaPerson
 import java.time.ZoneId
 import kotlin.test.Test
@@ -195,6 +197,61 @@ class TvDetailMetadataTest {
                 preferredQuality = "1080p",
                 selectedFileId = 2160,
             ),
+        )
+    }
+
+    @Test
+    fun runtimeAndAllTechnicalLabelsFollowOnlySelectedVersion() {
+        val theatrical = FileVersion(
+            fileId = 1,
+            duration = 13_740.0,
+            resolution = "1080p",
+            codecVideo = "h264",
+            codecAudio = "aac",
+            audioTracks = listOf(AudioTrack(codec = "aac", channels = 2, isDefault = true)),
+        )
+        val directorsCut = FileVersion(
+            fileId = 2,
+            duration = 15_060.0,
+            resolution = "2160p",
+            codecVideo = "hevc",
+            codecAudio = "truehd",
+            hdr = true,
+            videoTracks = listOf(VideoTrack(codec = "hevc", dolbyVision = "Profile 8", hdr = true)),
+            audioTracks = listOf(AudioTrack(codec = "truehd", channels = 8, isDefault = true)),
+            subtitleTracks = listOf(SubtitleTrack(language = "en")),
+        )
+        val detail = ItemDetail(
+            contentId = "m1",
+            type = "movie",
+            title = "Movie",
+            runtime = 229,
+            versions = listOf(theatrical, directorsCut),
+            // Catalog-level subtitles aggregate every version. They must not
+            // make the theatrical version inherit the director's-cut CC badge.
+            subtitles = listOf(SubtitleInfo(source = "embedded", language = "en")),
+        )
+
+        assertEquals(229, selectedMediaRuntimeMinutes(detail, theatrical))
+        assertEquals(251, selectedMediaRuntimeMinutes(detail, directorsCut))
+        assertEquals("1080P · H.264 · AAC", TvPlaybackFormatting.versionShortLabel(theatrical))
+        assertEquals("4K · HEVC · DV · TrueHD", TvPlaybackFormatting.versionShortLabel(directorsCut))
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("3h 49m"),
+                TvHeroFactToken.Chip("HD"),
+            ),
+            TvDetailMetadata.factsLine(detail, selectedFileId = theatrical.fileId),
+        )
+        assertEquals(
+            listOf(
+                TvHeroFactToken.TextToken("4h 11m"),
+                TvHeroFactToken.Chip("4K"),
+                TvHeroFactToken.Chip("DOLBY VISION"),
+                TvHeroFactToken.Chip("7.1"),
+                TvHeroFactToken.Chip("CC"),
+            ),
+            TvDetailMetadata.factsLine(detail, selectedFileId = directorsCut.fileId),
         )
     }
 
