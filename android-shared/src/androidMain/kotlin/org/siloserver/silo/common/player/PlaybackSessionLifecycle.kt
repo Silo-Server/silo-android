@@ -751,6 +751,8 @@ class PlaybackSessionLifecycle(
                 if (sessionManager.isSequenced(sess.sessionId)) {
                     if (result !is ApiResult.Success) {
                         _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                    } else {
+                        _notice.value = null
                     }
                     continue
                 }
