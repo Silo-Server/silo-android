@@ -370,6 +370,44 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun keepWatchingSuppressesCreditsPromptButReopensNextUpAtPlaybackEnd() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            viewModel.dismissUpNext()
+            viewModel.onApproachingEnd()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            viewModel.onApproachingEnd(videoEnded = true)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertTrue(viewModel.uiState.value.upNextVideoEnded)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(1, starter.startedRequestCount)
+
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            assertEquals("episode-b", starter.request(1).contentId)
+            starter.complete(1, ready(starter.request(1), "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            viewModel.onFirstVideoFrameRendered(viewModel.uiState.value.mediaMountGeneration)
+            assertFalse(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun successorRemountBeforeItsFirstFrameStillCompletesNextUp() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)

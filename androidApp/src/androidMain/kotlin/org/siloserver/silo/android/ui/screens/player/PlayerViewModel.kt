@@ -4000,7 +4000,8 @@ class PlayerViewModel(
      * below the pass-out threshold, the card runs a countdown that plays the
      * next episode at zero. Once the streak hits the threshold (or auto-play is
      * off), the card shows WITHOUT a countdown so the user must explicitly
-     * choose (the pass-out gate). Once-per-episode.
+     * choose (the pass-out gate). The credits prompt is once per episode;
+     * a dismissed card reopens when playback ends.
      *
      * [videoEnded] is true on STATE_ENDED — the card reads "Playing Next"; a
      * repeat call while the card is showing only upgrades that flag.
@@ -4010,8 +4011,10 @@ class PlayerViewModel(
         // Watch Together is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
         if (autoAdvanceHandled) {
-            if (videoEnded && _uiState.value.showUpNext) {
-                _uiState.update { it.copy(upNextVideoEnded = true) }
+            if (videoEnded) {
+                // Keep Watching dismisses the credits prompt, but finishing the
+                // episode must still offer Play Now without restarting its timer.
+                _uiState.update { it.copy(showUpNext = true, upNextVideoEnded = true) }
             }
             return
         }
@@ -4115,10 +4118,11 @@ class PlayerViewModel(
 
     /**
      * Up Next dismiss — cancel the countdown and stay on the current playback.
-     * Does NOT re-arm [autoAdvanceHandled]: the card is once-per-episode.
+     * Suppress further credits prompts; playback end still reopens the card.
      */
     fun dismissUpNext() {
         if (nextUpTransitionGate.isActive) return
+        autoAdvanceHandled = true
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }

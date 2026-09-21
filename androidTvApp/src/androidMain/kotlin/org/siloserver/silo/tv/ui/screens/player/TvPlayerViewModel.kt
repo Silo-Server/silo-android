@@ -3935,7 +3935,8 @@ class TvPlayerViewModel(
      * pass-out threshold, the overlay starts a countdown ring that plays the
      * next episode at zero. Once the streak hits the pass-out threshold (or
      * auto-play is off), the overlay shows with NO countdown so the user must
-     * explicitly choose Play Now / Keep Watching (the pass-out gate). Once-per-item.
+     * explicitly choose Play Now / Keep Watching (the pass-out gate). The credits
+     * prompt is once per episode; a dismissed card reopens when playback ends.
      *
      * [videoEnded] true when the stream has actually ended (STATE_ENDED) — the
      * panel reads "End of playback" / "Playing Next" and hides Keep Watching;
@@ -3947,11 +3948,11 @@ class TvPlayerViewModel(
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
         if (roomId != null) return
-        // Surfacing again on STATE_ENDED after a credits-crossing only upgrades
-        // the "video ended" flag; don't re-arm the countdown or re-trigger.
+        // Playback end reopens a dismissed card without restarting its timer.
+        // A card still showing keeps its existing countdown.
         if (autoAdvanceHandled) {
-            if (videoEnded && _uiState.value.showNextUp) {
-                _uiState.update { it.copy(nextUpVideoEnded = true) }
+            if (videoEnded) {
+                _uiState.update { it.copy(showNextUp = true, hudOpen = false, nextUpVideoEnded = true) }
             }
             return
         }
@@ -4224,6 +4225,7 @@ class TvPlayerViewModel(
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */
     fun dismissNextUp() {
         if (nextUpTransitionGate.isActive) return
+        autoAdvanceHandled = true
         nextUpCountdownJob?.cancel()
         nextUpCountdownJob = null
         _uiState.update { it.copy(showNextUp = false, nextUpCountdownSeconds = null) }
