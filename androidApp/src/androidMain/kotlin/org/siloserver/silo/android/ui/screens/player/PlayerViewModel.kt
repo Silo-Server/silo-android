@@ -1,5 +1,12 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+import org.siloserver.silo.playback.PlaybackMarkersUpdate
+import org.siloserver.silo.playback.introMarkerSegment
+import org.siloserver.silo.playback.legacyMarkerSegments
+import org.siloserver.silo.playback.terminalCreditsRange
+import org.siloserver.silo.playback.validMarkerSegments
+
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -413,6 +420,7 @@ class PlayerViewModel(
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        val markerSegments: List<PlaybackMarkerSegment> = legacyMarkerSegments(intro, credits, recap, preview),
         /**
          * Chapters from the selected FileVersion (server-extracted via FFprobe
          * at ingest). Empty list when the file has no embedded chapters. The
@@ -794,8 +802,16 @@ class PlayerViewModel(
     fun claimInitialRouteLoad(): Boolean = initialPlayerLoadGate.claim()
     private val loadOwners = MobilePlayerLoadOwnerRegistry()
     private var loadJob: Job? = null
+    private var markerRevision = 0L
 
     init {
+        viewModelScope.launch {
+            _uiState.map { Triple(it.sessionId, it.mediaFileId, it.isLoading) }
+                .distinctUntilChanged()
+                .collect { (sessionId, _, loading) ->
+                    if (sessionId != null && !loading) refreshMarkers(sessionId)
+                }
+        }
         // Reclaim-Watched must never delete the file the player is using
         // (reachable via PiP -> Downloads). Mirror the currently-playing file
         // id — from EVERY load path, incl. offline — into the process-wide
@@ -1353,6 +1369,7 @@ class PlayerViewModel(
                 credits = playbackState.credits,
                 recap = playbackState.recap,
                 preview = playbackState.preview,
+                markerSegments = playbackState.markerSegments,
                 chapters = playbackState.chapters.ifEmpty { version?.chapters.orEmpty() },
                 versions = versions,
                 selectedVersionIndex = versionIndex,
@@ -1430,12 +1447,12 @@ class PlayerViewModel(
                 .map { it.position }
                 .distinctUntilChanged(),
             introRange = _uiState
-                .map { it.intro }
+                .map { introMarkerSegment(it.markerSegments, it.position)?.range }
                 .distinctUntilChanged(),
             mode = playerSettingsStore.introSkipModeFlow,
             introKey = _uiState
                 .map { state ->
-                    state.intro?.let { intro ->
+                    introMarkerSegment(state.markerSegments, state.position)?.range?.let { intro ->
                         val fileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId
                         "${state.sessionId}:${fileId}:${intro.start}:${intro.end}"
                     }
@@ -1914,6 +1931,9 @@ class PlayerViewModel(
                                 ),
                                 duration = decision.session.durationSeconds ?: 0.0,
                                 serverDuration = decision.session.durationSeconds ?: 0.0,
+                                markerSegments = if (effectiveFileId == fileId) current.markerSegments else
+                                    effectiveVersion.markerSegments?.let(::validMarkerSegments)
+                                        ?: legacyMarkerSegments(effectiveVersion.intro, effectiveVersion.credits, effectiveVersion.recap, effectiveVersion.preview),
                                 chapters = effectiveVersion?.chapters.orEmpty(),
                                 position = remountPosition.sourcePositionSeconds,
                             )
@@ -2198,10 +2218,11 @@ class PlayerViewModel(
         // doesn't instantly trigger it). Without a credits marker, fall back to
         // crossing (duration - nextUpPromptSeconds); 0 = only at end (iOS parity).
         if (!seekWasActive) {
-            val creditsStart = _uiState.value.credits?.start
+            val markerState = _uiState.value
+            val creditsStart = terminalCreditsRange(markerState.markerSegments, markerState.duration)?.start
             if (creditsStart != null) {
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
-            } else {
+            } else if (markerState.markerSegments.none { it.kind == "credits" }) {
                 val promptSeconds = nextUpPromptSeconds.value
                 val duration = _uiState.value.duration
                 if (promptSeconds > 0 && duration > 0) {
@@ -2978,14 +2999,39 @@ class PlayerViewModel(
         if (index == -1 || index in _uiState.value.subtitleTracks.indices) onSelectSubtitle(index)
     }
 
-    /**
-     * Adopt server-recomputed marker ranges (a `markers_updated` event).
-     * The intro auto-skip observer and the credits-based F2 trigger read these
-     * from UiState, so updating them takes effect immediately. Passing `null`
-     * clears a marker the server says no longer applies.
-     */
-    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+    /** Apply a complete snapshot only to the file and session that requested it. */
+    fun applyUpdatedMarkers(markers: PlaybackMarkersUpdate, expectedSessionId: String) {
+        val state = _uiState.value
+        if (state.sessionId != expectedSessionId || state.isLoading) return
+        if (markers.fileId != null && markers.fileId != state.mediaFileId) return
+        markerRevision++
+        _uiState.update {
+            it.copy(
+                intro = markers.intro,
+                credits = markers.credits,
+                recap = markers.recap,
+                preview = markers.preview,
+                markerSegments = markers.markerSegments,
+            )
+        }
+    }
+
+    fun refreshMarkers(expectedSessionId: String) {
+        val state = _uiState.value
+        if (state.sessionId != expectedSessionId || state.isLoading) return
+        val fileId = state.mediaFileId ?: return
+        val generation = playbackRecoveryGeneration
+        val revision = ++markerRevision
+        viewModelScope.launch {
+            val owner = playbackSessionManager.controlOwner(expectedSessionId)?.first ?: return@launch
+            fun samePlayback(): Boolean = generation == playbackRecoveryGeneration &&
+                revision == markerRevision && _uiState.value.sessionId == expectedSessionId &&
+                _uiState.value.mediaFileId == fileId && !_uiState.value.isLoading
+            if (!samePlayback()) return@launch
+            val result = catalogRepository.getFileMarkers(fileId, owner)
+            if (!catalogRepository.isWatchAuthorityCurrent(owner) || !samePlayback()) return@launch
+            if (result is ApiResult.Success) applyUpdatedMarkers(result.data, expectedSessionId)
+        }
     }
 
     private fun mobileSubtitleContext(state: PlayerUiState): MobileSubtitlePlaybackContext =
@@ -3148,6 +3194,9 @@ class PlayerViewModel(
                     effectiveSubtitles,
                 ) ?: current.selectedSubtitleIndex,
                 committedSubtitleIdentity = committed.identity,
+                markerSegments = if (effectiveFileId == predecessorFileId) current.markerSegments else
+                    effectiveVersion.markerSegments?.let(::validMarkerSegments)
+                        ?: legacyMarkerSegments(effectiveVersion.intro, effectiveVersion.credits, effectiveVersion.recap, effectiveVersion.preview),
                 chapters = effectiveVersion.chapters.orEmpty(),
                 pendingSubtitleIdentity = pendingIdentity,
                 localSubtitleMountIdentity = null,
@@ -4399,9 +4448,8 @@ class PlayerViewModel(
      *
      * Best-effort metadata: we try to fetch [org.siloserver.silo.repository.CatalogRepository.getWatchDetail]
      * for the title / subtitle, but tolerate failure (true offline). The
-     * server-side session start, lifecycle reporter, and intro-skip observer
-     * are skipped — none of them work without network and none are required
-     * to actually play the local bytes.
+     * server-side session start and lifecycle reporter are skipped. Marker
+     * controls use the saved inventory and work without a network connection.
      */
     private suspend fun tryLocalPlayback(
         contentId: String,
@@ -4437,12 +4485,15 @@ class PlayerViewModel(
         if (!ownsLoad(loadOwner)) return false
         val title = watchDetail?.title ?: sidecar.title
         val subtitle = watchDetail?.let { buildSubtitle(it) } ?: sidecar.subtitle.orEmpty()
-        val versions = watchDetail?.versions?.takeIf { it.isNotEmpty() }
-            ?: listOf(
-                org.siloserver.silo.model.catalog.FileVersion(fileId = fileId),
-            )
+        val catalogVersions = watchDetail?.versions.orEmpty()
+        val versions = if (catalogVersions.any { it.fileId == fileId }) catalogVersions
+            else catalogVersions + FileVersion(fileId = fileId)
         val selectedIndex = versions.indexOfFirst { it.fileId == fileId }
-            .coerceAtLeast(0)
+        val selectedVersion = versions[selectedIndex]
+        val markers = sidecar.markerSegments?.let(::validMarkerSegments)
+            ?: selectedVersion.markerSegments?.let(::validMarkerSegments)
+            ?: legacyMarkerSegments(selectedVersion.intro, selectedVersion.credits, selectedVersion.recap, selectedVersion.preview)
+        val duration = sidecar.durationSeconds ?: selectedVersion.duration
         // Offline-safe resume: the server's watchDetail may be stale or absent in
         // airplane mode, so fold in the locally-recorded position and take the
         // furthest of the two (matches the server's GREATEST semantics).
@@ -4480,12 +4531,8 @@ class PlayerViewModel(
                 mediaMountGeneration = mountGeneration,
                 position = startPos,
                 bufferedPosition = 0.0,
-                duration = watchDetail?.versions?.firstOrNull { v -> v.fileId == fileId }?.duration
-                    ?: sidecar.durationSeconds
-                    ?: 0.0,
-                serverDuration = watchDetail?.versions?.firstOrNull { v -> v.fileId == fileId }?.duration
-                    ?: sidecar.durationSeconds
-                    ?: 0.0,
+                duration = duration,
+                serverDuration = duration,
                 isPlaying = true,
                 isPaused = false,
                 isBuffering = false,
@@ -4495,10 +4542,11 @@ class PlayerViewModel(
                 subtitleTracks = emptyList(),  // sidecars are remote in v1
                 selectedAudioIndex = 0,
                 selectedSubtitleIndex = -1,
-                intro = watchDetail?.intro,
-                credits = watchDetail?.credits,
-                recap = watchDetail?.recap,
-                preview = watchDetail?.preview,
+                intro = markers.firstOrNull { it.kind == "intro" }?.range,
+                credits = markers.firstOrNull { it.kind == "credits" }?.range,
+                recap = markers.firstOrNull { it.kind == "recap" }?.range,
+                preview = markers.firstOrNull { it.kind == "preview" }?.range,
+                markerSegments = markers,
                 chapters = versions[selectedIndex].chapters.orEmpty().ifEmpty { sidecar.chapters.orEmpty() },
                 seriesId = watchDetail?.seriesId,
                 preferredAudioLanguage = null,
@@ -4516,7 +4564,10 @@ class PlayerViewModel(
         // Media3 still picks its own default from the file's tracks -- so the
         // intent has to exist here too or a multi-audio download cannot be
         // corrected.
-        if (_uiState.value.audioTracks.isNotEmpty()) setDesiredAudio(0, explicit = false)
+        if (published) {
+            if (_uiState.value.audioTracks.isNotEmpty()) setDesiredAudio(0, explicit = false)
+            startIntroAutoSkipObserver()
+        }
         return published
     }
 

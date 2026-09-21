@@ -6,7 +6,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -19,8 +21,11 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.outlined.Bedtime
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +53,7 @@ import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.playback.activeMarkerSegment
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 
@@ -144,6 +150,10 @@ fun PlayerOverlay(
     val introSkipState by viewModel.introSkipState.collectAsState()
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
+    val activeMarker = activeMarkerSegment(
+        state.markerSegments.filter { it.kind != "intro" },
+        state.position,
+    )
     // Back while the pill is up dismisses it and is consumed; a second Back
     // behaves normally, because by then no pill is showing and this handler is
     // disabled. The player has no other BackHandler of its own — sheets live in
@@ -347,10 +357,7 @@ fun PlayerOverlay(
                 duration = state.duration,
                 bufferedPosition = state.bufferedPosition,
                 chapters = state.chapters,
-                intro = state.intro,
-                credits = state.credits,
-                recap = state.recap,
-                preview = state.preview,
+                markerSegments = state.markerSegments,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
                 hasMultipleVersions = state.versions.size > 1,
@@ -389,13 +396,12 @@ fun PlayerOverlay(
             .padding(bottom = 120.dp, end = 24.dp)
             .zIndex(2f)
 
-        // Intro skip pill (Hidden / Asking / Skipped).
-        // Shares the bottom-end slot with the Up Next card; intro and credits
-        // never overlap in practice, but the card wins the slot if both could show.
+        // Up Next takes precedence over marker actions.
         if (!state.showUpNext) {
-            Box(
+            Column(
                 modifier = bottomEndSlotModifier,
-                contentAlignment = Alignment.BottomEnd,
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 IntroAutoSkipBanner(
                     state = introSkipState,
@@ -404,6 +410,27 @@ fun PlayerOverlay(
                     countdownRun = introSkipCountdownRun,
                     timerRunning = introSkipTimerRunning,
                 )
+                if (seekEnabled && activeMarker != null) {
+                    Button(
+                        onClick = { gatedSeek(activeMarker.endSeconds) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Black.copy(alpha = 0.65f),
+                            contentColor = Color.White,
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Icon(Icons.Filled.SkipNext, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            when (activeMarker.kind) {
+                                "credits" -> "Skip credits"
+                                "recap" -> "Skip recap"
+                                "preview" -> "Skip preview"
+                                else -> "Skip segment"
+                            },
+                        )
+                    }
+                }
             }
         }
 

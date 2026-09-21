@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.downloads
 
 import org.siloserver.silo.common.data.db.entity.DownloadEntity
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
@@ -41,6 +42,7 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         narrator = narrator,
         durationSeconds = durationSeconds,
         chaptersJson = chapters?.let { mappingJson.encodeToString(it) },
+        markerSegmentsJson = markerSegments?.let { mappingJson.encodeToString(it) },
         resumeValidator = resumeValidator,
         status = record.status,
         kind = record.kind,
@@ -88,6 +90,9 @@ fun DownloadEntity.toSidecar(): DownloadSidecar =
         narrator = narrator,
         durationSeconds = durationSeconds,
         chapters = chaptersJson?.let { runCatching { mappingJson.decodeFromString<List<VersionChapter>>(it) }.getOrNull() },
+        markerSegments = markerSegmentsJson?.let {
+            runCatching { mappingJson.decodeFromString<List<PlaybackMarkerSegment>>(it) }.getOrNull()
+        },
         resumeValidator = resumeValidator,
         updatedAtMs = updatedAtMs,
     )

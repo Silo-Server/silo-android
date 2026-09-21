@@ -291,6 +291,11 @@ data class FileVersion(
     @SerialName("effective_audio_track_index") val effectiveAudioTrackIndex: Int? = null,
     @SerialName("subtitle_tracks") val subtitleTracks: List<SubtitleTrack>? = null,
     val chapters: List<VersionChapter>? = null,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
+    val recap: TimeRange? = null,
+    val preview: TimeRange? = null,
+    @SerialName("marker_segments") val markerSegments: List<PlaybackMarkerSegment>? = null,
     // --- Whole-book audiobook stitching (see org.siloserver.silo.audiobook.AudiobookTimeline) ---
     // The server has no concept of a whole book: it sends each audiobook file as an
     // individual FileVersion tagged `presentation_kind == "audiobook_part"` with a

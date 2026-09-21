@@ -156,6 +156,8 @@ class DownloadWorker(
 
         try {
             requireOwner()
+            persistManifestMetadata(downloadId, serverId, profileId, fileId)
+            requireOwner()
             httpClient.prepareGet("/api/v2/downloads/${downloadId.encodeURLPathPart()}/file") {
                 transferAuthority?.let { managedDownloadAuth(it.scope) }
                 // Streaming download: drop the global 60s TOTAL-request timeout (it
@@ -371,6 +373,18 @@ class DownloadWorker(
         } finally {
             lifetimeLease.close()
         }
+    }
+
+    /** Optional offline metadata follows the same owner checks as byte writes. */
+    private suspend fun persistManifestMetadata(
+        downloadId: String,
+        serverId: String,
+        profileId: String,
+        fileId: Int,
+    ) {
+        val manifest = (repository.getManifest(downloadId, fileId, transferAuthority) as? ApiResult.Success)?.data ?: return
+        if (manifest.downloadId != downloadId || manifest.mediaFileId != fileId) return
+        ownedWrite { metadataStore.persistManifest(serverId, profileId, manifest) }
     }
 
     /** Permanent failure — clean up local file and let the user retry manually. */

@@ -57,6 +57,8 @@ data class DownloadEntity(
     val durationSeconds: Double?,
     /** Serialized `List<VersionChapter>`; null/absent for non-chaptered media. */
     val chaptersJson: String?,
+    /** Serialized marker inventory; null means it has not been fetched. */
+    val markerSegmentsJson: String? = null,
     // Mirror DownloadStatus wire values (lowercase): queued/downloading/completed/
     // failed/cancelled (DownloadModels.kt); plus a local-only "stale" for imported
     // rows whose bytes are missing (Task 6).

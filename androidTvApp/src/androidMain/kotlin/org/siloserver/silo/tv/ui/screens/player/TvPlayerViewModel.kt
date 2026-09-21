@@ -2,6 +2,12 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+import org.siloserver.silo.playback.PlaybackMarkersUpdate
+import org.siloserver.silo.playback.introMarkerSegment
+import org.siloserver.silo.playback.legacyMarkerSegments
+import org.siloserver.silo.playback.terminalCreditsRange
+import org.siloserver.silo.playback.validMarkerSegments
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -920,6 +926,7 @@ class TvPlayerViewModel(
      * once its coordinator round-trip returns.
      */
     private var contentLoadGeneration = 0L
+    private var markerRevision = 0L
     private val loadOwners = TvPlayerLoadOwnerRegistry()
 
     /** Same-route retries spent on transient network errors; reset once playback progresses. */
@@ -1068,6 +1075,7 @@ class TvPlayerViewModel(
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,
         val preview: TimeRange? = null,
+        val markerSegments: List<PlaybackMarkerSegment> = legacyMarkerSegments(intro, credits, recap, preview),
         // Chapters from the selected FileVersion (server-extracted via FFprobe
         // at ingest, mirrors Apple's `VersionChapter` consumption). Empty list
         // when the file has no embedded chapters. The HUD Chapters pane
@@ -1439,6 +1447,12 @@ class TvPlayerViewModel(
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
         }
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.sessionId, it.selectedFileId ?: it.mediaFileId, it.isLoading) }
+                .distinctUntilChanged()
+                .collect { (_, _, loading) -> if (!loading) refreshMarkers() }
+        }
         // Mirror the screen error into the adb test hook — screen-level
         // failures (terminal server plans) never reach the Media3 player, so
         // scripted tests can't see them through player state alone.
@@ -1683,7 +1697,7 @@ class TvPlayerViewModel(
         )
         val mountNonce = nextTypedSubtitleMountNonce(adoption.committed.identity)
         _uiState.update { state ->
-            state.copy(
+            state.withMarkersForFile(fileId).copy(
                 error = null,
                 sessionId = ready.session.sessionId,
                 playMethod = ready.session.playMethod,
@@ -2152,6 +2166,7 @@ class TvPlayerViewModel(
                                 credits = result.credits,
                                 recap = result.recap,
                                 preview = result.preview,
+                                markerSegments = result.markerSegments,
                                 chapters = result.chapters,
                                 seriesId = result.seriesId,
                                 seasonNumber = result.seasonNumber,
@@ -2306,12 +2321,12 @@ class TvPlayerViewModel(
                 .map { it.position }
                 .distinctUntilChanged(),
             introRange = _uiState
-                .map { it.intro }
+                .map { introMarkerSegment(it.markerSegments, it.position)?.range }
                 .distinctUntilChanged(),
             mode = effectiveMode,
             introKey = _uiState
                 .map { state ->
-                    state.intro?.let { intro ->
+                    introMarkerSegment(state.markerSegments, state.position)?.range?.let { intro ->
                         "${state.sessionId}:${state.selectedFileId}:${intro.start}:${intro.end}"
                     }
                 }
@@ -2566,7 +2581,7 @@ class TvPlayerViewModel(
                         if (recoveryContentGeneration != contentLoadGeneration) return@launch
                         val transportMountNonce = nextTypedSubtitleMountNonce(returnedSubtitleIdentity)
                         _uiState.update {
-                            it.copy(
+                            it.withMarkersForFile(effectiveFileId).copy(
                                 error = null,
                                 sessionId = decision.session.sessionId,
                                 playMethod = decision.session.playMethod,
@@ -2847,7 +2862,8 @@ class TvPlayerViewModel(
         // whose saved position is already inside the credits doesn't instantly
         // skip to the next one (a seek into credits also won't trigger it).
         if (!seekWasActive) {
-            _uiState.value.credits?.start?.let { creditsStart ->
+            val state = _uiState.value
+            terminalCreditsRange(state.markerSegments, state.duration)?.start?.let { creditsStart ->
                 if (previousPosition < creditsStart && positionSec >= creditsStart) onApproachingEnd()
             }
         }
@@ -3800,13 +3816,55 @@ class TvPlayerViewModel(
         _pendingRemoteSubtitleIndex.value?.let(::remoteSelectSubtitle)
     }
 
-    /**
-     * Adopt server-recomputed intro/credits ranges (a `markers_updated` event).
-     * Skip-intro and the credits-based F2 trigger read these from UiState, so the
-     * update takes effect immediately; `null` clears a marker the server dropped.
-     */
-    fun applyUpdatedMarkers(intro: TimeRange?, credits: TimeRange?, recap: TimeRange?, preview: TimeRange?) {
-        _uiState.update { it.copy(intro = intro, credits = credits, recap = recap, preview = preview) }
+    private fun UiState.withMarkersForFile(fileId: Int): UiState {
+        if ((selectedFileId ?: mediaFileId) == fileId) return this
+        val version = fileVersions.firstOrNull { it.fileId == fileId }
+        val segments = version?.markerSegments?.let(::validMarkerSegments)
+            ?: legacyMarkerSegments(version?.intro, version?.credits, version?.recap, version?.preview)
+        return copy(
+            markerSegments = segments,
+            intro = segments.firstOrNull { it.kind == "intro" }?.range,
+            credits = segments.lastOrNull { it.kind == "credits" }?.range,
+            recap = segments.firstOrNull { it.kind == "recap" }?.range,
+            preview = segments.firstOrNull { it.kind == "preview" }?.range,
+        )
+    }
+
+    /** Refresh after startup and socket reconnects to recover missed marker updates. */
+    fun refreshMarkers(expectedSessionId: String? = _uiState.value.sessionId) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (state.isLoading || sessionId != expectedSessionId) return
+        val fileId = state.selectedFileId ?: state.mediaFileId ?: return
+        val generation = contentLoadGeneration
+        val revision = ++markerRevision
+        viewModelScope.launch {
+            val owner = playbackSessionManager.controlOwner(sessionId)?.first ?: return@launch
+            val result = catalogRepository.getFileMarkers(fileId, owner)
+            if (result !is ApiResult.Success || !catalogRepository.isWatchAuthorityCurrent(owner)) return@launch
+            val current = _uiState.value
+            if (generation != contentLoadGeneration || revision != markerRevision ||
+                current.sessionId != sessionId || (current.selectedFileId ?: current.mediaFileId) != fileId
+            ) return@launch
+            applyUpdatedMarkers(result.data, sessionId)
+        }
+    }
+
+    fun applyUpdatedMarkers(markers: PlaybackMarkersUpdate, expectedSessionId: String) {
+        val state = _uiState.value
+        if (state.isLoading || state.sessionId != expectedSessionId) return
+        val fileId = state.selectedFileId ?: state.mediaFileId
+        if (markers.fileId != null && markers.fileId != fileId) return
+        markerRevision++
+        _uiState.update {
+            it.copy(
+                intro = markers.intro,
+                credits = markers.credits,
+                recap = markers.recap,
+                preview = markers.preview,
+                markerSegments = markers.markerSegments,
+            )
+        }
     }
 
     // ---- Next-episode auto-advance (F2) ----

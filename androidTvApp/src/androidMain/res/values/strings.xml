@@ -18,6 +18,9 @@
     <!-- Intro skip (playback.intro_skip_mode; see the server's
          docs/design/2026-08-16-intro-skip-mode.md — the copy is contract-fixed) -->
     <string name="intro_skip_pill_skip">Skip Intro</string>
+    <string name="marker_skip_credits">Skip Credits</string>
+    <string name="marker_skip_recap">Skip Recap</string>
+    <string name="marker_skip_preview">Skip Preview</string>
     <string name="intro_skip_pill_undo">Watch Intro</string>
     <string name="intro_skip_pill_undo_caption">Intro skipped</string>
     <string name="settings_intro_skip_title">Skip intros</string>

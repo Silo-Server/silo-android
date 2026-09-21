@@ -1,5 +1,6 @@
 package org.siloserver.silo.model.download
 
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
 import org.siloserver.silo.model.catalog.VersionChapter
 import kotlinx.serialization.Serializable
 
@@ -64,6 +65,8 @@ data class DownloadSidecar(
      *  chapter list + chapter-aware progress. Empty/absent for non-chaptered
      *  media and for sidecars written before this field existed. */
     val chapters: List<VersionChapter>? = null,
+    /** All cached marker occurrences. Null means unavailable; empty means none. */
+    val markerSegments: List<PlaybackMarkerSegment>? = null,
     /** HTTP validator (strong ETag, else Last-Modified) captured at download start,
      *  used to send `If-Range` when resuming an interrupted transfer so a changed
      *  source file restarts cleanly instead of corrupting. Null/absent = none. */

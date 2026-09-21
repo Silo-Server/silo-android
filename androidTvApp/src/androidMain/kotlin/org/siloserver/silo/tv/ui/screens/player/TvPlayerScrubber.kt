@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+
 import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -107,11 +109,8 @@ fun TvPlayerScrubber(
     chapters: List<ChapterInfo>,
     cancelOnBlur: Boolean,
     // Detected marker bands [startSec, endSec] drawn on the track when known.
-    // Null = no band. Mirrors tvOS TVPlayerScrubber.introRegion.
-    introRangeSec: ClosedRange<Double>? = null,
-    creditsRangeSec: ClosedRange<Double>? = null,
-    recapRangeSec: ClosedRange<Double>? = null,
-    previewRangeSec: ClosedRange<Double>? = null,
+    // Each occurrence stays separate so narrative gaps remain visible.
+    markerSegments: List<PlaybackMarkerSegment> = emptyList(),
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
     onBeginScrub: () -> Unit,
@@ -398,15 +397,16 @@ fun TvPlayerScrubber(
             // ticks so the playhead still reads clearly over it.
             if (durationSec > 0) {
                 val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
-                val markers = listOfNotNull(
-                    introRangeSec?.let { it to Color.Cyan },
-                    recapRangeSec?.let { it to Color(0xFF8BC34A) },
-                    creditsRangeSec?.let { it to Color(0xFFFFB74D) },
-                    previewRangeSec?.let { it to Color(0xFFBA68C8) },
-                )
-                for ((range, color) in markers) {
-                    val start = (range.start / durationSec).toFloat().coerceIn(0f, 1f)
-                    val end = (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f)
+                for (marker in markerSegments) {
+                    val color = when (marker.kind) {
+                        "intro" -> Color.Cyan
+                        "recap" -> Color(0xFF8BC34A)
+                        "credits" -> Color(0xFFFFB74D)
+                        "preview" -> Color(0xFFBA68C8)
+                        else -> continue
+                    }
+                    val start = (marker.startSeconds / durationSec).toFloat().coerceIn(0f, 1f)
+                    val end = (marker.endSeconds / durationSec).toFloat().coerceIn(0f, 1f)
                     if (end > start) {
                         Box(
                             modifier = Modifier

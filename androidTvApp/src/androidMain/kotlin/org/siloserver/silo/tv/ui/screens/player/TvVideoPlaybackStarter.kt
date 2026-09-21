@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.playback.markersForVersion
+import org.siloserver.silo.playback.legacyMarkerSegments
+
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -336,6 +339,8 @@ class TvVideoPlaybackStarter(
                 unpublishedSessionId = null
                 return failure(request.contentId, "The metadata viewer changed during playback adoption.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
             }
+            val markerSegments = effectiveVersion?.let(watchDetail::markersForVersion)
+                ?: legacyMarkerSegments(watchDetail.intro, watchDetail.credits, watchDetail.recap, watchDetail.preview)
             val result = VideoPlaybackStartResult.Ready(
                 contentId = request.contentId,
                 fileId = effectiveFileId,
@@ -379,10 +384,11 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
-                intro = watchDetail.intro,
-                credits = watchDetail.credits,
-                recap = watchDetail.recap,
-                preview = watchDetail.preview,
+                intro = markerSegments.firstOrNull { it.kind == "intro" }?.range,
+                credits = markerSegments.lastOrNull { it.kind == "credits" }?.range,
+                recap = markerSegments.firstOrNull { it.kind == "recap" }?.range,
+                preview = markerSegments.firstOrNull { it.kind == "preview" }?.range,
+                markerSegments = markerSegments,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
                 seasonNumber = watchDetail.seasonNumber,

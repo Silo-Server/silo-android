@@ -2,7 +2,9 @@ package org.siloserver.silo.common.downloads
 
 import androidx.room.withTransaction
 import org.siloserver.silo.common.data.db.SiloDatabase
+import org.siloserver.silo.model.download.DownloadManifest
 import org.siloserver.silo.model.download.DownloadSidecar
+import org.siloserver.silo.model.download.effectiveMarkerSegments
 
 /**
  * Room-backed download metadata (Track B) — replaces the on-disk `.record.json`
@@ -22,6 +24,23 @@ class DownloadMetadataStore(private val db: SiloDatabase) {
 
     suspend fun readSidecar(serverId: String, profileId: String, fileId: Int): DownloadSidecar? =
         downloadDao.get(serverId, profileId, fileId)?.toSidecar()
+
+    /** Attach fetched metadata only while this file slot still holds its download. */
+    suspend fun persistManifest(serverId: String, profileId: String, manifest: DownloadManifest): Boolean =
+        db.withTransaction {
+            val row = downloadDao.get(serverId, profileId, manifest.mediaFileId) ?: return@withTransaction false
+            if (row.recordId != manifest.downloadId) return@withTransaction false
+            val sidecar = row.toSidecar()
+            downloadDao.upsert(
+                sidecar.copy(
+                    markerSegments = manifest.effectiveMarkerSegments() ?: sidecar.markerSegments,
+                    durationSeconds = manifest.durationSeconds.takeIf { it.isFinite() && it > 0 }
+                        ?: sidecar.durationSeconds,
+                    updatedAtMs = System.currentTimeMillis(),
+                ).toEntity(serverId, profileId),
+            )
+            true
+        }
 
     suspend fun deleteSidecar(serverId: String, profileId: String, fileId: Int) {
         downloadDao.delete(serverId, profileId, fileId)

@@ -2574,6 +2574,8 @@ open class PlaybackSessionManager(
             "The server returned a playback route this client cannot execute."
     }
 
+    open suspend fun controlOwner(sessionId: String) = playbackRepository.controlOwner(sessionId)
+
     open fun isSequenced(sessionId: String): Boolean = playbackRepository.isSequenced(sessionId)
 
     /**

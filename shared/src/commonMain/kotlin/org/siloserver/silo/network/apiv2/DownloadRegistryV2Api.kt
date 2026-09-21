@@ -5,6 +5,8 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+import org.siloserver.silo.model.catalog.TimeRange
 import org.siloserver.silo.model.download.*
 import org.siloserver.silo.network.*
 
@@ -36,14 +38,33 @@ internal data class DownloadEntryV2(
 }
 @Serializable private data class DownloadPageV2(val items: List<DownloadEntryV2>, val page: PageInfo)
 
+@Serializable
+internal data class DownloadManifestV2(
+    @SerialName("download_id") val downloadId: String,
+    @Serializable(with = DetailStringIdSerializer::class)
+    @SerialName("media_file_id") val mediaFileId: String,
+    @SerialName("duration_seconds") val durationSeconds: Double = 0.0,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
+    val recap: TimeRange? = null,
+    val preview: TimeRange? = null,
+    @SerialName("marker_segments") val markerSegments: List<PlaybackMarkerSegment>? = null,
+) {
+    fun project(expectedDownloadId: String, expectedFileId: Int): DownloadManifest {
+        require(downloadId == expectedDownloadId && checkedPositiveId(mediaFileId) == expectedFileId)
+        return DownloadManifest(downloadId, expectedFileId, durationSeconds, intro, credits, recap, preview, markerSegments)
+    }
+}
+
 /** Registry reads are all-or-nothing; local absence reconciliation must never see a prefix. */
 class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: TokenManager,
     private val devices: DeviceMetadataProvider, private val gate: ApiV2Gate) {
     private fun invalid() = ApiResult.Error(0, "invalid_download_registry", "The server returned an incomplete or unsupported download registry.")
     private suspend inline fun <reified T> exchange(scope: AuthScopeSnapshot, device: String, method: HttpMethod,
-        path: String, noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
+        path: String, policy: OwnerPolicy = OwnerPolicy.IDENTITY,
+        noinline configure: HttpRequestBuilder.() -> Unit = {}): ApiResult<T> {
         if (devices.current()?.id != device) return identityChanged()
-        val result = ownedV2Call<T, T>(gate, tokens, scope, OwnerPolicy.IDENTITY,
+        val result = ownedV2Call<T, T>(gate, tokens, scope, policy,
             if (method == HttpMethod.Delete) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
             client.request(path) {
                 this.method = method; authScope(owner!!); requireSiloAuth()
@@ -88,6 +109,22 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
         val device = devices.current()?.id ?: return identityChanged()
         val result = exchange<DownloadCapability>(scope, device, HttpMethod.Get, "/api/v2/capabilities/downloads")
         return if (result is ApiResult.Success && (result.data.revision.isNullOrBlank() || result.data.state.isNullOrBlank())) invalid() else result
+    }
+    suspend fun manifest(id: String, fileId: Int, scope: AuthScopeSnapshot): ApiResult<DownloadManifest> {
+        if (scope.profileId.isNullOrBlank()) return identityChanged()
+        if (id.isBlank() || fileId <= 0) return invalidResponse()
+        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
+        return when (val result = exchange<DownloadManifestV2>(
+            scope, device, HttpMethod.Get, "/api/v2/downloads/${id.encodeURLPathPart()}/manifest", OwnerPolicy.PROFILE,
+        )) {
+            is ApiResult.Success -> try {
+                ApiResult.Success(result.data.project(id, fileId))
+            } catch (_: IllegalArgumentException) {
+                invalidResponse("The download manifest does not match the requested file.")
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
     }
     suspend fun delete(id: String, scope: AuthScopeSnapshot): ApiResult<Unit> {
         val device = devices.current()?.id ?: return identityChanged()

@@ -40,7 +40,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.util.formatClockTime
-import org.siloserver.silo.model.catalog.TimeRange
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
 import org.siloserver.silo.model.catalog.VersionChapter
 
 /**
@@ -65,10 +65,7 @@ fun PlayerProgressBar(
     bufferedPosition: Double = 0.0,
     enabled: Boolean = true,
     chapters: List<VersionChapter> = emptyList(),
-    intro: TimeRange? = null,
-    credits: TimeRange? = null,
-    recap: TimeRange? = null,
-    preview: TimeRange? = null,
+    markerSegments: List<PlaybackMarkerSegment> = emptyList(),
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableFloatStateOf(0f) }
@@ -186,15 +183,16 @@ fun PlayerProgressBar(
                     if (hasKnownDuration) {
                         val density = LocalDensity.current
                         val barWidthDp = with(density) { barWidthPx.toDp() }
-                        val markers = listOfNotNull(
-                            intro?.let { it to Color.Cyan },
-                            recap?.let { it to Color(0xFF8BC34A) },
-                            credits?.let { it to Color(0xFFFFB74D) },
-                            preview?.let { it to Color(0xFFBA68C8) },
-                        )
-                        markers.forEach { (range, color) ->
-                            val startFraction = (range.start / maxDuration).toFloat().coerceIn(0f, 1f)
-                            val endFraction = (range.end / maxDuration).toFloat().coerceIn(startFraction, 1f)
+                        markerSegments.forEach { marker ->
+                            val color = when (marker.kind) {
+                                "intro" -> Color.Cyan
+                                "recap" -> Color(0xFF8BC34A)
+                                "credits" -> Color(0xFFFFB74D)
+                                "preview" -> Color(0xFFBA68C8)
+                                else -> return@forEach
+                            }
+                            val startFraction = (marker.startSeconds / maxDuration).toFloat().coerceIn(0f, 1f)
+                            val endFraction = (marker.endSeconds / maxDuration).toFloat().coerceIn(startFraction, 1f)
                             if (endFraction > startFraction) {
                                 Box(
                                     modifier = Modifier
