@@ -81,6 +81,7 @@ sealed interface VideoPlayerUiState {
         val episodeNumber: Int? = null,
         /** Target-catalog decision for the one-shot episode-selection handoff. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
+        val seriesTitle: String? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = true
 

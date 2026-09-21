@@ -43,6 +43,7 @@ import org.siloserver.silo.common.player.seek.replanMountPositionForSource
 import org.siloserver.silo.common.player.seek.sourcePositionForPlayer
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
+import org.siloserver.silo.common.player.video.NextUpTransitionGate
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.player.video.VideoPlayerUiState
 import org.siloserver.silo.common.player.video.serverTerminalUserMessage
@@ -343,6 +344,8 @@ class PlayerViewModel(
         val stillUrl: String?,
         val stillThumbhash: String?,
         val runtimeMinutes: Int,
+        val seriesTitle: String? = null,
+        val overview: String? = null,
     ) {
         val label: String
             get() = "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
@@ -367,6 +370,7 @@ class PlayerViewModel(
         val versionSwitchMessage: String? = null,
         val title: String = "",
         val subtitle: String = "",
+        val seriesTitle: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -432,6 +436,8 @@ class PlayerViewModel(
         val nextEpisode: NextEpisodeInfo? = null,
         val onDeckItems: List<OnDeckItem> = emptyList(),
         val showUpNext: Boolean = false,
+        /** Keep the outgoing frame/card mounted until the successor renders. */
+        val isNextUpTransitioning: Boolean = false,
         /** True once the stream has actually ended (STATE_ENDED) while the card shows. */
         val upNextVideoEnded: Boolean = false,
         /** Remaining auto-play countdown seconds; null = no countdown (gated / auto-play off). */
@@ -626,6 +632,7 @@ class PlayerViewModel(
     // strongest videoEnded flag seen) so resolveNextEpisode can commit the card.
     private var pendingApproachingEndVideoEnded: Boolean? = null
     private var upNextCountdownJob: Job? = null
+    private val nextUpTransitionGate = NextUpTransitionGate()
     // Auto-dismiss timer for the transient version-switch failure pill. A new
     // failure cancels the prior job so a stale one can't clear the fresh
     // message early (repeated identical failures used to be dismissed within a
@@ -834,8 +841,17 @@ class PlayerViewModel(
         lifecycleObserverJob = viewModelScope.launch {
             sessionLifecycle.state.collect { state ->
                 if (state is SessionState.Failed) {
+                    nextUpTransitionGate.cancel()
                     _uiState.update { current ->
-                        if (current.error == null) current.copy(error = state.message) else current
+                        if (current.error == null) {
+                            current.copy(
+                                error = state.message,
+                                showUpNext = false,
+                                isNextUpTransitioning = false,
+                            )
+                        } else {
+                            current
+                        }
                     }
                 }
             }
@@ -845,6 +861,7 @@ class PlayerViewModel(
                 val state = _uiState.value
                 val params = renewal.startParams
                 if (
+                    !nextUpTransitionGate.isActive &&
                     state.sessionId == renewal.staleSessionId &&
                     state.contentId == params.contentId
                 ) {
@@ -909,6 +926,7 @@ class PlayerViewModel(
      * This is the main entry point called when the player screen is first displayed.
      */
     private fun publishLoadingState(contentId: String) {
+        val preservesNextUp = nextUpTransitionGate.isActive
         _uiState.update {
             it.copy(
                 isLoading = true,
@@ -916,9 +934,10 @@ class PlayerViewModel(
                 error = null,
                 serverUnreachable = false,
                 contentId = contentId,
-                nextEpisode = null,
-                showUpNext = false,
-                upNextVideoEnded = false,
+                nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
+                showUpNext = it.showUpNext && preservesNextUp,
+                isNextUpTransitioning = preservesNextUp,
+                upNextVideoEnded = it.upNextVideoEnded && preservesNextUp,
                 upNextCountdownSeconds = null,
                 stats = PlayerStatsSnapshot(),
             )
@@ -1087,18 +1106,27 @@ class PlayerViewModel(
                     }
                     is VideoPlayerUiState.Error -> {
                         loadOwners.runIfOwned(loadOwner) {
+                            nextUpTransitionGate.cancel()
                             _uiState.update {
-                                it.copy(isLoading = false, error = playbackState.message)
+                                it.copy(
+                                    isLoading = false,
+                                    error = playbackState.message,
+                                    showUpNext = false,
+                                    isNextUpTransitioning = false,
+                                )
                             }
                         }
                     }
                     is VideoPlayerUiState.ServerUnreachable -> {
                         loadOwners.runIfOwned(loadOwner) {
+                            nextUpTransitionGate.cancel()
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
                                     error = SERVER_UNREACHABLE_MESSAGE,
                                     serverUnreachable = true,
+                                    showUpNext = false,
+                                    isNextUpTransitioning = false,
                                 )
                             }
                         }
@@ -1113,8 +1141,14 @@ class PlayerViewModel(
                 if (!ownsLoad(loadOwner)) return@launch
                 Log.e(TAG, "Error loading content", e)
                 loadOwners.runIfOwned(loadOwner) {
+                    nextUpTransitionGate.cancel()
                     _uiState.update {
-                        it.copy(isLoading = false, error = "Unexpected error: ${e.message}")
+                        it.copy(
+                            isLoading = false,
+                            error = "Unexpected error: ${e.message}",
+                            showUpNext = false,
+                            isNextUpTransitioning = false,
+                        )
                     }
                 }
             }
@@ -1319,11 +1353,16 @@ class PlayerViewModel(
         }
         val published = loadOwners.runIfOwned(loadOwner) {
             val mountGeneration = expectNextMediaMount()
+            val preservesNextUp = nextUpTransitionGate.expectMount(
+                contentId = playbackState.contentId,
+                mountToken = mountGeneration,
+            )
             _uiState.update {
                 it.copy(
                 isLoading = false,
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
+                seriesTitle = watchDetail?.seriesTitle,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -1359,9 +1398,10 @@ class PlayerViewModel(
                 seriesId = watchDetail?.seriesId,
                 seasonNumber = watchDetail?.seasonNumber,
                 episodeNumber = watchDetail?.episodeNumber,
-                nextEpisode = null,
-                showUpNext = false,
-                upNextVideoEnded = false,
+                nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
+                showUpNext = it.showUpNext && preservesNextUp,
+                isNextUpTransitioning = preservesNextUp,
+                upNextVideoEnded = it.upNextVideoEnded && preservesNextUp,
                 upNextCountdownSeconds = null,
                 // T11: clear the subtitle-refresh nonce on every fresh mount.
                 // It is bumped once per post-download refresh; without this
@@ -1415,9 +1455,13 @@ class PlayerViewModel(
 
         // Begin observing intro auto-skip inputs for this session.
         startIntroAutoSkipObserver()
-        // F2: resolve the next episode for auto-advance / "Up next".
-        resolveNextEpisode()
-        loadOnDeckItems()
+        // During an in-place Next Up handoff the old card remains authoritative
+        // until the successor's own first frame. Fetching its following episode
+        // earlier could replace that card while it is still masking the mount.
+        if (!nextUpTransitionGate.isActive) {
+            resolveNextEpisode()
+            loadOnDeckItems()
+        }
 
         // Schedule controls auto-hide
         scheduleControlsHide()
@@ -1462,8 +1506,13 @@ class PlayerViewModel(
      * reads differently than "DV Profile 7 not supported", and a single
      * "not supported" banner would hide both.
      */
-    fun onUnsupportedPlayback(reason: Playability) {
+    fun onUnsupportedPlayback(reason: Playability, mediaMountGeneration: Long) {
         val state = _uiState.value
+        if (state.isNextUpTransitioning &&
+            (state.isLoading || mediaMountGeneration != state.mediaMountGeneration)
+        ) {
+            return
+        }
         state.sessionId ?: return
 
         val notice = when (reason) {
@@ -1534,8 +1583,14 @@ class PlayerViewModel(
     fun onPlayerError(
         error: androidx.media3.common.PlaybackException,
         servicePlayer: androidx.media3.common.Player? = null,
+        mediaMountGeneration: Long? = null,
     ) {
         val state = _uiState.value
+        if (state.isNextUpTransitioning &&
+            (state.isLoading || mediaMountGeneration != state.mediaMountGeneration)
+        ) {
+            return
+        }
         val message = error.localizedMessage?.takeIf { msg -> msg.isNotBlank() }
             ?: "Playback failed. Please try again."
         val pendingSeekTarget = activeSeekTargetSec
@@ -1887,6 +1942,10 @@ class PlayerViewModel(
                         currentCoroutineContext().ensureActive()
                         if (recoveryGeneration != playbackRecoveryGeneration) return@launch
                         val mountGeneration = expectNextMediaMount()
+                        nextUpTransitionGate.expectMount(
+                            contentId = _uiState.value.contentId,
+                            mountToken = mountGeneration,
+                        )
                         _uiState.update { current ->
                             current.copy(
                                 error = null,
@@ -1944,9 +2003,12 @@ class PlayerViewModel(
                             return@launch
                         }
                         retainedOwnedSessionId = null
+                        nextUpTransitionGate.cancel()
                         _uiState.update {
                             it.copy(
                                 error = terminalMessage,
+                                showUpNext = false,
+                                isNextUpTransitioning = false,
                                 isLoading = false,
                                 isBuffering = false,
                                 isPlaying = false,
@@ -1959,12 +2021,17 @@ class PlayerViewModel(
                             )
                         }
                     }
-                    VideoSessionStartV3.ServerUpgradeRequired -> _uiState.update {
-                        it.copy(
-                            error = "This Silo server must be updated to support playback recovery.",
-                            isLoading = false,
-                            isBuffering = false,
-                        )
+                    VideoSessionStartV3.ServerUpgradeRequired -> {
+                        nextUpTransitionGate.cancel()
+                        _uiState.update {
+                            it.copy(
+                                error = "This Silo server must be updated to support playback recovery.",
+                                isLoading = false,
+                                isBuffering = false,
+                                showUpNext = false,
+                                isNextUpTransitioning = false,
+                            )
+                        }
                     }
                 }
                 is ApiResult.Error -> onReplanRequestFailed(classification, notice, result.message)
@@ -2005,11 +2072,14 @@ class PlayerViewModel(
             showVersionSwitchMessage("Couldn't apply the change — playback continues unchanged.")
             _uiState.update { it.copy(isLoading = false, isBuffering = false) }
         } else {
+            nextUpTransitionGate.cancel()
             _uiState.update {
                 it.copy(
                     error = "$notice ($detail)",
                     isLoading = false,
                     isBuffering = false,
+                    showUpNext = false,
+                    isNextUpTransitioning = false,
                 )
             }
         }
@@ -2089,6 +2159,9 @@ class PlayerViewModel(
         mediaMountSequence = if (mediaMountSequence == Long.MAX_VALUE) 1L else mediaMountSequence + 1L
         awaitingMediaMountGeneration = mediaMountSequence
         positionReportsBlockedForPendingLoad = false
+        // Intro skips and subtitle replans can remount the successor before its
+        // first frame. Complete Next Up only from the replacement mount.
+        nextUpTransitionGate.expectMount(_uiState.value.contentId, mediaMountSequence)
         return mediaMountSequence
     }
 
@@ -2272,9 +2345,23 @@ class PlayerViewModel(
         }
     }
 
-    fun onFirstVideoFrameRendered() {
+    fun onFirstVideoFrameRendered(mediaMountGeneration: Long?) {
+        if (mediaMountGeneration != _uiState.value.mediaMountGeneration) return
         hasRenderedFirstFrame = true
         playbackSessionManager.reportFirstVideoFrame(_uiState.value.stats)
+        if (nextUpTransitionGate.completeOnFirstFrame(mediaMountGeneration)) {
+            _uiState.update {
+                it.copy(
+                    nextEpisode = null,
+                    showUpNext = false,
+                    isNextUpTransitioning = false,
+                    upNextVideoEnded = false,
+                    upNextCountdownSeconds = null,
+                )
+            }
+            resolveNextEpisode()
+            loadOnDeckItems()
+        }
     }
 
     fun onRuntimeCorrection(event: String, correctionId: String, stage: String, details: Map<String, String> = emptyMap()) {
@@ -3887,6 +3974,8 @@ class PlayerViewModel(
                 stillUrl = next.stillUrl,
                 stillThumbhash = next.stillThumbhash,
                 runtimeMinutes = next.runtime,
+                seriesTitle = state.seriesTitle,
+                overview = next.overview,
             )
             _uiState.update {
                 // Drop the result if the player has since moved to another item.
@@ -3911,17 +4000,21 @@ class PlayerViewModel(
      * below the pass-out threshold, the card runs a countdown that plays the
      * next episode at zero. Once the streak hits the threshold (or auto-play is
      * off), the card shows WITHOUT a countdown so the user must explicitly
-     * choose (the pass-out gate). Once-per-episode.
+     * choose (the pass-out gate). The credits prompt is once per episode;
+     * a dismissed card reopens when playback ends.
      *
      * [videoEnded] is true on STATE_ENDED — the card reads "Playing Next"; a
      * repeat call while the card is showing only upgrades that flag.
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
+        if (nextUpTransitionGate.isActive) return
         // Watch Together is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
         if (autoAdvanceHandled) {
-            if (videoEnded && _uiState.value.showUpNext) {
-                _uiState.update { it.copy(upNextVideoEnded = true) }
+            if (videoEnded) {
+                // Keep Watching dismisses the credits prompt, but finishing the
+                // episode must still offer Play Now without restarting its timer.
+                _uiState.update { it.copy(showUpNext = true, upNextVideoEnded = true) }
             }
             return
         }
@@ -4025,9 +4118,11 @@ class PlayerViewModel(
 
     /**
      * Up Next dismiss — cancel the countdown and stay on the current playback.
-     * Does NOT re-arm [autoAdvanceHandled]: the card is once-per-episode.
+     * Suppress further credits prompts; playback end still reopens the card.
      */
     fun dismissUpNext() {
+        if (nextUpTransitionGate.isActive) return
+        autoAdvanceHandled = true
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
         _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
@@ -4064,10 +4159,22 @@ class PlayerViewModel(
             return
         }
         val nextContentId = _uiState.value.nextEpisode?.contentId ?: return
-        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+        if (!nextUpTransitionGate.begin(nextContentId)) return
+        _uiState.update {
+            it.copy(
+                showUpNext = true,
+                isNextUpTransitioning = true,
+                upNextCountdownSeconds = null,
+            )
+        }
         viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
-            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                nextUpTransitionGate.cancel()
+                _uiState.update { it.copy(showUpNext = false, isNextUpTransitioning = false) }
+                return@launch
+            }
+            if (!nextUpTransitionGate.isActive) return@launch
             loadContent(
                 contentId = nextContentId,
                 resumePositionOverride = 0.0,
@@ -4286,6 +4393,7 @@ class PlayerViewModel(
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
+        nextUpTransitionGate.cancel()
         routeIntentState.clear()
         resetPlaybackRecoveryState()
         loadOwners.invalidate()
@@ -4458,6 +4566,10 @@ class PlayerViewModel(
 
         val published = loadOwners.runIfOwned(loadOwner) {
             val mountGeneration = expectNextMediaMount()
+            val preservesNextUp = nextUpTransitionGate.expectMount(
+                contentId = contentId,
+                mountToken = mountGeneration,
+            )
             _uiState.update {
                 it.copy(
                 isLoading = false,
@@ -4501,6 +4613,13 @@ class PlayerViewModel(
                 preview = watchDetail?.preview,
                 chapters = versions[selectedIndex].chapters.orEmpty().ifEmpty { sidecar.chapters.orEmpty() },
                 seriesId = watchDetail?.seriesId,
+                seasonNumber = watchDetail?.seasonNumber,
+                episodeNumber = watchDetail?.episodeNumber,
+                nextEpisode = it.nextEpisode.takeIf { preservesNextUp },
+                showUpNext = it.showUpNext && preservesNextUp,
+                isNextUpTransitioning = preservesNextUp,
+                upNextVideoEnded = it.upNextVideoEnded && preservesNextUp,
+                upNextCountdownSeconds = null,
                 preferredAudioLanguage = null,
                 preferredTextLanguage = null,
                 subtitleRefreshNonce = 0,

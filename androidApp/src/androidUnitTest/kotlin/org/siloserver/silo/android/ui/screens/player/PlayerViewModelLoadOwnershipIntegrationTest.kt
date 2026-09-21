@@ -46,6 +46,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withContext
@@ -63,6 +64,7 @@ import org.siloserver.silo.common.downloads.OfflineMediaResolver
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
+import org.siloserver.silo.common.player.Playability
 import org.siloserver.silo.common.player.PlaybackAnalyticsListener
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
@@ -79,6 +81,7 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.libass.LibassBridge
+import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
@@ -329,6 +332,199 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         assertFalse(state.isPlaying)
     }
 
+    @Test
+    fun nextUpKeepsTheOutgoingCardUntilTheSuccessorFrame() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            val outgoingMount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.offerNextEpisode()
+
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            viewModel.playUpNextNow()
+            runCurrent()
+            assertTrue(viewModel.uiState.value.isNextUpTransitioning)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertEquals("episode-b", starter.request(1).contentId)
+            starter.complete(1, ready(starter.request(1), "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+
+            viewModel.onFirstVideoFrameRendered(outgoingMount)
+            assertTrue(viewModel.uiState.value.isNextUpTransitioning)
+            viewModel.dismissUpNext()
+            assertTrue(viewModel.uiState.value.showUpNext)
+            viewModel.onFirstVideoFrameRendered(viewModel.uiState.value.mediaMountGeneration)
+            assertFalse(viewModel.uiState.value.isNextUpTransitioning)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertNull(viewModel.uiState.value.nextEpisode)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun keepWatchingSuppressesCreditsPromptButReopensNextUpAtPlaybackEnd() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.onApproachingEnd()
+            assertTrue(viewModel.uiState.value.showUpNext)
+
+            viewModel.dismissUpNext()
+            viewModel.onApproachingEnd()
+            assertFalse(viewModel.uiState.value.showUpNext)
+            viewModel.onApproachingEnd(videoEnded = true)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertTrue(viewModel.uiState.value.upNextVideoEnded)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(1, starter.startedRequestCount)
+
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            assertEquals("episode-b", starter.request(1).contentId)
+            starter.complete(1, ready(starter.request(1), "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            viewModel.onFirstVideoFrameRendered(viewModel.uiState.value.mediaMountGeneration)
+            assertFalse(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun successorRemountBeforeItsFirstFrameStillCompletesNextUp() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            starter.complete(1, ready(starter.request(1), "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            val initialMount = viewModel.uiState.value.mediaMountGeneration
+
+            // An intro skip or subtitle replan can replace the successor's
+            // stream before it renders. Exercise the common remount boundary.
+            val replacementMount = PlayerViewModel::class.java.getDeclaredMethod("expectNextMediaMount").let {
+                it.isAccessible = true
+                it.invoke(viewModel) as Long
+            }
+            viewModel.mutableUiState().update { it.copy(mediaMountGeneration = replacementMount) }
+            viewModel.onFirstVideoFrameRendered(initialMount)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            viewModel.onFirstVideoFrameRendered(replacementMount)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertFalse(viewModel.uiState.value.isNextUpTransitioning)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun pendingSessionStopCancelsNextUpWithoutStartingTheSuccessor() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            fixture.lifecycle.adoptActiveSession(
+                params = StartParams(
+                    contentId = "episode-a", fileId = 1, capabilities = ClientCodecCapabilities(),
+                    clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+                ),
+                session = allocatedReady("session-a").session,
+                manageProgress = false,
+            )
+            fixture.manager.sequenced = true
+            fixture.manager.stopResult = ApiResult.Error(503, "stop_pending", "Stop is pending")
+            viewModel.offerNextEpisode()
+            viewModel.playUpNextNow()
+            fixture.manager.awaitStopped("session-a")
+            viewModel.awaitState { !it.isNextUpTransitioning }
+            assertEquals("episode-a", viewModel.uiState.value.contentId)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun successorStartupFailureIsHandledWhilePredecessorFailureIsIgnored() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            val outgoingMount = viewModel.uiState.value.mediaMountGeneration
+            viewModel.offerNextEpisode()
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            starter.complete(1, ready(starter.request(1), "session-b").copy(
+                fileId = 2, mediaFileId = 2, versions = listOf(FileVersion(fileId = 2)),
+            ))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            val failure = Playability.StartupStalled(0, 15_000, "decoder_no_output")
+            viewModel.onUnsupportedPlayback(failure, outgoingMount)
+            runCurrent()
+            assertNull(viewModel.uiState.value.error)
+            assertTrue(viewModel.uiState.value.isNextUpTransitioning)
+
+            // This fixture has no allocated manager session, so a real recovery
+            // request fails and must expose error UI instead of leaving the card stuck.
+            viewModel.onUnsupportedPlayback(failure, viewModel.uiState.value.mediaMountGeneration)
+            viewModel.awaitState { it.error != null }
+            assertFalse(viewModel.uiState.value.isNextUpTransitioning)
+            assertFalse(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun PlayerViewModel.mutableUiState(): MutableStateFlow<PlayerViewModel.PlayerUiState> =
+        PlayerViewModel::class.java.getDeclaredField("_uiState").let {
+            it.isAccessible = true
+            it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
+        }
+
+    private fun PlayerViewModel.offerNextEpisode() {
+        mutableUiState().update { it.copy(nextEpisode = PlayerViewModel.NextEpisodeInfo(
+            contentId = "episode-b", seasonNumber = 1, episodeNumber = 2,
+            title = "Next", stillUrl = null, stillThumbhash = null, runtimeMinutes = 20,
+        )) }
+    }
+
     private fun playerViewModel(
         starter: DeferredNonCooperativeStarter,
         scope: CoroutineScope,
@@ -346,6 +542,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             LibassBridge(false),
             SiloClientBuildIdentity(buildNumber = "5", channel = "release"),
         )
+        val lifecycle = PlaybackSessionLifecycle(manager, healthApi, personalDataRepository, scope)
         return PlayerFixture(
             viewModel = PlayerViewModel(
                 videoPlaybackCoordinator = VideoPlaybackSessionCoordinator(starter),
@@ -364,12 +561,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 serverReachabilityMonitor = ServerReachabilityMonitor(org.siloserver.silo.network.apiv2.ApiV2Probe(client)::probeFresh, scope, { null }),
                 playerSettingsStore = FakePlayerSettingsStore(),
                 introAutoSkipController = IntroAutoSkipController(scope),
-                sessionLifecycle = PlaybackSessionLifecycle(
-                    manager,
-                    healthApi,
-                    personalDataRepository,
-                    scope,
-                ),
+                sessionLifecycle = lifecycle,
                 sleepTimer = SleepTimerController(scope),
                 subtitlesRepository = SubtitlesRepository(
                     DefaultSubtitlesApi(
@@ -387,6 +579,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 ),
             ),
             manager = manager,
+            lifecycle = lifecycle,
         )
     }
 
@@ -409,6 +602,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     private data class PlayerFixture(
         val viewModel: PlayerViewModel,
         val manager: RecordingPlaybackSessionManager,
+        val lifecycle: PlaybackSessionLifecycle,
     )
 }
 
@@ -858,6 +1052,7 @@ private class DeferredNonCooperativeStarter : VideoPlaybackStarter {
 
     /** Replayable so a request that lands before the wait begins is still seen. */
     private val requestCount = MutableStateFlow(0)
+    val startedRequestCount: Int get() = requestCount.value
 
     override suspend fun start(request: VideoPlaybackStartRequest): VideoPlaybackStartResult =
         suspendCoroutine { continuation ->
@@ -892,6 +1087,10 @@ private class RecordingPlaybackSessionManager(
     PlaybackRepository(testSequencedPlayback(client, tokenManager)),
     tokenManager,
 ) {
+    var sequenced = false
+    var stopResult: ApiResult<Unit> = ApiResult.Success(Unit)
+    override fun isSequenced(sessionId: String): Boolean = sequenced
+
     private val stopped = mutableListOf<String>()
     private val stopActiveContexts = mutableListOf<Boolean>()
     private val stoppedSignal = MutableStateFlow<Set<String>>(emptySet())
@@ -909,7 +1108,7 @@ private class RecordingPlaybackSessionManager(
             stopActiveContexts += contextActive
         }
         stoppedSignal.update { it + sessionId }
-        return ApiResult.Success(Unit)
+        return stopResult
     }
 
     suspend fun awaitStopped(sessionId: String) {

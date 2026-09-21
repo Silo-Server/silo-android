@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import android.graphics.Rect
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -67,6 +68,7 @@ fun PlayerOverlay(
     alwaysShowControls: Boolean = false,
     tabletopMode: Boolean = false,
     tabletopPaneHeight: Dp? = null,
+    onNextUpVideoBoundsChanged: (Rect) -> Unit,
     brightnessFraction: Float,
     onSetBrightness: (Float) -> Unit,
     showBufferingIndicator: Boolean = true,
@@ -437,7 +439,8 @@ fun PlayerOverlay(
             modifier = Modifier.zIndex(3f),
         ) {
             PlayerNextUpScreen(
-                nextEpisode = retainedUpNextInfo,
+                nextEpisode = state.nextEpisode ?: retainedUpNextInfo,
+                onVideoBoundsChanged = onNextUpVideoBoundsChanged,
                 onDeckItems = state.onDeckItems,
                 videoEnded = state.upNextVideoEnded,
                 countdownSeconds = state.upNextCountdownSeconds,
