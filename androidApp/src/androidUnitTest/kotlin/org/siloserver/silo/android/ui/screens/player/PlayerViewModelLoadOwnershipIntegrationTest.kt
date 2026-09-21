@@ -370,6 +370,41 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun successorRemountBeforeItsFirstFrameStillCompletesNextUp() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent("episode-a", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-a"))
+            viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+            viewModel.offerNextEpisode()
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            starter.complete(1, ready(starter.request(1), "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            val initialMount = viewModel.uiState.value.mediaMountGeneration
+
+            // An intro skip or subtitle replan can replace the successor's
+            // stream before it renders. Exercise the common remount boundary.
+            val replacementMount = PlayerViewModel::class.java.getDeclaredMethod("expectNextMediaMount").let {
+                it.isAccessible = true
+                it.invoke(viewModel) as Long
+            }
+            viewModel.mutableUiState().update { it.copy(mediaMountGeneration = replacementMount) }
+            viewModel.onFirstVideoFrameRendered(initialMount)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            viewModel.onFirstVideoFrameRendered(replacementMount)
+            assertFalse(viewModel.uiState.value.showUpNext)
+            assertFalse(viewModel.uiState.value.isNextUpTransitioning)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun pendingSessionStopCancelsNextUpWithoutStartingTheSuccessor() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -439,12 +474,14 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun PlayerViewModel.offerNextEpisode() {
-        val state = PlayerViewModel::class.java.getDeclaredField("_uiState").let {
+    private fun PlayerViewModel.mutableUiState(): MutableStateFlow<PlayerViewModel.PlayerUiState> =
+        PlayerViewModel::class.java.getDeclaredField("_uiState").let {
             it.isAccessible = true
             it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
         }
-        state.update { it.copy(nextEpisode = PlayerViewModel.NextEpisodeInfo(
+
+    private fun PlayerViewModel.offerNextEpisode() {
+        mutableUiState().update { it.copy(nextEpisode = PlayerViewModel.NextEpisodeInfo(
             contentId = "episode-b", seasonNumber = 1, episodeNumber = 2,
             title = "Next", stillUrl = null, stillThumbhash = null, runtimeMinutes = 20,
         )) }

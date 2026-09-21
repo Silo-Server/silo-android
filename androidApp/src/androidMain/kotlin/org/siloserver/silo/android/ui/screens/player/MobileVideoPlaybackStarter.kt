@@ -466,6 +466,7 @@ internal class MobileVideoPlaybackStarter(
                 preview = watchDetail.preview,
                 chapters = effectiveVersion?.chapters.orEmpty(),
                 seriesId = watchDetail.seriesId,
+                seriesTitle = watchDetail.seriesTitle,
                 seasonNumber = watchDetail.seasonNumber,
                 episodeNumber = watchDetail.episodeNumber,
             )

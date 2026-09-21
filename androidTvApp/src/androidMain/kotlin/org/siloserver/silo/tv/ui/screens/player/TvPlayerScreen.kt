@@ -100,6 +100,8 @@ import org.siloserver.silo.cast.SiloCastTrack
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
 import org.siloserver.silo.common.pip.SiloPictureInPictureSurface
+import org.siloserver.silo.common.player.videoPlayerViewport
+import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.player.ActivePlayerHolder
 import org.siloserver.silo.common.player.AudioCapabilityManager
 import org.siloserver.silo.common.player.DisplayHdrProbe
@@ -402,6 +404,8 @@ fun TvPlayerScreen(
     var dvSanitizerReported by remember { mutableStateOf(false) }
     var pictureInPictureVideoWidth by remember { mutableStateOf(16) }
     var pictureInPictureVideoHeight by remember { mutableStateOf(9) }
+    var nextUpVideoBounds by remember { mutableStateOf<Rect?>(null) }
+    var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
 
     // Watch Together binding. Built once per roomId; null for solo playback.
@@ -2022,6 +2026,7 @@ fun TvPlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .onGloballyPositioned { playerRootBounds = it.videoViewportBounds() }
             .focusRequester(rootFocus)
             .onFocusChanged { playerRootHasFocus = it.isFocused }
             .focusable()
@@ -2060,6 +2065,10 @@ fun TvPlayerScreen(
                     AndroidView(
                         modifier = Modifier
                             .fillMaxSize()
+                            .videoPlayerViewport(
+                                nextUpVideoBounds.takeIf { state.showNextUp && !isInPictureInPictureMode },
+                                playerRootBounds,
+                            )
                             .onGloballyPositioned { coordinates ->
                                 val bounds = coordinates.boundsInWindow()
                                 val next = Rect(
@@ -2100,7 +2109,7 @@ fun TvPlayerScreen(
                             // when sessionPlayer changes on engine swap); transport
                             // still flows through the MediaController.
                             view.player = sessionPlayer
-                            applyPlayerViewVideoFillMode(view, state.videoFillMode)
+                            applyPlayerViewVideoFillMode(view, if (state.showNextUp) VideoFillMode.Fit else state.videoFillMode)
                             subtitleManager.syncSubtitleVideoBounds(view)
                         },
                     )
@@ -2477,6 +2486,7 @@ fun TvPlayerScreen(
             onKeepWatching = viewModel::dismissNextUp,
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
             onExitPlayback = { stopPlaybackAndExit() },
+            onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
         )
     }
@@ -2843,10 +2853,9 @@ private fun TvRoomIndicator(
 
 /**
  * End-of-playback Up-Next overlay (mirrors tvOS `PlayerNextUpScreen`). A 16:9
- * mini-player pane on the left — the still-playing video shows through a
- * lighter scrim in that region, framed with a rounded border — beside a
+ * mini-player pane on the left containing the mounted player, beside a
  * next-episode panel on the right: an "Up Next" / "Playing Next" eyebrow,
- * series-context-free episode metadata ("S·E · title" + overview), a Play Now
+ * series and episode metadata, a Play Now
  * primary button, a Keep Watching dismiss button, a Back button, an auto-play
  * countdown ring (a card raised at the end counts a wall clock to zero and then
  * plays the next episode; one raised at the credits marker mirrors the
@@ -2868,6 +2877,7 @@ private fun TvPlayerNextUpOverlay(
     onKeepWatching: () -> Unit,
     onToggleAutoPlay: () -> Unit,
     onBack: () -> Unit,
+    onVideoBoundsChanged: (Rect) -> Unit,
 ) {
     val primaryFocus = remember { FocusRequester() }
     var upNextHasFocus by remember { mutableStateOf(false) }
@@ -2883,14 +2893,7 @@ private fun TvPlayerNextUpOverlay(
     Box(
         modifier = Modifier
             .onFocusChanged { upNextHasFocus = it.hasFocus }
-            .fillMaxSize()
-            .background(
-                Brush.horizontalGradient(
-                    0.00f to Color.Black.copy(alpha = 0.30f),
-                    0.42f to Color.Black.copy(alpha = 0.66f),
-                    1.00f to Color.Black.copy(alpha = 0.92f),
-                ),
-            ),
+            .fillMaxSize(),
     ) {
         Row(
             modifier = Modifier
@@ -2900,14 +2903,14 @@ private fun TvPlayerNextUpOverlay(
             horizontalArrangement = Arrangement.spacedBy(48.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 16:9 mini-player frame. The live video plays behind the lighter
-            // left edge of the scrim; this is just the bordered frame over it.
+            // The existing PlayerView is measured and placed into this pane.
+            // It stays mounted while the successor prepares.
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .aspectRatio(16f / 9f)
+                    .onGloballyPositioned { onVideoBoundsChanged(it.videoViewportBounds()) }
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.10f))
                     .border(
                         width = 1.dp,
                         color = Color.White.copy(alpha = 0.16f),
@@ -2933,6 +2936,14 @@ private fun TvPlayerNextUpOverlay(
 
                 if (nextEpisode != null) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }?.let { seriesTitle ->
+                            androidx.tv.material3.Text(
+                                text = seriesTitle,
+                                color = Color.White,
+                                style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
+                                maxLines = 1,
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             androidx.tv.material3.Text(
                                 text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
@@ -2944,6 +2955,13 @@ private fun TvPlayerNextUpOverlay(
                                 color = Color.White,
                                 style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
                                 maxLines = 2,
+                            )
+                        }
+                        if (nextEpisode.runtimeMinutes > 0) {
+                            androidx.tv.material3.Text(
+                                text = "${nextEpisode.runtimeMinutes} min",
+                                color = Color.White.copy(alpha = 0.46f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                             )
                         }
                         nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
@@ -3541,6 +3559,7 @@ private fun TvPlayerOverlays(
     onKeepWatching: () -> Unit,
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
+    onNextUpVideoBoundsChanged: (Rect) -> Unit,
     onIntroPromptSelect: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
@@ -3720,6 +3739,7 @@ private fun TvPlayerOverlays(
                     onKeepWatching = onKeepWatching,
                     onToggleAutoPlay = onToggleAutoPlayNext,
                     onBack = onExitPlayback,
+                    onVideoBoundsChanged = onNextUpVideoBoundsChanged,
                 )
             }
         }

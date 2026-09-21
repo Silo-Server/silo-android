@@ -344,6 +344,8 @@ class PlayerViewModel(
         val stillUrl: String?,
         val stillThumbhash: String?,
         val runtimeMinutes: Int,
+        val seriesTitle: String? = null,
+        val overview: String? = null,
     ) {
         val label: String
             get() = "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
@@ -368,6 +370,7 @@ class PlayerViewModel(
         val versionSwitchMessage: String? = null,
         val title: String = "",
         val subtitle: String = "",
+        val seriesTitle: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -1359,6 +1362,7 @@ class PlayerViewModel(
                 isLoading = false,
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
+                seriesTitle = watchDetail?.seriesTitle,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -2155,6 +2159,9 @@ class PlayerViewModel(
         mediaMountSequence = if (mediaMountSequence == Long.MAX_VALUE) 1L else mediaMountSequence + 1L
         awaitingMediaMountGeneration = mediaMountSequence
         positionReportsBlockedForPendingLoad = false
+        // Intro skips and subtitle replans can remount the successor before its
+        // first frame. Complete Next Up only from the replacement mount.
+        nextUpTransitionGate.expectMount(_uiState.value.contentId, mediaMountSequence)
         return mediaMountSequence
     }
 
@@ -3967,6 +3974,8 @@ class PlayerViewModel(
                 stillUrl = next.stillUrl,
                 stillThumbhash = next.stillThumbhash,
                 runtimeMinutes = next.runtime,
+                seriesTitle = state.seriesTitle,
+                overview = next.overview,
             )
             _uiState.update {
                 // Drop the result if the player has since moved to another item.

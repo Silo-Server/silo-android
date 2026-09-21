@@ -80,6 +80,7 @@ import org.siloserver.silo.common.player.PlaybackPreflightListener
 import org.siloserver.silo.common.player.RefreshRateMatcher
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
+import org.siloserver.silo.common.player.videoPlayerViewport
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.videoMountToken
@@ -257,6 +258,7 @@ fun PlayerScreen(
     // against the real frame rather than the 16:9 placeholder above.
     var codedVideoAspect by remember { mutableFloatStateOf(0f) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
+    var nextUpVideoBounds by remember { mutableStateOf<Rect?>(null) }
     var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var fastForwardHoldActive by remember { mutableStateOf(false) }
     val originalWindowBrightness = remember(activity) {
@@ -1406,6 +1408,7 @@ fun PlayerScreen(
             val letterboxExpanding = codedVideoAspect > 0f &&
                 letterboxContentAspect > codedVideoAspect
             val resizeMode = when {
+                uiState.showUpNext -> AspectRatioFrameLayout.RESIZE_MODE_FIT
                 videoGravity == "fill" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 videoGravity == "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
                 letterboxExpanding -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -1427,6 +1430,8 @@ fun PlayerScreen(
             }
             val cutoutInsetDp = with(density) { cutoutSideInsetPx.toDp() }
             val videoSurfaceModifier = when {
+                uiState.showUpNext && activeTabletopPaneLayout == null && !isInPictureInPictureMode ->
+                    Modifier.fillMaxSize().videoPlayerViewport(nextUpVideoBounds, playerRootBounds)
                 activeTabletopPaneLayout != null ->
                     Modifier
                         .align(Alignment.TopCenter)
@@ -1552,6 +1557,7 @@ fun PlayerScreen(
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,
                         tabletopMode = activeTabletopPaneLayout != null,
+                        onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
                         tabletopPaneHeight = activeTabletopPaneLayout?.let { layout ->
                             with(density) { layout.controlsHeightPx.toDp() }
                         },

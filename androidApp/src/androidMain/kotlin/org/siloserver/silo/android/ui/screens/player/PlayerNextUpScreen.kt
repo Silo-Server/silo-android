@@ -1,10 +1,13 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import android.graphics.Rect
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -40,26 +43,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Canvas
+import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
-/**
- * End-of-playback Next-Up screen (mirrors iOS `PlayerNextUpScreen` and the
- * TV overlay). Replaces the player surface: the still-playing video shows
- * through a lighter region at the top as a bordered 16:9 "mini player"
- * frame, above a panel with the next episode's metadata, Play Now / Keep
- * Watching / Back actions, an auto-play countdown ring, the auto-play
- * toggle, and an On Deck carousel of other in-progress items.
- */
+/** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlayerNextUpScreen(
@@ -74,71 +70,41 @@ fun PlayerNextUpScreen(
     onToggleAutoPlay: () -> Unit,
     onPlayOnDeckItem: (String) -> Unit,
     onBack: () -> Unit,
+    onVideoBoundsChanged: (Rect) -> Unit,
     compactTabletop: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    0.00f to Color.Black.copy(alpha = 0.30f),
-                    0.42f to Color.Black.copy(alpha = 0.72f),
-                    1.00f to Color.Black.copy(alpha = 0.94f),
-                ),
-            ),
-    ) {
-        val pageScrollState = rememberScrollState()
-        DeferImagePresentationWhileScrolling(pageScrollState) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(pageScrollState)
-                .padding(
-                    horizontal = 24.dp,
-                    vertical = if (compactTabletop) 12.dp else 24.dp,
-                ),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (compactTabletop) 12.dp else 20.dp),
-        ) {
-            // Mini-player frame: the live video shows through the lighter top
-            // band of the scrim; this is just the bordered frame over it.
-            if (!compactTabletop) {
-                Box(
-                    modifier = Modifier
-                        .widthIn(max = 620.dp)
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color.Black.copy(alpha = 0.10f))
-                        .border(
-                            width = 1.dp,
-                            color = Color.White.copy(alpha = 0.16f),
-                            shape = RoundedCornerShape(8.dp),
-                        ),
-                )
-            }
-
-            // Next-episode panel.
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val sideBySide = maxWidth > maxHeight && !compactTabletop
+        val panelAlignment = if (sideBySide) Alignment.Start else Alignment.CenterHorizontally
+        val panel: @Composable (Modifier) -> Unit = { panelModifier ->
             Column(
-                modifier = Modifier.widthIn(max = 620.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = panelModifier.widthIn(max = 620.dp),
+                horizontalAlignment = panelAlignment,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val eyebrow = when {
-                    nextEpisode == null -> "Finished"
-                    videoEnded -> "Playing Next"
-                    else -> "Up Next"
-                }
                 Text(
-                    text = eyebrow.uppercase(),
+                    text = when {
+                        nextEpisode == null -> "FINISHED"
+                        videoEnded -> "PLAYING NEXT"
+                        else -> "UP NEXT"
+                    },
                     color = Color.White.copy(alpha = 0.52f),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = 2.sp,
                 )
-
                 if (nextEpisode != null) {
+                    nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }?.let { title ->
+                        Text(
+                            text = title,
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
                         text = nextEpisode.label,
                         color = Color.White,
@@ -154,98 +120,88 @@ fun PlayerNextUpScreen(
                             fontSize = 13.sp,
                         )
                     }
+                    nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                        Text(
+                            text = overview,
+                            color = Color.White.copy(alpha = 0.58f),
+                            fontSize = 13.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 } else {
-                    Text(
-                        text = "End of playback",
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
+                    Text("End of playback", color = Color.White, fontSize = 17.sp)
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, panelAlignment),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    NextUpActionButtons(
+                        hasNextEpisode = nextEpisode != null,
+                        videoEnded = videoEnded,
+                        onPlayNow = onPlayNow,
+                        onKeepWatching = onKeepWatching,
+                        onBack = onBack,
                     )
-                }
-
-                if (compactTabletop) {
-                    FlowRow(
-                        modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        NextUpActionButtons(
-                            hasNextEpisode = nextEpisode != null,
-                            videoEnded = videoEnded,
-                            onPlayNow = onPlayNow,
-                            onKeepWatching = onKeepWatching,
-                            onBack = onBack,
-                        )
-                    }
                     if (countdownSeconds != null) {
-                        CountdownRing(
-                            seconds = countdownSeconds,
-                            totalSeconds = countdownTotalSeconds,
-                        )
-                    }
-                } else {
-                    // Fullscreen/iOS-parity action column.
-                    Column(
-                        modifier = Modifier.widthIn(max = 280.dp).fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        NextUpActionButtons(
-                            hasNextEpisode = nextEpisode != null,
-                            videoEnded = videoEnded,
-                            onPlayNow = onPlayNow,
-                            onKeepWatching = onKeepWatching,
-                            onBack = onBack,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        if (countdownSeconds != null) {
-                            CountdownRing(
-                                seconds = countdownSeconds,
-                                totalSeconds = countdownTotalSeconds,
-                            )
-                        }
+                        CountdownRing(countdownSeconds, countdownTotalSeconds)
                     }
                 }
-
                 Text(
                     text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
                     color = Color.White.copy(alpha = 0.54f),
                     fontSize = 12.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(percent = 50))
-                        .clickable(onClick = onToggleAutoPlay)
+                    modifier = Modifier.clip(CircleShape).clickable(onClick = onToggleAutoPlay)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                 )
-            }
-
-            // On Deck carousel (iOS-only feature; TV doesn't have it).
-            if (!compactTabletop && onDeckItems.isNotEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "On Deck",
-                        color = Color.White,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                if (!compactTabletop && onDeckItems.isNotEmpty()) {
+                    Text("On Deck", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     val onDeckState = rememberLazyListState()
                     DeferImagePresentationWhileScrolling(onDeckState) {
-                    LazyRow(state = onDeckState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(onDeckItems, key = { it.contentId }) { item ->
-                            OnDeckCard(
-                                item = item,
-                                onClick = { onPlayOnDeckItem(item.contentId) },
-                            )
+                        LazyRow(state = onDeckState, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(onDeckItems, key = { it.contentId }) { item ->
+                                OnDeckCard(item = item, onClick = { onPlayOnDeckItem(item.contentId) })
+                            }
                         }
-                    }
                     }
                 }
             }
         }
+        val scrollState = rememberScrollState()
+        DeferImagePresentationWhileScrolling(scrollState) {
+            if (sideBySide) {
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    NextUpVideoPane(onVideoBoundsChanged, Modifier.weight(0.45f))
+                    panel(Modifier.weight(0.55f).verticalScroll(scrollState))
+                }
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState)
+                        .padding(horizontal = 24.dp, vertical = if (compactTabletop) 12.dp else 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    if (!compactTabletop) {
+                        NextUpVideoPane(onVideoBoundsChanged, Modifier.widthIn(max = 620.dp).fillMaxWidth())
+                    }
+                    panel(Modifier)
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, modifier: Modifier) {
+    Box(
+        modifier = modifier.aspectRatio(16f / 9f)
+            .onGloballyPositioned { onBoundsChanged(it.videoViewportBounds()) }
+            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(8.dp)),
+    )
 }
 
 @Composable

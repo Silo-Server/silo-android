@@ -642,6 +642,8 @@ data class NextEpisodeState(
     val title: String?,
     val stillUrl: String?,
     val overview: String? = null,
+    val seriesTitle: String? = null,
+    val runtimeMinutes: Int = 0,
 )
 
 data class TvPlayerLaunchArgs(
@@ -954,6 +956,7 @@ class TvPlayerViewModel(
          */
         val serverUnreachable: Boolean = false,
         val title: String = "",
+        val seriesTitle: String? = null,
         /**
          * Artwork URL for Now Playing lock-screen / Bluetooth / Wear surfaces.
          * Sourced from `WatchDetail.posterUrl` with `backdropUrl` fallback.
@@ -2130,6 +2133,7 @@ class TvPlayerViewModel(
                                 error = null,
                                 contentId = contentId,
                                 title = result.title,
+                                seriesTitle = result.seriesTitle,
                                 artworkUrl = result.artworkUrl,
                                 sessionId = result.sessionId,
                                 playMethod = result.playMethod,
@@ -3903,6 +3907,8 @@ class TvPlayerViewModel(
                 title = next.title,
                 stillUrl = next.stillUrl,
                 overview = next.overview,
+                seriesTitle = state.seriesTitle,
+                runtimeMinutes = next.runtime,
             )
             _uiState.update {
                 if (it.contentId != forContentId) it else it.copy(nextEpisode = nextState)
