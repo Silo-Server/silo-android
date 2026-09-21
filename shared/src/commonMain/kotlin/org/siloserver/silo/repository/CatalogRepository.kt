@@ -200,6 +200,7 @@ class CatalogRepository(
     suspend fun captureWatchAuthority() = catalogApi.captureWatchAuthority()
     suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.isWatchAuthorityCurrent(owner)
     suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId)
+    suspend fun getFileMarkers(fileId: Int, owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.getFileMarkers(fileId, owner)
 
     suspend fun getWatchDetail(contentId: String, libraryId: Int? = null): ApiResult<WatchDetail> =
         catalogApi.getWatchDetail(contentId, libraryId)

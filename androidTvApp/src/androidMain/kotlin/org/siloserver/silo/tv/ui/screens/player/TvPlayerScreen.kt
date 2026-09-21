@@ -2,6 +2,9 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+import org.siloserver.silo.playback.activeMarkerSegment
+
 import android.app.Activity
 import android.content.ComponentName
 import android.graphics.Rect
@@ -676,6 +679,26 @@ fun TvPlayerScreen(
         return true
     }
 
+    fun handleMarkerSkip(): Boolean {
+        val playerState = viewModel.uiState.value
+        val marker = activeMarkerSegment(
+            playerState.markerSegments.filter { it.kind != "intro" },
+            playerState.position,
+        ) ?: return false
+        if (roomController != null) {
+            if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
+                return true
+            }
+            roomController.onUserSeek(marker.endSeconds)
+        } else {
+            viewModel.seekImmediate(marker.endSeconds)
+        }
+        if (playerState.showControls) {
+            requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
+        }
+        return true
+    }
+
     fun armQuickSkipCapture() {
         quickSkipCaptureJob?.cancel()
         quickSkipCaptureGeneration = if (quickSkipCaptureGeneration == Long.MAX_VALUE) {
@@ -1150,7 +1173,11 @@ fun TvPlayerScreen(
 
             if (event.action == KeyEvent.ACTION_DOWN &&
                 event.repeatCount == 0 &&
-                latestIntroSkipState.isVisible &&
+                (latestIntroSkipState.isVisible || activeMarkerSegment(
+                    playerState.markerSegments.filter { it.kind != "intro" },
+                    playerState.position,
+                ) != null) &&
+                !playerState.showNextUp &&
                 // Only while the transport overlay is hidden: with controls up
                 // a focused button owns Select — hijacking it here made every
                 // OK press skip the intro for the whole intro window.
@@ -1161,7 +1188,7 @@ fun TvPlayerScreen(
                     KeyEvent.KEYCODE_NUMPAD_ENTER,
                 )
             ) {
-                return@handler handleIntroPromptSelect()
+                return@handler if (latestIntroSkipState.isVisible) handleIntroPromptSelect() else handleMarkerSkip()
             }
 
             // Back while PLAYING with the transport overlay up: hide the
@@ -2120,10 +2147,7 @@ fun TvPlayerScreen(
                         scrubPreviewSec = state.scrubPreviewSec,
                         bufferedAheadSec = bufferedAheadSec,
                         chapters = state.chapters,
-                        introRange = state.intro,
-                        creditsRange = state.credits,
-                        recapRange = state.recap,
-                        previewRange = state.preview,
+                        markerSegments = state.markerSegments,
                         // In a room, skip/scrub/seek are routed through the
                         // controller (transport_request → server → broadcast
                         // command → engine applies the seek locally). Solo
@@ -2423,48 +2447,54 @@ fun TvPlayerScreen(
             }
         }
 
-        TvPlayerOverlays(
-            isInPictureInPictureMode = isInPictureInPictureMode,
-            notice = notice,
-            remoteMessage = remoteMessage,
-            roomSnapshot = roomSnapshot,
-            roomActive = roomController != null,
-            showControls = state.showControls,
-            hudOpen = state.hudOpen,
-            showLeaveDialog = showLeaveDialog,
-            showNextUp = state.showNextUp,
-            nextEpisode = state.nextEpisode,
-            nextUpVideoEnded = state.nextUpVideoEnded,
-            nextUpCountdownSeconds = state.nextUpCountdownSeconds,
-            nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
-            autoPlayNextEnabled = autoPlayNextEnabled,
-            introSkipState = introSkipState,
-            introSkipCountdownRun = introSkipCountdownRun,
-            introSkipTimerRunning = introSkipTimerRunning,
-            introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
-            // The scrubber commits its seek on focus loss, so the prompt must
-            // not take focus out from under an active scrub.
-            introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
-            videoActive = videoActive,
-            isBuffering = state.isBuffering,
-            sleepTimerState = sleepTimerState,
-            showSpinner = shouldShowReconnectSpinner(
-                isReconnecting = sessionState is SessionState.Reconnecting,
-                showNextUp = state.showNextUp,
+        TvPlayerClockScope(viewModel) { clock ->
+            TvPlayerOverlays(
                 isInPictureInPictureMode = isInPictureInPictureMode,
-            ),
-            onCloseRoom = {
-                showLeaveDialog = false
-                roomController?.leave(closeRoom = true)
-                stopPlaybackAndExit()
-            },
-            onCancelLeaveDialog = { showLeaveDialog = false },
-            onPlayNextNow = viewModel::playNextEpisodeNow,
-            onKeepWatching = viewModel::dismissNextUp,
-            onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
-            onExitPlayback = { stopPlaybackAndExit() },
-            onIntroPromptSelect = { handleIntroPromptSelect() },
-        )
+                notice = notice,
+                remoteMessage = remoteMessage,
+                roomSnapshot = roomSnapshot,
+                roomActive = roomController != null,
+                showControls = state.showControls,
+                hudOpen = state.hudOpen,
+                showLeaveDialog = showLeaveDialog,
+                showNextUp = state.showNextUp,
+                nextEpisode = state.nextEpisode,
+                nextUpVideoEnded = state.nextUpVideoEnded,
+                nextUpCountdownSeconds = state.nextUpCountdownSeconds,
+                nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
+                autoPlayNextEnabled = autoPlayNextEnabled,
+                introSkipState = introSkipState,
+                activeSkipMarker = activeMarkerSegment(
+                    state.markerSegments.filter { it.kind != "intro" }, clock.position,
+                ),
+                introSkipCountdownRun = introSkipCountdownRun,
+                introSkipTimerRunning = introSkipTimerRunning,
+                introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
+                // The scrubber commits its seek on focus loss, so the prompt must
+                // not take focus out from under an active scrub.
+                introBannerMayTakeFocus = !state.isScrubbing && cleanSeekRate == 0,
+                videoActive = videoActive,
+                isBuffering = state.isBuffering,
+                sleepTimerState = sleepTimerState,
+                showSpinner = shouldShowReconnectSpinner(
+                    isReconnecting = sessionState is SessionState.Reconnecting,
+                    showNextUp = state.showNextUp,
+                    isInPictureInPictureMode = isInPictureInPictureMode,
+                ),
+                onCloseRoom = {
+                    showLeaveDialog = false
+                    roomController?.leave(closeRoom = true)
+                    stopPlaybackAndExit()
+                },
+                onCancelLeaveDialog = { showLeaveDialog = false },
+                onPlayNextNow = viewModel::playNextEpisodeNow,
+                onKeepWatching = viewModel::dismissNextUp,
+                onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
+                onExitPlayback = { stopPlaybackAndExit() },
+                onIntroPromptSelect = { handleIntroPromptSelect() },
+                onMarkerSkip = { handleMarkerSkip() },
+            )
+        }
     }
 }
 
@@ -2485,10 +2515,7 @@ private fun TvPlayerIdleOverlay(
     scrubPreviewSec: Double,
     bufferedAheadSec: Double,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter>,
-    introRange: org.siloserver.silo.model.catalog.TimeRange?,
-    creditsRange: org.siloserver.silo.model.catalog.TimeRange?,
-    recapRange: org.siloserver.silo.model.catalog.TimeRange?,
-    previewRange: org.siloserver.silo.model.catalog.TimeRange?,
+    markerSegments: List<PlaybackMarkerSegment>,
     onPlayPause: () -> Unit,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
@@ -2632,18 +2659,7 @@ private fun TvPlayerIdleOverlay(
                         title = it.title.ifBlank { null },
                     )
                 },
-                introRangeSec = introRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                creditsRangeSec = creditsRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                recapRangeSec = recapRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
-                previewRangeSec = previewRange
-                    ?.takeIf { it.end > it.start }
-                    ?.let { it.start..it.end },
+                markerSegments = markerSegments,
                 cancelOnBlur = false,
                 onSkipBack = onSkipBack,
                 onSkipForward = onSkipForward,
@@ -3510,6 +3526,7 @@ private fun TvPlayerOverlays(
     nextUpCountdownTotalSeconds: Int,
     autoPlayNextEnabled: Boolean,
     introSkipState: IntroAutoSkipState,
+    activeSkipMarker: PlaybackMarkerSegment?,
     /** Bumps when the pill's timer (re)starts, so its fill re-anchors. */
     introSkipCountdownRun: Int,
     /** False while the pill is up but its timer is frozen by a pause. */
@@ -3529,6 +3546,7 @@ private fun TvPlayerOverlays(
     onToggleAutoPlayNext: () -> Unit,
     onExitPlayback: () -> Unit,
     onIntroPromptSelect: () -> Unit,
+    onMarkerSkip: () -> Unit,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3731,17 +3749,27 @@ private fun TvPlayerOverlays(
                         .padding(bottom = introSkipBottomInset, end = 32.dp),
                     contentAlignment = Alignment.BottomEnd,
                 ) {
-                    TvIntroAutoSkipBanner(
-                        state = introSkipState,
-                        onSelect = onIntroPromptSelect,
-                        totalSeconds = introSkipTotalSeconds,
-                        countdownRun = introSkipCountdownRun,
-                        timerRunning = introSkipTimerRunning,
-                        // Not while the viewer is working the timeline: the
-                        // scrubber commits its seek on focus loss, so taking
-                        // focus here would land a seek they never confirmed.
-                        mayTakeFocus = introBannerMayTakeFocus,
-                    )
+                    if (introSkipState.isVisible || activeSkipMarker == null) {
+                        TvIntroAutoSkipBanner(
+                            state = introSkipState,
+                            onSelect = onIntroPromptSelect,
+                            totalSeconds = introSkipTotalSeconds,
+                            countdownRun = introSkipCountdownRun,
+                            timerRunning = introSkipTimerRunning,
+                            // Not while the viewer is working the timeline: the
+                            // scrubber commits its seek on focus loss, so taking
+                            // focus here would land a seek they never confirmed.
+                            mayTakeFocus = introBannerMayTakeFocus,
+                        )
+                    } else {
+                        androidx.compose.runtime.key(activeSkipMarker) {
+                            TvMarkerSkipButton(
+                                kind = activeSkipMarker.kind,
+                                onSelect = onMarkerSkip,
+                                mayTakeFocus = introBannerMayTakeFocus,
+                            )
+                        }
+                    }
                 }
             }
         }

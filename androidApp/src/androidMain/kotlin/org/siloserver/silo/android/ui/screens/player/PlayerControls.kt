@@ -68,6 +68,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.layout.useCompactPlayerToolbar
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
 
 /**
  * Transport controls overlay for the video player. Top-bar icon layout
@@ -100,10 +101,7 @@ fun PlayerControls(
     // hidden when the item has a single file version.
     hasMultipleVersions: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
-    intro: org.siloserver.silo.model.catalog.TimeRange? = null,
-    credits: org.siloserver.silo.model.catalog.TimeRange? = null,
-    recap: org.siloserver.silo.model.catalog.TimeRange? = null,
-    preview: org.siloserver.silo.model.catalog.TimeRange? = null,
+    markerSegments: List<PlaybackMarkerSegment> = emptyList(),
     isOrientationLocked: Boolean,
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
@@ -219,10 +217,7 @@ fun PlayerControls(
                 onSeek = onSeek,
                 enabled = seekEnabled,
                 chapters = chapters,
-                intro = intro,
-                credits = credits,
-                recap = recap,
-                preview = preview,
+                markerSegments = markerSegments,
             )
         }
 

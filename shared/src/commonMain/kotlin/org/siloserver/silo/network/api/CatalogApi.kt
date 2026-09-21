@@ -78,6 +78,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
     suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot, libraryId: Int? = null) = watchDetail.detail(id, owner, libraryId)
+    suspend fun getFileMarkers(fileId: Int, owner: AuthScopeSnapshot) = watchDetail.fileMarkers(fileId, owner)
 
     /** Captures the current viewer at call time when the caller has no retained owner. */
     suspend fun getWatchDetail(id: String, libraryId: Int? = null): ApiResult<WatchDetail> {

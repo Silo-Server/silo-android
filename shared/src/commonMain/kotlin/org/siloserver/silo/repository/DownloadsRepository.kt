@@ -1,6 +1,7 @@
 package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.download.DownloadCapability
+import org.siloserver.silo.model.download.DownloadManifest
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.network.ApiResult
@@ -60,6 +61,17 @@ class DownloadsRepository(
         if (!current(authority)) return changed()
         if (result is ApiResult.Success && !localWrite(authority) { _capability.value = result.data }) return changed()
         return result
+    }
+
+    /** Read metadata for the worker's captured owner without changing the UI cache. */
+    suspend fun getManifest(
+        id: String,
+        fileId: Int,
+        authority: org.siloserver.silo.network.DurableLoginAuthority?,
+    ): ApiResult<DownloadManifest> {
+        if (!current(authority)) return changed()
+        val result = api.getManifest(id, fileId, authority?.scope)
+        return if (current(authority)) result else changed()
     }
 
     /** Ids the user has asked to delete but which the server still returns

@@ -100,6 +100,55 @@ class SiloDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration11To12PreservesDownloadsAndAddsNullableMarkerInventory() {
+        val name = "migration-11-to-12"
+        migrationHelper.createDatabase(name, 11).use { database ->
+            database.execSQL(
+                """
+                INSERT INTO downloads (
+                    serverId, profileId, mediaFileId, recordId, contentId, title,
+                    mediaType, status, kind, fileSize, bytesSent, createdAt, updatedAtMs,
+                    durationSeconds, quality, effectiveQuality, resumeValidator
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                arrayOf<Any?>(
+                    "server-a", "profile-a", 42L, "record-a", "content-a", "Existing download",
+                    "video", "completed", "queued", 2048L, 2048L, "2026-07-27T00:00:00Z", 1234L,
+                    1200.0, "original", "original", "etag-a",
+                ),
+            )
+        }
+
+        migrationHelper.runMigrationsAndValidate(name, 12, true).use { database ->
+            database.query(
+                """
+                SELECT serverId, profileId, mediaFileId, recordId, contentId, title,
+                       status, fileSize, bytesSent, durationSeconds, quality, effectiveQuality,
+                       resumeValidator, markerSegmentsJson
+                FROM downloads
+                """.trimIndent(),
+            ).use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("server-a", cursor.getString(0))
+                assertEquals("profile-a", cursor.getString(1))
+                assertEquals(42L, cursor.getLong(2))
+                assertEquals("record-a", cursor.getString(3))
+                assertEquals("content-a", cursor.getString(4))
+                assertEquals("Existing download", cursor.getString(5))
+                assertEquals("completed", cursor.getString(6))
+                assertEquals(2048L, cursor.getLong(7))
+                assertEquals(2048L, cursor.getLong(8))
+                assertEquals(1200.0, cursor.getDouble(9))
+                assertEquals("original", cursor.getString(10))
+                assertEquals("original", cursor.getString(11))
+                assertEquals("etag-a", cursor.getString(12))
+                assertNull(cursor.getString(13))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     private companion object {
         const val DATABASE_NAME = "migration-7-to-8"
     }

@@ -3,6 +3,9 @@ package org.siloserver.silo.common.downloads
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
+import org.siloserver.silo.model.catalog.PlaybackMarkerSegment
+import org.siloserver.silo.model.catalog.TimeRange
+import org.siloserver.silo.model.download.DownloadManifest
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
 import kotlinx.coroutines.test.runTest
@@ -59,6 +62,115 @@ class DownloadMetadataStoreTest {
         val read = store.readSidecar("srv1", "profA", 7)
         assertNotNull(read)
         assertEquals(sidecar, read)
+    }
+
+    @Test
+    fun `marker inventory round-trips every occurrence of all supported kinds`() = runTest {
+        val sidecar = stubSidecar(7).copy(markerSegments = markerInventory)
+
+        store.writeSidecar("srv1", "profA", sidecar)
+
+        assertEquals(sidecar, store.readSidecar("srv1", "profA", 7))
+    }
+
+    @Test
+    fun `marker inventory preserves the difference between absent and empty`() = runTest {
+        store.writeSidecar("srv1", "profA", stubSidecar(7))
+        store.writeSidecar("srv1", "profA", stubSidecar(8).copy(markerSegments = emptyList()))
+
+        assertNull(store.readSidecar("srv1", "profA", 7)?.markerSegments)
+        assertEquals(emptyList(), store.readSidecar("srv1", "profA", 8)?.markerSegments)
+    }
+
+    @Test
+    fun `persistManifest saves duration and every marker occurrence without replacing download metadata`() = runTest {
+        val sidecar = stubSidecar(7).copy(durationSeconds = 100.0)
+        store.writeSidecar("srv1", "profA", sidecar)
+
+        assertTrue(
+            store.persistManifest(
+                "srv1", "profA",
+                DownloadManifest(
+                    downloadId = sidecar.record.id,
+                    mediaFileId = 7,
+                    durationSeconds = 1200.0,
+                    markerSegments = markerInventory,
+                ),
+            ),
+        )
+
+        val saved = assertNotNull(store.readSidecar("srv1", "profA", 7))
+        assertEquals(1200.0, saved.durationSeconds)
+        assertEquals(markerInventory, saved.markerSegments)
+        assertEquals(sidecar.record, saved.record)
+        assertEquals(sidecar.title, saved.title)
+        assertEquals(sidecar.posterUrl, saved.posterUrl)
+    }
+
+    @Test
+    fun `manifest without markers retains stored inventory and invalid durations retain stored duration`() = runTest {
+        val sidecar = stubSidecar(7).copy(durationSeconds = 1200.0, markerSegments = markerInventory)
+        store.writeSidecar("srv1", "profA", sidecar)
+
+        for (duration in listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertTrue(
+                store.persistManifest(
+                    "srv1", "profA",
+                    DownloadManifest(sidecar.record.id, 7, durationSeconds = duration),
+                ),
+            )
+            val saved = assertNotNull(store.readSidecar("srv1", "profA", 7))
+            assertEquals(1200.0, saved.durationSeconds)
+            assertEquals(markerInventory, saved.markerSegments)
+        }
+    }
+
+    @Test
+    fun `explicit empty manifest clears stored inventory even when legacy ranges are present`() = runTest {
+        val sidecar = stubSidecar(7).copy(markerSegments = markerInventory)
+        store.writeSidecar("srv1", "profA", sidecar)
+
+        assertTrue(
+            store.persistManifest(
+                "srv1", "profA",
+                DownloadManifest(
+                    downloadId = sidecar.record.id,
+                    mediaFileId = 7,
+                    intro = TimeRange(10.0, 20.0),
+                    markerSegments = emptyList(),
+                ),
+            ),
+        )
+
+        assertEquals(emptyList(), store.readSidecar("srv1", "profA", 7)?.markerSegments)
+    }
+
+    @Test
+    fun `manifest cannot update a replacement record or another file slot`() = runTest {
+        val replacement = stubSidecar(7).copy(record = stubSidecar(7).record.copy(id = "replacement"))
+        val otherFile = stubSidecar(8)
+        store.writeSidecar("srv1", "profA", replacement)
+        store.writeSidecar("srv1", "profA", otherFile)
+        val staleManifest = DownloadManifest("dl-7", 7, 1200.0, markerSegments = markerInventory)
+
+        assertFalse(store.persistManifest("srv1", "profA", staleManifest))
+        assertFalse(store.persistManifest("srv1", "profA", staleManifest.copy(mediaFileId = 8)))
+
+        assertEquals(replacement, store.readSidecar("srv1", "profA", 7))
+        assertEquals(otherFile, store.readSidecar("srv1", "profA", 8))
+    }
+
+    @Test
+    fun `manifest does not recreate missing downloads or write into another scope`() = runTest {
+        val sidecar = stubSidecar(7)
+        store.writeSidecar("srv1", "profA", sidecar)
+        val manifest = DownloadManifest(sidecar.record.id, 7, 1200.0, markerSegments = markerInventory)
+
+        assertFalse(store.persistManifest("srv1", "profA", manifest.copy(mediaFileId = 99)))
+        assertFalse(store.persistManifest("srv1", "profB", manifest))
+        assertFalse(store.persistManifest("srv2", "profA", manifest))
+
+        assertEquals(listOf(sidecar), store.listAllSidecars())
     }
 
     @Test
@@ -220,5 +332,16 @@ class DownloadMetadataStoreTest {
         })
         assertNotNull(store.readSidecar("server", "profile", 7))
     }
+
+    private val markerInventory = listOf(
+        PlaybackMarkerSegment("recap", 0.0, 10.0),
+        PlaybackMarkerSegment("intro", 10.0, 20.0),
+        PlaybackMarkerSegment("recap", 30.0, 40.0),
+        PlaybackMarkerSegment("intro", 40.0, 50.0),
+        PlaybackMarkerSegment("credits", 1000.0, 1020.0),
+        PlaybackMarkerSegment("preview", 1030.0, 1050.0),
+        PlaybackMarkerSegment("credits", 1060.0, 1180.0),
+        PlaybackMarkerSegment("preview", 1180.0, 1200.0),
+    )
 
 }

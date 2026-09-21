@@ -155,6 +155,22 @@ fun TvIntroAutoSkipBanner(
     }
 }
 
+@Composable
+internal fun TvMarkerSkipButton(kind: String, onSelect: () -> Unit, mayTakeFocus: Boolean) {
+    val label = when (kind) {
+        "credits" -> R.string.marker_skip_credits
+        "recap" -> R.string.marker_skip_recap
+        "preview" -> R.string.marker_skip_preview
+        else -> return
+    }
+    TvIntroPromptPill(
+        label = stringResource(label),
+        progress = 0f,
+        onSelect = onSelect,
+        autoFocus = mayTakeFocus,
+    )
+}
+
 /**
  * The pill both copies share: black capsule, white focus ring, and a fill that
  * creeps left-to-right as the timer runs out. [progress] is driven by the

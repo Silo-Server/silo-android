@@ -6,6 +6,8 @@ import io.ktor.http.*
 import kotlinx.serialization.json.*
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.network.*
+import org.siloserver.silo.playback.PlaybackMarkersUpdate
+import org.siloserver.silo.playback.decodeMarkersUpdate
 
 /** Optional watch metadata; callers retain their original owner across local work. */
 class WatchDetailV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
@@ -19,6 +21,17 @@ class WatchDetailV2Api(private val client: HttpClient, private val tokens: Token
                 libraryId?.let { parameter("library_id", it) }
             }
         }) { decodeWatchDetail(it, id) }
+
+    suspend fun fileMarkers(fileId: Int, owner: AuthScopeSnapshot): ApiResult<PlaybackMarkersUpdate> {
+        if (fileId <= 0) return ApiResult.Error(422, "validation_failed", "Invalid file identity.")
+        if (owner.profileId.isNullOrBlank()) return identityChanged()
+        return ownedV2Call<JsonObject, PlaybackMarkersUpdate>(gate, tokens, owner, OwnerPolicy.FULL, HttpStatusCode.OK, { scope ->
+            client.get("/api/v2/markers/files/$fileId") { authScope(scope!!); requireSiloAuth() }
+        }) { body ->
+            require(body["file_id"] == JsonPrimitive(fileId.toString())) { "The server returned markers for a different file." }
+            decodeMarkersUpdate(body)
+        }
+    }
 }
 
 /** Adapt only fields consumed by WatchDetail; do not change the legacy model wire contract. */
@@ -38,19 +51,24 @@ private fun decodeWatchDetail(body: JsonObject, id: String): WatchDetail {
         val duration = row["duration_seconds"] as? JsonPrimitive ?: error("Missing duration")
         check(!duration.isString && duration.double.isFinite() && duration.double >= 0)
         row["duration"] = duration
+        adaptMarkerRanges(row)
         JsonObject(row)
     })
-    for (key in listOf("intro", "credits", "recap", "preview")) {
-        val marker = body[key]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
-        adapted[key] = buildJsonObject {
-            put("start", marker.getValue("start_seconds"))
-            put("end", marker.getValue("end_seconds"))
-        }
-    }
+    adaptMarkerRanges(adapted)
     body["user_data"]?.takeUnless { it is JsonNull }?.jsonObject?.let { data ->
         val row = data.toMutableMap()
         row["last_file_id"]?.takeUnless { it is JsonNull }?.let { row["last_file_id"] = numericId(it) }
         adapted["user_data"] = JsonObject(row)
     }
     return SiloJson.decodeFromJsonElement(JsonObject(adapted))
+}
+
+private fun adaptMarkerRanges(row: MutableMap<String, JsonElement>) {
+    for (key in listOf("intro", "credits", "recap", "preview")) {
+        val marker = row[key]?.takeUnless { it is JsonNull }?.jsonObject ?: continue
+        row[key] = buildJsonObject {
+            put("start", marker.getValue("start_seconds"))
+            put("end", marker.getValue("end_seconds"))
+        }
+    }
 }
