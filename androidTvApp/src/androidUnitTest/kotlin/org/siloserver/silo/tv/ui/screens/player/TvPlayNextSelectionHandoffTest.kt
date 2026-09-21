@@ -82,6 +82,29 @@ class TvPlayNextSelectionHandoffTest {
     }
 
     @Test
+    fun inPlaceReplacementInstallsNewHandoffAndRejectsOldLease() {
+        val oldHandoff = captureTvEpisodeSelectionHandoff(
+            activeVersion = FileVersion(fileId = 42, resolution = "1080p"),
+            committedSubtitleIdentity = SubtitleIdentity.Off,
+            catalogSubtitles = emptyList(),
+            hasExplicitSubtitleSelection = true,
+        )
+        val newHandoff = captureTvEpisodeSelectionHandoff(
+            activeVersion = FileVersion(fileId = 84, resolution = "2160p"),
+            committedSubtitleIdentity = SubtitleIdentity.ServerSidecar(serverIndex = 3),
+            catalogSubtitles = listOf(subtitle(index = 3, language = "nl", codec = "srt")),
+            hasExplicitSubtitleSelection = true,
+        )
+        val slot = TvEpisodeSelectionHandoffSlot(oldHandoff)
+        val staleLease = requireNotNull(slot.leaseForStart(ownerGeneration = 1L))
+
+        slot.replace(newHandoff)
+
+        assertTrue(slot.acknowledgeReady(staleLease).not())
+        assertEquals(newHandoff, slot.leaseForStart(ownerGeneration = 2L)?.handoff)
+    }
+
+    @Test
     fun newerLaunchOwnerInvalidatesOlderLease() {
         val handoff = captureTvEpisodeSelectionHandoff(
             activeVersion = FileVersion(fileId = 42, resolution = "1080p"),

@@ -62,6 +62,8 @@ import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -80,6 +82,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
+import org.siloserver.silo.common.player.videoMountToken
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.pip.SiloPictureInPicturePlaybackState
@@ -722,6 +725,7 @@ fun PlayerScreen(
 
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = uiState.contentId,
+            mountToken = uiState.mediaMountGeneration,
             streamUrl = effectiveStreamUrl,
             // Local files play as progressive (DIRECT), regardless of how
             // the server originally provisioned the session.
@@ -803,6 +807,7 @@ fun PlayerScreen(
 
         val mediaSpec = VideoPlayerMediaSpec(
             contentId = uiState.contentId,
+            mountToken = uiState.mediaMountGeneration,
             streamUrl = effectiveStreamUrl,
             playMethod = playMethod,
             delivery = delivery,
@@ -862,12 +867,22 @@ fun PlayerScreen(
         } else {
             val preflight = PlaybackPreflightListener(
                 detector = capabilityDetector,
-                onUnsupported = { verdict -> viewModel.onUnsupportedPlayback(verdict) },
+                onUnsupported = { verdict ->
+                    viewModel.mountedSubtitleMount.value?.generation?.let { generation ->
+                        viewModel.onUnsupportedPlayback(verdict, generation)
+                    }
+                },
                 // Runtime errors (decoder init, source, mid-stream IO) walk the
                 // same recovery ladder as preflight failures — previously the
                 // mobile player dropped these on the floor and the screen sat
                 // on a stale frame.
-                onError = { error -> viewModel.onPlayerError(error, servicePlayer = latestServicePlayerForErrors.value) },
+                onError = { error ->
+                    viewModel.onPlayerError(
+                        error,
+                        servicePlayer = latestServicePlayerForErrors.value,
+                        mediaMountGeneration = viewModel.mountedSubtitleMount.value?.generation,
+                    )
+                },
                 plannedRoute = {
                     val plan = viewModel.uiState.value.playbackPlan
                     plannedVideoRouteFor(
@@ -879,6 +894,32 @@ fun PlayerScreen(
             )
             controller.addListener(preflight)
             onDispose { controller.removeListener(preflight) }
+        }
+    }
+
+    // MediaController's first-frame callback has no media identity. Read the
+    // immutable mount token from the ExoPlayer analytics event instead so a
+    // queued predecessor callback cannot complete the successor transition.
+    DisposableEffect(sessionPlayer) {
+        val player = sessionPlayer as? ExoPlayer
+        if (player == null) {
+            onDispose { }
+        } else {
+            val listener = object : AnalyticsListener {
+                override fun onRenderedFirstFrame(
+                    eventTime: AnalyticsListener.EventTime,
+                    output: Any,
+                    renderTimeMs: Long,
+                ) {
+                    val mountToken = eventTime.videoMountToken() ?: return
+                    if (mountToken != viewModel.uiState.value.mediaMountGeneration) return
+                    startupStallDetector.onFirstFrameRendered()
+                    postResumeStallDetector.onFirstFrameRendered()
+                    viewModel.onFirstVideoFrameRendered(mountToken)
+                }
+            }
+            player.addAnalyticsListener(listener)
+            onDispose { player.removeAnalyticsListener(listener) }
         }
     }
 
@@ -926,12 +967,6 @@ fun PlayerScreen(
                             renderedOutputBufferCount = rendered,
                         )
                     }
-                }
-
-                override fun onRenderedFirstFrame() {
-                    startupStallDetector.onFirstFrameRendered()
-                    postResumeStallDetector.onFirstFrameRendered()
-                    viewModel.onFirstVideoFrameRendered()
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1073,7 +1108,7 @@ fun PlayerScreen(
                 )
                 if (reason != null) {
                     Log.i(TAG, "Startup stall fallback: $reason")
-                    viewModel.onUnsupportedPlayback(reason)
+                    viewModel.onUnsupportedPlayback(reason, uiState.mediaMountGeneration)
                     return@repeatOnLifecycle
                 }
                 val sanitizedSamples = PlaybackRuntimeCorrectionMetrics.consumeDolbyVisionHdr10PlusSamples()
@@ -1145,12 +1180,14 @@ fun PlayerScreen(
         val backend = videoBackend ?: return@LaunchedEffect
         backend.baseLayerDecoderMismatch.collect { decoderName ->
             if (decoderName == null) return@collect
+            val generation = viewModel.mountedSubtitleMount.value?.generation ?: return@collect
             val plan = viewModel.uiState.value.playbackPlan
             viewModel.onUnsupportedPlayback(
                 org.siloserver.silo.common.player.Playability.DvBaseLayerDecoderUnavailable(
                     decoderName = decoderName,
                     baseRange = plan?.source?.hdrFormat.orEmpty(),
                 ),
+                generation,
             )
         }
     }
@@ -1234,7 +1271,7 @@ fun PlayerScreen(
             surface = SiloPictureInPictureSurface.Mobile,
             state = SiloPictureInPicturePlaybackState(
                 enabled = pictureInPictureEnabled,
-                videoActive = uiState.streamUrl != null && !uiState.isLoading && uiState.error == null,
+                videoActive = uiState.streamUrl != null && uiState.error == null,
                 isPlaying = uiState.isPlaying && !uiState.isPaused,
                 videoWidth = pictureInPictureVideoWidth,
                 videoHeight = pictureInPictureVideoHeight,
@@ -1265,7 +1302,7 @@ fun PlayerScreen(
                 if (playerRootBounds != next) playerRootBounds = next
             },
     ) {
-        if (uiState.isLoading) {
+        if (uiState.isLoading && uiState.streamUrl == null) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
@@ -1417,6 +1454,10 @@ fun PlayerScreen(
                     factory = { ctx ->
                         PlayerView(ctx).apply {
                             useController = false
+                            // The same SurfaceView spans Next Up mounts. Keep
+                            // the outgoing frame visible while Media3 resets
+                            // its item and decodes the successor's first frame.
+                            setKeepContentOnPlayerReset(true)
                             this.resizeMode = resizeMode
                             layoutParams = FrameLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
