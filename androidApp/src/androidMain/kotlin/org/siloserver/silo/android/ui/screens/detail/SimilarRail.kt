@@ -65,6 +65,8 @@ private fun SimilarRailContent(
                 title = item.title,
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
+                detailBackdropUrl = item.backdropUrl,
+                detailBackdropThumbhash = item.backdropThumbhash,
                 year = item.year?.takeIf { it > 0 },
                 type = item.type,
                 userState = null,

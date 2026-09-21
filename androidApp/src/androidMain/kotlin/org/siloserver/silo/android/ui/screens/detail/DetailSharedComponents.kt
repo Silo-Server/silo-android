@@ -95,6 +95,8 @@ private const val DetailArtworkCrossfadeMs = 120
 // ── Dynamic palette ───────────────────────────────────────────
 
 internal val ExpandedDetailBreakpoint = 600.dp
+internal fun expandedDetailHorizontalPadding(width: Dp) = if (width >= 840.dp) 48.dp else 32.dp
+internal fun expandedDetailPosterWidth(width: Dp) = (width * 0.25f).coerceIn(200.dp, 224.dp)
 
 data class DetailPortraitArtwork(
     val url: String?,
@@ -135,11 +137,11 @@ fun AdaptiveDetailHero(
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         if (maxWidth >= ExpandedDetailBreakpoint) {
-            val horizontalPadding = if (maxWidth >= 840.dp) 48.dp else 32.dp
+            val horizontalPadding = expandedDetailHorizontalPadding(maxWidth)
             // The expanded header keeps Play + the bottom action row inside
             // the portrait's vertical boundary. A 200pt minimum gives that
             // control stack the same breathing room as the tablet reference.
-            val posterWidth = (maxWidth * 0.25f).coerceIn(200.dp, 224.dp)
+            val posterWidth = expandedDetailPosterWidth(maxWidth)
             ExpandedDetailHero(
                 detail = detail,
                 portraitArtwork = portraitArtwork,
@@ -213,39 +215,11 @@ private fun ExpandedDetailHero(
     ) {
         // This cinematic box is measured by the row. Its last opaque gradient
         // stop therefore lands exactly at the bottom of the poster/buttons.
-        Box(modifier = Modifier.fillMaxWidth()) {
-            ThumbhashImage(
-                url = detail.backdropUrl,
-                thumbhash = detail.backdropThumbhash,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                crossfadeMillis = DetailArtworkCrossfadeMs,
-                modifier = Modifier.matchParentSize(),
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.horizontalGradient(
-                            0.00f to Color.Black.copy(alpha = 0.88f),
-                            0.48f to Color.Black.copy(alpha = 0.58f),
-                            1.00f to Color.Black.copy(alpha = 0.32f),
-                        ),
-                    ),
-            )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.00f to Color.Black.copy(alpha = 0.08f),
-                            0.56f to Color.Black.copy(alpha = 0.18f),
-                            0.82f to pageSurface.copy(alpha = 0.62f),
-                            1.00f to pageSurface,
-                        ),
-                    ),
-            )
-
+        ExpandedDetailHeroBackdrop(
+            artworkUrl = detail.backdropUrl,
+            artworkThumbhash = detail.backdropThumbhash,
+            pageSurface = pageSurface,
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -348,6 +322,49 @@ private fun ExpandedDetailHero(
                 belowOverview?.invoke()
             }
         }
+    }
+}
+
+@Composable
+internal fun ExpandedDetailHeroBackdrop(
+    artworkUrl: String?,
+    artworkThumbhash: String?,
+    pageSurface: Color,
+    content: @Composable () -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        ThumbhashImage(
+            url = artworkUrl,
+            thumbhash = artworkThumbhash,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            crossfadeMillis = DetailArtworkCrossfadeMs,
+            modifier = Modifier.matchParentSize(),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0.00f to Color.Black.copy(alpha = 0.88f),
+                        0.48f to Color.Black.copy(alpha = 0.58f),
+                        1.00f to Color.Black.copy(alpha = 0.32f),
+                    ),
+                ),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.00f to Color.Black.copy(alpha = 0.08f),
+                        0.56f to Color.Black.copy(alpha = 0.18f),
+                        0.82f to pageSurface.copy(alpha = 0.62f),
+                        1.00f to pageSurface,
+                    ),
+                ),
+        )
+        content()
     }
 }
 
@@ -479,122 +496,139 @@ fun DetailHero(
     belowOverview: (@Composable () -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        DetailHeroArtwork(
+            artworkUrl = detail.backdropUrl ?: detail.posterUrl,
+            artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
+            contentDescription = detail.title,
+        ) {
+            HeroTitle(detail = detail)
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = SafePadding)
+                .padding(top = 8.dp, bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            val metadataTokens = (factsLine + sourceTokens).distinct()
+            if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
+                SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+            }
+            actions()
+            if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
+                OverviewBlock(
+                    text = overviewText.orEmpty(),
+                    reserveCollapsedSpace = reserveOverviewSpace,
+                )
+            }
+            DetailCreditBlock(
+                text = directorText,
+                isLoading = isCreditLoading,
+                reserveSpace = reserveCreditSpace,
+                expanded = false,
+            )
+            translation?.invoke()
+            belowOverview?.invoke()
+        }
+    }
+}
+
+/** Shared artwork frame keeps loading and loaded crops, height, and fades identical. */
+@Composable
+internal fun DetailHeroArtwork(
+    artworkUrl: String?,
+    artworkThumbhash: String?,
+    contentDescription: String? = null,
+    title: @Composable () -> Unit,
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val artworkHeight = (maxWidth * 1.18f).coerceIn(430.dp, 540.dp)
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(artworkHeight),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            // Parallax: the artwork trails the scroll so the page reads
+            // as moving faster than the picture (iOS
+            // PhoneDetailParallaxArtwork). Only the artwork translates —
+            // the gradient below must stay pinned to the hero's bottom
+            // edge or the fade-to-surface would slide out of place.
+            val detailScroll = LocalDetailScrollState.current
+            val parallaxDp = detailScroll?.parallaxDp ?: 0f
+            val scrimAlpha = ParallaxScrimMaxAlpha *
+                (parallaxDp / ParallaxScrimRangeDp).coerceIn(0f, 1f)
+            // Artwork + its scrim are masked as one, the way iOS masks the
+            // parallax stack. The mask is on this fixed wrapper, not on the
+            // translating image, so the fade stays pinned to the hero's
+            // bottom edge while the picture slides underneath it.
+            //
+            // It fades to TRANSPARENT so the blurred page surface behind
+            // the whole page shows through. This used to fade into an
+            // opaque lerp(black, tint, 0.42) instead — a dark slab that
+            // scrolled with the hero and sat on top of that surface, which
+            // is what made the background read as a stray black gradient.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0.00f to Color.Black,
+                                0.72f to Color.Black,
+                                0.84f to Color.Black.copy(alpha = 0.76f),
+                                1.00f to Color.Transparent,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            ) {
+                ThumbhashImage(
+                    url = artworkUrl,
+                    thumbhash = artworkThumbhash,
+                    contentDescription = contentDescription,
+                    contentScale = ContentScale.Crop,
+                    crossfadeMillis = DetailArtworkCrossfadeMs,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            translationY = parallaxDp * ParallaxFactor * density
+                        },
+                )
+                // Deepens as the hero leaves, so the artwork recedes
+                // instead of just sliding.
+                if (scrimAlpha > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = scrimAlpha)),
+                    )
+                }
+            }
+            // Top darkening only — keeps the back/remote controls legible
+            // over bright artwork.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0.00f to Color.Black.copy(alpha = 0.34f),
+                            0.30f to Color.Transparent,
+                        ),
+                    ),
+            )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(artworkHeight),
+                    .padding(horizontal = 28.dp, vertical = 6.dp),
                 contentAlignment = Alignment.BottomCenter,
             ) {
-                // Parallax: the artwork trails the scroll so the page reads
-                // as moving faster than the picture (iOS
-                // PhoneDetailParallaxArtwork). Only the artwork translates —
-                // the gradient below must stay pinned to the hero's bottom
-                // edge or the fade-to-surface would slide out of place.
-                val detailScroll = LocalDetailScrollState.current
-                val parallaxDp = detailScroll?.parallaxDp ?: 0f
-                val scrimAlpha = ParallaxScrimMaxAlpha *
-                    (parallaxDp / ParallaxScrimRangeDp).coerceIn(0f, 1f)
-                // Artwork + its scrim are masked as one, the way iOS masks the
-                // parallax stack. The mask is on this fixed wrapper, not on the
-                // translating image, so the fade stays pinned to the hero's
-                // bottom edge while the picture slides underneath it.
-                //
-                // It fades to TRANSPARENT so the blurred page surface behind
-                // the whole page shows through. This used to fade into an
-                // opaque lerp(black, tint, 0.42) instead — a dark slab that
-                // scrolled with the hero and sat on top of that surface, which
-                // is what made the background read as a stray black gradient.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    0.00f to Color.Black,
-                                    0.72f to Color.Black,
-                                    0.84f to Color.Black.copy(alpha = 0.76f),
-                                    1.00f to Color.Transparent,
-                                ),
-                                blendMode = BlendMode.DstIn,
-                            )
-                        },
-                ) {
-                    ThumbhashImage(
-                        url = detail.backdropUrl ?: detail.posterUrl,
-                        thumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
-                        contentDescription = detail.title,
-                        contentScale = ContentScale.Crop,
-                        crossfadeMillis = DetailArtworkCrossfadeMs,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                translationY = parallaxDp * ParallaxFactor * density
-                            },
-                    )
-                    // Deepens as the hero leaves, so the artwork recedes
-                    // instead of just sliding.
-                    if (scrimAlpha > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = scrimAlpha)),
-                        )
-                    }
-                }
-                // Top darkening only — keeps the back/remote controls legible
-                // over bright artwork.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.00f to Color.Black.copy(alpha = 0.34f),
-                                0.30f to Color.Transparent,
-                            ),
-                        ),
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 28.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.BottomCenter,
-                ) {
-                    HeroTitle(detail = detail)
-                }
-            }
-
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = SafePadding)
-                    .padding(top = 8.dp, bottom = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                val metadataTokens = (factsLine + sourceTokens).distinct()
-                if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
-                    SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
-                }
-                actions()
-                if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
-                    OverviewBlock(
-                        text = overviewText.orEmpty(),
-                        reserveCollapsedSpace = reserveOverviewSpace,
-                    )
-                }
-                DetailCreditBlock(
-                    text = directorText,
-                    isLoading = isCreditLoading,
-                    reserveSpace = reserveCreditSpace,
-                    expanded = false,
-                )
-                translation?.invoke()
-                belowOverview?.invoke()
+                title()
             }
         }
     }

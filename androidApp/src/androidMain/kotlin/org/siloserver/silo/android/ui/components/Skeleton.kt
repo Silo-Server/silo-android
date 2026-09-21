@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,15 +24,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.common.cards.LocalCardPresentation
-import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 private val ShimmerHighlight = Color.White.copy(alpha = 0.06f)
 
@@ -162,74 +158,6 @@ fun PosterGridSkeleton(
 
 /** Matches the 16dp content padding of the grids this skeleton stands in for. */
 private val GridSkeletonInset = 16.dp
-
-/**
- * Loading skeleton for a media detail page: a hero band, a couple of title /
- * metadata bars, and a "more like this" rail — so the page is laid out from the
- * first frame instead of a spinner over black that snaps into the full screen.
- */
-@Composable
-fun DetailLoadingSkeleton(
-    modifier: Modifier = Modifier,
-    artworkUrl: String? = null,
-    artworkThumbhash: String? = null,
-) {
-    val shimmer = rememberShimmerProgress()
-    Column(modifier = modifier.fillMaxWidth()) {
-        val heroModifier = Modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 10f)
-        if (!artworkUrl.isNullOrBlank() || !artworkThumbhash.isNullOrBlank()) {
-            Box(modifier = heroModifier) {
-                ThumbhashImage(
-                    url = artworkUrl,
-                    thumbhash = artworkThumbhash,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    crossfadeMillis = 120,
-                    modifier = Modifier.fillMaxSize(),
-                )
-                // Match the loaded hero's scrim. A flat 20% wash here meant
-                // the moment detail arrived the artwork jumped from lightly
-                // dimmed to a hard left-weighted gradient — read as a flash
-                // even when the image itself never changed.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.horizontalGradient(
-                                0.00f to Color.Black.copy(alpha = 0.88f),
-                                0.48f to Color.Black.copy(alpha = 0.58f),
-                                1.00f to Color.Black.copy(alpha = 0.32f),
-                            ),
-                        ),
-                )
-            }
-        } else {
-            Box(
-                modifier = heroModifier.skeleton(shimmer, RoundedCornerShape(0.dp)),
-            )
-        }
-        Spacer(modifier = Modifier.height(20.dp))
-        Box(
-            modifier = Modifier
-                .padding(horizontal = 16.dp)
-                .fillMaxWidth(0.7f)
-                .height(26.dp)
-                .skeleton(shimmer),
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Box(
-            modifier = Modifier
-                .padding(horizontal = 16.dp)
-                .fillMaxWidth(0.4f)
-                .height(16.dp)
-                .skeleton(shimmer),
-        )
-        Spacer(modifier = Modifier.height(28.dp))
-        MediaRowSkeleton(progress = shimmer)
-    }
-}
 
 /** A vertical stack of [MediaRowSkeleton]s sharing one shimmer — for row-feed loading states. */
 @Composable

@@ -114,6 +114,8 @@ fun SearchResults(
                 title = item.title,
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,
+                detailBackdropUrl = item.backdropUrl,
+                detailBackdropThumbhash = item.backdropThumbhash,
                 year = item.year,
                 type = item.type,
                 userState = userState,
