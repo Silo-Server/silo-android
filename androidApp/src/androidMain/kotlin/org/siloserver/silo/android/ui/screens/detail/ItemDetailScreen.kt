@@ -59,7 +59,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.downloads.LEGACY_PUBLIC_DOWNLOAD_PERMISSION
 import org.siloserver.silo.android.downloads.hasLegacyPublicDownloadPermission
-import org.siloserver.silo.android.ui.components.DetailLoadingSkeleton
 import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.theme.SiloOverlayPillSurface
 import org.siloserver.silo.android.ui.theme.SiloNavPillSurface
@@ -340,11 +339,8 @@ fun ItemDetailScreen(
             .background(MaterialTheme.colorScheme.background),
     ) {
         CompositionLocalProvider(LocalDetailScrollState provides detailScroll) {
-        // The loading and loaded trees build the hero differently (fixed 16:10
-        // versus content-measured, and their own gradient stacks), so swapping
-        // them outright showed as a flash the instant metadata landed. Dissolve
-        // between them; keyed on which branch is showing, not on the detail
-        // object, so a metadata refresh does not re-run the fade.
+        // Only the initial branch change dissolves; metadata refreshes keep
+        // the current detail mounted. Loading shares the loaded hero frame.
         val loadedBranch = when {
             // A pending series redirect is about to replace this page's content
             // with the parent series. Hold the skeleton rather than dissolving

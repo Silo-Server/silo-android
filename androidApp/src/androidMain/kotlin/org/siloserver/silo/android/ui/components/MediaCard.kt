@@ -90,6 +90,8 @@ fun MediaCard(
      * a plain tap target — used where there is no matching hero to morph into.
      */
     sharedContentId: String? = null,
+    detailBackdropUrl: String? = null,
+    detailBackdropThumbhash: String? = null,
 ) {
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
@@ -110,11 +112,13 @@ fun MediaCard(
                     // Record which exact placement was tapped so the detail hero
                     // pairs with this card, not a duplicate elsewhere on screen.
                     if (heroKey != null) heroHandoff?.pendingKey = heroKey
-                    // Generic fallback for cards whose caller only knows the
-                    // poster. Rows/grids with a backdrop overwrite this before
-                    // navigating so detail can warm the wide art.
-                    heroHandoff?.pendingArtworkUrl = posterUrl
-                    heroHandoff?.pendingArtworkThumbhash = posterThumbhash
+                    // Match the detail hero from its first loading frame.
+                    heroHandoff?.pendingArtworkUrl = detailBackdropUrl ?: posterUrl
+                    heroHandoff?.pendingArtworkThumbhash = if (detailBackdropUrl != null) {
+                        detailBackdropThumbhash
+                    } else {
+                        posterThumbhash
+                    }
                     onClick()
                 },
                 onLongClick = if (actions.isEmpty) null else { { menuExpanded = true } },
