@@ -49,6 +49,42 @@ class MembershipActivationTest {
     private fun page(next: Boolean, second: Boolean = false) = """{"items":[{"content_id":"${if(second) "second" else "item"}","type":"movie","title":"Film"}],"page":{"has_more":$next${if(next) ",\"next_cursor\":\"next\"" else ""}},"total":2,"total_exact":true,"window_cursor":"window"}"""
     @AfterTest fun close() { viewModels.forEach { it.viewModelScope.cancel() }; clients.forEach { it.close() }; db.close(); Dispatchers.resetMain() }
 
+    @Test fun productionRepositoryWiringSharesIdentityAcrossMembershipChanges() = runTest {
+        val methods = mutableListOf<HttpMethod>()
+        val client = client(MockEngine { methods += it.method; respond("", HttpStatusCode.NoContent) })
+        val port = RoomMembershipPort(db, MembershipV2Api(client, ApiV2Gate.Unrestricted, tokens), tokens, authorities, barrier)
+        val app = org.koin.dsl.koinApplication(createEagerInstances = false) {
+            modules(org.siloserver.silo.di.repositoryModule, org.koin.dsl.module {
+                single { PersonalDataApi(client) }
+                single<MembershipPort> { port }
+                single<IdentityTransitionBarrier> { barrier }
+            })
+        }
+        try {
+            barrier.changing(IdentityTransitionKind.SIGN_IN) {
+                authority = authority.copy(scope = authority.scope.copy(identityGeneration = barrier.generation.value))
+            }
+            val actions = app.koin.get<PersonalDataRepository>().memberships
+            for (kind in MembershipPort.Kind.entries) {
+                val intent = actions.begin("item", kind, true)
+                actions.perform(intent)
+                assertTrue(actions.confirmed(intent), "$kind must save after sign-in")
+            }
+            barrier.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+                authority = authority.copy(scope = authority.scope.copy(profileId = "other-profile", identityGeneration = barrier.generation.value))
+            }
+            assertTrue(actions.actions.value.isEmpty(), "Old profile membership must be cleared")
+            for (kind in MembershipPort.Kind.entries) {
+                val intent = actions.begin("item", kind, false)
+                actions.perform(intent)
+                assertTrue(actions.confirmed(intent), "$kind must save after switching profiles")
+            }
+            assertEquals(listOf(HttpMethod.Put, HttpMethod.Put, HttpMethod.Delete, HttpMethod.Delete), methods)
+        } finally {
+            app.close()
+        }
+    }
+
     @Test fun actualFavoritesAndWatchlistRetainFailedRowsTotalsAndCursorThenReconcileByGet() = runTest {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         for (kind in MembershipPort.Kind.entries) {
