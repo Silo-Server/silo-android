@@ -245,7 +245,7 @@ internal fun TvPlaybackActionSelectors(
         value = versionValue,
         options = versionOptions,
         triggerFocusRequester = versionFocusRequester.takeUnless { showEditions },
-        interactive = currentVersion != null && scopedVersions.isNotEmpty(),
+        interactive = currentVersion != null && selectorIsInteractive(scopedVersions.size),
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
     TvAnchoredSelectorMenu(
