@@ -14,7 +14,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.ClosedCaption
-import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -92,7 +91,6 @@ fun SeriesDetailContent(
         fallback = SiloBackground,
         thumbhash = detail.backdropThumbhash,
     )
-    var showVersionPicker by remember { mutableStateOf(false) }
     var showAudioPicker by remember { mutableStateOf(false) }
     var showSubtitlePicker by remember { mutableStateOf(false) }
 
@@ -126,12 +124,11 @@ fun SeriesDetailContent(
                     val audioTracks = selectedVersion?.audioTracks.orEmpty()
                     val subtitleTracks = selectedVersion?.subtitleTracks.orEmpty()
                     PlaybackSelectorCard {
-                        TrackSelectorRow(
-                            icon = Icons.Outlined.HighQuality,
-                            label = "Version",
-                            value = formatVersionValueLabel(selectedVersion, isAutoVersion),
-                            onClick = { showVersionPicker = true },
-                            interactive = loadedSelectedEpisodeDetail.versions.size > 1,
+                        EditionVersionSelectorRows(
+                            detail = loadedSelectedEpisodeDetail,
+                            selectedVersionIndex = selectedVersionIndex,
+                            isAutoVersion = isAutoVersion,
+                            onVersionSelected = onVersionSelected,
                         )
                         PlaybackSelectorDivider()
                         TrackSelectorRow(
@@ -412,14 +409,6 @@ fun SeriesDetailContent(
 
     loadedSelectedEpisodeDetail?.let { episodeDetail ->
         val version = episodeDetail.versions.getOrNull(selectedVersionIndex)
-        if (showVersionPicker) {
-            VersionPickerSheet(
-                versions = episodeDetail.versions,
-                selectedIndex = selectedVersionIndex.takeUnless { isAutoVersion },
-                onSelect = { onVersionSelected(it); showVersionPicker = false },
-                onDismiss = { showVersionPicker = false },
-            )
-        }
         if (showAudioPicker) {
             AudioPickerSheet(
                 tracks = version?.audioTracks.orEmpty(),

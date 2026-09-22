@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.model.catalog.editionLabel
 import android.graphics.Rect
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -752,6 +753,7 @@ internal fun playerQualityLabel(
 ): String {
     val version = versions.getOrNull(selectedIndex) ?: return "Auto"
     return buildString {
+        version.editionLabel?.let { append(it).append(" · ") }
         append(version.resolution ?: "Unknown")
         if (version.hdr) append(" HDR")
     }

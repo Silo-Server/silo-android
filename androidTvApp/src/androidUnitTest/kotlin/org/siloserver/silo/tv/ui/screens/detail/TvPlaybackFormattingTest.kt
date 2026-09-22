@@ -717,7 +717,7 @@ class TvPlaybackFormattingTest {
         assertEquals(listOf(1, 0, 2), opts.map { it.selectionIndex })
     }
 
-    // --- editions (Android model has no edition data → single group) ---
+    // --- editions without metadata retain a single group ---
 
     @Test fun editions_collapseToSingleGroup() {
         val versions = listOf(fileVersion(fileId = 1), fileVersion(fileId = 2))
