@@ -77,6 +77,7 @@ val repositoryModule = module {
         PersonalDataRepository(
             personalDataApi = get(),
             membershipPort = get(),
+            identityTransitions = get(),
             userItemStatePort = getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>()
                 ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
