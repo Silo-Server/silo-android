@@ -1109,12 +1109,11 @@ private fun TvPlaybackSettingsPane(
                     onCheckedChange = onForceHdrPassthroughChanged,
                 )
                 SettingsFooterText(
-                    text = "Skips this TV's reported HDR support and lets Silo direct-play " +
-                        "every HDR type your device can decode. Some TVs/AVRs render a type " +
-                        "(HLG in particular) correctly without declaring it, which otherwise " +
-                        "forces an unnecessary tone-mapped transcode. Only turn this on if " +
-                        "you've confirmed your TV handles it — an unsupported type can show " +
-                        "as a black or incorrectly colored picture.",
+                    text = "Allows HDR playback when this TV doesn't report support. " +
+                        "This does not force the HDMI output into HDR; Android may still " +
+                        "convert the picture to SDR. Enable only if you've confirmed your " +
+                        "TV supports the source format. Unsupported formats may produce " +
+                        "a black screen or incorrect colors.",
                 )
             }
         }

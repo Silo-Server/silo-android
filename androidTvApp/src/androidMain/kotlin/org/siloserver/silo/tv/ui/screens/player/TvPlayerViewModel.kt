@@ -1390,6 +1390,8 @@ class TvPlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val dolbyVisionEnabled: StateFlow<Boolean> = playerSettingsStore.dolbyVisionEnabledFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val forceHdrPassthrough: StateFlow<Boolean> = playerSettingsStore.forceHdrPassthroughFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     private val dvProfile7Hdr10Fallback: StateFlow<Boolean> =
         playerSettingsStore.dvProfile7HDR10FallbackFlow
             .stateIn(viewModelScope, SharingStarted.Eagerly, false)

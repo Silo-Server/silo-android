@@ -194,6 +194,7 @@ class PlaybackCapabilityDetector(
     fun evaluateTracks(
         tracks: Tracks,
         route: PlannedVideoRoute = PlannedVideoRoute.Unspecified,
+        forceHdrPassthrough: Boolean = false,
     ): Playability {
         // Video — look for DV profile claims in Format.codecs.
         val selectedVideo = tracks.groups.firstOrNull {
@@ -218,7 +219,9 @@ class PlaybackCapabilityDetector(
                 val profile = dvMatch.groupValues[2].toIntOrNull()
                 if (profile != null) {
                     val codecProbe = MediaCodecCapabilitiesProbe.probe()
-                    val displayHdr = DisplayHdrProbe.probe(context, playbackDisplayId)
+                    val displayHdr = DisplayHdrProbe.probeDetailed(
+                        context, playbackDisplayId, forcePassthrough = forceHdrPassthrough,
+                    ).hdr
                     val supportedHdr = TvPlaybackOutputPolicy.effectiveHdrCapabilities(
                         codec = codecProbe.hdr,
                         display = displayHdr,
