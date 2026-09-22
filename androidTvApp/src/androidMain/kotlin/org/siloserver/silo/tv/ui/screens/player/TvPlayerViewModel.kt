@@ -1590,7 +1590,8 @@ class TvPlayerViewModel(
 
     private suspend fun subtitlePlaybackContext(state: UiState): TvSubtitlePlaybackContext {
         val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
-        val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
+        val forceHdrPassthrough = playerSettingsStore.forceHdrPassthroughFlow.first()
+        val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision, forceHdrPassthrough = forceHdrPassthrough)
         return subtitlePlaybackContext(
             state = state,
             capabilities = capabilities,
@@ -2496,7 +2497,8 @@ class TvPlayerViewModel(
                     .orEmpty(),
                 failedTrackType = failedTrackType,
             )
-            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision)
+            val forceHdrPassthrough = playerSettingsStore.forceHdrPassthroughFlow.first()
+            val capabilities = capabilityDetector.detect(dolbyVision = dolbyVision, forceHdrPassthrough = forceHdrPassthrough)
             val playbackContext = capabilityDetector.detectPlaybackContext(
                 formFactor = "tv",
                 appVersion = BuildConfig.VERSION_NAME,

@@ -1175,6 +1175,7 @@ private class FakePlayerSettingsStore(
     override val dolbyVisionEnabledFlow: Flow<Boolean> = flowOf(true)
     override val matchContentFrameRateFlow: Flow<Boolean> = flowOf(false)
     override val pictureInPictureEnabledFlow: Flow<Boolean> = flowOf(true)
+    override val forceHdrPassthroughFlow: Flow<Boolean> = flowOf(false)
     override val downloadsWifiOnlyFlow: Flow<Boolean> = flowOf(true)
     override val keepWatchedDownloadsFlow: Flow<Boolean> = flowOf(false)
     override val defaultDownloadQualityFlow: Flow<String> = flowOf("original")
@@ -1207,6 +1208,7 @@ private class FakePlayerSettingsStore(
     override suspend fun setDolbyVisionEnabled(value: Boolean) = Unit
     override suspend fun setMatchContentFrameRate(value: Boolean) = Unit
     override suspend fun setPictureInPictureEnabled(value: Boolean) = Unit
+    override suspend fun setForceHdrPassthrough(value: Boolean) = Unit
     override suspend fun setDownloadsWifiOnly(value: Boolean) = Unit
     override suspend fun setKeepWatchedDownloads(value: Boolean) = Unit
     override suspend fun setDefaultDownloadQuality(value: String) = Unit

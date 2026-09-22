@@ -330,14 +330,20 @@ class PlaybackCapabilityDetector(
      * verified by [FfmpegAudioSupport.supportedCodecShortCodes]. Encoded HDMI
      * passthrough remains a separate claim and the platform renderer still
      * wins when it can preserve that path.
+     * @param forceHdrPassthrough the user's "Force HDR passthrough" setting
+     * snapshot — see [DisplayHdrProbe.probeDetailed]'s `forcePassthrough`
+     * parameter. Off by default; skips the panel probe entirely when on, so
+     * a panel that under-reports a type it actually renders correctly
+     * doesn't push the server into an unnecessary transcode.
      */
     fun detect(
         ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
         dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
+        forceHdrPassthrough: Boolean = false,
     ): ClientCodecCapabilities {
         val audioRoute = audioCapabilityManager.playbackRouteSnapshot()
         val codecProbe = MediaCodecCapabilitiesProbe.probe()
-        val displayProbe = DisplayHdrProbe.probeDetailed(context, playbackDisplayId)
+        val displayProbe = DisplayHdrProbe.probeDetailed(context, playbackDisplayId, forceHdrPassthrough)
         // With Dolby Vision off, stop advertising DV profiles (except 5,
         // which has no watchable base layer) so the server plans base-layer /
         // HDR10 delivery and local direct-play checks agree. Single decision

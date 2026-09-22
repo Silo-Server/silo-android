@@ -154,8 +154,9 @@ class TvVideoPlaybackStarter(
                 )
 
             val dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()
+            val forceHdrPassthrough = playerSettingsStore.forceHdrPassthroughFlow.first()
             val capabilities = request.recoveryStartParams?.capabilities
-                ?: capabilityDetector.detect(dolbyVision = dolbyVision)
+                ?: capabilityDetector.detect(dolbyVision = dolbyVision, forceHdrPassthrough = forceHdrPassthrough)
             val playbackContext = request.recoveryStartParams?.clientPlaybackContext
                 ?: capabilityDetector.detectPlaybackContext(
                     formFactor = "tv",

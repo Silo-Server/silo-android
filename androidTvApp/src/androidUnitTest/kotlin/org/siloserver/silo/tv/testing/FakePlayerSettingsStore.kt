@@ -29,6 +29,7 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override val effectiveSubtitleAppearanceFlow =
         MutableStateFlow(org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT)
     override val pictureInPictureEnabledFlow = MutableStateFlow(true)
+    override val forceHdrPassthroughFlow = MutableStateFlow(false)
     override val downloadsWifiOnlyFlow = MutableStateFlow(true)
     override val keepWatchedDownloadsFlow = MutableStateFlow(false)
     override val defaultDownloadQualityFlow = MutableStateFlow("original")
@@ -80,6 +81,9 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setPictureInPictureEnabled(value: Boolean) {
         setterCalls += "setPictureInPictureEnabled"; pictureInPictureEnabledFlow.value = value
+    }
+    override suspend fun setForceHdrPassthrough(value: Boolean) {
+        setterCalls += "setForceHdrPassthrough"; forceHdrPassthroughFlow.value = value
     }
     override suspend fun setDownloadsWifiOnly(value: Boolean) {
         setterCalls += "setDownloadsWifiOnly"; downloadsWifiOnlyFlow.value = value

@@ -57,6 +57,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -469,6 +470,7 @@ class TvItemDetailViewModel(
                         withContext(Dispatchers.Default) {
                             detector.detect(
                                 dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot(),
+                                forceHdrPassthrough = playerSettingsStore.forceHdrPassthroughFlow.first(),
                             )
                         }
                     }.getOrNull()

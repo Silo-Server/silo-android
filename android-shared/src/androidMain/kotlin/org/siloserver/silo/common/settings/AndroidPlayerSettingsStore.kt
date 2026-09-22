@@ -276,6 +276,9 @@ class AndroidPlayerSettingsStore(
     override val pictureInPictureEnabledFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.PictureInPictureEnabled, true) }
 
+    override val forceHdrPassthroughFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.ForceHdrPassthrough, false) }
+
     override val letterboxExpansionFlow: Flow<String> =
         profileScopedFlow(LetterboxExpansion.Default) { p, s ->
             p.stringFor(s, PlaybackSettingsKeys.LetterboxExpansion, LetterboxExpansion.Default)
@@ -437,6 +440,9 @@ class AndroidPlayerSettingsStore(
 
     override suspend fun setPictureInPictureEnabled(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.PictureInPictureEnabled, value)
+
+    override suspend fun setForceHdrPassthrough(value: Boolean) =
+        writeBoolLocal(PlaybackSettingsKeys.ForceHdrPassthrough, value)
 
     override suspend fun setLetterboxExpansion(value: String) {
         val safe = if (value in LetterboxExpansion.Valid) value else LetterboxExpansion.Default
@@ -675,6 +681,7 @@ class AndroidPlayerSettingsStore(
                 // it declares. Without this, the action would leave exactly the
                 // settings the user most associates with this device untouched.
                 it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PictureInPictureEnabled))
+                it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ForceHdrPassthrough))
                 it.remove(stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.LetterboxExpansion))
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ResumeRewindSeconds))
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
