@@ -4,6 +4,8 @@ package org.siloserver.silo.tv.ui.screens.detail
 
 import org.siloserver.silo.common.player.TrackSelectionPresets
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.editionLabel
+import org.siloserver.silo.model.catalog.playbackEditions
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.AutoSubtitleContext
@@ -49,12 +51,6 @@ internal fun resolveTvAutomaticAudioTrackOrdinal(
  *   derived from catalog order plus external-track placement; it is not the raw
  *   [SubtitleTrack.index] stream index and is not the visible sorted-row ordinal.
  *
- * NOTE on editions: unlike Apple's `FileVersion` (which carries
- * `edition_key` / `edition_raw` / `edition`), the Android [FileVersion] model
- * exposes NO edition data. [editions] therefore always returns a single
- * "Standard" group (or empty for no versions), so the Edition selector in the
- * UI stays hidden. This becomes meaningful only once the model/server adds
- * edition fields (see SPEC §6 / §11).
  */
 object TvPlaybackFormatting {
 
@@ -157,7 +153,9 @@ object TvPlaybackFormatting {
      * container is the last resort.
      */
     fun versionPickerLabels(versions: List<FileVersion>): List<String> {
-        val base = versions.map { versionShortLabel(it) }
+        val base = versions.map { version ->
+            listOfNotNull(version.editionLabel, versionShortLabel(version)).joinToString(" · ")
+        }
         val colliding = base.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
         if (colliding.isEmpty()) return base
 
@@ -728,21 +726,14 @@ object TvPlaybackFormatting {
         return subtitleLabelIndicatesHearingImpaired(value)
     }
 
-    // --- Editions (Android model has no edition data) --------------------
+    // --- Editions -------------------------------------------------------
 
     fun currentEdition(versions: List<FileVersion>, currentVersion: FileVersion?): TvEdition? =
         edition(forFileId = currentVersion?.fileId, versions = versions)
             ?: editions(versions).firstOrNull()
 
-    /**
-     * Distinct editions in first-seen order. The Android [FileVersion] carries
-     * no edition fields, so every version lands in one "Standard" group; this
-     * keeps the UI's Edition selector hidden until model support lands.
-     */
-    fun editions(versions: List<FileVersion>): List<TvEdition> {
-        if (versions.isEmpty()) return emptyList()
-        return listOf(TvEdition(id = "standard", label = "Standard", versions = versions))
-    }
+    fun editions(versions: List<FileVersion>): List<TvEdition> =
+        playbackEditions(versions).map { TvEdition(it.id, it.label, it.versions) }
 
     private fun edition(forFileId: Int?, versions: List<FileVersion>): TvEdition? {
         if (forFileId == null) return null

@@ -18,7 +18,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Groups
-import androidx.compose.material.icons.outlined.HighQuality
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -101,7 +100,6 @@ fun MovieDetailContent(
     translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    var showVersionPicker by remember { mutableStateOf(false) }
     var showAudioPicker by remember { mutableStateOf(false) }
     var showSubtitlePicker by remember { mutableStateOf(false) }
 
@@ -173,12 +171,11 @@ fun MovieDetailContent(
                     // credits, and translation—not inside the action stack.
                     if (hasTrackSelectors) {
                         PlaybackSelectorCard {
-                            TrackSelectorRow(
-                                icon = Icons.Outlined.HighQuality,
-                                label = "Version",
-                                value = formatVersionValueLabel(selectedVersion, isAutoVersion),
-                                onClick = { showVersionPicker = true },
-                                interactive = detail.versions.size > 1,
+                            EditionVersionSelectorRows(
+                                detail = detail,
+                                selectedVersionIndex = selectedVersionIndex,
+                                isAutoVersion = isAutoVersion,
+                                onVersionSelected = onVersionSelected,
                             )
                             if (audioTracks.isNotEmpty()) {
                                 PlaybackSelectorDivider()
@@ -352,18 +349,6 @@ fun MovieDetailContent(
             Spacer(modifier = Modifier.height(40.dp))
         }
     }
-    }
-
-    if (showVersionPicker) {
-        VersionPickerSheet(
-            versions = detail.versions,
-            selectedIndex = selectedVersionIndex.takeUnless { isAutoVersion },
-            onSelect = { index ->
-                onVersionSelected(index)
-                showVersionPicker = false
-            },
-            onDismiss = { showVersionPicker = false },
-        )
     }
 
     if (showAudioPicker && audioTracks.isNotEmpty()) {
