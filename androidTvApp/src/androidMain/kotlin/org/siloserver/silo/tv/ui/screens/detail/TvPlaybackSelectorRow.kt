@@ -28,6 +28,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.model.catalog.PlaybackVariant
+import org.siloserver.silo.model.catalog.playbackEditions
+import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.tv.ui.components.TvAnchoredSelectorMenu
 import org.siloserver.silo.tv.ui.components.TvSelectorOption
@@ -79,6 +82,7 @@ internal fun selectorIsInteractive(realChoiceCount: Int): Boolean = realChoiceCo
 @Composable
 internal fun TvPlaybackActionSelectors(
     versions: List<FileVersion>,
+    playbackVariants: List<PlaybackVariant>,
     currentVersion: FileVersion?,
     selectedVersionFileId: Int?,
     selectedAudioTrackIndex: Int?,
@@ -93,8 +97,14 @@ internal fun TvPlaybackActionSelectors(
     onSelectSubtitleTrack: (Int?) -> Unit,
     versionFocusRequester: FocusRequester,
 ) {
+    val editions = playbackEditions(versions, playbackVariants)
+    val showEditions = editions.hasEditionChoices()
+    val currentEdition = editions.firstOrNull { currentVersion?.fileId in it.fileIds }
+        ?: editions.firstOrNull()
+    val scopedVersions = if (showEditions) currentEdition?.versions.orEmpty() else versions
     val versionOptions = buildList {
-        add(
+        // Auto is global; omitting it here keeps quality changes within the edition.
+        if (!showEditions) add(
             TvSelectorOption(
                 key = "version:auto",
                 title = "Auto",
@@ -103,13 +113,13 @@ internal fun TvPlaybackActionSelectors(
                 onSelect = { onSelectVersion(null) },
             ),
         )
-        versions.forEach { version ->
+        scopedVersions.forEach { version ->
             add(
                 TvSelectorOption(
                     key = "version:${version.fileId}",
                     title = TvPlaybackFormatting.versionShortLabel(version),
                     detail = TvPlaybackFormatting.versionDetailLabel(version),
-                    selected = selectedVersionFileId == version.fileId,
+                    selected = (selectedVersionFileId ?: currentVersion?.fileId.takeIf { showEditions }) == version.fileId,
                     onSelect = { onSelectVersion(version.fileId) },
                 ),
             )
@@ -176,7 +186,7 @@ internal fun TvPlaybackActionSelectors(
         }
     }
     val versionValue = currentVersion?.let {
-        TvPlaybackFormatting.versionValueLabel(it, selectedVersionFileId)
+        TvPlaybackFormatting.versionValueLabel(it, selectedVersionFileId ?: it.fileId.takeIf { showEditions })
     }.orEmpty()
     val audioValue = currentVersion?.let {
         if (selectedAudioTrackIndex == null && !automaticAudioResolutionKnown) {
@@ -210,13 +220,32 @@ internal fun TvPlaybackActionSelectors(
         )
     }.orEmpty()
 
+    if (showEditions) {
+        TvAnchoredSelectorMenu(
+            icon = Icons.Filled.Layers,
+            label = "Edition",
+            value = currentEdition?.label.orEmpty(),
+            options = editions.map { edition ->
+                TvSelectorOption(
+                    key = "edition:${edition.id}",
+                    title = edition.label,
+                    detail = TvPlaybackFormatting.versionShortLabel(edition.defaultVersion),
+                    selected = edition.id == currentEdition?.id,
+                    onSelect = { onSelectVersion(edition.defaultVersion.fileId) },
+                )
+            },
+            triggerFocusRequester = versionFocusRequester,
+            interactive = currentVersion != null,
+            triggerStyle = TvSelectorTriggerStyle.CircularAction,
+        )
+    }
     TvAnchoredSelectorMenu(
         icon = Icons.Filled.Movie,
         label = "Version",
         value = versionValue,
         options = versionOptions,
-        triggerFocusRequester = versionFocusRequester,
-        interactive = currentVersion != null && versions.isNotEmpty(),
+        triggerFocusRequester = versionFocusRequester.takeUnless { showEditions },
+        interactive = currentVersion != null && selectorIsInteractive(scopedVersions.size),
         triggerStyle = TvSelectorTriggerStyle.CircularAction,
     )
     TvAnchoredSelectorMenu(
@@ -265,8 +294,7 @@ fun TvPlaybackSelectorRow(
     val editions = TvPlaybackFormatting.editions(versions)
     val currentEdition = TvPlaybackFormatting.currentEdition(versions, currentVersion)
     // Scope the version list to the current edition when editions are present
-    // (mirrors Apple's `scopedVersions`); Android has a single "Standard" group
-    // today so this is the full list.
+    // (mirrors Apple's `scopedVersions`).
     val scopedVersions = if (editions.size > 1 && currentEdition != null) {
         currentEdition.versions
     } else {

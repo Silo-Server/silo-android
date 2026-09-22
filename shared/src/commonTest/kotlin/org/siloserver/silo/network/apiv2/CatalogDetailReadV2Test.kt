@@ -28,10 +28,10 @@ class CatalogDetailReadV2Test {
     @Test fun detailProjectsPlaybackVariantsAndNestedStringFileIds() = runTest {
         val body = """{
             "content_id":"m1","type":"movie","title":"Film","cast":[],"crew":[],"subtitles":[],
-            "versions":[{"file_id":"42","duration":15060}],
+            "versions":[{"file_id":"42","duration":15060,"edition_raw":"Director’s Cut","edition_key":"directors_cut"}],
             "playback_variants":[{
-                "variant_id":"directors-cut","part_count":2,"total_duration":15120,"default_file_id":"42",
-                "parts":[{"part_index":0,"default_file_id":"42","total_duration":7560,"versions":[{"file_id":"42","duration":7560}]}]
+                "variant_id":"directors-cut","edition_raw":"Director’s Cut","edition_key":"directors_cut","part_count":2,"total_duration":15120,"default_file_id":"42",
+                "parts":[{"part_index":0,"default_file_id":"42","total_duration":7560,"versions":[{"file_id":"42","duration":7560,"edition_raw":"Director’s Cut","edition_key":"directors_cut"}]}]
             }]
         }"""
         val client = client(body)
@@ -39,7 +39,13 @@ class CatalogDetailReadV2Test {
             val result = assertIs<ApiResult.Success<*>>(
                 CatalogV2Api(client, ApiV2Gate.Unrestricted).itemDetail("m1"),
             ).data as org.siloserver.silo.model.catalog.ItemDetail
+            assertEquals("Director’s Cut", result.versions.single().editionRaw)
+            assertEquals("directors_cut", result.versions.single().editionKey)
             val variant = result.playbackVariants.single()
+            assertEquals("Director’s Cut", variant.editionRaw)
+            assertEquals("directors_cut", variant.editionKey)
+            assertEquals("Director’s Cut", variant.parts.single().versions.single().editionRaw)
+            assertEquals("directors_cut", variant.parts.single().versions.single().editionKey)
             assertEquals("directors-cut", variant.variantId)
             assertEquals(2, variant.partCount)
             assertEquals(15_120.0, variant.totalDuration)

@@ -1699,6 +1699,7 @@ private fun HeroActionRow(
 
                 TvPlaybackActionSelectors(
                     versions = selectorVersions,
+                    playbackVariants = if (isSeriesOrSeason) nextUpDetail?.playbackVariants.orEmpty() else detail.playbackVariants,
                     currentVersion = selectedVersion,
                     selectedVersionFileId = selectorSelectedFileId,
                     selectedAudioTrackIndex = selectorAudioIndex,

@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.HighQuality
+import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -32,6 +34,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +54,10 @@ import org.siloserver.silo.android.ui.theme.DarkOutline
 import org.siloserver.silo.android.ui.theme.DarkSurface
 import org.siloserver.silo.android.ui.theme.DarkSurfaceVariant
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.editionLabel
+import org.siloserver.silo.model.catalog.playbackEditions
+import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.player.DolbyVisionDetection
@@ -185,6 +195,78 @@ private fun SelectorSkeletonShape(width: Dp, height: Dp) {
     )
 }
 
+/** Edition and quality selections retain the original detail-list file identity. */
+@Composable
+fun EditionVersionSelectorRows(
+    detail: ItemDetail,
+    selectedVersionIndex: Int,
+    isAutoVersion: Boolean,
+    onVersionSelected: (Int?) -> Unit,
+) {
+    var showEditionPicker by remember(detail.contentId) { mutableStateOf(false) }
+    var showVersionPicker by remember(detail.contentId) { mutableStateOf(false) }
+    val selectedVersion = detail.versions.getOrNull(selectedVersionIndex)
+    val editions = playbackEditions(detail.versions, detail.playbackVariants)
+    val showEditions = editions.hasEditionChoices()
+    val currentEdition = editions.firstOrNull { selectedVersion?.fileId in it.fileIds }
+        ?: editions.firstOrNull()
+    val versions = if (showEditions) currentEdition?.versions.orEmpty() else detail.versions
+
+    if (showEditions) {
+        TrackSelectorRow(
+            icon = Icons.Outlined.Layers,
+            label = "Edition",
+            value = currentEdition?.label.orEmpty(),
+            onClick = { showEditionPicker = true },
+        )
+        PlaybackSelectorDivider()
+    }
+    TrackSelectorRow(
+        icon = Icons.Outlined.HighQuality,
+        label = "Version",
+        value = formatVersionValueLabel(selectedVersion, isAutoVersion && !showEditions),
+        onClick = { showVersionPicker = true },
+        interactive = versions.size > 1,
+    )
+    if (showEditionPicker) {
+        PickerSheetScaffold(title = "Select Edition", onDismiss = { showEditionPicker = false }) {
+            itemsIndexed(editions) { index, edition ->
+                PickerItem(
+                    title = edition.label,
+                    subtitle = formatVersionMenuLabel(edition.defaultVersion),
+                    badges = emptyList(),
+                    isSelected = edition.id == currentEdition?.id,
+                    onClick = {
+                        detail.versions.indexOfFirst { it.fileId == edition.defaultVersion.fileId }
+                            .takeIf { it >= 0 }?.let(onVersionSelected)
+                        showEditionPicker = false
+                    },
+                )
+                if (index < editions.lastIndex) HorizontalDivider(color = DarkOutline)
+            }
+        }
+    }
+    if (showVersionPicker) {
+        VersionPickerSheet(
+            versions = versions,
+            selectedIndex = versions.indexOfFirst { it.fileId == selectedVersion?.fileId }
+                .takeIf { it >= 0 && (!isAutoVersion || showEditions) },
+            onSelect = { index ->
+                if (index == null) {
+                    onVersionSelected(null)
+                } else {
+                    detail.versions.indexOfFirst { it.fileId == versions[index].fileId }
+                        .takeIf { it >= 0 }?.let(onVersionSelected)
+                }
+                showVersionPicker = false
+            },
+            onDismiss = { showVersionPicker = false },
+            // A global Auto reset could switch away from the chosen edition.
+            allowAuto = !showEditions,
+        )
+    }
+}
+
 // ── Bottom sheet pickers ──────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,9 +276,10 @@ fun VersionPickerSheet(
     selectedIndex: Int?,
     onSelect: (Int?) -> Unit,
     onDismiss: () -> Unit,
+    allowAuto: Boolean = true,
 ) {
     PickerSheetScaffold(title = "Select Version", onDismiss = onDismiss) {
-        item {
+        if (allowAuto) item {
             PickerItem(
                 title = "Auto",
                 subtitle = "Best available version",
@@ -529,6 +612,7 @@ fun formatSubtitleLabel(track: SubtitleTrack?): String {
 
 private fun formatVersionTitle(version: FileVersion): String {
     val parts = mutableListOf<String>()
+    version.editionLabel?.let(parts::add)
     formatResolutionLabel(version.resolution)?.let { parts.add(it) }
     formatHdrLabel(version)?.let { parts.add(it) }
     return parts.joinToString(" · ").ifBlank { "Unknown" }

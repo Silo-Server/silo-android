@@ -299,7 +299,9 @@ data class FileVersion(
     @SerialName("presentation_kind") val presentationKind: String? = null,
     @SerialName("presentation_group_key") val presentationGroupKey: String? = null,
     @SerialName("presentation_part_index") val presentationPartIndex: Int? = null,
-    @SerialName("presentation_part_total") val presentationPartTotal: Int? = null
+    @SerialName("presentation_part_total") val presentationPartTotal: Int? = null,
+    @SerialName("edition_raw") val editionRaw: String? = null,
+    @SerialName("edition_key") val editionKey: String? = null,
 )
 
 @Serializable

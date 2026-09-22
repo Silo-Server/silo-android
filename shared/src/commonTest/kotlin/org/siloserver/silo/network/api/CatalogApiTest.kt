@@ -73,6 +73,7 @@ class CatalogApiTest {
     fun `getItemVersions reads the v2 items envelope and checks string file ids`() = runTest {
         val (api, captured) = api(
             responseBody = """{"items":[{"file_id":"42","resolution":"1080p","codec_video":"h264","codec_audio":"aac",
+                "edition_raw":"International", "edition_key":"international",
                 "hdr":false,"container":"mkv","file_size":10,"duration":120,"bitrate":5000,"added_at":"2026-01-01T00:00:00Z"}]}""",
         )
 
@@ -81,6 +82,8 @@ class CatalogApiTest {
         assertEquals("/api/v2/catalog/items/item-1/versions", captured.path)
         assertIs<ApiResult.Success<*>>(result)
         assertEquals(42, (result as ApiResult.Success).data.single().fileId)
+        assertEquals("International", result.data.single().editionRaw)
+        assertEquals("international", result.data.single().editionKey)
     }
 
     @Test
