@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.collections
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,8 @@ import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.theme.Spacing
+import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -100,6 +103,19 @@ fun TvCollectionDetailScreen(
                     onItemClick(contentId)
                 },
                 onLoadMore = viewModel::loadMore,
+                // Same fixed 6-column metrics as the library collection page
+                // (and Browse). The adaptive default packed only 4 columns on a
+                // 1080p TV, so user-collection posters read far larger than
+                // server-collection ones opened from the same Collections tab.
+                fixedColumnCount = tvPresetGridColumns(6),
+                contentPadding = PaddingValues(
+                    start = Spacing.safeArea,
+                    top = Spacing.lg,
+                    end = Spacing.safeArea,
+                    bottom = Spacing.xxxl,
+                ),
+                horizontalSpacing = 20.dp,
+                verticalSpacing = 30.dp,
                 gridState = gridState,
                 restoreItemIndex = restoration.requesterItemIndex,
                 restoreItemFocusRequester = restoreItemFocusRequester,
