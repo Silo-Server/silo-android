@@ -12,25 +12,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.layout.resolveAudiobookTransportLayout
 
@@ -98,8 +92,9 @@ fun AudiobookTransport(
                 enabled = enabled,
                 modifier = Modifier.size(50.dp),
             ) {
-                Icon(
-                    imageVector = skipBackIcon(skipBackSeconds),
+                SeekIntervalIcon(
+                    forward = false,
+                    seconds = skipBackSeconds,
                     contentDescription = "Back $skipBackSeconds seconds",
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(32.dp),
@@ -131,8 +126,9 @@ fun AudiobookTransport(
                 enabled = enabled,
                 modifier = Modifier.size(50.dp),
             ) {
-                Icon(
-                    imageVector = skipForwardIcon(skipForwardSeconds),
+                SeekIntervalIcon(
+                    forward = true,
+                    seconds = skipForwardSeconds,
                     contentDescription = "Forward $skipForwardSeconds seconds",
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(32.dp),
@@ -154,22 +150,4 @@ fun AudiobookTransport(
             }
         }
     }
-}
-
-/**
- * Best matching glyph for the configured skip-back interval. Material ships
- * Replay10 / Replay30 numbered icons; other configured intervals (15 / 60s)
- * fall back to the generic rewind glyph — the exact value is still conveyed by
- * the button's content description and the secondary-bar skip chip.
- */
-private fun skipBackIcon(seconds: Int): ImageVector = when (seconds) {
-    10 -> Icons.Filled.Replay10
-    30 -> Icons.Filled.Replay30
-    else -> Icons.Filled.FastRewind
-}
-
-private fun skipForwardIcon(seconds: Int): ImageVector = when (seconds) {
-    10 -> Icons.Filled.Forward10
-    30 -> Icons.Filled.Forward30
-    else -> Icons.Filled.FastForward
 }

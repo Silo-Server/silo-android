@@ -20,6 +20,15 @@ object LanguageOptions {
     /** Wire value meaning "no preference"; the server stores this as null. */
     const val UNSET = ""
 
+    /**
+     * Contract revision whose language floor the pickers offer. Revision 8
+     * added regional and script tags (`zh-Hans`, `en-US`, ...); this client
+     * has not adopted them yet, so the picker keeps the revision-7 floor even
+     * though the generated bindings now carry the newer entries. Exact current
+     * and server-suggested values stay selectable regardless.
+     */
+    internal const val FLOOR_REVISION = 7
+
     fun namedOptions(
         key: String,
         currentValue: String? = null,
@@ -41,7 +50,7 @@ object LanguageOptions {
             values += value
         }
 
-        SettingPresentationMetadata.suggestedValues(key).forEach { add(it, false) }
+        SettingPresentationMetadata.suggestedValues(key, FLOOR_REVISION).forEach { add(it, false) }
         runtimeValues.forEach { add(it, false) }
         currentValue?.let { add(it, true) }
 

@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 7
+    const val REVISION = 9
 
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
@@ -72,6 +72,10 @@ object SettingKeys {
     const val PLAYBACK_SUBTITLE_MODE = "playback.subtitle_mode"
     /** Audio sync offset */
     const val PLAYER_AUDIO_SYNC_MS = "player.audio_sync_ms"
+    /** Audiobook rewind interval */
+    const val PLAYER_AUDIOBOOK_SKIP_BACK_SECONDS = "player.audiobook_skip_back_seconds"
+    /** Audiobook fast-forward interval */
+    const val PLAYER_AUDIOBOOK_SKIP_FORWARD_SECONDS = "player.audiobook_skip_forward_seconds"
     /** Dolby Vision */
     const val PLAYER_DOLBY_VISION_ENABLED = "player.dolby_vision_enabled"
     /** Dolby Vision Profile 7 fallback */
@@ -98,14 +102,24 @@ object SettingKeys {
     const val PLAYER_SUBTITLE_SYNC_MS = "player.subtitle_sync_ms"
     /** Video sizing */
     const val PLAYER_VIDEO_GRAVITY = "player.video_gravity"
+    /** Video rewind interval */
+    const val PLAYER_VIDEO_SKIP_BACK_SECONDS = "player.video_skip_back_seconds"
+    /** Video fast-forward interval */
+    const val PLAYER_VIDEO_SKIP_FORWARD_SECONDS = "player.video_skip_forward_seconds"
     /** Search scope */
     const val SEARCH_MEDIA_SCOPE = "search.media_scope"
     /** Match device caption settings */
     const val SUBTITLE_MATCHES_DEVICE = "subtitle.matches_device"
     /** Poster badges */
     const val UI_CARD_OVERLAYS = "ui.card_overlays"
+    /** Card overlays enabled */
+    const val UI_CARD_OVERLAYS_ENABLED = "ui.card_overlays_enabled"
     /** Media cards */
     const val UI_CARD_PRESENTATION = "ui.card_presentation"
+    /** Card quick actions */
+    const val UI_CARD_QUICK_ACTIONS = "ui.card_quick_actions"
+    /** Card quick actions enabled */
+    const val UI_CARD_QUICK_ACTIONS_ENABLED = "ui.card_quick_actions_enabled"
     /** Custom CSS */
     const val UI_CUSTOM_CSS = "ui.custom_css"
     /** Custom theme variables */
@@ -156,6 +170,8 @@ object SettingKeys {
         PLAYBACK_SUBTITLE_LANGUAGE,
         PLAYBACK_SUBTITLE_MODE,
         PLAYER_AUDIO_SYNC_MS,
+        PLAYER_AUDIOBOOK_SKIP_BACK_SECONDS,
+        PLAYER_AUDIOBOOK_SKIP_FORWARD_SECONDS,
         PLAYER_DOLBY_VISION_ENABLED,
         PLAYER_DV_PROFILE7_HDR10_FALLBACK,
         PLAYER_HDR_ENABLED,
@@ -166,9 +182,14 @@ object SettingKeys {
         PLAYER_SLEEP_TIMER_DEFAULT_MINUTES,
         PLAYER_SUBTITLE_SYNC_MS,
         PLAYER_VIDEO_GRAVITY,
+        PLAYER_VIDEO_SKIP_BACK_SECONDS,
+        PLAYER_VIDEO_SKIP_FORWARD_SECONDS,
         SEARCH_MEDIA_SCOPE,
         UI_CARD_OVERLAYS,
+        UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_PRESENTATION,
+        UI_CARD_QUICK_ACTIONS,
+        UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_CUSTOM_CSS,
         UI_CUSTOM_THEME_VARS,
         UI_DATE_FORMAT,
@@ -197,6 +218,13 @@ object SettingKeys {
         SUBTITLE_MATCHES_DEVICE,
     )
 
+    /** Keys another definition supersedes. Still readable, never offered
+     * as a second control beside their replacement: the server mirrors the
+     * pair at write time, so editing either would rewrite the other. */
+    val DEPRECATED: Set<String> = setOf(
+        PLAYBACK_AUTO_SKIP_INTRO,
+    )
+
     val BOOLEAN_KEYS: Set<String> = setOf(
         PLAYBACK_AUTO_PLAY_NEXT,
         PLAYBACK_AUTO_PLAY_NEXT_PREVIEW,
@@ -209,6 +237,8 @@ object SettingKeys {
         PLAYER_HDR_ENABLED,
         PLAYER_MATCH_FRAME_RATE,
         PLAYER_SEEK_CACHE_ENABLED,
+        UI_CARD_OVERLAYS_ENABLED,
+        UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_HIGH_CONTRAST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
     )
@@ -235,13 +265,18 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("bn", 1),
                 SettingSuggestedOption("bg", 1),
                 SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("zh-Hans", 8),
+                SettingSuggestedOption("zh-Hant", 8),
                 SettingSuggestedOption("hr", 1),
                 SettingSuggestedOption("cs", 1),
                 SettingSuggestedOption("da", 1),
                 SettingSuggestedOption("nl", 1),
                 SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("en-US", 8),
+                SettingSuggestedOption("en-GB", 8),
                 SettingSuggestedOption("fi", 1),
                 SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("fr-CA", 8),
                 SettingSuggestedOption("de", 1),
                 SettingSuggestedOption("el", 1),
                 SettingSuggestedOption("he", 1),
@@ -256,11 +291,15 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("fa", 1),
                 SettingSuggestedOption("pl", 1),
                 SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("pt-BR", 8),
+                SettingSuggestedOption("pt-PT", 8),
                 SettingSuggestedOption("ro", 1),
                 SettingSuggestedOption("ru", 1),
                 SettingSuggestedOption("sk", 1),
                 SettingSuggestedOption("sl", 1),
                 SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("es-419", 8),
+                SettingSuggestedOption("es-ES", 8),
                 SettingSuggestedOption("sv", 1),
                 SettingSuggestedOption("ta", 1),
                 SettingSuggestedOption("te", 1),
@@ -277,13 +316,18 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("bn", 1),
                 SettingSuggestedOption("bg", 1),
                 SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("zh-Hans", 8),
+                SettingSuggestedOption("zh-Hant", 8),
                 SettingSuggestedOption("hr", 1),
                 SettingSuggestedOption("cs", 1),
                 SettingSuggestedOption("da", 1),
                 SettingSuggestedOption("nl", 1),
                 SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("en-US", 8),
+                SettingSuggestedOption("en-GB", 8),
                 SettingSuggestedOption("fi", 1),
                 SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("fr-CA", 8),
                 SettingSuggestedOption("de", 1),
                 SettingSuggestedOption("el", 1),
                 SettingSuggestedOption("he", 1),
@@ -298,11 +342,15 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("fa", 1),
                 SettingSuggestedOption("pl", 1),
                 SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("pt-BR", 8),
+                SettingSuggestedOption("pt-PT", 8),
                 SettingSuggestedOption("ro", 1),
                 SettingSuggestedOption("ru", 1),
                 SettingSuggestedOption("sk", 1),
                 SettingSuggestedOption("sl", 1),
                 SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("es-419", 8),
+                SettingSuggestedOption("es-ES", 8),
                 SettingSuggestedOption("sv", 1),
                 SettingSuggestedOption("ta", 1),
                 SettingSuggestedOption("te", 1),
@@ -319,13 +367,18 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("bn", 1),
                 SettingSuggestedOption("bg", 1),
                 SettingSuggestedOption("zh", 1),
+                SettingSuggestedOption("zh-Hans", 8),
+                SettingSuggestedOption("zh-Hant", 8),
                 SettingSuggestedOption("hr", 1),
                 SettingSuggestedOption("cs", 1),
                 SettingSuggestedOption("da", 1),
                 SettingSuggestedOption("nl", 1),
                 SettingSuggestedOption("en", 1),
+                SettingSuggestedOption("en-US", 8),
+                SettingSuggestedOption("en-GB", 8),
                 SettingSuggestedOption("fi", 1),
                 SettingSuggestedOption("fr", 1),
+                SettingSuggestedOption("fr-CA", 8),
                 SettingSuggestedOption("de", 1),
                 SettingSuggestedOption("el", 1),
                 SettingSuggestedOption("he", 1),
@@ -340,11 +393,15 @@ object SettingPresentationMetadata {
                 SettingSuggestedOption("fa", 1),
                 SettingSuggestedOption("pl", 1),
                 SettingSuggestedOption("pt", 1),
+                SettingSuggestedOption("pt-BR", 8),
+                SettingSuggestedOption("pt-PT", 8),
                 SettingSuggestedOption("ro", 1),
                 SettingSuggestedOption("ru", 1),
                 SettingSuggestedOption("sk", 1),
                 SettingSuggestedOption("sl", 1),
                 SettingSuggestedOption("es", 1),
+                SettingSuggestedOption("es-419", 8),
+                SettingSuggestedOption("es-ES", 8),
                 SettingSuggestedOption("sv", 1),
                 SettingSuggestedOption("ta", 1),
                 SettingSuggestedOption("te", 1),

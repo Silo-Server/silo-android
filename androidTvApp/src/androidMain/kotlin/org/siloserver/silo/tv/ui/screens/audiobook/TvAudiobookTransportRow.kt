@@ -14,17 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FastForward
-import androidx.compose.material.icons.filled.FastRewind
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
-import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.runtime.Composable
+import org.siloserver.silo.tv.ui.components.TvSeekIntervalIcon
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -89,7 +84,8 @@ fun TvAudiobookTransportRow(
             onClick = onPrevChapter,
         )
         TransportIconButton(
-            icon = skipBackIcon(skipBackSeconds),
+            icon = null,
+            seekGlyph = false to skipBackSeconds,
             description = "Skip back $skipBackSeconds seconds",
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
@@ -107,7 +103,8 @@ fun TvAudiobookTransportRow(
             onClick = onPlayPause,
         )
         TransportIconButton(
-            icon = skipForwardIcon(skipForwardSeconds),
+            icon = null,
+            seekGlyph = true to skipForwardSeconds,
             description = "Skip forward $skipForwardSeconds seconds",
             focusSuppressed = focusSuppressed,
             buttonSize = buttonSize,
@@ -126,7 +123,7 @@ fun TvAudiobookTransportRow(
 
 @Composable
 private fun TransportIconButton(
-    icon: ImageVector,
+    icon: ImageVector?,
     description: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
@@ -136,6 +133,8 @@ private fun TransportIconButton(
     buttonSize: Dp = 68.dp,
     primaryButtonWidth: Dp = 112.dp,
     primaryButtonHeight: Dp = 58.dp,
+    /** (forward, seconds) for a relative-seek button; drawn with the interval. */
+    seekGlyph: Pair<Boolean, Int>? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -188,29 +187,21 @@ private fun TransportIconButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(symbolSize),
-        )
+        if (seekGlyph != null) {
+            TvSeekIntervalIcon(
+                forward = seekGlyph.first,
+                seconds = seekGlyph.second,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(symbolSize),
+            )
+        } else if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(symbolSize),
+            )
+        }
     }
-}
-
-/**
- * Best matching glyph for the configured skip interval. Material ships the
- * numbered Replay10 / Replay30 (and Forward10 / Forward30) icons; other
- * configured values (15 / 60s) fall back to the generic rewind / fast-forward
- * glyph — the exact value is still in the button's content description.
- */
-private fun skipBackIcon(seconds: Int): ImageVector = when (seconds) {
-    10 -> Icons.Filled.Replay10
-    30 -> Icons.Filled.Replay30
-    else -> Icons.Filled.FastRewind
-}
-
-private fun skipForwardIcon(seconds: Int): ImageVector = when (seconds) {
-    10 -> Icons.Filled.Forward10
-    30 -> Icons.Filled.Forward30
-    else -> Icons.Filled.FastForward
 }

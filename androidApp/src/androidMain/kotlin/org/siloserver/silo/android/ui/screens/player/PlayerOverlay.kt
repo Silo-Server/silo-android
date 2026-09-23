@@ -117,20 +117,25 @@ fun PlayerOverlay(
         if (inRoom && isRoomHost) showCloseConfirm = true else onBack()
     }
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
+    // Resolved profile-wide video intervals; read at press time so a change
+    // made in settings applies to the next skip without restarting playback.
+    val seekIntervals by viewModel.seekIntervals.collectAsState()
     val gatedSkipForward: () -> Unit = {
         if (seekEnabled) {
+            val step = viewModel.seekIntervals.value.forwardSeconds.toDouble()
             if (inRoom) {
-                val forward = state.position + 10.0
+                val forward = state.position + step
                 gatedSeek(if (state.duration > 0.0) forward.coerceAtMost(state.duration) else forward)
             } else {
-                viewModel.onSkipBy(10.0)
+                viewModel.onSkipBy(step)
             }
         }
     }
     val gatedSkipBackward: () -> Unit = {
         if (seekEnabled) {
-            if (inRoom) gatedSeek((state.position - 10.0).coerceAtLeast(0.0))
-            else viewModel.onSkipBy(-10.0)
+            val step = viewModel.seekIntervals.value.backSeconds.toDouble()
+            if (inRoom) gatedSeek((state.position - step).coerceAtLeast(0.0))
+            else viewModel.onSkipBy(-step)
         }
     }
     val gatedPlayPause: () -> Unit = { if (playPauseEnabled) onPlayPause() }
@@ -200,6 +205,8 @@ fun PlayerOverlay(
                 onSkipForward = gatedSkipForward,
                 onSkipBackward = gatedSkipBackward,
                 seekEnabled = seekEnabled,
+                skipBackSeconds = seekIntervals.backSeconds,
+                skipForwardSeconds = seekIntervals.forwardSeconds,
                 onFastForwardHold = gatedFastForwardHold,
                 onPinchVideoGravity = stepVideoGravity,
                 onDismiss = handleBack,
@@ -368,6 +375,8 @@ fun PlayerOverlay(
                 onBack = handleBack,
                 onPlayPause = gatedPlayPause,
                 onSeek = gatedSeek,
+                skipBackSeconds = seekIntervals.backSeconds,
+                skipForwardSeconds = seekIntervals.forwardSeconds,
                 onSkipForward = gatedSkipForward,
                 onSkipBackward = gatedSkipBackward,
                 onToggleOrientationLock = {

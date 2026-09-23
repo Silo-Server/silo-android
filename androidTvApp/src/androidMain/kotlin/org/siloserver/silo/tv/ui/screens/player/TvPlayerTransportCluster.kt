@@ -16,10 +16,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ClosedCaption
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.runtime.Composable
@@ -43,6 +41,7 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
+import org.siloserver.silo.tv.ui.components.TvSeekIntervalIcon
 
 /**
  * Bottom transport row mirroring `iosApp/.../tvOS/TVPlayerTransportCluster.swift`.
@@ -50,7 +49,8 @@ import androidx.tv.material3.Icon
  * Primary group (skipBack / playPause / skipForward) pinned left; secondary
  * group (options / close) pushed right. Uniform circular buttons that flip
  * white-on-black ↔ black-on-white when focused (white-fill inversion only — no
- * focus scale). Skip back is 10s; skip forward is 30s. There is no Back button
+ * focus scale). The skip buttons use the profile-wide video intervals
+ * (10s back / 30s forward on older servers). There is no Back button
  * and no separate subtitles button — `options` (⋯) opens the floating HUD,
  * whose Subtitles tab now owns the track/style/delay controls; `close` (xmark)
  * exits the player. Up returns focus to the scrubber.
@@ -73,6 +73,9 @@ fun TvPlayerTransportCluster(
     playPauseFocus: FocusRequester,
     onMoveUpToScrubber: () -> Unit,
     modifier: Modifier = Modifier,
+    // Resolved video intervals behind [onSkipBack]/[onSkipForward].
+    skipBackSeconds: Int = 10,
+    skipForwardSeconds: Int = 30,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -82,8 +85,9 @@ fun TvPlayerTransportCluster(
         // Primary group — pinned left.
         Row(verticalAlignment = Alignment.CenterVertically) {
             TransportIconButton(
-                icon = Icons.Filled.Replay10,
-                description = "Skip back 10 seconds",
+                icon = null,
+                seekGlyph = SeekGlyph(forward = false, seconds = skipBackSeconds),
+                description = "Skip back $skipBackSeconds seconds",
                 onClick = onSkipBack,
                 onMoveUp = onMoveUpToScrubber,
             )
@@ -98,8 +102,9 @@ fun TvPlayerTransportCluster(
             )
             DockGap()
             TransportIconButton(
-                icon = Icons.Filled.Forward30,
-                description = "Skip forward 30 seconds",
+                icon = null,
+                seekGlyph = SeekGlyph(forward = true, seconds = skipForwardSeconds),
+                description = "Skip forward $skipForwardSeconds seconds",
                 onClick = onSkipForward,
                 onMoveUp = onMoveUpToScrubber,
             )
@@ -147,12 +152,13 @@ private fun DockGap() {
 
 @Composable
 private fun TransportIconButton(
-    icon: ImageVector,
+    icon: ImageVector?,
     description: String,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
     isPrimary: Boolean = false,
     onMoveUp: () -> Unit = {},
+    seekGlyph: SeekGlyph? = null,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
@@ -198,11 +204,24 @@ private fun TransportIconButton(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(symbolSize),
-        )
+        if (seekGlyph != null) {
+            TvSeekIntervalIcon(
+                forward = seekGlyph.forward,
+                seconds = seekGlyph.seconds,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(symbolSize),
+            )
+        } else if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconTint,
+                modifier = Modifier.size(symbolSize),
+            )
+        }
     }
 }
+
+/** A relative-seek button's glyph: the interval it actually skips. */
+private data class SeekGlyph(val forward: Boolean, val seconds: Int)

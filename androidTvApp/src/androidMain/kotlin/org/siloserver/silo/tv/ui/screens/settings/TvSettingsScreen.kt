@@ -49,16 +49,23 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
+import org.siloserver.silo.common.settings.SeekIntervalSettingsUiState
+import org.siloserver.silo.model.settings.SeekDirection
+import org.siloserver.silo.model.settings.SeekIntervalSupport
+import org.siloserver.silo.model.settings.SeekIntervals
+import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
-import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.compose.ui.draw.alpha
@@ -271,6 +278,7 @@ fun TvSettingsScreen(
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
         onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
         onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,
+        seekIntervals = viewModel.seekIntervals,
         onSubtitleModeChanged = viewModel::onSubtitleModeChanged,
         onSubtitleLanguageChanged = viewModel::onSubtitleLanguageChanged,
         onMetadataLanguageChanged = viewModel::onMetadataLanguageChanged,
@@ -413,6 +421,7 @@ private fun SettingsSplitLayout(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    seekIntervals: SeekIntervalSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
     onMetadataLanguageChanged: (String) -> Unit,
@@ -489,6 +498,7 @@ private fun SettingsSplitLayout(
             onPassOutThresholdChanged = onPassOutThresholdChanged,
             onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
             onResetPlaybackOverrides = onResetPlaybackOverrides,
+            seekIntervals = seekIntervals,
             onSubtitleModeChanged = onSubtitleModeChanged,
             onSubtitleLanguageChanged = onSubtitleLanguageChanged,
             onMetadataLanguageChanged = onMetadataLanguageChanged,
@@ -755,6 +765,7 @@ private fun SettingsDetailPane(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    seekIntervals: SeekIntervalSettingsModel? = null,
     onSubtitleModeChanged: (SubtitleMode) -> Unit,
     onSubtitleLanguageChanged: (String) -> Unit,
     onMetadataLanguageChanged: (String) -> Unit,
@@ -823,6 +834,7 @@ private fun SettingsDetailPane(
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
                 onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
                 onResetPlaybackOverrides = onResetPlaybackOverrides,
+                seekIntervals = seekIntervals,
             )
             TvSettingsCategory.Subtitles -> TvSubtitleSettingsPane(
                 state = state,
@@ -1052,9 +1064,15 @@ private fun TvPlaybackSettingsPane(
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
+    seekIntervals: SeekIntervalSettingsModel? = null,
 ) {
     val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
+    val seekState = seekIntervals?.state?.collectAsState()?.value
+    var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
+    // Where focus goes when a skip-interval group drops the focused row and
+    // has no row of its own left to take it (the row just above the groups).
+    val seekFallbackFocus = remember { FocusRequester() }
     val audioLanguages = remember(state.audioLanguage, state.audioLanguageSuggestions) {
         LanguageOptions.options(
             key = SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
@@ -1154,6 +1172,29 @@ private fun TvPlaybackSettingsPane(
                     label = "Still-Watching Prompt After",
                     value = passOutThresholdLabel(state.passOutThreshold),
                     onClick = { activePicker = PlaybackPicker.PassOutThreshold },
+                    focusRequester = seekFallbackFocus,
+                )
+            }
+        }
+        if (seekState != null) {
+            item {
+                TvSeekIntervalGroup(
+                    media = SeekMedia.Video,
+                    state = seekState,
+                    onOpenPicker = { direction -> seekPicker = SeekMedia.Video to direction },
+                    onImportLegacyAudiobook = {},
+                    onRetry = { seekIntervals?.refresh() },
+                    fallbackFocus = seekFallbackFocus,
+                )
+            }
+            item {
+                TvSeekIntervalGroup(
+                    media = SeekMedia.Audiobook,
+                    state = seekState,
+                    onOpenPicker = { direction -> seekPicker = SeekMedia.Audiobook to direction },
+                    onImportLegacyAudiobook = { seekIntervals?.importLegacyAudiobook() },
+                    onRetry = { seekIntervals?.refresh() },
+                    fallbackFocus = seekFallbackFocus,
                 )
             }
         }
@@ -1253,7 +1294,158 @@ private fun TvPlaybackSettingsPane(
         )
         null -> Unit
     }
+
+    val openSeekPicker = seekPicker
+    if (openSeekPicker != null && seekState != null) {
+        val (media, direction) = openSeekPicker
+        val pair = if (media == SeekMedia.Video) seekState.video else seekState.audiobook
+        TvSettingsPickerSheet(
+            title = seekIntervalGroupTitle(media) + " " + seekDirectionLabel(direction),
+            options = seekState.choices.map { PickerOption(it.toString(), SeekIntervals.label(it)) },
+            selectedId = pair.seconds(direction).toString(),
+            onSelect = { id ->
+                id.toIntOrNull()?.let { seekIntervals?.select(media, direction, it) }
+                seekPicker = null
+            },
+            onDismiss = { seekPicker = null },
+        )
+    }
 }
+
+private fun seekIntervalGroupTitle(media: SeekMedia): String = when (media) {
+    SeekMedia.Video -> "Video"
+    SeekMedia.Audiobook -> "Audiobooks"
+}
+
+private fun seekDirectionLabel(direction: SeekDirection): String = when (direction) {
+    SeekDirection.Back -> "Skip Back"
+    SeekDirection.Forward -> "Skip Forward"
+}
+
+/**
+ * "Video" or "Audiobooks" group of the profile-wide skip intervals (settings
+ * revision 9). On an older server it explains the legacy behavior instead of
+ * offering rows that could not be saved; while the first check is pending it
+ * shows no values, and after a failed check it offers a retry.
+ */
+@Composable
+private fun TvSeekIntervalGroup(
+    media: SeekMedia,
+    state: SeekIntervalSettingsUiState,
+    onOpenPicker: (SeekDirection) -> Unit,
+    onImportLegacyAudiobook: () -> Unit,
+    onRetry: () -> Unit,
+    fallbackFocus: FocusRequester,
+) {
+    val showRows = state.editable
+    val showImport = showRows && media == SeekMedia.Audiobook && state.showLegacyImport
+    val showRetry = state.checkFailed
+
+    // The import and retry rows disappear once they succeed. If one of them
+    // held focus, hand it to this group's first row (or the row above the
+    // groups) instead of letting it fall to the root.
+    val firstRowFocus = remember { FocusRequester() }
+    var focusedAction by remember { mutableStateOf<SeekGroupAction?>(null) }
+    var handoffLanded by remember { mutableStateOf(false) }
+    val latestShowImport by rememberUpdatedState(showImport)
+    val latestShowRetry by rememberUpdatedState(showRetry)
+    val actionGone = when (focusedAction) {
+        SeekGroupAction.Import -> !showImport
+        SeekGroupAction.Retry -> !showRetry
+        null -> false
+    }
+    LaunchedEffect(actionGone) {
+        if (!actionGone) return@LaunchedEffect
+        focusedAction = null
+        handoffLanded = false
+        if (showRows) {
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = firstRowFocus::requestFocus,
+                isFocused = { handoffLanded },
+            )
+        } else {
+            withFrameNanos { }
+            fallbackFocus.claimFocusOrReport(target = "settings_seek_interval", action = "action_row_removed")
+        }
+    }
+    // Ignores the callback a removed row fires on detach: by then the latest
+    // visibility is already false, and the handoff above needs the old value.
+    fun trackActionFocus(action: SeekGroupAction, visible: () -> Boolean) = Modifier.onFocusChanged {
+        if (!visible()) return@onFocusChanged
+        if (it.isFocused) {
+            focusedAction = action
+        } else if (focusedAction == action) {
+            focusedAction = null
+        }
+    }
+    val trackHandoff = Modifier.onFocusChanged { if (it.isFocused) handoffLanded = true }
+
+    SettingsGroup(title = seekIntervalGroupTitle(media)) {
+        when (state.support) {
+            SeekIntervalSupport.Unsupported -> SettingsFooterText(
+                text = when (media) {
+                    SeekMedia.Video ->
+                        "This server uses fixed skip intervals for video. Update the server to choose " +
+                            "them for this profile."
+                    SeekMedia.Audiobook ->
+                        "This server does not sync skip intervals. Set them from the audiobook player; " +
+                            "they stay on this TV."
+                },
+            )
+            SeekIntervalSupport.Unknown -> SettingsFooterText(
+                text = "Checking whether this server stores skip intervals for this profile…",
+            )
+            SeekIntervalSupport.Unavailable -> {
+                SettingsFooterText(
+                    text = when (media) {
+                        SeekMedia.Video ->
+                            "Couldn't check whether this server stores skip intervals for this profile. " +
+                                "Players use the standard intervals until it answers."
+                        SeekMedia.Audiobook ->
+                            "Couldn't check whether this server stores skip intervals for this profile. " +
+                                "Until it answers, intervals set in the audiobook player stay on this TV."
+                    },
+                )
+                SettingsActionRow(
+                    label = "Try Again",
+                    onClick = onRetry,
+                    modifier = trackActionFocus(SeekGroupAction.Retry) { latestShowRetry },
+                )
+            }
+            SeekIntervalSupport.Supported -> {
+                val pair = if (media == SeekMedia.Video) state.video else state.audiobook
+                SeekDirection.entries.forEach { direction ->
+                    SettingsValueRow(
+                        label = seekDirectionLabel(direction),
+                        value = SeekIntervals.label(pair.seconds(direction)),
+                        onClick = { onOpenPicker(direction) },
+                        focusRequester = if (direction == SeekDirection.Back) firstRowFocus else null,
+                        modifier = if (direction == SeekDirection.Back) trackHandoff else Modifier,
+                    )
+                }
+                if (showImport) {
+                    // Stays enabled while importing so it keeps focus; the model
+                    // ignores a second press until the first import finishes.
+                    SettingsActionRow(
+                        label = if (state.importInProgress) "Importing…" else "Use This TV's Audiobook Intervals",
+                        onClick = onImportLegacyAudiobook,
+                        modifier = trackActionFocus(SeekGroupAction.Import) { latestShowImport },
+                    )
+                    SettingsFooterText(text = "${state.legacyAudiobookSummary}. Uploads them to this profile.")
+                }
+                SettingsFooterText(text = "Applies to every device on this profile.")
+                state.saveErrorFor(media)?.let { SettingsFooterText(text = it) }
+            }
+        }
+        if (media == SeekMedia.Audiobook) {
+            state.importMessage?.let { SettingsFooterText(text = it) }
+        }
+    }
+}
+
+private enum class SeekGroupAction { Import, Retry }
 
 @Composable
 private fun TvSubtitleSettingsPane(

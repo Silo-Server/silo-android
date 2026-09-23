@@ -9,6 +9,9 @@ import org.siloserver.silo.common.settings.CardPresentationUiState
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
+import org.siloserver.silo.common.settings.SeekIntervalStore
+import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
@@ -126,10 +129,15 @@ class SettingsViewModel(
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
+    private val seekIntervalStore: SeekIntervalStore,
+    audiobookSettingsStore: AudiobookSettingsStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    /** Profile-wide video and audiobook skip intervals (settings revision 9). */
+    val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
 
     init {
         loadUserInfo()
@@ -137,6 +145,8 @@ class SettingsViewModel(
         observePlaybackBehaviorSettings()
         observeNotifications()
         observeCardPresentation()
+        // Opening Settings is a refresh edge for the seek-interval support probe.
+        seekIntervals.refresh()
     }
 
     private fun loadUserInfo() {
@@ -428,6 +438,7 @@ class SettingsViewModel(
             overlayPrefsStore.clear()
             activeProfileStore.reset()
             cardPresentationStore.clear()
+            seekIntervalStore.clear()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }

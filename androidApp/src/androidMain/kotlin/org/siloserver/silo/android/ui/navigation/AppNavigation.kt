@@ -16,6 +16,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
+import org.siloserver.silo.android.cast.GOOGLE_CAST_LEGACY_SEEK_INTERVALS
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingWrongServerScreen
 import org.siloserver.silo.android.ui.screens.auth.DevicePairingUnknownServerScreen
 import androidx.compose.runtime.collectAsState
@@ -148,6 +150,7 @@ fun AppNavigation(
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
+    val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
@@ -587,6 +590,9 @@ fun AppNavigation(
                     overlayPrefsStore.clear()
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
+                    // Not seekIntervalStore.clear(): the registry switch has already
+                    // reset it and started hydrating the new server's profile through
+                    // its identity flow, and a clear here would discard that load.
                     navController.navigate(target) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
@@ -601,7 +607,7 @@ fun AppNavigation(
             ProfileSelectionScreen(
                 onNavigateToHome = {
                     // The switch-profile paths dropped the per-profile card
-                    // caches; re-hydrate for the profile just picked. The
+                    // and seek-interval caches; re-hydrate for the profile just picked. The
                     // providers above the graph only re-run when the profile id
                     // itself changes, so re-selecting the SAME profile would
                     // otherwise render cleared (default) cards until the next
@@ -609,6 +615,7 @@ fun AppNavigation(
                     navScope.launch {
                         overlayPrefsStore.hydrateIfNeeded()
                         cardPresentationStore.hydrateIfNeeded()
+                        seekIntervalStore.hydrateIfNeeded()
                     }
                     // Route through the tour gate: OnboardingTourScreen checks
                     // server-side state and immediately hands off to Home when
@@ -735,6 +742,7 @@ fun AppNavigation(
                     overlayPrefsStore.clear()
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
+                    seekIntervalStore.clear()
                 },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
@@ -1333,11 +1341,15 @@ fun AppNavigation(
                 Route.Downloads.route,
                 Route.Calendar.route,
             )
+            // Profile-wide video intervals; the mini bar's 30s/30s on older servers.
+            val castSeekIntervals = rememberVideoSeekIntervals(GOOGLE_CAST_LEGACY_SEEK_INTERVALS)
             GoogleCastMiniBar(
                 castState = googleCastState,
                 onPlayPause = { googleCastManager.togglePlayback() },
-                onSkipBack = { googleCastManager.skipBy(-30.0) },
-                onSkipForward = { googleCastManager.skipBy(30.0) },
+                onSkipBack = { googleCastManager.skipBy(-castSeekIntervals.backSeconds.toDouble()) },
+                onSkipForward = { googleCastManager.skipBy(castSeekIntervals.forwardSeconds.toDouble()) },
+                skipBackSeconds = castSeekIntervals.backSeconds,
+                skipForwardSeconds = castSeekIntervals.forwardSeconds,
                 onSelectSubtitle = { googleCastManager.selectSubtitleTrack(it) },
                 onStop = { googleCastManager.disconnect() },
                 modifier = Modifier

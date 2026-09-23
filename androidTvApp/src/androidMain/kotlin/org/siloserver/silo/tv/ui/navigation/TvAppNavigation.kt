@@ -349,6 +349,7 @@ fun TvAppNavigation(
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
+    val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
     val watchNextSeeder: WatchNextSeeder = koinInject()
     val siloCastReceiver: TvSiloCastReceiver = koinInject()
@@ -651,6 +652,8 @@ fun TvAppNavigation(
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
+                        // Not seekIntervalStore.clear(): its identity flow already reset
+                        // it for the new server and is hydrating; clearing would drop that.
                         watchNextSeeder.clear()
                         watchNextSeeder.seedNow()
                         watchNextSeeder.enqueuePeriodic()
@@ -711,6 +714,10 @@ fun TvAppNavigation(
                     // than whatever was last synced.
                     watchNextSeeder.seedNow()
                     watchNextSeeder.enqueuePeriodic()
+                    // The switch-profile paths cleared the seek intervals; the
+                    // identity flow only reloads when the profile id changes, so
+                    // re-selecting the same profile needs this.
+                    scope.launch { seekIntervalStore.hydrateIfNeeded() }
                 },
                 onAddProfile = {
                     navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
@@ -821,6 +828,7 @@ fun TvAppNavigation(
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
+                        seekIntervalStore.clear()
                         // Drop our Watch Next rows + cancel the periodic refresh so
                         // the launcher doesn't keep showing the signed-out user's
                         // progress.
@@ -847,6 +855,7 @@ fun TvAppNavigation(
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
+                        seekIntervalStore.clear()
                         // Clear the previous profile's Watch Next rows before
                         // landing on the picker; the new profile will re-seed
                         // via [onProfileSelected].

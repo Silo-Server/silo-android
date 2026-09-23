@@ -92,6 +92,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.settings.SeekIntervalStore
+import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.cast.SiloCastPlaybackState
@@ -154,12 +156,12 @@ private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // recover from a wedged init instead of stranding a permanent black screen and
 // blocking every later switch behind the held mutex. 25s splits that range.
 private const val ENGINE_SWITCH_TIMEOUT_MS = 25_000L
-// Skip back is 10s; skip forward is 30s, matching tvOS (gobackward.10 /
-// goforward.30).
-private const val SKIP_BACK_MS = 10_000L
+// Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
+// (gobackward.10 / goforward.30). A server with the profile-wide
+// player.video_skip_* settings replaces them (see resolvedSkip*Ms below).
+private val LEGACY_TV_VIDEO_SEEK_INTERVALS = SeekIntervalPair(backSeconds = 10, forwardSeconds = 30)
 // How long the transient skip indicator stays up after the last D-pad skip.
 private const val SKIP_FEEDBACK_HIDE_MS = 1_200L
-private const val SKIP_FORWARD_MS = 30_000L
 private const val CLEAN_SEEK_HOLD_THRESHOLD_MS = 300L
 private const val CLEAN_QUICK_SKIP_CAPTURE_MS = 200L
 
@@ -296,7 +298,18 @@ fun TvPlayerScreen(
     activePlayerHolder: ActivePlayerHolder = koinInject(),
     pictureInPictureCoordinator: SiloPictureInPictureCoordinator = koinInject(),
     siloCastReceiver: TvSiloCastReceiver = koinInject(),
+    seekIntervalStore: SeekIntervalStore = koinInject(),
 ) {
+    // Profile-wide video intervals. Key handlers read the store at press time
+    // (they are installed once), so a settings change applies to the next
+    // skip without restarting playback; the displayed glyphs recompose.
+    val seekIntervalState by seekIntervalStore.state.collectAsState()
+    val seekIntervals = seekIntervalState.video(LEGACY_TV_VIDEO_SEEK_INTERVALS)
+    fun resolvedSkipBackMs(): Long = seekIntervalStore.state.value.video(LEGACY_TV_VIDEO_SEEK_INTERVALS).backMs
+    fun resolvedSkipForwardMs(): Long =
+        seekIntervalStore.state.value.video(LEGACY_TV_VIDEO_SEEK_INTERVALS).forwardMs
+    // Player open is a refresh edge (Android has no settings realtime consumer).
+    LaunchedEffect(seekIntervalStore) { seekIntervalStore.refresh() }
     // The player never takes text input, so any soft keyboard visible here
     // leaked in from a prior screen (e.g. starting playback from a search with
     // the IME up). Dismiss it on entry — belt-and-braces over the source fixes
@@ -839,7 +852,7 @@ fun TvPlayerScreen(
         clearPendingCleanSeekPress()
         if (!becameHold) {
             performRelativeSeek(
-                deltaMs = if (direction < 0) -SKIP_BACK_MS else SKIP_FORWARD_MS,
+                deltaMs = if (direction < 0) -resolvedSkipBackMs() else resolvedSkipForwardMs(),
                 snapshot = snapshot,
                 revealControls = true,
                 captureQuickSkipBurst = true,
@@ -1195,9 +1208,9 @@ fun TvPlayerScreen(
                     true
                 }
                 TvPlayerRemoteKeyAction.SkipBack ->
-                    performRelativeSeek(-SKIP_BACK_MS, latestRoomSnapshot, revealControls = true)
+                    performRelativeSeek(-resolvedSkipBackMs(), latestRoomSnapshot, revealControls = true)
                 TvPlayerRemoteKeyAction.SkipForward ->
-                    performRelativeSeek(SKIP_FORWARD_MS, latestRoomSnapshot, revealControls = true)
+                    performRelativeSeek(resolvedSkipForwardMs(), latestRoomSnapshot, revealControls = true)
                 TvPlayerRemoteKeyAction.OpenSettingsHud -> {
                     requestedHudTab = HudTab.Video
                     viewModel.openHUD()
@@ -2152,11 +2165,13 @@ fun TvPlayerScreen(
                         // playback seeks the MediaController directly.
                         transportEnabled = canSeekInRoom,
                         playPauseEnabled = canPlayPauseInRoom,
+                        skipBackSeconds = seekIntervals.backSeconds,
+                        skipForwardSeconds = seekIntervals.forwardSeconds,
                         canToggleAfterCommit = roomController == null,
                         onSkipBack = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
-                                    -SKIP_BACK_MS,
+                                    -resolvedSkipBackMs(),
                                     roomSnapshot,
                                     revealControls = true,
                                 )
@@ -2165,7 +2180,7 @@ fun TvPlayerScreen(
                         onSkipForward = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
-                                    SKIP_FORWARD_MS,
+                                    resolvedSkipForwardMs(),
                                     roomSnapshot,
                                     revealControls = true,
                                 )
@@ -2531,6 +2546,9 @@ private fun TvPlayerIdleOverlay(
     // play/pause (host_only policy) gets a no-op play/pause.
     transportEnabled: Boolean = true,
     playPauseEnabled: Boolean = true,
+    /** Resolved video intervals behind [onSkipBack]/[onSkipForward]. */
+    skipBackSeconds: Int = LEGACY_TV_VIDEO_SEEK_INTERVALS.backSeconds,
+    skipForwardSeconds: Int = LEGACY_TV_VIDEO_SEEK_INTERVALS.forwardSeconds,
     /**
      * Whether Center may toggle playback after committing a scrub.
      *
@@ -2641,7 +2659,7 @@ private fun TvPlayerIdleOverlay(
                 .padding(horizontal = 80.dp, vertical = 40.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Interactive scrubber — capsule track with chapter ticks, ±10s
+            // Interactive scrubber — capsule track with chapter ticks, interval
             // skip, hold-to-auto-seek, and Select to commit. tvOS spec §4.1.
             TvPlayerScrubber(
                 modifier = Modifier.onFocusChanged { scrubberHasFocus = it.hasFocus },
@@ -2669,6 +2687,8 @@ private fun TvPlayerIdleOverlay(
                     ?.takeIf { it.end > it.start }
                     ?.let { it.start..it.end },
                 cancelOnBlur = false,
+                skipBackSeconds = skipBackSeconds,
+                skipForwardSeconds = skipForwardSeconds,
                 onSkipBack = onSkipBack,
                 onSkipForward = onSkipForward,
                 onBeginScrub = onBeginScrub,
@@ -2692,6 +2712,8 @@ private fun TvPlayerIdleOverlay(
             TvPlayerTransportCluster(
                 modifier = Modifier.onFocusChanged { transportHasFocus = it.hasFocus },
                 isPlaying = !isPaused,
+                skipBackSeconds = skipBackSeconds,
+                skipForwardSeconds = skipForwardSeconds,
                 onSkipBack = onSkipBack,
                 onPlayPause = onPlayPause,
                 onSkipForward = onSkipForward,

@@ -18,8 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Forward10
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,6 +27,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,8 +48,8 @@ import kotlin.math.hypot
  *
  * Supported gestures:
  * - Single tap center: toggle controls visibility
- * - Double-tap left 35% zone: skip back 10 seconds (with a flash badge)
- * - Double-tap right 35% zone: skip forward 10 seconds (with a flash badge)
+ * - Double-tap left 35% zone: skip back by the video interval (with a flash badge)
+ * - Double-tap right 35% zone: skip forward by the video interval (with a flash badge)
  * - Hold: temporary 2x playback while held
  * - Two-finger pinch: step video gravity — pinch-out steps Fit -> Fill ->
  *   Stretch, pinch-in steps back, clamped at both ends (iOS parity)
@@ -73,6 +72,9 @@ fun PlayerGestureHandler(
     // firing a gated no-op skip and flashing a "+10s" badge that lies about a
     // position that never moves. Mirrors PlayerControls' seekEnabled gating.
     seekEnabled: Boolean = true,
+    // Resolved video intervals, shown in the double-tap flash badge.
+    skipBackSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.backSeconds,
+    skipForwardSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.forwardSeconds,
     onFastForwardHold: (Boolean) -> Unit = {},
     // Called once per completed pinch: true = pinch-out (step toward
     // fill/stretch), false = pinch-in (step back toward fit).
@@ -89,6 +91,8 @@ fun PlayerGestureHandler(
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
     val currentSeekEnabled by rememberUpdatedState(seekEnabled)
+    val currentSkipBackSeconds by rememberUpdatedState(skipBackSeconds)
+    val currentSkipForwardSeconds by rememberUpdatedState(skipForwardSeconds)
     // Same reason as seekEnabled: the vertical-drag coroutine is created once
     // (keyed on Unit), so read the latest dismiss gate through rememberUpdatedState
     // — otherwise a value captured while buffering would stick after playback.
@@ -180,7 +184,7 @@ fun PlayerGestureHandler(
                     },
                     onDoubleTap = { offset ->
                         suppressTapAfterFastForwardHold = false
-                        // iOS skipZoneFraction (0.35): outer bands skip ±10s
+                        // iOS skipZoneFraction (0.35): outer bands skip by the interval
                         // with a flash badge; the middle band keeps the
                         // controls toggle.
                         val skipZoneWidth = size.width * SkipZoneFraction
@@ -190,11 +194,11 @@ fun PlayerGestureHandler(
                             !currentSeekEnabled -> onToggleControls()
                             offset.x < skipZoneWidth -> {
                                 onSkipBackward()
-                                skipFlash = SkipFlash(forward = false, nonce = ++skipFlashNonce)
+                                skipFlash = SkipFlash(forward = false, seconds = currentSkipBackSeconds, nonce = ++skipFlashNonce)
                             }
                             offset.x > size.width - skipZoneWidth -> {
                                 onSkipForward()
-                                skipFlash = SkipFlash(forward = true, nonce = ++skipFlashNonce)
+                                skipFlash = SkipFlash(forward = true, seconds = currentSkipForwardSeconds, nonce = ++skipFlashNonce)
                             }
                             else -> onToggleControls()
                         }
@@ -257,7 +261,7 @@ fun PlayerGestureHandler(
                     .align(if (flash.forward) Alignment.CenterEnd else Alignment.CenterStart)
                     .padding(horizontal = 56.dp),
             ) {
-                SkipFlashBadge(forward = flash.forward)
+                SkipFlashBadge(forward = flash.forward, seconds = flash.seconds)
             }
         }
     }
@@ -268,7 +272,7 @@ fun PlayerGestureHandler(
  * glyph above a "+10s"/"−10s" caption.
  */
 @Composable
-private fun SkipFlashBadge(forward: Boolean) {
+private fun SkipFlashBadge(forward: Boolean, seconds: Int) {
     Column(
         modifier = Modifier
             .size(74.dp)
@@ -276,14 +280,15 @@ private fun SkipFlashBadge(forward: Boolean) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = if (forward) Icons.Filled.Forward10 else Icons.Filled.Replay10,
-            contentDescription = if (forward) "Skipped forward 10 seconds" else "Skipped back 10 seconds",
+        SeekIntervalIcon(
+            forward = forward,
+            seconds = seconds,
+            contentDescription = if (forward) "Skipped forward $seconds seconds" else "Skipped back $seconds seconds",
             tint = Color.White,
             modifier = Modifier.size(26.dp),
         )
         Text(
-            text = if (forward) "+10s" else "−10s",
+            text = if (forward) "+${seconds}s" else "−${seconds}s",
             color = Color.White,
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
@@ -294,13 +299,13 @@ private fun SkipFlashBadge(forward: Boolean) {
 /** iOS pinch dead zone: >1.08 steps out, <1/1.08 steps in, between = no-op. */
 private const val PinchGravityThreshold = 1.08f
 
-/** iOS skipZoneFraction: outer double-tap bands (35% each side) skip ±10s. */
+/** iOS skipZoneFraction: outer double-tap bands (35% each side) skip. */
 private const val SkipZoneFraction = 0.35f
 
 /** iOS skip flash hold before the fade-out begins. */
 private const val SkipFlashHoldMs = 700L
 
-private data class SkipFlash(val forward: Boolean, val nonce: Long)
+private data class SkipFlash(val forward: Boolean, val seconds: Int, val nonce: Long)
 
 internal enum class VerticalDragMode { None, Volume, DismissCandidate }
 

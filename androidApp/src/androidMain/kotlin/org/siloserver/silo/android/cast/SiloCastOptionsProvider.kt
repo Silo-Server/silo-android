@@ -9,6 +9,21 @@ import com.google.android.gms.cast.framework.media.CastMediaOptions
 import com.google.android.gms.cast.framework.media.MediaIntentReceiver
 import com.google.android.gms.cast.framework.media.NotificationOptions
 import org.siloserver.silo.android.MainActivity
+import org.siloserver.silo.model.settings.SeekIntervalPair
+
+/**
+ * Google Cast seek pair before the revision-9 profile intervals: the
+ * notification, mini bar and cast overlay all skipped 30 s both ways.
+ */
+internal val GOOGLE_CAST_LEGACY_SEEK_INTERVALS = SeekIntervalPair(backSeconds = 30, forwardSeconds = 30)
+
+/**
+ * Step the Cast SDK is configured with. The SDK draws "10" or "30" icons and
+ * titles only for exactly 10 000 or 30 000 ms; any other value gets the plain
+ * rewind/forward icon. The actual distance comes from the profile setting in
+ * [SiloCastMediaIntentReceiver], so a numbered icon could be wrong.
+ */
+private const val CAST_NOTIFICATION_SKIP_STEP_MS = 15_000L
 
 /**
  * Google Cast (Chromecast) configuration. Uses the Default Media Receiver so no
@@ -30,12 +45,16 @@ class SiloCastOptionsProvider : OptionsProvider {
             // gives lock-screen/notification transport controls for free.
             .setCastMediaOptions(
                 CastMediaOptions.Builder()
+                    // Rewind/forward from the notification and lock screen
+                    // land in this receiver, which applies the profile intervals.
+                    .setMediaIntentReceiverClassName(SiloCastMediaIntentReceiver::class.java.name)
                     .setNotificationOptions(
                         NotificationOptions.Builder()
                             .setTargetActivityClassName(MainActivity::class.java.name)
-                            // ±30s alongside play/pause and stop; the compact
-                            // (lock-screen) view keeps the three transport
-                            // actions. The Cast framework handles the seeks.
+                            // Rewind/forward alongside play/pause and stop; the
+                            // compact (lock-screen) view keeps the three
+                            // transport actions. SiloCastMediaIntentReceiver
+                            // handles the seeks.
                             .setActions(
                                 listOf(
                                     MediaIntentReceiver.ACTION_REWIND,
@@ -45,7 +64,7 @@ class SiloCastOptionsProvider : OptionsProvider {
                                 ),
                                 intArrayOf(0, 1, 2),
                             )
-                            .setSkipStepMs(30_000L)
+                            .setSkipStepMs(CAST_NOTIFICATION_SKIP_STEP_MS)
                             .build(),
                     )
                     .build(),

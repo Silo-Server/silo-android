@@ -114,6 +114,10 @@ fun TvPlayerScrubber(
     previewRangeSec: ClosedRange<Double>? = null,
     onSkipBack: () -> Unit,
     onSkipForward: () -> Unit,
+    // Resolved video intervals; a tap while scrubbing nudges the preview by
+    // the same step the idle skip would take.
+    skipBackSeconds: Int = 10,
+    skipForwardSeconds: Int = 30,
     onBeginScrub: () -> Unit,
     onUpdateScrub: (Double) -> Unit,
     onCommitScrub: () -> Unit,
@@ -294,17 +298,21 @@ fun TvPlayerScrubber(
                             val direction = if (event.key == Key.DirectionLeft) -1 else 1
                             if (isUp) {
                                 // Release before the first repeat: this was a
-                                // tap. ±10s/30s skip in idle, a nudge of the
+                                // tap. An interval skip in idle, a nudge of the
                                 // in-flight preview, or a rate bump in auto-seek.
                                 if (pendingTapDirection == direction) {
                                     pendingTapDirection = 0
                                     when {
                                         autoSeekRate != 0 -> bumpRate(direction)
-                                        // Forward nudge matches the 30s transport
-                                        // skip (back stays 10s), mirroring tvOS
-                                        // scrubForwardStep/scrubBackwardStep.
+                                        // Nudges match the transport skips,
+                                        // mirroring tvOS scrubForwardStep /
+                                        // scrubBackwardStep.
                                         isTimelineScrubbing -> onUpdateScrub(
-                                            scrubPreviewSec + if (direction < 0) -10.0 else 30.0,
+                                            scrubPreviewSec + if (direction < 0) {
+                                                -skipBackSeconds.toDouble()
+                                            } else {
+                                                skipForwardSeconds.toDouble()
+                                            },
                                         )
                                         direction < 0 -> onSkipBack()
                                         else -> onSkipForward()

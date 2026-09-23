@@ -12,7 +12,9 @@ import android.os.Build
 import android.util.Rational
 import org.siloserver.silo.common.R
 import org.siloserver.silo.common.player.PipActionCapability
+import org.siloserver.silo.common.player.LEGACY_PLAYER_SEEK_INTERVALS
 import org.siloserver.silo.common.player.SiloPlaybackService
+import org.siloserver.silo.model.settings.SeekIntervalPair
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,7 +67,14 @@ fun siloShouldUpdatePictureInPictureParams(
         deviceSupportsPictureInPicture &&
         (wasEnabled || enabled)
 
-class SiloPictureInPictureCoordinator {
+class SiloPictureInPictureCoordinator(
+    /**
+     * Video intervals the PiP skip actions use (see
+     * [SiloPlaybackService.dispatchPictureInPictureAction]); read whenever the
+     * params are rebuilt so titles and glyphs match the action.
+     */
+    private val seekIntervals: () -> SeekIntervalPair = { LEGACY_PLAYER_SEEK_INTERVALS },
+) {
     private val _isInPictureInPictureMode = MutableStateFlow(false)
     val isInPictureInPictureMode: StateFlow<Boolean> = _isInPictureInPictureMode.asStateFlow()
 
@@ -181,11 +190,20 @@ class SiloPictureInPictureCoordinator {
         }
         val playPauseIcon = if (isPlaying) R.drawable.ic_pip_pause else R.drawable.ic_pip_play
         val playPauseTitle = if (isPlaying) "Pause" else "Play"
+        val intervals = seekIntervals()
+        // Numbered glyphs exist for the legacy 10s back / 30s forward only;
+        // any other interval uses the plain arrow and names the value in the
+        // action title.
+        val backIcon = if (intervals.backSeconds == 10) R.drawable.ic_pip_replay_10 else R.drawable.ic_pip_replay
+        val forwardIcon =
+            if (intervals.forwardSeconds == 30) R.drawable.ic_pip_forward_30 else R.drawable.ic_pip_forward
+        val backTitle = "Back ${intervals.backSeconds} seconds"
+        val forwardTitle = "Forward ${intervals.forwardSeconds} seconds"
         return listOf(
             RemoteAction(
-                Icon.createWithResource(context, R.drawable.ic_pip_replay_10),
-                "Back 10 seconds",
-                "Back 10 seconds",
+                Icon.createWithResource(context, backIcon),
+                backTitle,
+                backTitle,
                 pendingServiceIntent(context, SiloPlaybackService.ACTION_PIP_SKIP_BACK),
             ),
             RemoteAction(
@@ -195,9 +213,9 @@ class SiloPictureInPictureCoordinator {
                 pendingServiceIntent(context, playPauseAction),
             ),
             RemoteAction(
-                Icon.createWithResource(context, R.drawable.ic_pip_forward_30),
-                "Forward 30 seconds",
-                "Forward 30 seconds",
+                Icon.createWithResource(context, forwardIcon),
+                forwardTitle,
+                forwardTitle,
                 pendingServiceIntent(context, SiloPlaybackService.ACTION_PIP_SKIP_FORWARD),
             ),
         )

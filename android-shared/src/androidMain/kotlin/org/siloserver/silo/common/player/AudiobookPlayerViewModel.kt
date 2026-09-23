@@ -11,6 +11,12 @@ import org.siloserver.silo.audiobook.buildAudiobookTimeline
 import org.siloserver.silo.common.audiobook.AudiobookBookmarksStore
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.OfflineMediaResolver
+import org.siloserver.silo.common.settings.SeekIntervalStore
+import org.siloserver.silo.domain.settings.SeekIntervalController
+import org.siloserver.silo.model.settings.SeekDirection
+import org.siloserver.silo.model.settings.SeekIntervalPair
+import org.siloserver.silo.model.settings.SeekIntervals
+import org.siloserver.silo.model.settings.SeekMedia
 import org.siloserver.silo.model.audiobook.AudiobookBookmark
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.QUALITY_ORIGINAL_V3
@@ -35,6 +41,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -69,8 +76,16 @@ data class AudiobookPlayerUiState(
     // the user hit play.
     val isPaused: Boolean = false,
     val playbackSpeed: Float = 1.0f,
-    val skipBackSeconds: Int = 30,
-    val skipForwardSeconds: Int = 30,
+    val skipBackSeconds: Int = AudiobookSettingsStore.DEFAULT_SKIP,
+    val skipForwardSeconds: Int = AudiobookSettingsStore.DEFAULT_SKIP,
+    /** Choices the skip-interval picker offers for the current server. */
+    val skipIntervalChoices: List<Int> = AudiobookSettingsStore.ALLOWED_SKIP,
+    /** True when the intervals are the profile-wide server values (revision 9). */
+    val skipIntervalsProfileWide: Boolean = false,
+    /** False while server support is still unknown: nothing may be edited yet. */
+    val skipIntervalsEditable: Boolean = false,
+    /** Why the last skip-interval change was not saved; cleared by the next attempt. */
+    val skipIntervalError: String? = null,
     val sleepTimerMinutesLeft: Int? = null,
     val streamUrl: String? = null,
     val sessionId: String? = null,
@@ -97,6 +112,8 @@ class AudiobookPlayerViewModel(
     private val profileRepository: ProfileRepository,
     private val offlineMediaResolver: OfflineMediaResolver,
     private val audiobookSettings: AudiobookSettingsStore,
+    private val seekIntervalStore: SeekIntervalStore,
+    private val audiobookSeekRouter: AudiobookSeekRouter,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -194,6 +211,19 @@ class AudiobookPlayerViewModel(
      *  aborts instead of resurrecting a stopped session (Apple `isClosing`). */
     private var isClosing = false
 
+    /**
+     * Session seeks (lock screen, notification, headset) on this book go
+     * through [seekBy] so they cross part files like the in-app buttons.
+     */
+    private val sessionSeekHandler = AudiobookSeekRouter.Handler { direction ->
+        if (isClosing) return@Handler false
+        when (direction) {
+            SeekDirection.Back -> skipBack()
+            SeekDirection.Forward -> skipForward()
+        }
+        true
+    }
+
     /** The part-local start position the engine is being pointed at during a
      *  cross-part load. While non-null the engine's reported time still belongs
      *  to the outgoing part for a frame or two (the 4Hz poller is decoupled from
@@ -209,6 +239,7 @@ class AudiobookPlayerViewModel(
     private var suppressWholeBookPersistence = false
 
     init {
+        audiobookSeekRouter.register(sessionSeekHandler)
         observeAudiobookSettings()
         observeMissingPlaybackSessions()
         if (contentId.isNotBlank()) {
@@ -295,19 +326,44 @@ class AudiobookPlayerViewModel(
         }
     }
 
-    /** Mirror the persisted skip interval into ui-state, and seed playback
-     *  speed from the saved default exactly once. */
+    /** Mirror the resolved skip intervals into ui-state, and seed playback
+     *  speed from the saved default exactly once.
+     *
+     *  Revision-9 servers supply profile-wide audiobook intervals; older
+     *  servers (and a not-yet-answered probe) keep the device-local values.
+     *  [skipBack]/[skipForward] read ui-state at press time, so a change made
+     *  in settings or the picker applies to the next skip without reloading. */
     private fun observeAudiobookSettings() {
         viewModelScope.launch {
-            audiobookSettings.skipBackSecondsFlow.collect { seconds ->
-                _uiState.update { it.copy(skipBackSeconds = seconds) }
+            combine(
+                seekIntervalStore.state,
+                audiobookSettings.skipBackSecondsFlow,
+                audiobookSettings.skipForwardSecondsFlow,
+            ) { seek, legacyBack, legacyForward ->
+                val pair = seek.audiobook(SeekIntervalPair(legacyBack, legacyForward))
+                val choices = if (seek.isSupported) SeekIntervals.CHOICES else AudiobookSettingsStore.ALLOWED_SKIP
+                AudiobookSkipUi(
+                    back = pair.backSeconds,
+                    forward = pair.forwardSeconds,
+                    choices = choices,
+                    profileWide = seek.isSupported,
+                    editable = seek.isSupported || seek.allowsLegacyAudiobookEditing,
+                )
+            }.collect { skip ->
+                _uiState.update {
+                    it.copy(
+                        skipBackSeconds = skip.back,
+                        skipForwardSeconds = skip.forward,
+                        skipIntervalChoices = skip.choices,
+                        skipIntervalsProfileWide = skip.profileWide,
+                        skipIntervalsEditable = skip.editable,
+                    )
+                }
             }
         }
-        viewModelScope.launch {
-            audiobookSettings.skipForwardSecondsFlow.collect { seconds ->
-                _uiState.update { it.copy(skipForwardSeconds = seconds) }
-            }
-        }
+        // Player open is a refresh edge: Android has no settings realtime
+        // consumer, so this is how an edit made on another device lands.
+        viewModelScope.launch { seekIntervalStore.refresh() }
         viewModelScope.launch {
             val savedDefault = audiobookSettings.defaultSpeedFlow.first()
             if (!speedSeeded) {
@@ -1311,13 +1367,56 @@ class AudiobookPlayerViewModel(
     /** Skip forward by the user's configured interval (default 30s). */
     fun skipForward() = seekBy(_uiState.value.skipForwardSeconds.toDouble())
 
-    fun setSkipBackSeconds(seconds: Int) {
-        viewModelScope.launch { audiobookSettings.setSkipBackSeconds(seconds) }
+    fun setSkipBackSeconds(seconds: Int) = setSkipSeconds(SeekDirection.Back, seconds)
+
+    fun setSkipForwardSeconds(seconds: Int) = setSkipSeconds(SeekDirection.Forward, seconds)
+
+    /**
+     * Revision-9 servers: write the profile-wide value. Older servers: the
+     * device-local value, and only once discovery has said so — never both,
+     * and never the server while support is unknown.
+     */
+    private fun setSkipSeconds(direction: SeekDirection, seconds: Int) {
+        val seek = seekIntervalStore.state.value
+        val attempt = ++skipSaveAttempt
+        _uiState.update { it.copy(skipIntervalError = null) }
+        viewModelScope.launch {
+            when {
+                seek.isSupported -> {
+                    val error = when (val result = seekIntervalStore.save(SeekMedia.Audiobook, direction, seconds)) {
+                        is SeekIntervalController.SaveResult.Saved -> null
+                        is SeekIntervalController.SaveResult.Invalid ->
+                            "${result.seconds} seconds is not a supported interval."
+                        is SeekIntervalController.SaveResult.Failed ->
+                            "Couldn't save the skip interval" +
+                                (result.message?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ".")
+                    }
+                    // A newer pick owns the message; the store already reverted this one.
+                    if (attempt == skipSaveAttempt) _uiState.update { it.copy(skipIntervalError = error) }
+                }
+                seek.allowsLegacyAudiobookEditing -> when (direction) {
+                    SeekDirection.Back -> audiobookSettings.setSkipBackSeconds(seconds)
+                    SeekDirection.Forward -> audiobookSettings.setSkipForwardSeconds(seconds)
+                }
+                else -> Unit
+            }
+        }
     }
 
-    fun setSkipForwardSeconds(seconds: Int) {
-        viewModelScope.launch { audiobookSettings.setSkipForwardSeconds(seconds) }
+    /** Drops the skip-interval save message (the picker closed). */
+    fun clearSkipIntervalError() {
+        _uiState.update { it.copy(skipIntervalError = null) }
     }
+
+    private var skipSaveAttempt = 0
+
+    private data class AudiobookSkipUi(
+        val back: Int,
+        val forward: Int,
+        val choices: List<Int>,
+        val profileWide: Boolean,
+        val editable: Boolean,
+    )
 
     // ── Sleep timer ──────────────────────────────────────────────────────
 
@@ -1594,6 +1693,7 @@ class AudiobookPlayerViewModel(
     }
 
     override fun onCleared() {
+        audiobookSeekRouter.unregister(sessionSeekHandler)
         // Invalidate any in-flight cross-part load so it can't resurrect a
         // session during teardown (Apple close(): isClosing + loadGeneration).
         isClosing = true

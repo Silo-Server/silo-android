@@ -95,6 +95,25 @@ class ServerDrivenConfigRefresherTest {
     }
 
     @Test
+    fun `refresh re-probes the profile seek intervals`() = runTest {
+        val seek = FakeSeekIntervalStore()
+        val refresher = ServerDrivenConfigRefresher(
+            overlayPrefsStore = FakeOverlayPrefsStore(),
+            cardPresentationStore = FakeCardPresentationStore(),
+            libraryPlaybackPrefsStore = FakeLibraryPlaybackPrefsStore(),
+            playerSettingsStore = FakePlayerSettingsStore(),
+            hasAuthenticatedProfile = { true },
+            seekIntervalStore = seek,
+            nowMs = { 1_000L },
+        )
+
+        assertTrue(refresher.refreshIfStale())
+        assertTrue(refresher.forceRefresh())
+
+        assertEquals(2, seek.refreshCalls)
+    }
+
+    @Test
     fun `forceRefresh bypasses throttle for reconnect edge`() = runTest {
         val overlay = FakeOverlayPrefsStore()
         val cards = FakeCardPresentationStore()
