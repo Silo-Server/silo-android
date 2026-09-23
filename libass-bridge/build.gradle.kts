@@ -17,7 +17,7 @@ android {
 }
 
 dependencies {
-    // Kept behind this Java-only module because ass-media 0.4.0 is compiled
+    // Kept behind this Java-only module because ass-media 0.5.1 is compiled
     // with Kotlin 2.2 while the Silo application remains on Kotlin 2.1. The
     // wrapper's public API exposes only Java/Media3 types, so Kotlin metadata
     // from the implementation never enters android-shared's compile classpath.
