@@ -333,6 +333,26 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun homeOverlayLookupsHandleMoreIdsThanSqliteAllowsVariables() = runTest {
+        // A customized Home can hold well over 999 distinct items; Android 11 and
+        // older SQLite rejects a statement with more than 999 bind variables.
+        // Robolectric's SQLite allows more, so this guards the merge across
+        // batches; the limit itself needs an Android 11-or-older device.
+        val ids = (0 until 1_500).map { "c$it" }
+        repo.recordWatched("c3", watched = true)
+        repo.recordWatched("c1400", watched = true)
+        repo.recordPosition("c1400", fileId = 7, positionSeconds = 120.0, durationSeconds = 3600.0)
+        repo.recordPosition("c1400", fileId = 8, positionSeconds = 480.0, durationSeconds = 3700.0)
+
+        val states = repo.localContentStates(ids)
+        val progress = repo.localPlaybackProgressForContent(ids)
+
+        assertEquals(setOf("c3", "c1400"), states.keys)
+        assertEquals(8, progress.getValue("c1400").fileId)
+        assertEquals(480.0, progress.getValue("c1400").positionSeconds)
+    }
+
+    @Test
     fun recordTrackSelectionsWritesFileProjectionWithoutOutbox() = runTest {
         repo.recordPosition("c1", fileId = 7, positionSeconds = 456.0, durationSeconds = 3600.0)
         repo.recordAudioTrackSelection("c1", fileId = 7, audioFingerprint = "1|eng|eac3|5.1|false")
