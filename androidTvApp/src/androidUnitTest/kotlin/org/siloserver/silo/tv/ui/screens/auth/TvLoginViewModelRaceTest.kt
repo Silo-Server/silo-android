@@ -177,6 +177,79 @@ class TvLoginViewModelRaceTest {
         client.close()
     }
 
+    @Test
+    fun passwordSignInSucceedsWhileQrPollIsRunning() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenStore()
+        val viewModel = passwordSignIn(tokenManager, HttpStatusCode.OK)
+
+        assertTrue(viewModel.uiState.value.loginSuccess)
+        assertEquals(null, viewModel.uiState.value.error)
+        assertEquals(listOf("credential-access"), tokenManager.savedAccessTokens)
+    }
+
+    @Test
+    fun wrongPasswordWhileQrPollIsRunningShowsInvalidCredentials() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenStore()
+        val viewModel = passwordSignIn(tokenManager, HttpStatusCode.Unauthorized)
+
+        assertFalse(viewModel.uiState.value.loginSuccess)
+        assertEquals("Invalid username or password", viewModel.uiState.value.error)
+        assertEquals(emptyList(), tokenManager.savedAccessTokens)
+    }
+
+    @Test
+    fun identityChangeDuringPasswordRequestIsRejected() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenStore()
+        val viewModel = passwordSignIn(tokenManager, HttpStatusCode.OK) {
+            tokenManager.replaceAccountSession(accessToken = "newer-access",
+                refreshToken = "newer-refresh", expiresIn = 3600)
+        }
+
+        assertFalse(viewModel.uiState.value.loginSuccess)
+        assertEquals("The account or server changed. Start sign-in again.", viewModel.uiState.value.error)
+        assertEquals(listOf("newer-access"), tokenManager.savedAccessTokens)
+    }
+
+    /** Signs in with a password while the QR poll started by `init` is still waiting. */
+    private suspend fun kotlinx.coroutines.test.TestScope.passwordSignIn(
+        tokenManager: RecordingTokenStore,
+        status: HttpStatusCode,
+        duringRequest: suspend () -> Unit = {},
+    ): TvLoginViewModel {
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    duringRequest()
+                    if (status == HttpStatusCode.OK) {
+                        respond(credentialLoginJson("credential-access", "credential-refresh"), status,
+                            headersOf(HttpHeaders.ContentType, "application/json"))
+                    } else {
+                        respond("""{"code":"invalid_credentials","message":"Invalid username or password"}""", status,
+                            headersOf(HttpHeaders.ContentType, "application/json"))
+                    }
+                }
+            }
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { this.tokenManager = tokenManager }
+        }
+        val deviceApi = ControlledDeviceLoginApi()
+        val viewModel = track(TvLoginViewModel(
+            AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokenManager), tokenManager, DeviceLoginRepository(deviceApi),
+        ))
+        advanceUntilIdle()
+        assertTrue(deviceApi.polling, "the QR device-login poll should be waiting")
+
+        viewModel.onUsernameChanged("jim")
+        viewModel.onPasswordChanged("password")
+        viewModel.onLoginClick()
+        advanceUntilIdle()
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { viewModel.uiState.first { !it.isLoading } }
+        }
+        client.close()
+        return viewModel
+    }
+
     private fun loginClient(
         tokenManager: TokenManager,
         releaseCredentialLogin: CompletableDeferred<Unit>,
@@ -228,8 +301,13 @@ private class ControlledDeviceLoginApi : DeviceLoginApi {
         ),
     )
 
-    override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> =
-        pollResult.await()
+    var polling = false
+        private set
+
+    override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> {
+        polling = true
+        return pollResult.await()
+    }
 
     fun completePoll(response: DeviceLoginPollResponse) {
         pollResult.complete(ApiResult.Success(response))
@@ -247,10 +325,17 @@ private class ControlledDeviceLoginApi : DeviceLoginApi {
 
 private class RecordingTokenStore : TokenManager {
     private var accountGeneration = 0L
-    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(accountGeneration, getCurrentServerId(), getServerUrl())
+    // A new fence instance per capture, as D8-desugared code builds on device. The JVM
+    // caches the default non-capturing lambda, which hid a `==` comparison bug (#364).
+    override suspend fun captureAccountSessionExpectation() = org.siloserver.silo.network.AccountSessionExpectation(
+        accountGeneration, getCurrentServerId(), getServerUrl(),
+        installationAllowed = object : () -> Boolean { override fun invoke() = true },
+    )
     override suspend fun replaceAccountSession(serverId: String?, serverUrl: String?, accessToken: String, refreshToken: String,
         expiresIn: Long, profileId: String?, profileToken: String?, expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?) {
-        check(expectedIdentity == null || expectedIdentity.generation == accountGeneration)
+        if (expectedIdentity != null && expectedIdentity.generation != accountGeneration) {
+            throw org.siloserver.silo.network.AccountSessionChangedException()
+        }
         accountGeneration++
         if (serverId != null) switchActiveServer(serverId)
         if (serverUrl != null) setServerUrl(serverUrl)

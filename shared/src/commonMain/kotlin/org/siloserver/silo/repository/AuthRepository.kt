@@ -138,7 +138,7 @@ class AuthRepository(
     suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> {
         val captured = expected ?: tokenManager.captureAccountSessionExpectation() ?: return staleSession()
         val result = authApi.login(LoginRequest(username, password), captured.serverUrl)
-        return if (tokenManager.captureAccountSessionExpectation() == captured) result else staleSession()
+        return if (captured.isSameSession(tokenManager.captureAccountSessionExpectation())) result else staleSession()
     }
 
     suspend fun signup(username: String, email: String, password: String, inviteCode: String): ApiResult<User> = authenticate {
