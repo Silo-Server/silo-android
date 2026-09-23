@@ -297,7 +297,8 @@ class RoomUserItemStateRepository(
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
-        return userStateDao.progressForContentIds(snapshot.serverId, profileId, contentIds.distinct())
+        return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
+            .flatMap { userStateDao.progressForContentIds(snapshot.serverId, profileId, it) }
             .groupBy { it.contentId }
             .mapValues { (_, rows) -> rows.latestProgress() }
             .filterValues { it != null }
@@ -528,7 +529,8 @@ class RoomUserItemStateRepository(
         if (contentIds.isEmpty()) return emptyMap()
         val snapshot = snapshotProvider() ?: return emptyMap()
         val profileId = snapshot.profileId ?: return emptyMap()
-        return contentDao.getForContentIds(snapshot.serverId, profileId, contentIds.distinct())
+        return contentIds.distinct().chunked(MAX_IN_LIST_IDS)
+            .flatMap { contentDao.getForContentIds(snapshot.serverId, profileId, it) }
             .associate { it.contentId to LocalContentState(watched = it.watched, favorite = null) }
     }
 
@@ -660,6 +662,11 @@ private fun TrackSelectionFingerprintUpdate.applyTo(current: String?): String? =
         TrackSelectionFingerprintUpdate.Clear -> null
         is TrackSelectionFingerprintUpdate.Set -> fingerprint.trim()
     }
+
+// Android 11 and older SQLite reject statements with more than 999 bind
+// variables, and a customized Home can hold more distinct items than that.
+// Batches stay under the limit alongside the serverId/profileId arguments.
+private const val MAX_IN_LIST_IDS = 900
 
 // Newest local write wins — NOT the furthest position. Picking the max
 // position made a deliberate backward seek (or an old row for a different
