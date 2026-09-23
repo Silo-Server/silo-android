@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
+import org.siloserver.silo.model.settings.LegacyAudiobookIntervals
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -67,6 +68,19 @@ class AudiobookSettingsStore(
     val skipForwardSecondsFlow: Flow<Int> =
         profileScopedFlow(DEFAULT_SKIP) { it[KEY_SKIP_FORWARD] ?: DEFAULT_SKIP }
 
+    /**
+     * Only the intervals the user explicitly stored on this device (no
+     * defaults filled in). This is what an explicit "import to profile" may
+     * offer; a direction that was never set is null and never uploaded.
+     */
+    val legacySkipIntervalsFlow: Flow<LegacyAudiobookIntervals> =
+        profileScopedFlow(LegacyAudiobookIntervals()) {
+            LegacyAudiobookIntervals(
+                backSeconds = it[KEY_SKIP_BACK],
+                forwardSeconds = it[KEY_SKIP_FORWARD],
+            )
+        }
+
     val defaultSpeedFlow: Flow<Float> =
         profileScopedFlow(DEFAULT_SPEED) { it[KEY_DEFAULT_SPEED]?.toFloatOrNull() ?: DEFAULT_SPEED }
 
@@ -100,10 +114,15 @@ class AudiobookSettingsStore(
     }
 
     companion object {
-        /** Skip intervals offered in the picker; any other value coerces to [DEFAULT_SKIP]. */
+        /**
+         * Skip intervals offered in the device-local picker; any other value
+         * coerces to [DEFAULT_SKIP]. Only used against servers that predate
+         * the profile-wide intervals (settings revision 9).
+         */
         val ALLOWED_SKIP = listOf(10, 15, 30, 60)
 
-        private const val DEFAULT_SKIP = 30
+        /** Device-local default for both directions (pre-revision-9 behavior). */
+        const val DEFAULT_SKIP = 30
         private const val DEFAULT_SPEED = 1.0f
         private const val MIN_SPEED = 0.5f
         private const val MAX_SPEED = 3.0f

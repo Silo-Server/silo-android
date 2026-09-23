@@ -29,12 +29,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AspectRatio
@@ -90,6 +88,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import org.koin.compose.koinInject
+import org.siloserver.silo.android.ui.components.SeekIntervalIcon
+import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
+import org.siloserver.silo.model.settings.SeekIntervalPair
 import org.siloserver.silo.android.R
 import org.siloserver.silo.android.cast.RemoteControlBatteryOptimization
 import org.siloserver.silo.android.cast.SiloCastController
@@ -722,6 +723,8 @@ private fun RemoteTransport(
     controller: SiloCastController,
 ) {
     @Suppress("UNUSED_EXPRESSION") clockTick
+    // Profile-wide video intervals; 10s back / 30s forward on older servers.
+    val intervals = rememberVideoSeekIntervals(SeekIntervalPair(10, 30))
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = if (playback.hasNextEpisode) {
@@ -737,10 +740,13 @@ private fun RemoteTransport(
             Spacer(modifier = Modifier.size(48.dp))
         }
 
-        IconButton(onClick = { controller.seek((controller.displayTime() - 10.0).coerceAtLeast(0.0)) }) {
-            Icon(
-                Icons.Filled.Replay10,
-                contentDescription = "Back 10 seconds",
+        IconButton(onClick = {
+            controller.seek((controller.displayTime() - intervals.backSeconds).coerceAtLeast(0.0))
+        }) {
+            SeekIntervalIcon(
+                forward = false,
+                seconds = intervals.backSeconds,
+                contentDescription = "Back ${intervals.backSeconds} seconds",
                 tint = RemoteOnSurface,
                 modifier = Modifier.size(34.dp),
             )
@@ -772,12 +778,14 @@ private fun RemoteTransport(
 
         IconButton(onClick = {
             val base = controller.displayTime()
-            val target = if (playback.duration > 0.0) (base + 30.0).coerceAtMost(playback.duration) else base + 30.0
+            val step = intervals.forwardSeconds.toDouble()
+            val target = if (playback.duration > 0.0) (base + step).coerceAtMost(playback.duration) else base + step
             controller.seek(target)
         }) {
-            Icon(
-                Icons.Filled.Forward30,
-                contentDescription = "Forward 30 seconds",
+            SeekIntervalIcon(
+                forward = true,
+                seconds = intervals.forwardSeconds,
+                contentDescription = "Forward ${intervals.forwardSeconds} seconds",
                 tint = RemoteOnSurface,
                 modifier = Modifier.size(34.dp),
             )

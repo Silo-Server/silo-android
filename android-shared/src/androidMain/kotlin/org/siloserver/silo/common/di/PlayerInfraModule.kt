@@ -3,6 +3,7 @@ package org.siloserver.silo.common.di
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.pip.SiloPictureInPictureCoordinator
 import org.siloserver.silo.common.player.ActivePlayerHolder
+import org.siloserver.silo.common.player.LEGACY_PLAYER_SEEK_INTERVALS
 import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.common.player.FinalPlaybackPositionWriter
 import org.siloserver.silo.common.player.PlaybackSessionLifecycle
@@ -13,13 +14,16 @@ import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.DefaultCardPresentationStore
 import org.siloserver.silo.common.settings.DefaultLibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.DefaultOverlayPrefsStore
+import org.siloserver.silo.common.settings.DefaultSeekIntervalStore
 import org.siloserver.silo.common.settings.DefaultServerSettingsFlusher
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
+import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.settings.ServerSettingsFlusher
 import org.siloserver.silo.domain.player.IntroAutoSkipController
+import org.siloserver.silo.domain.settings.SeekIntervalController
 import org.siloserver.silo.network.DeviceMetadataProvider
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -58,8 +62,14 @@ val playerInfraModule = module {
     }
     // Shares the active session Player with the in-process UI so the video
     single { ActivePlayerHolder() }
+    single { org.siloserver.silo.common.player.AudiobookSeekRouter() }
 
-    single { SiloPictureInPictureCoordinator() }
+    single {
+        val seekIntervalStore = get<SeekIntervalStore>()
+        SiloPictureInPictureCoordinator(seekIntervals = {
+            seekIntervalStore.state.value.video(LEGACY_PLAYER_SEEK_INTERVALS)
+        })
+    }
 
     single {
         val userItemState = get<org.siloserver.silo.repository.port.UserItemStatePort>()
@@ -155,12 +165,32 @@ val playerInfraModule = module {
         )
     }
 
+    // Profile-wide forward/rewind intervals (settings revision 9). Resets and
+    // re-resolves whenever the active server or profile changes; players read
+    // its state on every relative seek so edits apply mid-playback.
+    single<SeekIntervalStore> {
+        val registry = get<ServerRegistry>()
+        val identityChanges = registry.activeEntry
+            .map { it?.url to it?.profileId }
+            .distinctUntilChanged()
+            .map { Unit }
+        DefaultSeekIntervalStore(
+            context = androidContext(),
+            controller = SeekIntervalController(get<SettingsRepository>()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+            identityChanges = identityChanges,
+        )
+    }
+
     single {
         ServerDrivenConfigRefresher(
             overlayPrefsStore = get(),
             cardPresentationStore = get(),
             libraryPlaybackPrefsStore = get(),
             playerSettingsStore = get(),
+            seekIntervalStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },

@@ -31,12 +31,10 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Brightness6
-import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenLockRotation
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.SkipNext
@@ -67,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import org.siloserver.silo.android.ui.layout.useCompactPlayerToolbar
 
 /**
@@ -117,6 +116,10 @@ fun PlayerControls(
     // Separate from [seekEnabled]: a guest under guest_play_pause keeps the
     // play/pause affordance but loses seek. Defaults true for solo playback.
     playPauseEnabled: Boolean = true,
+    // Resolved video intervals the skip buttons use (profile-wide on a
+    // revision-9 server, the legacy fixed pair otherwise).
+    skipBackSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.backSeconds,
+    skipForwardSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.forwardSeconds,
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -206,6 +209,8 @@ fun PlayerControls(
                 isPaused = isPaused,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
+                skipBackSeconds = skipBackSeconds,
+                skipForwardSeconds = skipForwardSeconds,
                 onPlayPause = onPlayPause,
                 onSkipForward = onSkipForward,
                 onSkipBackward = onSkipBackward,
@@ -352,6 +357,8 @@ private fun PlayerTransportControls(
     isPaused: Boolean,
     seekEnabled: Boolean,
     playPauseEnabled: Boolean,
+    skipBackSeconds: Int,
+    skipForwardSeconds: Int,
     onPlayPause: () -> Unit,
     onSkipForward: () -> Unit,
     onSkipBackward: () -> Unit,
@@ -366,9 +373,10 @@ private fun PlayerTransportControls(
             enabled = seekEnabled,
             modifier = Modifier.size(52.dp),
         ) {
-            Icon(
-                imageVector = Icons.Default.Replay10,
-                contentDescription = "Skip back 10 seconds",
+            SeekIntervalIcon(
+                forward = false,
+                seconds = skipBackSeconds,
+                contentDescription = "Skip back $skipBackSeconds seconds",
                 tint = if (seekEnabled) Color.White else Color.White.copy(alpha = 0.3f),
                 modifier = Modifier.size(32.dp),
             )
@@ -396,9 +404,10 @@ private fun PlayerTransportControls(
             enabled = seekEnabled,
             modifier = Modifier.size(52.dp),
         ) {
-            Icon(
-                imageVector = Icons.Default.Forward10,
-                contentDescription = "Skip forward 10 seconds",
+            SeekIntervalIcon(
+                forward = true,
+                seconds = skipForwardSeconds,
+                contentDescription = "Skip forward $skipForwardSeconds seconds",
                 tint = if (seekEnabled) Color.White else Color.White.copy(alpha = 0.3f),
                 modifier = Modifier.size(32.dp),
             )

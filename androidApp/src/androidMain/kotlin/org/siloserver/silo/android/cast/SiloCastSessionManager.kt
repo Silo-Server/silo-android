@@ -608,6 +608,18 @@ class SiloCastSessionManager(private val context: Context) {
         seekTo(target)
     }
 
+    /**
+     * [skipBy] for a notification or lock-screen action, which can arrive in a
+     * process the app UI never initialized. Returns false when there is no
+     * cast client to seek. Main thread only.
+     */
+    fun skipFromSystemControl(deltaSeconds: Double): Boolean {
+        ensureInitialized()
+        if (sessionManager?.currentCastSession?.remoteMediaClient == null) return false
+        skipBy(deltaSeconds)
+        return true
+    }
+
     fun refreshRoutes() {
         ensureInitialized()
         syncCastState()

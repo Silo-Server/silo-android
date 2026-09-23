@@ -9,6 +9,9 @@ import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
+import org.siloserver.silo.common.settings.SeekIntervalStore
+import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.domain.player.IntroSkipMode
@@ -60,7 +63,21 @@ class TvSettingsViewModel(
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
     private val profileSettings: ProfileSettingsController,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
+    private val seekIntervalStore: SeekIntervalStore? = null,
+    audiobookSettingsStore: AudiobookSettingsStore? = null,
 ) : ViewModel() {
+
+    /**
+     * Profile-wide video and audiobook skip intervals (settings revision 9).
+     * Null only in hand-built instances without the player stores.
+     */
+    val seekIntervals: SeekIntervalSettingsModel? =
+        if (seekIntervalStore != null && audiobookSettingsStore != null) {
+            SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
+                .also { it.refresh() }
+        } else {
+            null
+        }
 
     enum class NavAction { SIGNED_OUT, SWITCH_PROFILE }
 
@@ -668,6 +685,7 @@ class TvSettingsViewModel(
             libraryPlaybackPrefsStore.clear()
             overlayPrefsStore.clear()
             cardPresentationStore.clear()
+            seekIntervalStore?.clear()
             _uiState.update { it.copy(navAction = NavAction.SIGNED_OUT) }
         }
     }

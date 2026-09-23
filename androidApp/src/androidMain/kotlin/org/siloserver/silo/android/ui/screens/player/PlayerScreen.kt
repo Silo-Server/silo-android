@@ -60,6 +60,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player
 import org.siloserver.silo.common.player.PlayWhenReadyReconciliationGate
+import org.siloserver.silo.android.ui.components.rememberVideoSeekIntervals
+import org.siloserver.silo.android.cast.GOOGLE_CAST_LEGACY_SEEK_INTERVALS
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -1521,12 +1523,16 @@ fun PlayerScreen(
             // keeps running via the Cast SDK media notification) and play/pause
             // + stop controls.
             if (castState.isConnected) {
+                // Profile-wide video intervals; the overlay's 30s/30s on older servers.
+                val castSeekIntervals = rememberVideoSeekIntervals(GOOGLE_CAST_LEGACY_SEEK_INTERVALS)
                 SiloCastOverlay(
                     castState = castState,
                     posterUrl = uiState.artworkUrl,
                     onPlayPause = { castManager.togglePlayback() },
-                    onSkipBack = { castManager.skipBy(-30.0) },
-                    onSkipForward = { castManager.skipBy(30.0) },
+                    onSkipBack = { castManager.skipBy(-castSeekIntervals.backSeconds.toDouble()) },
+                    onSkipForward = { castManager.skipBy(castSeekIntervals.forwardSeconds.toDouble()) },
+                    skipBackSeconds = castSeekIntervals.backSeconds,
+                    skipForwardSeconds = castSeekIntervals.forwardSeconds,
                     onSelectSubtitle = { castManager.selectSubtitleTrack(it) },
                     onStopCasting = { castManager.disconnect() },
                     onSeek = { castManager.seekTo(it) },

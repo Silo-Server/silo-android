@@ -376,6 +376,7 @@ val androidModule = module {
             finalPlaybackPositionWriter = get(),
             sectionRepository = get(),
             castPlaybackPreparer = get(),
+            seekIntervalStore = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
@@ -452,7 +453,7 @@ val androidModule = module {
             tmdbId = args.second,
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }
@@ -503,6 +504,8 @@ val androidModule = module {
             profileRepository = get(),
             offlineMediaResolver = get(),
             audiobookSettings = get(),
+            seekIntervalStore = get(),
+            audiobookSeekRouter = get(),
             savedStateHandle = get(),
         )
     }

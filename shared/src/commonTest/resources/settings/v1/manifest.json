@@ -1,6 +1,6 @@
 {
   "api_version": 1,
-  "revision": 7,
+  "revision": 9,
   "option_sets": {
     "playback_audio_languages": {
       "type": "language_tag",
@@ -9,13 +9,18 @@
         { "value": "bn", "introduced_in": 1 },
         { "value": "bg", "introduced_in": 1 },
         { "value": "zh", "introduced_in": 1 },
+        { "value": "zh-Hans", "introduced_in": 8 },
+        { "value": "zh-Hant", "introduced_in": 8 },
         { "value": "hr", "introduced_in": 1 },
         { "value": "cs", "introduced_in": 1 },
         { "value": "da", "introduced_in": 1 },
         { "value": "nl", "introduced_in": 1 },
         { "value": "en", "introduced_in": 1 },
+        { "value": "en-US", "introduced_in": 8 },
+        { "value": "en-GB", "introduced_in": 8 },
         { "value": "fi", "introduced_in": 1 },
         { "value": "fr", "introduced_in": 1 },
+        { "value": "fr-CA", "introduced_in": 8 },
         { "value": "de", "introduced_in": 1 },
         { "value": "el", "introduced_in": 1 },
         { "value": "he", "introduced_in": 1 },
@@ -30,11 +35,15 @@
         { "value": "fa", "introduced_in": 1 },
         { "value": "pl", "introduced_in": 1 },
         { "value": "pt", "introduced_in": 1 },
+        { "value": "pt-BR", "introduced_in": 8 },
+        { "value": "pt-PT", "introduced_in": 8 },
         { "value": "ro", "introduced_in": 1 },
         { "value": "ru", "introduced_in": 1 },
         { "value": "sk", "introduced_in": 1 },
         { "value": "sl", "introduced_in": 1 },
         { "value": "es", "introduced_in": 1 },
+        { "value": "es-419", "introduced_in": 8 },
+        { "value": "es-ES", "introduced_in": 8 },
         { "value": "sv", "introduced_in": 1 },
         { "value": "ta", "introduced_in": 1 },
         { "value": "te", "introduced_in": 1 },
@@ -51,13 +60,18 @@
         { "value": "bn", "introduced_in": 1 },
         { "value": "bg", "introduced_in": 1 },
         { "value": "zh", "introduced_in": 1 },
+        { "value": "zh-Hans", "introduced_in": 8 },
+        { "value": "zh-Hant", "introduced_in": 8 },
         { "value": "hr", "introduced_in": 1 },
         { "value": "cs", "introduced_in": 1 },
         { "value": "da", "introduced_in": 1 },
         { "value": "nl", "introduced_in": 1 },
         { "value": "en", "introduced_in": 1 },
+        { "value": "en-US", "introduced_in": 8 },
+        { "value": "en-GB", "introduced_in": 8 },
         { "value": "fi", "introduced_in": 1 },
         { "value": "fr", "introduced_in": 1 },
+        { "value": "fr-CA", "introduced_in": 8 },
         { "value": "de", "introduced_in": 1 },
         { "value": "el", "introduced_in": 1 },
         { "value": "he", "introduced_in": 1 },
@@ -72,11 +86,15 @@
         { "value": "fa", "introduced_in": 1 },
         { "value": "pl", "introduced_in": 1 },
         { "value": "pt", "introduced_in": 1 },
+        { "value": "pt-BR", "introduced_in": 8 },
+        { "value": "pt-PT", "introduced_in": 8 },
         { "value": "ro", "introduced_in": 1 },
         { "value": "ru", "introduced_in": 1 },
         { "value": "sk", "introduced_in": 1 },
         { "value": "sl", "introduced_in": 1 },
         { "value": "es", "introduced_in": 1 },
+        { "value": "es-419", "introduced_in": 8 },
+        { "value": "es-ES", "introduced_in": 8 },
         { "value": "sv", "introduced_in": 1 },
         { "value": "ta", "introduced_in": 1 },
         { "value": "te", "introduced_in": 1 },
@@ -93,13 +111,18 @@
         { "value": "bn", "introduced_in": 1 },
         { "value": "bg", "introduced_in": 1 },
         { "value": "zh", "introduced_in": 1 },
+        { "value": "zh-Hans", "introduced_in": 8 },
+        { "value": "zh-Hant", "introduced_in": 8 },
         { "value": "hr", "introduced_in": 1 },
         { "value": "cs", "introduced_in": 1 },
         { "value": "da", "introduced_in": 1 },
         { "value": "nl", "introduced_in": 1 },
         { "value": "en", "introduced_in": 1 },
+        { "value": "en-US", "introduced_in": 8 },
+        { "value": "en-GB", "introduced_in": 8 },
         { "value": "fi", "introduced_in": 1 },
         { "value": "fr", "introduced_in": 1 },
+        { "value": "fr-CA", "introduced_in": 8 },
         { "value": "de", "introduced_in": 1 },
         { "value": "el", "introduced_in": 1 },
         { "value": "he", "introduced_in": 1 },
@@ -114,11 +137,15 @@
         { "value": "fa", "introduced_in": 1 },
         { "value": "pl", "introduced_in": 1 },
         { "value": "pt", "introduced_in": 1 },
+        { "value": "pt-BR", "introduced_in": 8 },
+        { "value": "pt-PT", "introduced_in": 8 },
         { "value": "ro", "introduced_in": 1 },
         { "value": "ru", "introduced_in": 1 },
         { "value": "sk", "introduced_in": 1 },
         { "value": "sl", "introduced_in": 1 },
         { "value": "es", "introduced_in": 1 },
+        { "value": "es-419", "introduced_in": 8 },
+        { "value": "es-ES", "introduced_in": 8 },
         { "value": "sv", "introduced_in": 1 },
         { "value": "ta", "introduced_in": 1 },
         { "value": "te", "introduced_in": 1 },
@@ -130,6 +157,194 @@
     }
   },
   "definitions": [
+    {
+      "key": "player.video_skip_back_seconds",
+      "introduced_in": 9,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": {
+        "type": "enum",
+        "values": [
+          {
+            "value": 5,
+            "label": "5 seconds"
+          },
+          {
+            "value": 10,
+            "label": "10 seconds"
+          },
+          {
+            "value": 15,
+            "label": "15 seconds"
+          },
+          {
+            "value": 30,
+            "label": "30 seconds"
+          },
+          {
+            "value": 45,
+            "label": "45 seconds"
+          },
+          {
+            "value": 60,
+            "label": "60 seconds"
+          },
+          {
+            "value": 90,
+            "label": "90 seconds"
+          }
+        ]
+      },
+      "default_value": 10,
+      "unit": "seconds",
+      "platforms": ["ios", "tvos", "macos", "android", "android_tv", "web"],
+      "category": "player",
+      "label": "Video rewind interval",
+      "description": "Seconds to skip back in video playback. Applies to buttons, keyboard shortcuts, gestures, and supported media controls.",
+      "recommended_control": "select"
+    },
+    {
+      "key": "player.video_skip_forward_seconds",
+      "introduced_in": 9,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": {
+        "type": "enum",
+        "values": [
+          {
+            "value": 5,
+            "label": "5 seconds"
+          },
+          {
+            "value": 10,
+            "label": "10 seconds"
+          },
+          {
+            "value": 15,
+            "label": "15 seconds"
+          },
+          {
+            "value": 30,
+            "label": "30 seconds"
+          },
+          {
+            "value": 45,
+            "label": "45 seconds"
+          },
+          {
+            "value": 60,
+            "label": "60 seconds"
+          },
+          {
+            "value": 90,
+            "label": "90 seconds"
+          }
+        ]
+      },
+      "default_value": 30,
+      "unit": "seconds",
+      "platforms": ["ios", "tvos", "macos", "android", "android_tv", "web"],
+      "category": "player",
+      "label": "Video fast-forward interval",
+      "description": "Seconds to skip forward in video playback. Applies to buttons, keyboard shortcuts, gestures, and supported media controls.",
+      "recommended_control": "select"
+    },
+    {
+      "key": "player.audiobook_skip_back_seconds",
+      "introduced_in": 9,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": {
+        "type": "enum",
+        "values": [
+          {
+            "value": 5,
+            "label": "5 seconds"
+          },
+          {
+            "value": 10,
+            "label": "10 seconds"
+          },
+          {
+            "value": 15,
+            "label": "15 seconds"
+          },
+          {
+            "value": 30,
+            "label": "30 seconds"
+          },
+          {
+            "value": 45,
+            "label": "45 seconds"
+          },
+          {
+            "value": 60,
+            "label": "60 seconds"
+          },
+          {
+            "value": 90,
+            "label": "90 seconds"
+          }
+        ]
+      },
+      "default_value": 10,
+      "unit": "seconds",
+      "platforms": ["ios", "tvos", "macos", "android", "android_tv", "web"],
+      "category": "player",
+      "label": "Audiobook rewind interval",
+      "description": "Seconds to skip back in audiobook playback. Applies to buttons, keyboard shortcuts, gestures, and supported media controls.",
+      "recommended_control": "select"
+    },
+    {
+      "key": "player.audiobook_skip_forward_seconds",
+      "introduced_in": 9,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": {
+        "type": "enum",
+        "values": [
+          {
+            "value": 5,
+            "label": "5 seconds"
+          },
+          {
+            "value": 10,
+            "label": "10 seconds"
+          },
+          {
+            "value": 15,
+            "label": "15 seconds"
+          },
+          {
+            "value": 30,
+            "label": "30 seconds"
+          },
+          {
+            "value": 45,
+            "label": "45 seconds"
+          },
+          {
+            "value": 60,
+            "label": "60 seconds"
+          },
+          {
+            "value": 90,
+            "label": "90 seconds"
+          }
+        ]
+      },
+      "default_value": 30,
+      "unit": "seconds",
+      "platforms": ["ios", "tvos", "macos", "android", "android_tv", "web"],
+      "category": "player",
+      "label": "Audiobook fast-forward interval",
+      "description": "Seconds to skip forward in audiobook playback. Applies to buttons, keyboard shortcuts, gestures, and supported media controls.",
+      "recommended_control": "select"
+    },
     {
       "key": "playback.audio_language",
       "introduced_in": 1,
@@ -828,7 +1043,60 @@
       "category": "appearance",
       "label": "Poster badges",
       "description": "Which badges appear on poster cards, and where.",
-      "notes": "Registered from the legacy unprefixed key card_overlays, which reached the server only through the unknown-key extension bag — stored as an arbitrary string with no validation. null means the user has expressed no preference, which is what lets the server-wide admin default in the overlay-config endpoint apply; writing a resolved-but-unchosen value would silently pin them. The admin default and the enabled kill switch stay in server_settings and are not user settings."
+      "notes": "Registered from the legacy unprefixed key card_overlays, which reached the server only through the unknown-key extension bag — stored as an arbitrary string with no validation. null means the user has expressed no preference, which is what lets the server-wide admin default in the overlay-config endpoint apply; writing a resolved-but-unchosen value would silently pin them. The server-wide default configuration stays in server_settings and is not a user setting. This key describes which badges to show, not whether to show them — that is ui.card_overlays_enabled."
+    },
+    {
+      "key": "ui.card_overlays_enabled",
+      "introduced_in": 8,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": { "type": "boolean", "nullable": true },
+      "default_value": null,
+      "platforms": ["web"],
+      "category": "appearance",
+      "label": "Card overlays enabled",
+      "description": "Show overlay badges on media cards.",
+      "recommended_control": "switch",
+      "notes": "null means the profile has not chosen whether overlay badges are enabled, so the server-wide default from the overlay-config endpoint applies. An explicit profile choice overrides the server-wide default in either direction."
+    },
+    {
+      "key": "ui.card_quick_actions",
+      "introduced_in": 8,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": {
+        "type": "enum",
+        "nullable": true,
+        "values": [
+          { "value": "both", "label": "Both" },
+          { "value": "favorites", "label": "Favorites only" },
+          { "value": "watched", "label": "Watch indicator only" }
+        ]
+      },
+      "default_value": null,
+      "platforms": ["web"],
+      "category": "appearance",
+      "label": "Card quick actions",
+      "description": "Which favorite and watched shortcuts appear on media cards.",
+      "recommended_control": "select",
+      "notes": "null means the user has not chosen a mode, so the server-wide default from the overlay-config endpoint applies. The mode applies whenever quick actions are effectively enabled for the profile."
+    },
+    {
+      "key": "ui.card_quick_actions_enabled",
+      "introduced_in": 8,
+      "persistence": "remote",
+      "allowed_scopes": ["profile"],
+      "resolution_order": ["profile", "default"],
+      "value_schema": { "type": "boolean", "nullable": true },
+      "default_value": null,
+      "platforms": ["web"],
+      "category": "appearance",
+      "label": "Card quick actions enabled",
+      "description": "Show the selected favorite and watched shortcuts on media cards.",
+      "recommended_control": "switch",
+      "notes": "null means the profile has not chosen whether quick actions are enabled, so the server-wide default from the overlay-config endpoint applies. An explicit profile choice overrides the server-wide default in either direction."
     },
     {
       "key": "ui.next_up_mode",

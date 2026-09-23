@@ -16,6 +16,7 @@ class ServerDrivenConfigRefresher(
     private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
     private val playerSettingsStore: PlayerSettingsStore,
     private val hasAuthenticatedProfile: suspend () -> Boolean,
+    private val seekIntervalStore: SeekIntervalStore? = null,
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     @Volatile
@@ -38,6 +39,7 @@ class ServerDrivenConfigRefresher(
         cardPresentationStore.refresh()
         libraryPlaybackPrefsStore.refresh()
         playerSettingsStore.refreshFromServer()
+        seekIntervalStore?.refresh()
         lastRefreshAtMs = now
         return true
     }

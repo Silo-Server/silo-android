@@ -118,6 +118,9 @@ fun AudiobookPlayerScreen(
             .setUri(url)
             .setMediaMetadata(
                 MediaMetadata.Builder()
+                    // Tags the item so session seeks (headset, lock screen)
+                    // use the audiobook intervals rather than the video ones.
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK)
                     .setTitle(state.title)
                     .setArtist(state.author ?: state.narrator)
                     .also { mb ->
@@ -352,7 +355,14 @@ fun AudiobookPlayerScreen(
                     skipForwardSeconds = state.skipForwardSeconds,
                     onSkipBackSelected = viewModel::setSkipBackSeconds,
                     onSkipForwardSelected = viewModel::setSkipForwardSeconds,
-                    onDismiss = { showSkipSheet = false },
+                    onDismiss = {
+                        showSkipSheet = false
+                        viewModel.clearSkipIntervalError()
+                    },
+                    choices = state.skipIntervalChoices,
+                    profileWide = state.skipIntervalsProfileWide,
+                    editable = state.skipIntervalsEditable,
+                    errorMessage = state.skipIntervalError,
                 )
             }
             if (showSleepSheet) {

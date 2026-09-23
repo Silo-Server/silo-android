@@ -262,6 +262,8 @@ val androidTvModule = module {
             profileRepository = get(),
             offlineMediaResolver = get(),
             audiobookSettings = get(),
+            seekIntervalStore = get(),
+            audiobookSeekRouter = get(),
             savedStateHandle = get(),
         )
     }
@@ -538,6 +540,8 @@ val androidTvModule = module {
             legacyTvPrefsMigration = get(),
             profileSettings = get(),
             tvLibraryScopeStore = getOrNull(),
+            seekIntervalStore = get(),
+            audiobookSettingsStore = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }

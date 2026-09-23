@@ -20,10 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Forward30
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Replay30
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -42,6 +40,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import org.siloserver.silo.android.ui.components.SeekIntervalIcon
 import coil3.compose.AsyncImage
 
 /**
@@ -63,6 +62,9 @@ fun SiloCastOverlay(
     onBack: () -> Unit,
     onSeek: (Double) -> Unit,
     modifier: Modifier = Modifier,
+    // Intervals [onSkipBack]/[onSkipForward] actually use, for the glyphs.
+    skipBackSeconds: Int = 30,
+    skipForwardSeconds: Int = 30,
 ) {
     BackHandler(onBack = onBack)
     Box(
@@ -163,9 +165,10 @@ fun SiloCastOverlay(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onSkipBack) {
-                    Icon(
-                        imageVector = Icons.Default.Replay30,
-                        contentDescription = "Back 30 seconds",
+                    SeekIntervalIcon(
+                        forward = false,
+                        seconds = skipBackSeconds,
+                        contentDescription = "Back $skipBackSeconds seconds",
                         tint = Color.White,
                         modifier = Modifier.size(32.dp),
                     )
@@ -181,9 +184,10 @@ fun SiloCastOverlay(
                 }
 
                 IconButton(onClick = onSkipForward) {
-                    Icon(
-                        imageVector = Icons.Default.Forward30,
-                        contentDescription = "Forward 30 seconds",
+                    SeekIntervalIcon(
+                        forward = true,
+                        seconds = skipForwardSeconds,
+                        contentDescription = "Forward $skipForwardSeconds seconds",
                         tint = Color.White,
                         modifier = Modifier.size(32.dp),
                     )

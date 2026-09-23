@@ -279,6 +279,9 @@ class PlayerViewModel(
     // Google Cast (Chromecast) Tier-2 session preparer. Optional so existing
     // unit tests that construct the VM directly stay source-compatible.
     private val castPlaybackPreparer: org.siloserver.silo.common.player.cast.CastPlaybackPreparer? = null,
+    // Profile-wide seek intervals (settings revision 9). Optional so unit
+    // tests that construct the VM directly keep the legacy fixed intervals.
+    private val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -320,6 +323,12 @@ class PlayerViewModel(
         // `PlayerOrientationMode` so the device-scoped setting round-trips.
         private const val ORIENTATION_MODE_LANDSCAPE_LOCKED = "landscapeLocked"
         private const val ORIENTATION_MODE_ROTATE_FREELY = "rotateFreely"
+
+        /**
+         * The phone player's fixed intervals before revision 9. Kept for older
+         * servers (and until discovery answers) instead of the contract default.
+         */
+        val LEGACY_VIDEO_SEEK_INTERVALS = org.siloserver.silo.model.settings.SeekIntervalPair(10, 10)
     }
 
     /**
@@ -617,6 +626,28 @@ class PlayerViewModel(
     // exists (0 = only at end). Credits marker wins when present.
     private val nextUpPromptSeconds: StateFlow<Int> = playerSettingsStore.nextUpPromptSecondsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 30)
+
+    /**
+     * Video relative-seek intervals every phone surface uses (buttons,
+     * double-tap, Watch Together skips): the profile-wide values on a
+     * revision-9 server, otherwise the phone's pre-revision-9 10s/10s. Read at
+     * press time, so a settings change applies to the next skip mid-playback.
+     */
+    val seekIntervals: StateFlow<org.siloserver.silo.model.settings.SeekIntervalPair> =
+        seekIntervalStore?.state
+            ?.map { it.video(LEGACY_VIDEO_SEEK_INTERVALS) }
+            ?.stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                seekIntervalStore.state.value.video(LEGACY_VIDEO_SEEK_INTERVALS),
+            )
+            ?: kotlinx.coroutines.flow.MutableStateFlow(LEGACY_VIDEO_SEEK_INTERVALS)
+
+    init {
+        // Player open is a refresh edge: Android has no settings realtime
+        // consumer, so this picks up an interval changed on another device.
+        seekIntervalStore?.let { store -> viewModelScope.launch { store.refresh() } }
+    }
 
     // ---- F2 pass-out protection ----
     // Per-profile "Still watching?" threshold (default 3; 0 = off).

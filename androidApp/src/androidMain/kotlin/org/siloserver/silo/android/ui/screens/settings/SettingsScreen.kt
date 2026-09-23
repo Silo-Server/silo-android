@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.model.settings.SeekMedia
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -225,6 +226,28 @@ fun SettingsScreen(
                     onResumeRewindSecondsChanged = viewModel::setResumeRewindSeconds,
                     onPassOutThresholdChanged = viewModel::setPassOutThreshold,
                     onResetPlaybackOverrides = viewModel::resetPlaybackOverrides,
+                )
+            }
+
+            item {
+                val seekIntervals by viewModel.seekIntervals.state.collectAsState()
+                SeekIntervalSettings(
+                    media = SeekMedia.Video,
+                    state = seekIntervals,
+                    onIntervalSelected = viewModel.seekIntervals::select,
+                    onImportLegacyAudiobook = viewModel.seekIntervals::importLegacyAudiobook,
+                    onRetry = viewModel.seekIntervals::refresh,
+                )
+            }
+
+            item {
+                val seekIntervals by viewModel.seekIntervals.state.collectAsState()
+                SeekIntervalSettings(
+                    media = SeekMedia.Audiobook,
+                    state = seekIntervals,
+                    onIntervalSelected = viewModel.seekIntervals::select,
+                    onImportLegacyAudiobook = viewModel.seekIntervals::importLegacyAudiobook,
+                    onRetry = viewModel.seekIntervals::refresh,
                 )
             }
 

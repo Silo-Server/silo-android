@@ -155,6 +155,9 @@ fun TvAudiobookPlayerScreen(
             .setUri(url)
             .setMediaMetadata(
                 MediaMetadata.Builder()
+                    // Tags the item so session seeks (headset, lock screen)
+                    // use the audiobook intervals rather than the video ones.
+                    .setMediaType(MediaMetadata.MEDIA_TYPE_AUDIO_BOOK)
                     .setTitle(state.title)
                     .setArtist(state.author ?: state.narrator)
                     .also { mb ->
@@ -310,6 +313,11 @@ fun TvAudiobookPlayerScreen(
     // belonged to.
     LaunchedEffect(state.error != null) {
         if (state.error != null) activePanel = AudiobookPanel.None
+    }
+
+    // A skip-interval save message belongs to the open skip panel.
+    LaunchedEffect(activePanel) {
+        if (activePanel != AudiobookPanel.Skip) viewModel.clearSkipIntervalError()
     }
 
     // The panels are in-window overlays, so the player stays composed and
@@ -486,6 +494,10 @@ fun TvAudiobookPlayerScreen(
                     skipForwardSeconds = state.skipForwardSeconds,
                     onSelectSkipBack = { viewModel.setSkipBackSeconds(it) },
                     onSelectSkipForward = { viewModel.setSkipForwardSeconds(it) },
+                    choices = state.skipIntervalChoices,
+                    profileWide = state.skipIntervalsProfileWide,
+                    editable = state.skipIntervalsEditable,
+                    errorMessage = state.skipIntervalError,
                 )
                 AudiobookPanel.Sleep -> TvAudiobookSleepPanel(
                     onFocusAcquisitionFailed = { panelFocusFailed = true },
