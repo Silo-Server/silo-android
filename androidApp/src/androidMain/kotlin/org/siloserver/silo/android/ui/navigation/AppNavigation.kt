@@ -607,7 +607,7 @@ fun AppNavigation(
             ProfileSelectionScreen(
                 onNavigateToHome = {
                     // The switch-profile paths dropped the per-profile card
-                    // caches; re-hydrate for the profile just picked. The
+                    // and seek-interval caches; re-hydrate for the profile just picked. The
                     // providers above the graph only re-run when the profile id
                     // itself changes, so re-selecting the SAME profile would
                     // otherwise render cleared (default) cards until the next
@@ -615,6 +615,7 @@ fun AppNavigation(
                     navScope.launch {
                         overlayPrefsStore.hydrateIfNeeded()
                         cardPresentationStore.hydrateIfNeeded()
+                        seekIntervalStore.hydrateIfNeeded()
                     }
                     // Route through the tour gate: OnboardingTourScreen checks
                     // server-side state and immediately hands off to Home when

@@ -714,6 +714,10 @@ fun TvAppNavigation(
                     // than whatever was last synced.
                     watchNextSeeder.seedNow()
                     watchNextSeeder.enqueuePeriodic()
+                    // The switch-profile paths cleared the seek intervals; the
+                    // identity flow only reloads when the profile id changes, so
+                    // re-selecting the same profile needs this.
+                    scope.launch { seekIntervalStore.hydrateIfNeeded() }
                 },
                 onAddProfile = {
                     navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }

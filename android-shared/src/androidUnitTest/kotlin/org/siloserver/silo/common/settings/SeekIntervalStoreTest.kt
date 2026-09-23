@@ -18,7 +18,11 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonElement
@@ -164,6 +168,65 @@ class SeekIntervalStoreTest {
     }
 
     @Test
+    fun `a write keeps settling after its caller is cancelled`() = runTest {
+        val api = FakeSeekSettingsApi(values = mapOf(SettingKeys.PLAYER_VIDEO_SKIP_BACK_SECONDS to 30))
+        val store = storeFor(api)
+        store.refresh()
+        val gate = CompletableDeferred<Unit>()
+        api.putGate = gate
+        api.failPuts = true
+
+        val caller = launch { store.save(SeekMedia.Video, SeekDirection.Back, 45) }
+        runCurrent()
+        assertEquals(45, store.state.value.videoIntervals.backSeconds)
+        caller.cancel()
+        gate.complete(Unit)
+        runCurrent()
+
+        assertEquals(30, store.state.value.videoIntervals.backSeconds)
+    }
+
+    @Test
+    fun `a failed write returns to the server value, not an unconfirmed one`() = runTest {
+        val api = FakeSeekSettingsApi(values = mapOf(SettingKeys.PLAYER_VIDEO_SKIP_BACK_SECONDS to 30))
+        val store = storeFor(api)
+        store.refresh()
+        val gate = CompletableDeferred<Unit>()
+        api.putGate = gate
+        api.failPuts = true
+
+        val first = async { store.save(SeekMedia.Video, SeekDirection.Back, 45) }
+        val second = async { store.save(SeekMedia.Video, SeekDirection.Back, 60) }
+        runCurrent()
+        gate.complete(Unit)
+        first.await()
+        second.await()
+
+        assertEquals(30, store.state.value.videoIntervals.backSeconds)
+    }
+
+    @Test
+    fun `a choice made during an import stays on screen and is saved`() = runTest {
+        val api = FakeSeekSettingsApi()
+        val store = storeFor(api)
+        store.refresh()
+        val gate = CompletableDeferred<Unit>()
+        api.putGate = gate
+
+        val import = async { store.importLegacyAudiobook(LegacyAudiobookIntervals(backSeconds = 15, forwardSeconds = 60)) }
+        runCurrent()
+        val save = async { store.save(SeekMedia.Audiobook, SeekDirection.Back, 90) }
+        runCurrent()
+        gate.complete(Unit)
+        import.await()
+        runCurrent()
+        assertEquals(90, store.state.value.audiobookIntervals.backSeconds)
+        assertEquals(60, store.state.value.audiobookIntervals.forwardSeconds)
+        assertEquals<SeekIntervalController.SaveResult>(SeekIntervalController.SaveResult.Saved(90), save.await())
+        assertEquals(90, store.state.value.audiobookIntervals.backSeconds)
+    }
+
+    @Test
     fun `import applies only the directions that succeeded`() = runTest {
         val api = FakeSeekSettingsApi(failKey = SettingKeys.PLAYER_AUDIOBOOK_SKIP_FORWARD_SECONDS)
         val store = storeFor(api)
@@ -215,6 +278,8 @@ internal class FakeSeekSettingsApi(
     ),
 ) {
     var failPuts = false
+    /** When set, every write waits for it, holding the request in flight. */
+    var putGate: CompletableDeferred<Unit>? = null
     val puts = mutableListOf<Pair<String, JsonElement>>()
 
     override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
@@ -240,6 +305,7 @@ internal class FakeSeekSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         puts += key to value
+        putGate?.await()
         if (failPuts || key == failKey) return ApiResult.Error(500, "boom", "Server error")
         return ApiResult.Success(StoredSettingValue(key = key, scope = scope.scope.wire))
     }

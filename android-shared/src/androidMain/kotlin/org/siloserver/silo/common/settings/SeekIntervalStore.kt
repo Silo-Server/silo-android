@@ -14,6 +14,7 @@ import org.siloserver.silo.model.settings.SeekIntervalSupport
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -55,7 +56,8 @@ interface SeekIntervalStore {
 
     /**
      * Apply [seconds] locally, then write it at profile scope; restores the
-     * previous value if the write fails. Refused without a request unless the
+     * last server-confirmed value if the write fails. The write settles in the
+     * store's scope, so cancelling the caller does not leave it half-applied. Refused without a request unless the
      * server is known to support the keys.
      */
     suspend fun save(media: SeekMedia, direction: SeekDirection, seconds: Int): SeekIntervalController.SaveResult
@@ -115,6 +117,16 @@ class DefaultSeekIntervalStore private constructor(
     @Volatile
     private var hasHydrated = false
 
+    /** The last values the server confirmed (a committed refresh, a saved
+     *  write, an imported direction). A failed write restores these rather
+     *  than whatever unconfirmed value was on screen before it. */
+    private var confirmed = SeekIntervalState()
+
+    /** Latest local request per media and direction. Only that request may
+     *  change what is shown when it settles; an older one updates [confirmed]. */
+    private val latestRequest = mutableMapOf<Pair<SeekMedia, SeekDirection>, Long>()
+    private var requestCounter = 0L
+
     private val refreshLock = Mutex()
     private val writeLock = Mutex()
 
@@ -125,13 +137,7 @@ class DefaultSeekIntervalStore private constructor(
     }
 
     private suspend fun onIdentityChanged() {
-        synchronized(lock) {
-            generation += 1
-            mutationEpoch += 1
-            hasHydrated = false
-            _state.value = SeekIntervalState()
-            _lastError.value = null
-        }
+        synchronized(lock) { resetLocked() }
         hydrateIfNeeded()
     }
 
@@ -173,6 +179,7 @@ class DefaultSeekIntervalStore private constructor(
         val committed = synchronized(lock) {
             if (generation != startGeneration || mutationEpoch != startEpoch) return@synchronized false
             _state.value = resolved
+            confirmed = resolved
             _lastError.value = null
             hasHydrated = true
             true
@@ -192,6 +199,7 @@ class DefaultSeekIntervalStore private constructor(
             val waiting = current == SeekIntervalSupport.Unknown || current == SeekIntervalSupport.Unavailable
             if (!hasHydrated && generation == startGeneration && waiting) {
                 _state.value = cached
+                confirmed = cached
             }
         }
     }
@@ -202,79 +210,100 @@ class DefaultSeekIntervalStore private constructor(
         seconds: Int,
     ): SeekIntervalController.SaveResult {
         if (!SeekIntervals.isValid(seconds)) return SeekIntervalController.SaveResult.Invalid(seconds)
+        val key = media to direction
         val startGeneration: Int
-        val previous: Int
+        val request: Long
         synchronized(lock) {
             val current = _state.value
             if (!current.isSupported) {
                 return SeekIntervalController.SaveResult.Failed(UNSUPPORTED_MESSAGE)
             }
             startGeneration = generation
-            previous = current.pair(media).seconds(direction)
+            request = ++requestCounter
+            latestRequest[key] = request
             mutationEpoch += 1
             _state.value = current.with(media, direction, seconds)
         }
-        val result = writeLock.withLock {
-            if (generation != startGeneration) return SeekIntervalController.SaveResult.Failed(null)
-            controller.save(media, direction, seconds)
-        }
-        when (result) {
-            is SeekIntervalController.SaveResult.Saved -> persistCurrent(startGeneration)
-            is SeekIntervalController.SaveResult.Failed, is SeekIntervalController.SaveResult.Invalid ->
-                synchronized(lock) {
-                    if (generation != startGeneration) return@synchronized
+        // The store owns the write and its settlement: a caller that leaves the
+        // screen (cancelling its scope) must not strand an unsaved value on screen.
+        return scope.async {
+            val result = writeLock.withLock {
+                if (generation != startGeneration) return@async SeekIntervalController.SaveResult.Failed(null)
+                controller.save(media, direction, seconds)
+            }
+            val saved = result is SeekIntervalController.SaveResult.Saved
+            synchronized(lock) {
+                if (generation != startGeneration) return@async result
+                if (saved) confirmed = confirmed.with(media, direction, seconds)
+                if (latestRequest[key] == request) {
                     mutationEpoch += 1
-                    // Only undo our own value; a newer choice stays on screen.
-                    val current = _state.value
-                    if (current.pair(media).seconds(direction) == seconds) {
-                        _state.value = current.with(media, direction, previous)
-                    }
-                    _lastError.value = (result as? SeekIntervalController.SaveResult.Failed)?.message
+                    // Saved: re-assert the value (an import may have painted over it).
+                    // Failed: return to what the server last confirmed.
+                    val shown = if (saved) seconds else confirmed.pair(media).seconds(direction)
+                    _state.value = _state.value.with(media, direction, shown)
                 }
-        }
-        return result
+                if (!saved) _lastError.value = (result as? SeekIntervalController.SaveResult.Failed)?.message
+            }
+            if (saved) persistConfirmed(startGeneration)
+            result
+        }.await()
     }
 
     override suspend fun importLegacyAudiobook(legacy: LegacyAudiobookIntervals): SeekImportResult? {
-        val startGeneration = generation
-        if (!_state.value.isSupported) return null
-        val result = writeLock.withLock {
-            if (generation != startGeneration) return null
-            controller.importLegacyAudiobook(legacy)
-        }
+        val startGeneration: Int
+        val startRequest: Long
         synchronized(lock) {
-            if (generation != startGeneration) return result
-            mutationEpoch += 1
-            var next = _state.value
-            SeekDirection.entries.forEach { direction ->
-                val outcome = result.outcome(direction)
-                if (outcome is SeekImportOutcome.Imported) {
-                    next = next.with(SeekMedia.Audiobook, direction, outcome.seconds)
-                }
-            }
-            _state.value = next
+            if (!_state.value.isSupported) return null
+            startGeneration = generation
+            startRequest = requestCounter
         }
-        persistCurrent(startGeneration)
-        return result
+        return scope.async {
+            val result = writeLock.withLock {
+                if (generation != startGeneration) return@async null
+                controller.importLegacyAudiobook(legacy)
+            }
+            synchronized(lock) {
+                if (generation != startGeneration) return@async result
+                mutationEpoch += 1
+                var next = _state.value
+                SeekDirection.entries.forEach { direction ->
+                    val outcome = result.outcome(direction)
+                    if (outcome is SeekImportOutcome.Imported) {
+                        confirmed = confirmed.with(SeekMedia.Audiobook, direction, outcome.seconds)
+                        // A choice made while the import ran is newer; keep it on screen.
+                        val chosenSince = (latestRequest[SeekMedia.Audiobook to direction] ?: 0L) > startRequest
+                        if (!chosenSince) next = next.with(SeekMedia.Audiobook, direction, outcome.seconds)
+                    }
+                }
+                _state.value = next
+            }
+            persistConfirmed(startGeneration)
+            result
+        }.await()
     }
 
-    private suspend fun persistCurrent(startGeneration: Int) {
+    /** Caches what the server confirmed, never an unconfirmed value on screen. */
+    private suspend fun persistConfirmed(startGeneration: Int) {
         val identity = currentIdentity() ?: return
         val snapshot = synchronized(lock) {
             if (generation != startGeneration) return
-            _state.value
+            confirmed
         }
         cache.write(identity, snapshot)
     }
 
     override fun clear() {
-        synchronized(lock) {
-            generation += 1
-            mutationEpoch += 1
-            hasHydrated = false
-            _state.value = SeekIntervalState()
-            _lastError.value = null
-        }
+        synchronized(lock) { resetLocked() }
+    }
+
+    private fun resetLocked() {
+        generation += 1
+        mutationEpoch += 1
+        hasHydrated = false
+        _state.value = SeekIntervalState()
+        confirmed = SeekIntervalState()
+        latestRequest.clear()
+        _lastError.value = null
     }
 
     private suspend fun currentIdentity(): String? {
