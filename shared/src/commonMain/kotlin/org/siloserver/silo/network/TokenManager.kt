@@ -45,7 +45,16 @@ data class AccountSessionExpectation(
     val serverUrl: String,
     /** Non-suspending route/attempt fence, evaluated inside the account replacement lock. */
     val installationAllowed: () -> Boolean = { true },
-)
+) {
+    /**
+     * Whether [current] still names the same account session. Use this rather than `==`:
+     * [installationAllowed] compares by instance, and D8 builds a new default lambda for
+     * every expectation, so two captures of an unchanged session are never equal on device.
+     */
+    fun isSameSession(current: AccountSessionExpectation?): Boolean =
+        current != null && current.generation == generation &&
+            current.serverId == serverId && current.serverUrl == serverUrl
+}
 class AccountSessionChangedException : IllegalStateException("The initiating account or server changed")
 
 interface TokenManager {
