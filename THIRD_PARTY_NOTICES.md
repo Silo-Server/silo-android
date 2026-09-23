@@ -12,7 +12,7 @@ Rebuild and source instructions are in [scripts/README-ffmpeg-aar.md](scripts/RE
 
 ## libass Subtitles
 
-Silo uses [`ass-media` 0.4.0](https://github.com/peerless2012/libass-android) under the MIT license to integrate authored ASS/SSA subtitle rendering with AndroidX Media3. Its native package includes [`libass`](https://github.com/libass/libass), distributed under the ISC license, plus libass's font and text-shaping dependencies under their respective upstream licenses.
+Silo uses [`ass-media` 0.5.1](https://github.com/peerless2012/libass-android) under the MIT license to integrate authored ASS/SSA subtitle rendering with AndroidX Media3. Its native package includes [`libass`](https://github.com/libass/libass), distributed under the ISC license, plus libass's font and text-shaping dependencies under their respective upstream licenses.
 
 ## libdovi
 

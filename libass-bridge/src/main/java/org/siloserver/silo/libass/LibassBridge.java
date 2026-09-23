@@ -344,7 +344,9 @@ public final class LibassBridge {
             Extractor extractor = extractors[index];
             if (extractor instanceof MatroskaExtractor
                     && !(extractor instanceof AssMatroskaExtractor)) {
-                extractors[index] = new AssMatroskaExtractor(combinedParserFactory, handler);
+                // Flags 0 is what the two-argument constructor passed before
+                // ass-media 0.5 made them a Kotlin default Java cannot omit.
+                extractors[index] = new AssMatroskaExtractor(combinedParserFactory, handler, 0);
             }
         }
         return extractors;
