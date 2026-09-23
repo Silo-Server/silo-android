@@ -102,6 +102,18 @@ write_workflow 'jobs:
     uses: example/project/.github/workflows/reusable.yml@main'
 expect_fail "job-level reusable workflow" "Unpinned GitHub Action"
 
+new_fixture "first-party-reusable"
+write_workflow 'jobs:
+  reusable:
+    uses: Silo-Server/silo-server/.github/workflows/reusable.yml@main'
+expect_pass "first-party reusable workflow"
+
+new_fixture "lookalike-owner"
+write_workflow 'jobs:
+  reusable:
+    uses: Silo-Server-fork/silo-server/.github/workflows/reusable.yml@main'
+expect_fail "lookalike owner reusable workflow" "Unpinned GitHub Action"
+
 new_fixture "nested-mutable"
 write_workflow 'jobs:
   test:
