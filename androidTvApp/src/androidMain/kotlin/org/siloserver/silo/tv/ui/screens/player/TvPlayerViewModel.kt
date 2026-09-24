@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -2868,8 +2870,12 @@ class TvPlayerViewModel(
         val durationSec = mappedDurationSec
         val seekWasActive = activeSeekTargetSec != null
         activeSeekTargetSec?.let { target ->
-            if (kotlin.math.abs(positionSec - target) <= 2.0 || nowMs - activeSeekStartedAtMs >= SEEK_SETTLE_DEADLINE_MS) {
+            val landed = kotlin.math.abs(positionSec - target) <= 2.0
+            if (landed || nowMs - activeSeekStartedAtMs >= SEEK_SETTLE_DEADLINE_MS) {
                 Log.i(TAG, "seek_settled seek_id=$activeSeekId target_source_seconds=$target actual_source_seconds=$positionSec")
+                DiagnosticsPlaybackLogger.seek(
+                    if (landed) DiagnosticsSeekEvent.Settled else DiagnosticsSeekEvent.SettleDeadlineReached,
+                )
                 activeSeekTargetSec = null
                 activeSeekId = null
                 sameRouteSeekRecoveryAttempted = false
@@ -3392,6 +3398,7 @@ class TvPlayerViewModel(
                 "seek_commit seek_id=$activeSeekId action=queue_native_after_mount " +
                     "target_source_seconds=$targetSourceSec",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.QueuedUntilMount)
             return
         }
         if (seekRecoveryQueue.hasInFlight || transportMountGate.suppressPositionReports) {
@@ -3400,6 +3407,7 @@ class TvPlayerViewModel(
                 "seek_commit seek_id=$activeSeekId action=queue_server_reanchor " +
                     "target_source_seconds=$targetSourceSec reason=recovery_or_mount_pending",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.QueuedBehindRecovery)
             enqueueSeekRecovery(
                 TvSeekRecoveryOperation.Reanchor(
                     targetSourceSeconds = targetSourceSec,
@@ -3421,6 +3429,10 @@ class TvPlayerViewModel(
                     "seek_commit seek_id=$activeSeekId action=server_reanchor " +
                         "target_source_seconds=$targetSourceSec reason=${decision.reason}",
                 )
+                DiagnosticsPlaybackLogger.seek(
+                    DiagnosticsSeekEvent.CommittedServerReanchor,
+                    reason = decision.reason.name,
+                )
                 startSeekReanchor(targetSourceSec, "${decision.reason}")
             }
             is PlaybackSeekDecision.NativeSeek -> {
@@ -3433,9 +3445,13 @@ class TvPlayerViewModel(
                             " mounted_source_range=${it.start}..${it.endInclusive}"
                         } ?: ""),
                 )
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedNative)
                 seekRequestChannel.trySend(decision.targetPlayerPositionSeconds)
             }
-            null -> seekRequestChannel.trySend(targetSourceSec)
+            null -> {
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedWithoutPlan)
+                seekRequestChannel.trySend(targetSourceSec)
+            }
         }
     }
 
@@ -3502,11 +3518,14 @@ class TvPlayerViewModel(
                     operation is TvSeekRecoveryOperation.Reanchor && !operation.rollbackAllowed
                 viewModelScope.launch { drainSeekRecoveryQueue(submission.request) }
             }
-            TvSeekRecoverySubmission.Queued -> Log.i(
-                TAG,
-                "seek_recovery_queued seek_id=$seekId " +
-                    "target_source_seconds=${operation.targetSourceSeconds}",
-            )
+            TvSeekRecoverySubmission.Queued -> {
+                Log.i(
+                    TAG,
+                    "seek_recovery_queued seek_id=$seekId " +
+                        "target_source_seconds=${operation.targetSourceSeconds}",
+                )
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.RecoveryQueued)
+            }
         }
     }
 
@@ -3777,6 +3796,7 @@ class TvPlayerViewModel(
             seekRecoveryRollbackInvalidated = false
             transportMountGate.reset()
             Log.w(TAG, "seek_recovery action=rollback message=$message")
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.RolledBack)
             _uiState.update {
                 it.copy(
                     position = rollback,
@@ -3786,6 +3806,7 @@ class TvPlayerViewModel(
             }
             return
         }
+        DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.Failed)
         _uiState.update { it.copy(isBuffering = false, error = message) }
     }
 
@@ -5475,6 +5496,7 @@ class TvPlayerViewModel(
                 "seek_recovery seek_id=$activeSeekId action=ignore_stale_player_error " +
                     "error=${error.errorCodeName}",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorIgnored, reason = error.errorCodeName)
             seekRecoveryRollbackInvalidated = true
             return
         }
@@ -5527,6 +5549,7 @@ class TvPlayerViewModel(
                     "target_source_seconds=$pendingSeekTarget error=${error.errorCodeName}",
                 error,
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorReanchor, reason = error.errorCodeName)
             startSeekReanchor(
                 targetSourceSec = pendingSeekTarget,
                 reason = "player_error_same_route",

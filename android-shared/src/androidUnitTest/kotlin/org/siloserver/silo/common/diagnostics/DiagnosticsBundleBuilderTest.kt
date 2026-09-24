@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import org.siloserver.silo.common.player.seek.ServerReanchorReason
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsent
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode
@@ -310,6 +311,68 @@ class DiagnosticsBundleBuilderTest {
                 "self-hosted logs must still carry $retained: $selfHostedLogs",
             )
         }
+    }
+
+    @Test
+    fun hostedBundleKeepsPlaybackStateAndSeekMessages() {
+        // The collector strips the playback reason attribute, so play/pause and
+        // seek lines carry their fixed reason code in the message. Drive the real
+        // logger so the test covers both what it emits and what survives hosted
+        // text scrubbing.
+        val playWhenReadyReasons = listOf(
+            "user_request",
+            "audio_focus_loss",
+            "audio_becoming_noisy",
+            "remote",
+            "end_of_media_item",
+            "suppressed_too_long",
+            "other",
+        )
+        val errorCodes = listOf(
+            "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+            "ERROR_CODE_IO_BAD_HTTP_STATUS",
+            "ERROR_CODE_DECODING_FAILED",
+        )
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+        try {
+            DiagnosticsSeekEvent.entries.forEach { DiagnosticsPlaybackLogger.seek(it) }
+            DiagnosticsPlayerState.entries.forEach(DiagnosticsPlaybackLogger::playerState)
+            playWhenReadyReasons.forEach { reason ->
+                DiagnosticsPlaybackLogger.playWhenReadyChanged(playWhenReady = true, reason = reason)
+                DiagnosticsPlaybackLogger.playWhenReadyChanged(playWhenReady = false, reason = reason)
+            }
+            ServerReanchorReason.entries.forEach {
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedServerReanchor, reason = it.name)
+            }
+            errorCodes.forEach {
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorReanchor, reason = it)
+            }
+        } finally {
+            SiloLog.installSink(null)
+        }
+        val expected = DiagnosticsSeekEvent.entries.map { it.message } +
+            DiagnosticsPlayerState.entries.map { it.message } +
+            playWhenReadyReasons.flatMap { reason ->
+                listOf("play requested ($reason)", "pause requested ($reason)")
+            } +
+            ServerReanchorReason.entries.map { "seek committed reanchor (${it.name})" } +
+            errorCodes.map { "seek reanchor after player error ($it)" }
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "logs.jsonl" to lines.joinToString(separator = "\n", postfix = "\n").encodeToByteArray(),
+        )
+
+        val hostedLogs = untar(gunzip(builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).bytes)).associateBy(TarEntry::name)
+            .getValue("logs.jsonl").bytes.decodeToString()
+        val hostedMessages = hostedLogs.lineSequence().filter(String::isNotBlank)
+            .map { Json.parseToJsonElement(it).jsonObject.getValue("msg").jsonPrimitive.content }
+            .toList()
+
+        assertEquals(expected, hostedMessages)
     }
 
     @Test

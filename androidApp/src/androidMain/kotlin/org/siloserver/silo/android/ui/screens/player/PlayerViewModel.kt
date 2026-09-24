@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
 import org.siloserver.silo.common.player.failedRendererTrackType
 import org.siloserver.silo.common.player.failureDiagnostics
@@ -1640,6 +1642,7 @@ class PlayerViewModel(
                 "seek_recovery seek_id=$activeSeekId action=ignore_stale_player_error " +
                     "error=${error.errorCodeName}",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorIgnored, reason = error.errorCodeName)
             seekRecoveryRollbackInvalidated = true
             return
         }
@@ -1695,6 +1698,7 @@ class PlayerViewModel(
                     "target_source_seconds=$pendingSeekTarget error=${error.errorCodeName}",
                 error,
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorReanchor, reason = error.errorCodeName)
             startSeekReanchor(
                 targetSourceSec = pendingSeekTarget,
                 reason = "player_error_same_route",
@@ -2269,11 +2273,14 @@ class PlayerViewModel(
         val bufferedSec = mappedBufferedSec
         val seekWasActive = activeSeekTargetSec != null
         activeSeekTargetSec?.let { target ->
+            val landed = kotlin.math.abs(positionSec - target) <= 2.0
             if (!serverSeekRecoveryInFlight &&
-                (kotlin.math.abs(positionSec - target) <= 2.0 ||
-                    nowMs - activeSeekStartedAtMs >= SEEK_SETTLE_DEADLINE_MS)
+                (landed || nowMs - activeSeekStartedAtMs >= SEEK_SETTLE_DEADLINE_MS)
             ) {
                 Log.i(TAG, "seek_settled seek_id=$activeSeekId target_source_seconds=$target actual_source_seconds=$positionSec")
+                DiagnosticsPlaybackLogger.seek(
+                    if (landed) DiagnosticsSeekEvent.Settled else DiagnosticsSeekEvent.SettleDeadlineReached,
+                )
                 activeSeekTargetSec = null
                 activeSeekId = null
                 sameRouteSeekRecoveryAttempted = false
@@ -2543,6 +2550,7 @@ class PlayerViewModel(
                 "seek_commit seek_id=$activeSeekId action=queue_native_after_mount " +
                     "target_source_seconds=$targetSourceSec",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.QueuedUntilMount)
             return
         }
         // The mounted player still represents the old server origin until the
@@ -2560,6 +2568,7 @@ class PlayerViewModel(
                 "seek_commit seek_id=$activeSeekId action=queue_server_reanchor " +
                     "target_source_seconds=$targetSourceSec reason=reanchor_in_flight",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.QueuedBehindRecovery)
             startSeekReanchor(targetSourceSec, "reanchor_in_flight")
             return
         }
@@ -2572,6 +2581,10 @@ class PlayerViewModel(
                     "seek_commit seek_id=$activeSeekId action=server_reanchor " +
                         "target_source_seconds=$targetSourceSec reason=${decision.reason}",
                 )
+                DiagnosticsPlaybackLogger.seek(
+                    DiagnosticsSeekEvent.CommittedServerReanchor,
+                    reason = decision.reason.name,
+                )
                 startSeekReanchor(targetSourceSec, "${decision.reason}")
             }
             is PlaybackSeekDecision.NativeSeek -> {
@@ -2581,6 +2594,7 @@ class PlayerViewModel(
                         "target_source_seconds=$targetSourceSec " +
                         "target_player_seconds=${decision.targetPlayerPositionSeconds}",
                 )
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedNative)
                 if (immediate) {
                     immediateSeekChannel.trySend(decision.targetPlayerPositionSeconds)
                 } else {
@@ -2590,6 +2604,7 @@ class PlayerViewModel(
             null -> {
                 // Offline/local playback has no V3 plan; source and player
                 // coordinates are the same.
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedWithoutPlan)
                 if (immediate) immediateSeekChannel.trySend(targetSourceSec)
                 else seekRequestChannel.trySend(targetSourceSec)
             }
@@ -2664,6 +2679,7 @@ class PlayerViewModel(
                 "seek_recovery seek_id=${request.seekId} action=queued_latest " +
                     "target_source_seconds=${request.targetSourceSec}",
             )
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.RecoveryQueued)
             return
         }
 
@@ -2881,6 +2897,7 @@ class PlayerViewModel(
             positionReportsBlockedForPendingLoad = false
             awaitingMediaMountGeneration = null
             Log.w(TAG, "seek_recovery action=rollback message=$message")
+            DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.RolledBack)
             _uiState.update {
                 it.copy(
                     position = rollback,
@@ -2890,6 +2907,7 @@ class PlayerViewModel(
             }
             return
         }
+        DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.Failed)
         _uiState.update { it.copy(isBuffering = false, error = message) }
     }
 

@@ -93,6 +93,29 @@ internal fun safeDiagnosticsNetworkPath(rawPath: String): String {
     return (listOf("", "api", segments[1], resource) + template).joinToString("/")
 }
 
+enum class DiagnosticsPlayerState(internal val message: String) {
+    Idle("player idle"),
+    Buffering("player buffering"),
+    Ready("player ready"),
+    Ended("player ended"),
+}
+
+/** Seek routing and recovery steps shared by the phone and TV player view models. */
+enum class DiagnosticsSeekEvent(internal val message: String, internal val warning: Boolean = false) {
+    CommittedNative("seek committed native"),
+    CommittedServerReanchor("seek committed reanchor"),
+    CommittedWithoutPlan("seek committed without plan"),
+    QueuedUntilMount("seek queued until mount"),
+    QueuedBehindRecovery("seek queued behind recovery"),
+    RecoveryQueued("seek recovery queued"),
+    Settled("seek settled"),
+    SettleDeadlineReached("seek settle deadline reached", warning = true),
+    PlayerErrorIgnored("seek player error ignored", warning = true),
+    PlayerErrorReanchor("seek reanchor after player error", warning = true),
+    RolledBack("seek rolled back", warning = true),
+    Failed("seek failed", warning = true),
+}
+
 object DiagnosticsPlaybackLogger {
     fun sessionEvent(message: String) = playbackInfo(message)
 
@@ -158,6 +181,35 @@ object DiagnosticsPlaybackLogger {
     fun playerError() = SiloLog.e(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "player error")
 
     fun loadError() = SiloLog.w(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "media load error")
+
+    // Seek and state lines carry their meaning in the message, not attributes:
+    // the hosted collector strips position_ms and reason. Reason codes come from
+    // fixed vocabularies (Media3 constants, enum names), so appending them to
+    // the message keeps them in hosted reports without free text.
+    fun seekStarted(positionMs: Long) = playbackInfo(
+        "seek started",
+        mapOf("position_ms" to SiloLogAttribute.Integer(positionMs.coerceAtLeast(0))),
+    )
+
+    fun playerState(state: DiagnosticsPlayerState) = playbackInfo(state.message)
+
+    fun playWhenReadyChanged(playWhenReady: Boolean, reason: String) = playbackInfo(
+        withReasonCode(if (playWhenReady) "play requested" else "pause requested", reason),
+    )
+
+    fun seek(event: DiagnosticsSeekEvent, reason: String? = null) {
+        val message = withReasonCode(event.message, reason)
+        if (event.warning) {
+            SiloLog.w(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, message)
+        } else {
+            SiloLog.i(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, message)
+        }
+    }
+
+    private fun withReasonCode(message: String, reason: String?): String =
+        if (reason.isNullOrBlank()) message else "$message ($reason)"
+
+    private const val SEEK_TAG = "PlaybackSeek"
 
     fun statsSnapshot(snapshot: PlayerStatsSnapshot) = playbackInfo(
         "player stats snapshot",

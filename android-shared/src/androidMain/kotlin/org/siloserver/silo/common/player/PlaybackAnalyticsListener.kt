@@ -15,12 +15,14 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import org.siloserver.silo.common.diagnostics.DiagnosticsCaptureDetailState
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
+import org.siloserver.silo.common.diagnostics.DiagnosticsPlayerState
 import org.siloserver.silo.common.diagnostics.DiagnosticsStatsCadence
 
 /**
  * `AnalyticsListener` that logs the handful of signals we actually triage
  * playback issues with — decoder init names, dropped-frame counts, audio
- * underruns, load errors, and bandwidth estimates — and re-emits them to an
+ * underruns, load errors, seeks, player-state and play/pause changes, and
+ * bandwidth estimates — and re-emits them to an
  * in-process [SharedFlow] so the debug overlay (or a future server-side
  * telemetry POST) can subscribe without another listener registration.
  *
@@ -71,9 +73,11 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         reason: Int,
     ) {
         this.playWhenReady = playWhenReady
+        DiagnosticsPlaybackLogger.playWhenReadyChanged(playWhenReady, playWhenReadyReasonName(reason))
     }
 
     override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
+        diagnosticsPlayerState(state)?.let(DiagnosticsPlaybackLogger::playerState)
         emit(Event.PlaybackStateChanged(state, eventTime.realtimeMs, eventTime.totalBufferedDurationMs, playWhenReady))
         if (state == Player.STATE_ENDED || state == Player.STATE_IDLE) {
             val finished = finishPlayerStats(diagnosticsStats, DiagnosticsCaptureDetailState.isEnabled())
@@ -88,7 +92,10 @@ class PlaybackAnalyticsListener : AnalyticsListener {
         newPosition: Player.PositionInfo,
         reason: Int,
     ) {
-        if (reason == Player.DISCONTINUITY_REASON_SEEK) emit(Event.SeekStarted(eventTime.realtimeMs))
+        if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            DiagnosticsPlaybackLogger.seekStarted(newPosition.positionMs)
+            emit(Event.SeekStarted(eventTime.realtimeMs))
+        }
     }
 
     override fun onRenderedFirstFrame(
@@ -214,6 +221,24 @@ class PlaybackAnalyticsListener : AnalyticsListener {
             DiagnosticsPlaybackLogger.statsSnapshot(diagnosticsStats)
         }
     }
+}
+
+private fun diagnosticsPlayerState(state: Int): DiagnosticsPlayerState? = when (state) {
+    Player.STATE_IDLE -> DiagnosticsPlayerState.Idle
+    Player.STATE_BUFFERING -> DiagnosticsPlayerState.Buffering
+    Player.STATE_READY -> DiagnosticsPlayerState.Ready
+    Player.STATE_ENDED -> DiagnosticsPlayerState.Ended
+    else -> null
+}
+
+private fun playWhenReadyReasonName(reason: Int): String = when (reason) {
+    Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "user_request"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "audio_focus_loss"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "audio_becoming_noisy"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "remote"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "end_of_media_item"
+    Player.PLAY_WHEN_READY_CHANGE_REASON_SUPPRESSED_TOO_LONG -> "suppressed_too_long"
+    else -> "other"
 }
 
 private fun Tracks.describeForLog(): String {
