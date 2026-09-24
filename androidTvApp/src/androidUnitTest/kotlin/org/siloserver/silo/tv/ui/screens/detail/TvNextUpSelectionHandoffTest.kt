@@ -540,12 +540,10 @@ class TvNextUpSelectionHandoffTest {
 
             fixture.viewModel.onSetEpisodeWatched(scenario.episodeOneId, true)
             awaitCondition { scenario.episodeTwoRequests.get() > 0 }
-            fixture.identityTransitions.changing(kind) {
-                when (kind) {
-                    IdentityTransitionKind.PROFILE_SWITCH -> fixture.tokenManager.profileId = "profile-2"
-                    IdentityTransitionKind.SERVER_SWITCH -> fixture.tokenManager.serverId = "server-2"
-                    else -> error("unexpected kind")
-                }
+            when (kind) {
+                IdentityTransitionKind.PROFILE_SWITCH -> fixture.tokenManager.switchIdentity(kind, profileId = "profile-2")
+                IdentityTransitionKind.SERVER_SWITCH -> fixture.tokenManager.switchIdentity(kind, serverId = "server-2")
+                else -> error("unexpected kind")
             }
             gate.complete(Unit)
             awaitCondition {
@@ -819,14 +817,11 @@ class TvNextUpSelectionHandoffTest {
         fun client(tokenManager: FakeTokenManager): HttpClient = HttpClient(
             MockEngine { request ->
                 if (request.url.encodedPath.startsWith("/api/v2/")) {
-                    // The engine runs handlers on its own threads, so a request
-                    // issued before an identity transition can be evaluated after
-                    // it and legitimately carries the old owner. Only a request
-                    // issued under the live generation must match the live scope.
+                    // The engine runs handlers on its own threads, so comparing
+                    // against the live scope races any concurrent transition.
+                    // Check the owner against the servers its own generation had.
                     val owner = request.attributes[AuthScopeAttributeKey]
-                    if (owner.identityGeneration == tokenManager.liveGeneration()) {
-                        assertTrue(owner.isSameIdentityAs(tokenManager.currentScope()))
-                    }
+                    assertTrue(owner.serverId in tokenManager.serversDuring(owner.identityGeneration))
                 }
                 fun json(content: String) = respond(
                     content = content,
@@ -950,8 +945,13 @@ class TvNextUpSelectionHandoffTest {
     private class FakeTokenManager(
         private val identityTransitions: IdentityTransitionBarrier,
     ) : TokenManager {
-        var serverId = "server-1"
-        var profileId = "profile-1"
+        @Volatile var serverId = "server-1"
+        @Volatile var profileId = "profile-1"
+
+        // Server committed by each generation. The barrier bumps the generation
+        // before the switch block runs, so a scope stamped in between carries
+        // the new generation with the previous server.
+        private val committedServers = ConcurrentHashMap(mapOf(0L to serverId))
         val snapshotCalls = AtomicInteger()
         val snapshotResponses = ConcurrentLinkedDeque<SnapshotResponse>()
 
@@ -974,7 +974,19 @@ class TvNextUpSelectionHandoffTest {
             this.serverId = serverId.orEmpty()
         }
         override suspend fun signOutCurrentServer() = Unit
-        fun liveGeneration(): Long = identityTransitions.generation.value
+        suspend fun switchIdentity(
+            kind: IdentityTransitionKind,
+            serverId: String = this.serverId,
+            profileId: String = this.profileId,
+        ) = identityTransitions.changing(kind) {
+            // Record before publishing so no reader sees the new server unrecorded.
+            committedServers[identityTransitions.generation.value] = serverId
+            this.serverId = serverId
+            this.profileId = profileId
+        }
+
+        fun serversDuring(generation: Long): Set<String> =
+            setOfNotNull(committedServers[generation - 1], committedServers[generation])
 
         fun currentScope(profileId: String? = this.profileId) = AuthScopeSnapshot(
             serverId = serverId,
