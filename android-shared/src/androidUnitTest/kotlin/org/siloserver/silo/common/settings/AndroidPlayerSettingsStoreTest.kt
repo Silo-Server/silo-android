@@ -316,6 +316,36 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `HDR override is local scoped and resettable`() = runTest {
+        var profile = "profile-a"
+        var server = "https://one.example"
+        val stores = mutableMapOf<String, DataStore<Preferences>>()
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(), legacyCache = fakeLegacyCache,
+            getActiveProfileId = { profile }, getServerUrl = { server },
+            getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
+            dataStoreFactory = { id -> stores.getOrPut(id) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { File(tempFolder.root, "hdr_$id.preferences_pb") },
+                )
+            } },
+        )
+        assertFalse(store.forceHdrPassthroughFlow.first())
+        store.setForceHdrPassthrough(true)
+        assertTrue(store.forceHdrPassthroughFlow.first())
+        profile = "profile-b"
+        assertFalse(store.forceHdrPassthroughFlow.first())
+        profile = "profile-a"
+        server = "https://two.example"
+        assertFalse(store.forceHdrPassthroughFlow.first())
+        server = "https://one.example"
+        assertTrue(store.forceHdrPassthroughFlow.first())
+        store.resetAllDeviceSettings()
+        assertFalse(store.forceHdrPassthroughFlow.first())
+        assertFalse(fakeFlusher.calls.any { it.key == PlaybackSettingsKeys.ForceHdrPassthrough })
+    }
+
+    @Test
     fun `setSubtitleAppearance round-trips through JSON`() = runTest {
         val store = newStore()
         val custom = SubtitleAppearance.DEFAULT.copy(

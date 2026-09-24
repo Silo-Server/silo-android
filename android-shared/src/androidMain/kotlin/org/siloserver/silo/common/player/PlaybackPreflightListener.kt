@@ -27,12 +27,13 @@ class PlaybackPreflightListener(
      * validated against the new promise, not the old one.
      */
     private val plannedRoute: () -> PlannedVideoRoute = { PlannedVideoRoute.Unspecified },
+    private val forceHdrPassthrough: () -> Boolean = { false },
 ) : Player.Listener {
 
     private var lastSignaled: Playability? = null
 
     override fun onTracksChanged(tracks: Tracks) {
-        val verdict = detector.evaluateTracks(tracks, plannedRoute())
+        val verdict = detector.evaluateTracks(tracks, plannedRoute(), forceHdrPassthrough())
         if (verdict != Playability.Supported && verdict != lastSignaled) {
             lastSignaled = verdict
             onUnsupported(verdict)

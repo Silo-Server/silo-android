@@ -129,6 +129,27 @@ object PlaybackSettingsKeys {
      */
     const val LetterboxExpansion = "player.letterbox_expansion"
 
+    /**
+     * Local-only per-profile setting, off by default. Skips
+     * [org.siloserver.silo.common.player.DisplayHdrProbe]'s panel probe and
+     * reports every HDR type (HDR10, HDR10+, HLG, Dolby Vision) as supported,
+     * so eligibility is decided by the codec probe alone.
+     *
+     * Some TVs/AVRs render a dynamic-range type correctly without declaring
+     * it in `Display.HdrCapabilities` — HLG in particular carries no static
+     * metadata block, unlike HDR10, so a panel can support it while Android's
+     * EDID-derived capability query omits it. That under-report makes the
+     * server plan an unnecessary tone-mapped transcode for a file the device
+     * could have played natively. There is no general fix on the Android
+     * side, so this is an explicit, user-acknowledged override rather than a
+     * change to the default (fail-closed) probe behavior — the UI pairs it
+     * with a warning that an unsupported type can render as a black or
+     * incorrectly-colored picture. What the panel truly can decode is a
+     * device fact, not a server playback preference, so this never enters
+     * [DeviceSettings].
+     */
+    const val ForceHdrPassthrough = "player.force_hdr_passthrough"
+
     val DeviceSettings = listOf(
         PreferredQuality,
         MaxBitrateKbps,

@@ -342,6 +342,7 @@ fun TvPlayerScreen(
     val subtitleDelayMs by viewModel.subtitleDelayMs.collectAsState()
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
+    val forceHdrPassthrough by viewModel.forceHdrPassthrough.collectAsState()
     val dolbyVisionSwitchInFlight by viewModel.dolbyVisionSwitchInFlight.collectAsState()
     val subtitleSearch by viewModel.subtitleSearch.collectAsState()
     val aiTranslate by viewModel.aiTranslate.collectAsState()
@@ -371,8 +372,10 @@ fun TvPlayerScreen(
     // Re-probe whenever the output route generation moves, so track
     // selection sees the same display facts as capability detection.
     val outputRouteGeneration by audioCapabilityManager.outputRouteGeneration.collectAsState()
-    val displayHdr = remember(outputRouteGeneration) {
-        DisplayHdrProbe.probe(context, capabilityDetector.playbackDisplayId)
+    val displayHdr = remember(outputRouteGeneration, currentPlaybackDisplayId, forceHdrPassthrough) {
+        DisplayHdrProbe.probeDetailed(
+            context, currentPlaybackDisplayId, forcePassthrough = forceHdrPassthrough,
+        ).hdr
     }
     val audioCaps by audioCapabilityManager.capabilities.collectAsState()
     val rootFocus = remember { FocusRequester() }
@@ -1291,6 +1294,7 @@ fun TvPlayerScreen(
         state.preferredTextLanguage,
         hdrEnabled,
         dolbyVisionEnabled,
+        displayHdr,
     ) {
         val backend = videoBackend ?: return@LaunchedEffect
         // Let the audio route settle before asking media3 to reselect.
@@ -1447,6 +1451,7 @@ fun TvPlayerScreen(
                         transportMountNonce = mountedTransportNonce,
                     )
                 },
+                forceHdrPassthrough = { viewModel.forceHdrPassthrough.value },
                 plannedRoute = {
                     val plan = viewModel.uiState.value.playbackPlan
                     org.siloserver.silo.common.player.plannedVideoRouteFor(

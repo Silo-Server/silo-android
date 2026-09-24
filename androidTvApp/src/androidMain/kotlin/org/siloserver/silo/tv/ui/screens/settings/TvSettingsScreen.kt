@@ -274,6 +274,7 @@ fun TvSettingsScreen(
         onMatchContentFrameRateChanged = viewModel::onMatchContentFrameRateChanged,
         onDolbyVisionEnabledChanged = viewModel::onDolbyVisionEnabledChanged,
         onDvProfile7HDR10FallbackChanged = viewModel::onDvProfile7HDR10FallbackChanged,
+        onForceHdrPassthroughChanged = viewModel::onForceHdrPassthroughChanged,
         onResumeRewindSecondsChanged = viewModel::onResumeRewindSecondsChanged,
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
         onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
@@ -417,6 +418,7 @@ private fun SettingsSplitLayout(
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
+    onForceHdrPassthroughChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -494,6 +496,7 @@ private fun SettingsSplitLayout(
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
+            onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
             onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
             onPassOutThresholdChanged = onPassOutThresholdChanged,
             onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -761,6 +764,7 @@ private fun SettingsDetailPane(
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
+    onForceHdrPassthroughChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -830,6 +834,7 @@ private fun SettingsDetailPane(
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
+            onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
                 onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
                 onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -1060,6 +1065,7 @@ private fun TvPlaybackSettingsPane(
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
+    onForceHdrPassthroughChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -1114,6 +1120,18 @@ private fun TvPlaybackSettingsPane(
                     label = "Match Content Frame Rate",
                     checked = state.matchContentFrameRate,
                     onCheckedChange = onMatchContentFrameRateChanged,
+                )
+                SettingsToggleRow(
+                    label = "Force HDR Passthrough",
+                    checked = state.forceHdrPassthrough,
+                    onCheckedChange = onForceHdrPassthroughChanged,
+                )
+                SettingsFooterText(
+                    text = "Allows HDR playback when this TV doesn't report support. " +
+                        "This does not force the HDMI output into HDR; Android may still " +
+                        "convert the picture to SDR. Enable only if you've confirmed your " +
+                        "TV supports the source format. Unsupported formats may produce " +
+                        "a black screen or incorrect colors.",
                 )
             }
         }

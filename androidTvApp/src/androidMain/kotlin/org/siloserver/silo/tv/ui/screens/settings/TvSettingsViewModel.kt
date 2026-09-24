@@ -122,6 +122,7 @@ class TvSettingsViewModel(
         val showAudiobooksTab: Boolean = false,
         val subtitleMatchesDevice: Boolean = false,
         val dvProfile7HDR10Fallback: Boolean = true,
+        val forceHdrPassthrough: Boolean = false,
         val autoSkipCredits: Boolean = false,
         // Seconds to skip back on resume (0 = off); consecutive auto-advances
         // before the "Still watching?" prompt (0 = off).
@@ -387,6 +388,11 @@ class TvSettingsViewModel(
             }
         }
         viewModelScope.launch {
+            playerSettingsStore.forceHdrPassthroughFlow.collect { value ->
+                _uiState.update { it.copy(forceHdrPassthrough = value) }
+            }
+        }
+        viewModelScope.launch {
             playerSettingsStore.subtitleMatchesDeviceFlow.collect { value ->
                 _uiState.update { it.copy(subtitleMatchesDevice = value) }
             }
@@ -638,6 +644,10 @@ class TvSettingsViewModel(
 
     fun onDvProfile7HDR10FallbackChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setDvProfile7HDR10Fallback(value) }
+    }
+
+    fun onForceHdrPassthroughChanged(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setForceHdrPassthrough(value) }
     }
 
     fun onIntroSkipModeChanged(value: IntroSkipMode) {

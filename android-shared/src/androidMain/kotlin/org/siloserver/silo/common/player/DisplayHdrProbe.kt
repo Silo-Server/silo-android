@@ -100,25 +100,61 @@ object DisplayHdrProbe {
      * @param displayId the display that owns the playback surface, when the
      * caller knows it. Without it an Activity context resolves its own
      * display and any other context resolves the default display.
+     * @param forcePassthrough skips the EDID-derived probe entirely and
+     * reports every HDR type as supported (see [forcePassthroughHdr]).
+     * Wired from the user-facing "Force HDR passthrough" setting — off by
+     * default. Some panels/AVRs render a type correctly (HLG in particular
+     * needs no static metadata block, unlike HDR10) without declaring it in
+     * `Display.HdrCapabilities`, which makes this probe under-report a real
+     * capability and pushes the server into an unnecessary tone-mapped
+     * transcode. There is no general fix for that on the Android side — the
+     * platform has no "trust the codec, not the panel" API — so this is an
+     * explicit, opt-in, user-acknowledged override rather than a change to
+     * the default probe behavior.
      */
-    fun probeDetailed(context: Context, displayId: Int? = null): DisplayHdrProbeResult {
+    fun probeDetailed(
+        context: Context,
+        displayId: Int? = null,
+        forcePassthrough: Boolean = false,
+    ): DisplayHdrProbeResult {
         val display = resolveDisplay(context, displayId)
             ?: return DisplayHdrProbeResult.Unknown(displayId = displayId, reason = "no_display")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
             return DisplayHdrProbeResult.Unknown(displayId = display.displayId, reason = "api_below_24")
         }
-        return runCatching { hdrCapabilities(context, display) }
+        return runCatching { hdrCapabilities(context, display, forcePassthrough) }
             .getOrElse { DisplayHdrProbeResult.Unknown(displayId = display.displayId, reason = "probe_failed") }
     }
 
-    private fun hdrCapabilities(context: Context, display: Display): DisplayHdrProbeResult {
+    /**
+     * The maximal claim [probeDetailed] reports when the user has opted into
+     * `forcePassthrough`. Codec support is still probed and intersected
+     * separately ([intersect]) — this only removes the panel as the limiting
+     * factor, it never claims decode support the hardware doesn't have.
+     */
+    private fun forcePassthroughHdr(): HdrCapabilities = HdrCapabilities(
+        hdr10 = true,
+        hdr10Plus = true,
+        hlg = true,
+        dolbyVisionProfiles = PANEL_DOLBY_VISION_PROFILES,
+    )
+
+    private fun hdrCapabilities(context: Context, display: Display, forcePassthrough: Boolean): DisplayHdrProbeResult {
         val displayId = display.displayId
         // Android 14 lets the user force the system HDR conversion to SDR. The
         // legacy per-display capability object still lists the panel's HDR
         // types then, so a plan promising native HDR would be tone-mapped by
-        // the compositor. Treat forced-SDR as a confirmed SDR output.
+        // the compositor. Treat forced-SDR as a confirmed SDR output — this
+        // takes priority over forcePassthrough below: a system-wide "make
+        // everything SDR" setting describes what the compositor will
+        // actually do, and pretending otherwise would just produce a plan
+        // the compositor tone-maps anyway.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && systemForcesSdr(context)) {
             return DisplayHdrProbeResult.Exact(HdrCapabilities(), displayId)
+        }
+
+        if (forcePassthrough) {
+            return DisplayHdrProbeResult.Exact(forcePassthroughHdr(), displayId)
         }
 
         val types: Set<Int>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
