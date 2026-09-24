@@ -1,7 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
@@ -100,17 +98,18 @@ import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
 import org.siloserver.silo.common.ui.movieDirectorCredit
+import org.siloserver.silo.common.ui.openYoutubeTrailer
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
-import org.siloserver.silo.model.catalog.ItemVideo
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
@@ -427,7 +426,7 @@ private fun TvDetailContent(
     var seriesPrimaryFocusGeneration by remember(detail.contentId) { mutableStateOf(0) }
     var seriesHeroHeightPx by remember(detail.contentId) { mutableStateOf(0) }
     val trailerEntries = remember(detail.videos, detail.extras) {
-        tvDetailTrailerEntries(detail)
+        trailerRailEntries(detail)
     }
     val detailContext = LocalContext.current
 
@@ -1109,7 +1108,7 @@ private fun TvDetailContent(
                             TvDetailTrailersSection(
                                 entries = trailerEntries,
                                 onSelectRemote = { video ->
-                                    openTvYoutubeTrailer(detailContext, video)
+                                    openYoutubeTrailer(detailContext, video)
                                 },
                                 onSelectLocal = { extra ->
                                     onPlay(
@@ -1954,19 +1953,6 @@ internal fun seriesEpisodePlaybackLaunch(
         subtitleSelection = subtitleSelection,
         resumePositionSeconds = episode.userData?.resumePositionSeconds(),
     )
-}
-
-private fun openTvYoutubeTrailer(context: android.content.Context, video: ItemVideo) {
-    val appIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:${video.siteKey}"))
-    val webIntent = Intent(
-        Intent.ACTION_VIEW,
-        Uri.parse("https://www.youtube.com/watch?v=${video.siteKey}"),
-    )
-    runCatching { context.startActivity(appIntent) }
-        .recoverCatching { context.startActivity(webIntent) }
-        .onFailure {
-            Toast.makeText(context, "No app is available to open this trailer", Toast.LENGTH_SHORT).show()
-        }
 }
 
 private fun watchedMarkLabel(detail: ItemDetail): String = when (detail.type) {

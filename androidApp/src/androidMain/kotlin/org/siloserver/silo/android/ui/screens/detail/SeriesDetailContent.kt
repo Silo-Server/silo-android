@@ -30,7 +30,9 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.trailerRailEntries
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -75,6 +77,7 @@ fun SeriesDetailContent(
     onToggleWatched: () -> Unit,
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
+    onPlayExtra: (ItemExtra) -> Unit = {},
     onSeriesDownloadClick: (() -> Unit)? = null,
     onEpisodeDownloadClick: (() -> Unit)? = null,
     episodeDownloadState: DetailDownloadState = DetailDownloadState(),
@@ -385,6 +388,13 @@ fun SeriesDetailContent(
                         onPersonClick = onPersonClick,
                     )
                 }
+            }
+        }
+
+        val trailerEntries = trailerRailEntries(detail)
+        if (trailerEntries.isNotEmpty()) {
+            item(contentType = "detail-trailers") {
+                TrailersRail(entries = trailerEntries, onPlayExtra = onPlayExtra)
             }
         }
 

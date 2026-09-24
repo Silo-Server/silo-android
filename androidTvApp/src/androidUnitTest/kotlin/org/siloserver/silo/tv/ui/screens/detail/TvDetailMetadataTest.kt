@@ -10,6 +10,7 @@ import org.siloserver.silo.model.catalog.SubtitleInfo
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaPerson
 import java.time.ZoneId
 import kotlin.test.Test
@@ -80,7 +81,7 @@ class TvDetailMetadataTest {
 
         assertEquals(
             listOf("remote:youtube:abc"),
-            tvDetailTrailerEntries(detail).map { it.key },
+            trailerRailEntries(detail).map { it.key },
         )
     }
 
