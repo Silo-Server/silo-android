@@ -316,31 +316,51 @@ class DiagnosticsBundleBuilderTest {
     @Test
     fun hostedBundleKeepsPlaybackStateAndSeekMessages() {
         // The collector strips the playback reason attribute, so play/pause and
-        // seek lines carry their fixed reason code in the message. Every such
-        // message must survive hosted text scrubbing intact.
-        val messages = DiagnosticsSeekEvent.entries.map { it.message } +
-            DiagnosticsPlayerState.entries.map { it.message } +
-            listOf(
-                "user_request",
-                "audio_focus_loss",
-                "audio_becoming_noisy",
-                "remote",
-                "end_of_media_item",
-                "suppressed_too_long",
-                "other",
-            ).flatMap { reason -> listOf("play requested ($reason)", "pause requested ($reason)") } +
-            ServerReanchorReason.entries.map { "seek committed reanchor (${it.name})" } +
-            listOf(
-                "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
-                "ERROR_CODE_IO_BAD_HTTP_STATUS",
-                "ERROR_CODE_DECODING_FAILED",
-            ).map { "seek reanchor after player error ($it)" }
-        val logs = messages.joinToString(separator = "\n", postfix = "\n") { message ->
-            """{"ts":"2026-08-14T00:00:00Z","run":"run-1","lvl":"I","cat":"playback","tag":"PlaybackSeek","msg":"$message"}"""
+        // seek lines carry their fixed reason code in the message. Drive the real
+        // logger so the test covers both what it emits and what survives hosted
+        // text scrubbing.
+        val playWhenReadyReasons = listOf(
+            "user_request",
+            "audio_focus_loss",
+            "audio_becoming_noisy",
+            "remote",
+            "end_of_media_item",
+            "suppressed_too_long",
+            "other",
+        )
+        val errorCodes = listOf(
+            "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+            "ERROR_CODE_IO_BAD_HTTP_STATUS",
+            "ERROR_CODE_DECODING_FAILED",
+        )
+        val lines = mutableListOf<String>()
+        SiloLog.installSink { lines += it }
+        try {
+            DiagnosticsSeekEvent.entries.forEach { DiagnosticsPlaybackLogger.seek(it) }
+            DiagnosticsPlayerState.entries.forEach(DiagnosticsPlaybackLogger::playerState)
+            playWhenReadyReasons.forEach { reason ->
+                DiagnosticsPlaybackLogger.playWhenReadyChanged(playWhenReady = true, reason = reason)
+                DiagnosticsPlaybackLogger.playWhenReadyChanged(playWhenReady = false, reason = reason)
+            }
+            ServerReanchorReason.entries.forEach {
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.CommittedServerReanchor, reason = it.name)
+            }
+            errorCodes.forEach {
+                DiagnosticsPlaybackLogger.seek(DiagnosticsSeekEvent.PlayerErrorReanchor, reason = it)
+            }
+        } finally {
+            SiloLog.installSink(null)
         }
+        val expected = DiagnosticsSeekEvent.entries.map { it.message } +
+            DiagnosticsPlayerState.entries.map { it.message } +
+            playWhenReadyReasons.flatMap { reason ->
+                listOf("play requested ($reason)", "pause requested ($reason)")
+            } +
+            ServerReanchorReason.entries.map { "seek committed reanchor (${it.name})" } +
+            errorCodes.map { "seek reanchor after player error ($it)" }
         val artifacts = mapOf(
             "device.json" to "{}".encodeToByteArray(),
-            "logs.jsonl" to logs.encodeToByteArray(),
+            "logs.jsonl" to lines.joinToString(separator = "\n", postfix = "\n").encodeToByteArray(),
         )
 
         val hostedLogs = untar(gunzip(builder.build(
@@ -352,7 +372,7 @@ class DiagnosticsBundleBuilderTest {
             .map { Json.parseToJsonElement(it).jsonObject.getValue("msg").jsonPrimitive.content }
             .toList()
 
-        assertEquals(messages, hostedMessages)
+        assertEquals(expected, hostedMessages)
     }
 
     @Test
