@@ -48,45 +48,20 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.ItemVideo
+import org.siloserver.silo.model.catalog.TrailerRailEntry
+import org.siloserver.silo.model.catalog.trailerRailDurationLabel
+import org.siloserver.silo.model.catalog.youtubeThumbnailUrl
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 
-internal sealed interface TvDetailTrailerEntry {
-    val key: String
-    val title: String
-    val kind: String
-
-    data class Remote(val video: ItemVideo) : TvDetailTrailerEntry {
-        override val key = "remote:${video.site}:${video.siteKey}"
-        override val title = video.name?.trim()?.takeIf { it.isNotEmpty() }
-            ?: trailerKindLabel(video.kind)
-        override val kind = video.kind
-    }
-
-    data class Local(val extra: ItemExtra) : TvDetailTrailerEntry {
-        override val key = "local:${extra.contentId}"
-        override val title = extra.title?.trim()?.takeIf { it.isNotEmpty() }
-            ?: trailerKindLabel(extra.kind)
-        override val kind = extra.kind
-    }
-}
-
-internal fun tvDetailTrailerEntries(detail: ItemDetail): List<TvDetailTrailerEntry> = buildList {
-    detail.videos.orEmpty()
-        .filter { it.site.equals("youtube", ignoreCase = true) && it.siteKey.isNotBlank() }
-        .forEach { add(TvDetailTrailerEntry.Remote(it)) }
-    detail.extras.orEmpty().forEach { add(TvDetailTrailerEntry.Local(it)) }
-}.distinctBy(TvDetailTrailerEntry::key)
-
 @Composable
 internal fun TvDetailTrailersSection(
-    entries: List<TvDetailTrailerEntry>,
+    entries: List<TrailerRailEntry>,
     onSelectRemote: (ItemVideo) -> Unit,
     onSelectLocal: (ItemExtra) -> Unit,
     modifier: Modifier = Modifier,
@@ -130,14 +105,14 @@ internal fun TvDetailTrailersSection(
                 itemsIndexed(
                     items = entries,
                     key = { _, entry -> entry.key },
-                    contentType = { _, entry -> if (entry is TvDetailTrailerEntry.Remote) "remote-trailer" else "local-extra" },
+                    contentType = { _, entry -> if (entry is TrailerRailEntry.Remote) "remote-trailer" else "local-extra" },
                 ) { index, entry ->
                     TvDetailTrailerCard(
                         entry = entry,
                         onClick = {
                             when (entry) {
-                                is TvDetailTrailerEntry.Remote -> onSelectRemote(entry.video)
-                                is TvDetailTrailerEntry.Local -> onSelectLocal(entry.extra)
+                                is TrailerRailEntry.Remote -> onSelectRemote(entry.video)
+                                is TrailerRailEntry.Local -> onSelectLocal(entry.extra)
                             }
                         },
                         modifier = Modifier.tvRailPinOnFocus(listState, index, TvDetailHorizontalInset),
@@ -150,7 +125,7 @@ internal fun TvDetailTrailersSection(
 
 @Composable
 private fun TvDetailTrailerCard(
-    entry: TvDetailTrailerEntry,
+    entry: TrailerRailEntry,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -189,13 +164,13 @@ private fun TvDetailTrailerCard(
             contentAlignment = Alignment.Center,
         ) {
             when (entry) {
-                is TvDetailTrailerEntry.Remote -> AsyncImage(
-                    model = "https://i.ytimg.com/vi/${entry.video.siteKey}/hqdefault.jpg",
+                is TrailerRailEntry.Remote -> AsyncImage(
+                    model = youtubeThumbnailUrl(entry.video.siteKey),
                     contentDescription = entry.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                is TvDetailTrailerEntry.Local -> Icon(
+                is TrailerRailEntry.Local -> Icon(
                     imageVector = Icons.Filled.Movie,
                     contentDescription = null,
                     tint = SiloSecondaryText,
@@ -240,34 +215,7 @@ private fun TvDetailTrailerCard(
     }
 }
 
-private fun trailerSecondaryLine(entry: TvDetailTrailerEntry): String? = when (entry) {
-    is TvDetailTrailerEntry.Remote -> "YouTube"
-    is TvDetailTrailerEntry.Local -> entry.extra.durationSeconds
-        ?.takeIf { it > 0 }
-        ?.let(::formatTrailerDuration)
-}
-
-private fun formatTrailerDuration(totalSeconds: Int): String {
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "$hours:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
-    } else {
-        "$minutes:${seconds.toString().padStart(2, '0')}"
-    }
-}
-
-private fun trailerKindLabel(kind: String): String = when (kind.lowercase()) {
-    "trailer" -> "Trailer"
-    "teaser" -> "Teaser"
-    "featurette" -> "Featurette"
-    "behind_the_scenes", "behind-the-scenes" -> "Behind the Scenes"
-    "deleted_scene", "deleted-scene" -> "Deleted Scene"
-    "interview" -> "Interview"
-    else -> kind.replace('_', ' ').replace('-', ' ').trim()
-        .split(' ')
-        .filter { it.isNotBlank() }
-        .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
-        .ifBlank { "Extra" }
+private fun trailerSecondaryLine(entry: TrailerRailEntry): String? = when (entry) {
+    is TrailerRailEntry.Remote -> "YouTube"
+    is TrailerRailEntry.Local -> trailerRailDurationLabel(entry)
 }

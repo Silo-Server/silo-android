@@ -40,7 +40,9 @@ import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
+import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
@@ -82,6 +84,7 @@ fun MovieDetailContent(
     onPersonClick: (String) -> Unit,
     onItemDetailClick: (String) -> Unit,
     onSeriesClick: (() -> Unit)? = null,
+    onPlayExtra: (ItemExtra) -> Unit = {},
     // Episode pages only: the parent series' seasons + the selected
     // season's siblings, for the in-page season/episode selector.
     seasons: List<Season> = emptyList(),
@@ -326,6 +329,13 @@ fun MovieDetailContent(
                         onPersonClick = onPersonClick,
                     )
                 }
+            }
+        }
+
+        val trailerEntries = trailerRailEntries(detail)
+        if (trailerEntries.isNotEmpty()) {
+            item(contentType = "detail-trailers") {
+                TrailersRail(entries = trailerEntries, onPlayExtra = onPlayExtra)
             }
         }
 

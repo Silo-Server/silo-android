@@ -720,6 +720,9 @@ fun ItemDetailScreen(
                             onToggleWatched = { viewModel.toggleWatched() },
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
+                            onPlayExtra = { extra ->
+                                onPlayClick(extra.contentId, extra.fileId, null, null, 0.0)
+                            },
                             onSeriesDownloadClick = {
                                 // Series/season batches are Original-only server-side
                                 // (501 bulk_quality_unavailable otherwise), so no
@@ -910,6 +913,9 @@ fun ItemDetailScreen(
                             },
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
+                            onPlayExtra = { extra ->
+                                onPlayClick(extra.contentId, extra.fileId, null, null, 0.0)
+                            },
                             onSeriesClick = seriesId?.let { resolvedSeriesId ->
                                 { onSeriesClick(resolvedSeriesId) }
                             },
