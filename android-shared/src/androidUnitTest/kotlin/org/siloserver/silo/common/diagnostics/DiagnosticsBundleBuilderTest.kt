@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Rule
 import org.junit.rules.TemporaryFolder
+import org.siloserver.silo.common.player.seek.ServerReanchorReason
 import org.siloserver.silo.model.diagnostics.DiagnosticsArchive
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsent
 import org.siloserver.silo.model.diagnostics.DiagnosticsConsentMode
@@ -310,6 +311,48 @@ class DiagnosticsBundleBuilderTest {
                 "self-hosted logs must still carry $retained: $selfHostedLogs",
             )
         }
+    }
+
+    @Test
+    fun hostedBundleKeepsPlaybackStateAndSeekMessages() {
+        // The collector strips the playback reason attribute, so play/pause and
+        // seek lines carry their fixed reason code in the message. Every such
+        // message must survive hosted text scrubbing intact.
+        val messages = DiagnosticsSeekEvent.entries.map { it.message } +
+            DiagnosticsPlayerState.entries.map { it.message } +
+            listOf(
+                "user_request",
+                "audio_focus_loss",
+                "audio_becoming_noisy",
+                "remote",
+                "end_of_media_item",
+                "suppressed_too_long",
+                "other",
+            ).flatMap { reason -> listOf("play requested ($reason)", "pause requested ($reason)") } +
+            ServerReanchorReason.entries.map { "seek committed reanchor (${it.name})" } +
+            listOf(
+                "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED",
+                "ERROR_CODE_IO_BAD_HTTP_STATUS",
+                "ERROR_CODE_DECODING_FAILED",
+            ).map { "seek reanchor after player error ($it)" }
+        val logs = messages.joinToString(separator = "\n", postfix = "\n") { message ->
+            """{"ts":"2026-08-14T00:00:00Z","run":"run-1","lvl":"I","cat":"playback","tag":"PlaybackSeek","msg":"$message"}"""
+        }
+        val artifacts = mapOf(
+            "device.json" to "{}".encodeToByteArray(),
+            "logs.jsonl" to logs.encodeToByteArray(),
+        )
+
+        val hostedLogs = untar(gunzip(builder.build(
+            report(artifacts, DiagnosticsDestinationKind.HOSTED),
+            redactionTokens = emptyList(),
+        ).bytes)).associateBy(TarEntry::name)
+            .getValue("logs.jsonl").bytes.decodeToString()
+        val hostedMessages = hostedLogs.lineSequence().filter(String::isNotBlank)
+            .map { Json.parseToJsonElement(it).jsonObject.getValue("msg").jsonPrimitive.content }
+            .toList()
+
+        assertEquals(messages, hostedMessages)
     }
 
     @Test

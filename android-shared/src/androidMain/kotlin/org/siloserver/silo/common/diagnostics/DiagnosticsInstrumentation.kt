@@ -103,7 +103,7 @@ enum class DiagnosticsPlayerState(internal val message: String) {
 /** Seek routing and recovery steps shared by the phone and TV player view models. */
 enum class DiagnosticsSeekEvent(internal val message: String, internal val warning: Boolean = false) {
     CommittedNative("seek committed native"),
-    CommittedServerReanchor("seek committed server reanchor"),
+    CommittedServerReanchor("seek committed reanchor"),
     CommittedWithoutPlan("seek committed without plan"),
     QueuedUntilMount("seek queued until mount"),
     QueuedBehindRecovery("seek queued behind recovery"),
@@ -183,8 +183,9 @@ object DiagnosticsPlaybackLogger {
     fun loadError() = SiloLog.w(DiagnosticsLogCategory.PLAYBACK, "Media3Analytics", "media load error")
 
     // Seek and state lines carry their meaning in the message, not attributes:
-    // the hosted collector strips position_ms and reason, and its timestamps
-    // alone are what a stuck-after-seek report needs.
+    // the hosted collector strips position_ms and reason. Reason codes come from
+    // fixed vocabularies (Media3 constants, enum names), so appending them to
+    // the message keeps them in hosted reports without free text.
     fun seekStarted(positionMs: Long) = playbackInfo(
         "seek started",
         mapOf("position_ms" to SiloLogAttribute.Integer(positionMs.coerceAtLeast(0))),
@@ -193,18 +194,20 @@ object DiagnosticsPlaybackLogger {
     fun playerState(state: DiagnosticsPlayerState) = playbackInfo(state.message)
 
     fun playWhenReadyChanged(playWhenReady: Boolean, reason: String) = playbackInfo(
-        if (playWhenReady) "play requested" else "pause requested",
-        mapOf("reason" to SiloLogAttribute.Text(reason)),
+        withReasonCode(if (playWhenReady) "play requested" else "pause requested", reason),
     )
 
     fun seek(event: DiagnosticsSeekEvent, reason: String? = null) {
-        val attributes = reason?.let { mapOf("reason" to SiloLogAttribute.Text(it)) }.orEmpty()
+        val message = withReasonCode(event.message, reason)
         if (event.warning) {
-            SiloLog.w(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, event.message, attributes)
+            SiloLog.w(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, message)
         } else {
-            SiloLog.i(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, event.message, attributes)
+            SiloLog.i(DiagnosticsLogCategory.PLAYBACK, SEEK_TAG, message)
         }
     }
+
+    private fun withReasonCode(message: String, reason: String?): String =
+        if (reason.isNullOrBlank()) message else "$message ($reason)"
 
     private const val SEEK_TAG = "PlaybackSeek"
 
