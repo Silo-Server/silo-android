@@ -213,6 +213,7 @@ val androidModule = module {
             tokenManager = get(),
             deviceLoginApi = get(),
             lastTargetStore = get(),
+            activeProfileStore = get(),
             deviceNameProvider = {
                 org.siloserver.silo.common.cast.SiloCastDeviceName.resolve(androidContext(), fallback = "Android Phone")
             },

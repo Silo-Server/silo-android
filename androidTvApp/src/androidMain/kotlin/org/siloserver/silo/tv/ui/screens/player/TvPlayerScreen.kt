@@ -142,6 +142,7 @@ import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.cast.SiloCastVolumeState
 import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.ui.screens.cast.TvRemotePlaybackIdentityNotice
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -2507,6 +2508,16 @@ fun TvPlayerScreen(
             onExitPlayback = { stopPlaybackAndExit() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
+        )
+
+        // Stays composed through picture-in-picture, hidden, so leaving PiP
+        // doesn't restart its six seconds.
+        TvRemotePlaybackIdentityNotice(
+            contentId = contentId,
+            hidden = isInPictureInPictureMode,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 48.dp),
         )
     }
 }
