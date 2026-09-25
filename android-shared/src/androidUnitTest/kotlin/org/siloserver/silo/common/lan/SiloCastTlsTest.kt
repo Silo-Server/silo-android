@@ -3,6 +3,7 @@ package org.siloserver.silo.common.lan
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.SecureRandom
+import java.util.Collections
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -53,8 +54,8 @@ class SiloCastTlsTest {
     @Test
     fun tls12ClientCannotWipeTheReceiversKey() {
         val listener = ServerSocket(0)
-        val servers = mutableListOf<SiloCastTlsSession>()
-        thread(isDaemon = true, name = "silocast-tls-test-server") {
+        val servers = Collections.synchronizedList(mutableListOf<SiloCastTlsSession>())
+        val worker = thread(isDaemon = true, name = "silocast-tls-test-server") {
             repeat(3) { runCatching { servers += SiloCastTls.accept(listener.accept()) } }
         }
         try {
@@ -69,8 +70,10 @@ class SiloCastTlsTest {
             // An ordinary (TLS 1.3) client still gets through afterwards.
             SiloCastTls.connect("127.0.0.1", listener.localPort, 5_000).close()
         } finally {
-            servers.forEach { it.close() }
+            // The last server-side handshake can still be finishing.
+            worker.join(5_000)
             listener.close()
+            synchronized(servers) { servers.toList() }.forEach { it.close() }
         }
     }
 
