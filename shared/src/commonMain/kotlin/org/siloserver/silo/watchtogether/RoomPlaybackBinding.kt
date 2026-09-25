@@ -119,6 +119,20 @@ sealed interface RoomPlaybackNotice {
     data object Undelivered : RoomPlaybackNotice
 }
 
+/** What the binding is doing, for debug tooling and harness runs. Never contains credentials. */
+data class RoomPlaybackDebug(
+    val attachedSessionId: String? = null,
+    val serverAttached: Boolean = false,
+    val pendingCommandId: String? = null,
+    val appliedCommandId: String? = null,
+    val readinessCommandId: String? = null,
+    val catchingUp: Boolean = false,
+    val correctionRate: Double? = null,
+    val reloadInFlight: Boolean = false,
+    val stallReported: Boolean = false,
+    val suspended: Boolean = false,
+)
+
 /** Outcome of a user transport intent. */
 enum class RoomTransportResult { Sent, Denied, Reconnecting, NotInRoom, Ignored }
 
@@ -165,6 +179,11 @@ class RoomPlaybackBinding(
 
     /** This viewer is catching up on its own while the room keeps going. */
     val catchingUp: StateFlow<Boolean> = _catchingUp.asStateFlow()
+
+    private val _debug = MutableStateFlow(RoomPlaybackDebug())
+
+    /** The binding's state for debug tooling. */
+    val debug: StateFlow<RoomPlaybackDebug> = _debug.asStateFlow()
 
     private val _offerLowerQuality = MutableStateFlow(false)
 
@@ -291,7 +310,26 @@ class RoomPlaybackBinding(
                 Event.Tick, Event.Changed -> Unit
             }
             step()
+            publishDebug()
         }
+    }
+
+    private fun publishDebug() {
+        val obs = player.observations.value
+        val echo = room.roomDeliveryEcho.value
+        _debug.value = RoomPlaybackDebug(
+            attachedSessionId = attachedKey?.playbackSessionId,
+            serverAttached = attachedKey != null && echo?.playbackSessionId == attachedKey?.playbackSessionId &&
+                echo?.connectionEpoch == attachedKey?.connectionEpoch,
+            pendingCommandId = pending?.scheduled?.command?.commandId,
+            appliedCommandId = applied?.commandId,
+            readinessCommandId = readiness?.commandId,
+            catchingUp = _catchingUp.value,
+            correctionRate = rateApplied,
+            reloadInFlight = reloads.inFlight,
+            stallReported = stallReported,
+            suspended = obs.suspended,
+        )
     }
 
     private suspend fun step() {

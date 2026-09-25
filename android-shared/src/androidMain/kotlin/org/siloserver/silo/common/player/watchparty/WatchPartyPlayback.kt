@@ -71,11 +71,13 @@ class WatchPartyPlayback(
 
     fun start() {
         binding.start()
+        WatchPartyDebugRegistry.register(binding)
         roomSession.adopt(roomId)
     }
 
     /** Stop this screen's binding; the room engagement continues. */
     fun dispose() {
+        WatchPartyDebugRegistry.unregister(binding)
         binding.dispose()
     }
 
@@ -101,13 +103,13 @@ class WatchPartyPlayback(
 
     /** Leave this device's membership. For a host, the room ends two minutes later unless they rejoin. */
     fun leave() {
-        binding.dispose()
+        dispose()
         roomSession.depart(closeRoom = false)
     }
 
     /** End the party for everyone (host). */
     fun endForEveryone() {
-        binding.dispose()
+        dispose()
         roomSession.depart(closeRoom = true)
     }
 
