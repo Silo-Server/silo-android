@@ -48,9 +48,9 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
 
     /**
      * Sends a streaming [request] to the engaged TV. Returns false when no TV
-     * is engaged, so the caller plays on the phone. A TV playing a different
-     * title asks first; the same title (Resume of what is on) goes straight
-     * through. [onLaunched] runs when the request goes out right away.
+     * is engaged or the send fails, so the caller plays on the phone. A TV
+     * playing a different title asks first; the same title (Resume of what is
+     * on) goes straight through. [onLaunched] runs when the request goes out right away.
      * [localRoute] is where the title plays on the phone should the TV be
      * gone when the person answers; null keeps it off the phone.
      */
@@ -67,8 +67,8 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
             )
             return true
         }
-        if (controller.launchOnConnectedTarget(request)) onLaunched()
-        return true
+        // The TV can drop between the check above and the send.
+        return controller.launchOnConnectedTarget(request).also { if (it) onLaunched() }
     }
 
     /**
