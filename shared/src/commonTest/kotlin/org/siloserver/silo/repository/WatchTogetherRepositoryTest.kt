@@ -1323,6 +1323,33 @@ class WatchTogetherRepositoryTest {
     }
 
     @Test
+    fun `a new membership starts without the previous room's clock samples`() = runTest {
+        val realtime = FakeRealtime()
+        val r = repo(realtime = realtime, timing = testTiming.copy(backgroundWork = true))
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        runCurrent()
+        realtime.events.emit(
+            RoomRealtimeEvent.Pong(
+                clientSentAt = "2026-09-24T18:00:00.000Z",
+                serverReceivedAt = "2026-09-24T18:00:00.240Z",
+                serverSentAt = "2026-09-24T18:00:00.241Z",
+                clientReceivedMs = parseMs("2026-09-24T18:00:00.081Z"),
+            ),
+        )
+        runCurrent()
+        assertEquals(200L, r.clock.value.offsetMs)
+        job.cancel()
+
+        r.reset()
+        assertNull(r.clock.value.offsetMs)
+        r.createRoom(create())
+        assertNull(r.clock.value.offsetMs)
+    }
+
+    @Test
     fun `pings start when the socket opens and pongs update the clock`() = runTest {
         val realtime = FakeRealtime()
         val r = repo(realtime = realtime, timing = testTiming.copy(backgroundWork = true))

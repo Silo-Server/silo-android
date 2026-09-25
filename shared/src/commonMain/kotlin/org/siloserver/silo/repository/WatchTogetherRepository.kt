@@ -325,6 +325,10 @@ class WatchTogetherRepository(
             binding = installed
             proof = RoomProof(data.roomAccessToken, roomProofExpiryMs(data.roomAccessToken))
             terminalGeneration = null
+            // Offsets measured against another room, possibly on another
+            // server, must not schedule this one's commands.
+            clockEstimator.reset()
+            _clock.value = clockEstimator.estimate
             votedIds.clear()
             rawSuggestions = emptyList()
             _suggestions.value = emptyList()
@@ -1182,6 +1186,8 @@ class WatchTogetherRepository(
             _roomClosedReason.value = null
             _ended.value = null
             votedIds.clear()
+            clockEstimator.reset()
+            _clock.value = clockEstimator.estimate
             realtime = null
             realtimeGeneration = null
             realtimeConnectionId = null
