@@ -446,10 +446,6 @@ class SiloCastController(
         sendControl(SiloCastControlCommand.setVideoGravity(value))
     }
 
-    fun setHdrEnabled(enabled: Boolean) {
-        sendControl(SiloCastControlCommand.setHdrEnabled(enabled))
-    }
-
     fun setSubtitleSyncMs(milliseconds: Int) {
         sendControl(SiloCastControlCommand.setSubtitleSyncMs(milliseconds))
     }
@@ -757,7 +753,8 @@ class SiloCastController(
                 val read = withContext(Dispatchers.IO) { input.read(chunk) }
                 if (read < 0) break
                 frameBuffer.append(chunk.copyOf(read)).forEach { payload ->
-                    handleMessage(json.decodeFromString(SiloCastMessage.serializer(), payload.decodeToString()))
+                    // A kind added after this build is skipped, not fatal.
+                    SiloCastMessage.decodeOrNull(json, payload.decodeToString())?.let { handleMessage(it) }
                 }
             }
         } catch (e: CancellationException) {

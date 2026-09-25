@@ -4,7 +4,13 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.elementNames
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonClassDiscriminator
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * Wire model for the `_silocast._tcp` phone→TV control channel.
@@ -103,6 +109,28 @@ sealed class SiloCastMessage {
     data class Close(
         @EncodeDefault(EncodeDefault.Mode.ALWAYS) override val v: Int = SiloCastProtocol.version,
     ) : SiloCastMessage()
+
+    companion object {
+        /** Every `type` this build understands, read from the serializer so it can't drift. */
+        val knownTypes: Set<String> by lazy {
+            serializer().descriptor.getElementDescriptor(1).elementNames.toSet()
+        }
+
+        /**
+         * Decodes one frame, or returns null for a `type` this build doesn't
+         * know. A newer peer may send kinds added after this build; dropping
+         * them keeps the session up where a decode error would tear it down
+         * (Apple ignores them the same way). A known type with a malformed
+         * payload still throws.
+         */
+        fun decodeOrNull(json: Json, text: String): SiloCastMessage? {
+            val frame = json.parseToJsonElement(text) as? JsonObject
+                ?: throw SerializationException("SiloCast frame is not a JSON object")
+            val type = (frame["type"] as? JsonPrimitive)?.contentOrNull
+            if (type != null && type !in knownTypes) return null
+            return json.decodeFromJsonElement(serializer(), frame)
+        }
+    }
 }
 
 @Serializable
@@ -232,8 +260,8 @@ data class SiloCastPlaybackState(
 
 /**
  * Command envelope: a [name] from Apple's closed Name enum plus the sparse
- * argument fields. Apple's decoder REJECTS unknown names, so never send a
- * string outside this set.
+ * argument fields. Current Apple builds ignore a name they don't know, but
+ * older ones reject the whole frame, so never send a string outside this set.
  */
 @Serializable
 data class SiloCastControlCommand(
@@ -257,12 +285,17 @@ data class SiloCastControlCommand(
         const val SetPlaybackSpeed = "set_playback_speed"
         const val SetQuality = "set_quality"
         const val SetVideoGravity = "set_video_gravity"
-        const val SetHdrEnabled = "set_hdr_enabled"
         const val SetSubtitleSyncMs = "set_subtitle_sync_ms"
         const val SetSubtitlePosition = "set_subtitle_position"
         const val SetVolume = "set_volume"
         const val SetMuted = "set_muted"
         const val PlayNext = "play_next"
+
+        /** Every command name this build implements. */
+        val knownNames: Set<String> = setOf(
+            Play, Pause, PlayPause, Seek, Stop, SelectAudioTrack, SelectSubtitleTrack, SetPlaybackSpeed,
+            SetQuality, SetVideoGravity, SetSubtitleSyncMs, SetSubtitlePosition, SetVolume, SetMuted, PlayNext,
+        )
 
         fun play(): SiloCastControlCommand = SiloCastControlCommand(name = Play)
 
@@ -289,9 +322,6 @@ data class SiloCastControlCommand(
 
         fun setVideoGravity(value: String): SiloCastControlCommand =
             SiloCastControlCommand(name = SetVideoGravity, value = value)
-
-        fun setHdrEnabled(enabled: Boolean): SiloCastControlCommand =
-            SiloCastControlCommand(name = SetHdrEnabled, enabled = enabled)
 
         fun setSubtitleSyncMs(milliseconds: Int): SiloCastControlCommand =
             SiloCastControlCommand(name = SetSubtitleSyncMs, milliseconds = milliseconds)

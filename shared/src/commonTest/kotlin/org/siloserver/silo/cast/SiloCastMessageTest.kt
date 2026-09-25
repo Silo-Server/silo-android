@@ -1,8 +1,10 @@
 package org.siloserver.silo.cast
 
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
@@ -248,6 +250,23 @@ class SiloCastMessageTest {
         assertWireEquals(
             """{"type":"handoff_cancel","v":2,"handoffCancel":{"requestId":"req-1","reason":"denied","message":"No"}}""",
             SiloCastMessage.HandoffCancel(SiloCastHandoffCancel("req-1", "denied", "No")),
+        )
+    }
+
+    @Test
+    fun unknownMessageTypeIsDroppedNotFatal() {
+        assertNull(SiloCastMessage.decodeOrNull(json, """{"type":"queue_update","v":3,"queueUpdate":{"items":[]}}"""))
+        assertIs<SiloCastMessage.Ping>(SiloCastMessage.decodeOrNull(json, """{"type":"ping","v":2}"""))
+        // A known kind with a broken payload is still a protocol error.
+        assertFailsWith<SerializationException> {
+            SiloCastMessage.decodeOrNull(json, """{"type":"state","v":2,"state":{"title":"x"}}""")
+        }
+        assertEquals(
+            setOf(
+                "hello", "handoff_offer", "handoff_challenge", "handoff_ready", "handoff_cancel",
+                "launch", "control", "state", "error", "ping", "pong", "close",
+            ),
+            SiloCastMessage.knownTypes,
         )
     }
 }
