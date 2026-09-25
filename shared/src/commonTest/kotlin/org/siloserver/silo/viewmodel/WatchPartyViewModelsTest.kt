@@ -7,6 +7,7 @@ import org.siloserver.silo.model.watchtogether.JoinRoomRequest
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.MemberStateRequest
 import org.siloserver.silo.model.watchtogether.MemberStateResponse
+import org.siloserver.silo.model.watchtogether.PickerEntry
 import org.siloserver.silo.model.watchtogether.PickerResponse
 import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
 import org.siloserver.silo.model.watchtogether.RoomMember
@@ -80,6 +81,7 @@ class WatchPartyViewModelsTest {
         var joinResult: ApiResult<RoomResponse>? = null
         var room = RoomSnapshot(roomId = "room-1", code = "K7PQ2M4X", phase = RoomPhase.Lobby, selectionMode = RoomSelectionMode.HostPick, selfRole = MemberRole.Host, selfCanManageRoom = true)
         var createGate: CompletableDeferred<Unit>? = null
+        var pickerResponse = PickerResponse()
 
         private fun ok(snapshot: RoomSnapshot = room) = ApiResult.Success(RoomResponse(snapshot, "proof"))
 
@@ -115,7 +117,7 @@ class WatchPartyViewModelsTest {
             ok().also { calls += "promote" }
         override suspend fun memberState(roomId: String, roomToken: String, request: MemberStateRequest, scope: AuthScopeSnapshot) =
             ApiResult.Success(MemberStateResponse())
-        override suspend fun picker(roomId: String, roomToken: String, scope: AuthScopeSnapshot) = ApiResult.Success(PickerResponse())
+        override suspend fun picker(roomId: String, roomToken: String, scope: AuthScopeSnapshot) = ApiResult.Success(pickerResponse)
     }
 
     private class Storage : RecentWatchPartyStorage {
@@ -138,7 +140,7 @@ class WatchPartyViewModelsTest {
                     WatchTogetherCapabilitiesV2(
                         state = "available", allowed = true, stagedSelection = true, connectionReplaced = true,
                         socketProtocol = "silo.room.v2", stopPlayback = true, selectionModeSwitch = true,
-                        voteHostOverride = true,
+                        voteHostOverride = true, picker = true,
                     ),
                 )
             },
@@ -289,6 +291,29 @@ class WatchPartyViewModelsTest {
         val host = lobby.state.value.eligibility
         assertTrue(host.canStart && host.canStage && host.canSwitchMode && host.canEnd)
         assertTrue(!host.canLobbyReady && !host.canStop)
+    }
+
+    @Test
+    fun `shared picker rows exclude nonvideo titles`() = runTest(dispatcher) {
+        val f = Fixture(this)
+        f.repository.createRoom(CreateRoomRequest(roomId = "room-1"))
+        val movie = PickerEntry(BrowseItem("movie:a", "movie", "Movie"))
+        val series = PickerEntry(BrowseItem("series:a", "series", "Series"))
+        val episode = PickerEntry(BrowseItem("episode:a", "episode", "Episode"))
+        val ebook = PickerEntry(BrowseItem("ebook:a", "ebook", "Book"))
+        val audiobook = PickerEntry(BrowseItem("audiobook:a", "audiobook", "Audiobook"))
+        f.api.pickerResponse = PickerResponse(
+            continueTogether = listOf(ebook, series, movie),
+            watchlistUnion = listOf(audiobook, movie, ebook, episode),
+        )
+        val picker = WatchPartyPickerViewModel(f.repository, f.availability) { ApiResult.Success(emptyList()) }
+
+        picker.loadRows()
+        runCurrent()
+
+        val rows = assertNotNull(picker.state.value.rows)
+        assertEquals(listOf(series, movie), rows.continueTogether)
+        assertEquals(listOf(movie, episode), rows.watchlistUnion)
     }
 
     @Test
