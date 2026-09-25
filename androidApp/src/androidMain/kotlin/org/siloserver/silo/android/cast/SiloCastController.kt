@@ -171,6 +171,10 @@ class SiloCastController(
     @Volatile
     private var sessionIsAutoResumed = false
 
+    /** The title the launch in flight sent; see [SiloCastControllerState.isLaunching]. */
+    @Volatile
+    private var launchingContentId: String? = null
+
     // We let go of an auto-resumed session on our own (quietDisconnect); a
     // `close` the TV sends meanwhile is not the TV ending it on us.
     @Volatile
@@ -221,6 +225,9 @@ class SiloCastController(
                     ensureConnected(target, allowCrossServer = true)
                     // AFTER ensureConnected: its teardown of any previous session
                     // resets the flag, so setting it earlier would be undone.
+                    // Only the TV's state for this title ends the launch: while
+                    // replacing, the outgoing title keeps reporting meanwhile.
+                    launchingContentId = request.playback.contentId
                     _state.update { it.copy(isLaunching = true) }
                     prepareRemoteIdentity(request)
                     send(SiloCastMessage.Launch(request))
@@ -941,7 +948,7 @@ class SiloCastController(
                             playbackState = next,
                             error = null,
                             isAutoResuming = if (!isIdle) false else it.isAutoResuming,
-                            isLaunching = if (!isIdle) false else it.isLaunching,
+                            isLaunching = if (!isIdle && message.state.contentId == launchingContentId) false else it.isLaunching,
                         )
                     }
                     next
