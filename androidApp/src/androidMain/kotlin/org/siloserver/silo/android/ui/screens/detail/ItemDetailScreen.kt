@@ -1169,7 +1169,8 @@ fun ItemDetailScreen(
                     when {
                         // A movie or episode: send this title to the TV, as iOS does.
                         castRequest != null && siloCastState.isEngaged ->
-                            siloCastPlayRouter.playStreaming(castRequest, onLaunched = onOpenCastRemote)
+                            // Asked for the TV: no fallback to the phone.
+                            siloCastPlayRouter.playStreaming(castRequest, localRoute = null, onLaunched = onOpenCastRemote)
                         castRequest != null && server != null ->
                             pendingCastLaunch = SiloCastLaunchRequest(serverId = server.id, playback = castRequest)
                         siloCastState.isEngaged -> remoteMenuExpanded = true
