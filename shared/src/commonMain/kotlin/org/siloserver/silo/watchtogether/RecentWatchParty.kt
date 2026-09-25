@@ -154,10 +154,14 @@ class WatchPartyRecentsRecorder(
                         ?.let { Membership(it.roomId, it.code, it.selfRole == MemberRole.Host) }
                 }
                 .distinctUntilChanged()
+            // The repository publishes an end while the last snapshot is still
+            // live, then clears both, so an end must win over the membership
+            // it ends; otherwise the room is remembered again as it closes.
             combine(membership, ended) { live, end -> live to end }.collect { (live, end) ->
                 when {
-                    live != null -> recents.remember(live.roomId, live.code, wasHost = live.isHost)
                     end != null && end.reason in ROOM_GONE -> recents.forget(end.roomId)
+                    live != null && end?.roomId != live.roomId ->
+                        recents.remember(live.roomId, live.code, wasHost = live.isHost)
                 }
             }
         }

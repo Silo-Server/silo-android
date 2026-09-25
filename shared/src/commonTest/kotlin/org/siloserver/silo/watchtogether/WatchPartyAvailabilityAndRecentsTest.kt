@@ -141,6 +141,25 @@ class WatchPartyAvailabilityAndRecentsTest {
     }
 
     @Test
+    fun `recorder forgets a room that ends while its snapshot is still live`() = runTest {
+        val storage = MemoryStorage()
+        val recents = RecentWatchParties(storage, owner = { ownerA }, nowEpochMs = { 5L })
+        val room = MutableStateFlow<RoomSnapshot?>(null)
+        val ended = MutableStateFlow<WatchPartyEnded?>(null)
+        WatchPartyRecentsRecorder(recents, room, ended, backgroundScope, DefaultIdentityTransitionBarrier())
+
+        room.value = RoomSnapshot(roomId = "room-1", code = "K7PQ2M4X", selfRole = MemberRole.Host)
+        runCurrent()
+        // The repository's order: the end first, then the snapshot and end clear.
+        ended.value = WatchPartyEnded("room-1", "K7PQ2M4X", WatchPartyEndReason.Ended, wasHost = true)
+        runCurrent()
+        room.value = null
+        ended.value = null
+        runCurrent()
+        assertNull(recents.current())
+    }
+
+    @Test
     fun `recorder forgets a party this device ended but keeps one it left`() = runTest {
         val storage = MemoryStorage()
         val recents = RecentWatchParties(storage, owner = { ownerA }, nowEpochMs = { 5L })
