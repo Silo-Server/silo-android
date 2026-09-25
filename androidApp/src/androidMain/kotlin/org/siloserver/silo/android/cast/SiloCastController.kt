@@ -984,12 +984,16 @@ class SiloCastController(
                             isMuted = volumeReconciler.reconcileMuted(message.state.isMuted, now),
                         )
                     }
+                    // The TV acknowledges a launch at once with a loading placeholder for
+                    // the title; the launch is done only once its player reports in.
+                    val launched = !isIdle && message.state.contentId == launchingContentId &&
+                        (message.state.sessionId != null || !message.state.isLoading || message.state.error != null)
                     _state.update {
                         it.copy(
                             playbackState = next,
                             error = null,
                             isAutoResuming = if (!isIdle) false else it.isAutoResuming,
-                            isLaunching = if (!isIdle && message.state.contentId == launchingContentId) false else it.isLaunching,
+                            isLaunching = if (launched) false else it.isLaunching,
                         )
                     }
                     next
