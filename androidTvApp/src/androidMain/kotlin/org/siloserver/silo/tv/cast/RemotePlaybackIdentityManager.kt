@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.cast
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.cast.SiloCastHandoffChallenge
@@ -45,6 +46,9 @@ class RemotePlaybackIdentityManager(
     var activeIdentity: ActiveIdentity? = null
         private set
 
+    /** Generations whose phone session the server has ended (refresh rejected). */
+    val rejectedGenerations: StateFlow<Set<String>> get() = tokenManager.rejectedTemporaryGenerations
+
     fun matches(offer: SiloCastHandoffOffer, controllerDeviceId: String): Boolean {
         val active = activeIdentity ?: return false
         return AndroidServerRegistry.serverIdsMatch(active.serverId, offer.serverId) &&
@@ -60,11 +64,13 @@ class RemotePlaybackIdentityManager(
     ): SiloCastHandoffReady = mutex.withLock {
         validateOffer(offer)
 
-        activeIdentity?.takeIf { matches(offer, controllerDeviceId) }?.let { active ->
+        val dead = activeIdentity?.generationId in tokenManager.rejectedTemporaryGenerations.value
+        activeIdentity?.takeIf { !dead && matches(offer, controllerDeviceId) }?.let { active ->
             return@withLock active.toReady(offer.requestId, reused = true)
         }
 
-        endLocked()
+        // A session the server already ended has nothing left to log out.
+        endLocked(notifyServer = !dead)
 
         val capability = deviceLoginApi.remotePlaybackCapabilityAt(offer.serverURL).successOrThrow()
         require(capability.remotePlaybackHandoff && SiloCastProtocol.version in capability.protocolVersions) {
@@ -159,12 +165,24 @@ class RemotePlaybackIdentityManager(
         error("Remote playback handoff expired.")
     }
 
-    suspend fun end() = mutex.withLock { endLocked() }
+    /**
+     * Ends the temporary identity. With [expectedGenerationId], only that
+     * identity: checked under the lock, so a queued end can never remove a
+     * replacement that was installed in the meantime.
+     */
+    suspend fun end(expectedGenerationId: String? = null, notifyServer: Boolean = true) = mutex.withLock {
+        if (expectedGenerationId != null && activeIdentity?.generationId != expectedGenerationId) return@withLock
+        endLocked(notifyServer)
+    }
 
-    private suspend fun endLocked() {
+    /**
+     * @param notifyServer false when the server already ended the session:
+     *   its credentials are dead, so a logout call could only fail.
+     */
+    private suspend fun endLocked(notifyServer: Boolean = true) {
         val active = activeIdentity
         try {
-            if (active != null && tokenManager.hasTemporaryScope()) {
+            if (notifyServer && active != null && tokenManager.hasTemporaryScope()) {
                 deviceLoginApi.endRemotePlayback(
                     AuthScopeSnapshot(
                         serverId = active.serverId,

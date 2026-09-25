@@ -6,8 +6,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -75,6 +79,13 @@ class EncryptedTokenManagerImpl(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
+
+    private val _rejectedTemporaryGenerations = MutableStateFlow<Set<String>>(emptySet())
+    override val rejectedTemporaryGenerations: StateFlow<Set<String>> = _rejectedTemporaryGenerations.asStateFlow()
+
+    override fun reportTemporaryCredentialsRejected(generationId: String) {
+        _rejectedTemporaryGenerations.update { it + generationId }
+    }
 
     init {
         // Load initial cache for whichever server the registry made active

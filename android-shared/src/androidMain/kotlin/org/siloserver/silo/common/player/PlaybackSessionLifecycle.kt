@@ -27,10 +27,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Wraps [PlaybackSessionManager] with a unified state machine that handles
@@ -620,6 +622,19 @@ class PlaybackSessionLifecycle(
         stop(expectedSessionId = expectedSessionId)
         currentCoroutineContext().ensureActive()
         return isCurrent()
+    }
+
+    /**
+     * Waits, at most [timeoutMs], for detached stops and external
+     * finalizations still in flight. A remote-playback identity must outlive
+     * the final stop it authenticates: ending it first fails that stop and
+     * leaves the server session to time out on its own.
+     */
+    suspend fun awaitPendingStops(timeoutMs: Long) {
+        val jobs = synchronized(pendingStopLock) { listOfNotNull(pendingStopJob) } +
+            synchronized(externalFinalizationLock) { pendingExternalFinalizations.values.toList() }
+        if (jobs.isEmpty()) return
+        withTimeoutOrNull(timeoutMs) { jobs.joinAll() }
     }
 
     /**
