@@ -369,12 +369,14 @@ class MainActivity : ComponentActivity() {
             // produced it, and that requires a complete identity.
             route === notificationRoute -> checkNotNull(notification).second
             route === contentRoute -> currentIdentityScope()
-            // Pinned like a content link: a server, account, or profile change
-            // before delivery drops it, and a newer link replaces it.
-            route === partyRoute -> currentIdentityScope()
+            // Like an invite claim, a party invitation names its own server
+            // and usually arrives before sign-in or profile selection, so it
+            // must NOT be pinned to the identity at arrival: signing in moves
+            // the identity generation and would drop it. The hub joins only
+            // when the invitation's server is the active one, under whoever is
+            // signed in by then; a newer link still replaces it.
             // An invite claim carries its own target server and is designed to
-            // work before authentication, so it must NOT be pinned to the
-            // current identity.
+            // work before authentication, so it must NOT be pinned either.
             else -> ExternalRouteScope.Unscoped
         }
 
