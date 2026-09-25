@@ -104,9 +104,12 @@ fun TvJoinCodeDialog(
             clippingEnabled = false,
         ),
     ) {
+        // A scrim and a near-opaque panel, as the party's other dialogs use:
+        // the hub's text sits right behind the keypad.
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.72f))
                 .padding(start = 36.dp, top = 40.dp, end = 36.dp, bottom = 30.dp),
             contentAlignment = Alignment.Center,
         ) {
@@ -114,7 +117,7 @@ fun TvJoinCodeDialog(
             Column(
                 modifier = Modifier
                     .width(360.dp)
-                    .background(color = DarkBackground.copy(alpha = 0.68f), shape = panelShape)
+                    .background(color = DarkBackground.copy(alpha = 0.94f), shape = panelShape)
                     .border(0.6.dp, Color.White.copy(alpha = 0.20f), panelShape)
                     .padding(horizontal = 14.dp, vertical = 14.dp)
                     .then(rememberTvDialogInitialFocus(firstKeyFocus)),

@@ -55,6 +55,7 @@ val watchPartyModule = module {
             ended = repository.ended,
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
             identityTransitions = get(),
+            closedByThisDevice = repository.closedByThisDevice,
         )
     }
 }

@@ -263,10 +263,12 @@ class WatchPartyHubViewModel(
                 else -> {
                     onFailure(joined)
                     fail(
-                        if (joined is ApiResult.Error && joined.code == 404) {
-                            "No Watch Party uses that code."
-                        } else {
-                            watchPartyErrorMessage(joined, fallback)
+                        when {
+                            joined is ApiResult.Error && joined.code == 404 -> "No Watch Party uses that code."
+                            // None of the ordinary conflicts apply to joining,
+                            // so a join 409 is a party that has ended.
+                            joined is ApiResult.Error && joined.code == 409 -> "That Watch Party has ended."
+                            else -> watchPartyErrorMessage(joined, fallback)
                         },
                     )
                 }

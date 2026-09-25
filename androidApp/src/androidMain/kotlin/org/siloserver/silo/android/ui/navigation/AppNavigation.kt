@@ -176,8 +176,7 @@ fun AppNavigation(
     // when this room's player is already in the back stack, return to it; it
     // follows the room's selection on its own.
     fun openPartyPlayer(room: RoomSnapshot, replacing: String?) {
-        val topPlayer = navController.currentBackStack.value
-            .lastOrNull { it.destination.route == Route.Player.ROUTE }
+        val topPlayer = runCatching { navController.getBackStackEntry(Route.Player.ROUTE) }.getOrNull()
         if (topPlayer?.arguments?.getString("roomId") == room.roomId) {
             navController.popBackStack(Route.Player.ROUTE, inclusive = false)
             return

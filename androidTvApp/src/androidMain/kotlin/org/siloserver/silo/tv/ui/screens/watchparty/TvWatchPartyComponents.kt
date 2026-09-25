@@ -21,10 +21,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -49,6 +51,7 @@ import org.siloserver.silo.repository.WatchTogetherConnectionState
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.tvModalFocusBoundary
 import org.siloserver.silo.tv.ui.screens.auth.QrCodePanel
 import org.siloserver.silo.tv.ui.theme.DarkBackground
@@ -311,6 +314,9 @@ internal fun TvPartyMemberRow(member: RoomMember, room: RoomSnapshot, modifier: 
     }
 }
 
+/** Frames to keep asking for the confirmation's initial focus. */
+private const val CONFIRM_FOCUS_ATTEMPTS = 6
+
 /**
  * Two-button confirmation. Initial focus goes to Cancel unless
  * [focusConfirm], so a stray Select never runs a destructive action.
@@ -328,6 +334,19 @@ internal fun TvWatchPartyConfirmDialog(
 ) {
     val confirmFocus = remember { FocusRequester() }
     val cancelFocus = remember { FocusRequester() }
+    var confirmFocused by remember { mutableStateOf(false) }
+    var cancelFocused by remember { mutableStateOf(false) }
+    // The focusable popup hands focus to its first row (the confirm action)
+    // on its own, and the shared initial-focus helper then stands down, so
+    // move focus to the intended row once the rows exist.
+    LaunchedEffect(focusConfirm) {
+        requestFocusUntilObserved(
+            maxAttempts = CONFIRM_FOCUS_ATTEMPTS,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = (if (focusConfirm) confirmFocus else cancelFocus)::requestFocus,
+            isFocused = { if (focusConfirm) confirmFocused else cancelFocused },
+        )
+    }
     Popup(
         alignment = Alignment.Center,
         onDismissRequest = onDismiss,
@@ -373,12 +392,16 @@ internal fun TvWatchPartyConfirmDialog(
                     title = confirmLabel,
                     onClick = onConfirm,
                     destructive = destructive,
-                    modifier = Modifier.focusRequester(confirmFocus),
+                    modifier = Modifier
+                        .focusRequester(confirmFocus)
+                        .onFocusChanged { confirmFocused = it.isFocused },
                 )
                 TvPartyActionRow(
                     title = cancelLabel,
                     onClick = onDismiss,
-                    modifier = Modifier.focusRequester(cancelFocus),
+                    modifier = Modifier
+                        .focusRequester(cancelFocus)
+                        .onFocusChanged { cancelFocused = it.isFocused },
                 )
             }
         }

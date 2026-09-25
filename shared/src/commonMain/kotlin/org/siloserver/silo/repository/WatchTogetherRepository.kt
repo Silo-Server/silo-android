@@ -207,6 +207,14 @@ class WatchTogetherRepository(
     private val _latestCommand = MutableStateFlow<ScheduledTransportCommand?>(null)
     private val _clock = MutableStateFlow(clockEstimator.estimate)
     private val _roomClosedReason = MutableStateFlow<String?>(null)
+
+    private val _closedByThisDevice = MutableSharedFlow<String>(extraBufferCapacity = 4)
+
+    /**
+     * Rooms this device ended for everyone. Leaving clears the engagement without
+     * an end reason, so this is how the recent party learns the room is gone.
+     */
+    val closedByThisDevice: SharedFlow<String> = _closedByThisDevice.asSharedFlow()
     private val _ended = MutableStateFlow<WatchPartyEnded?>(null)
     private val _pendingAction = MutableStateFlow<WatchPartyPendingAction?>(null)
 
@@ -368,9 +376,10 @@ class WatchTogetherRepository(
             result is ApiResult.Error && result.code == 409 -> {
                 // Already ended: converge on the ended state.
                 endIfCurrent(lease, WatchPartyEndReason.Ended)
+                _closedByThisDevice.tryEmit(lease.roomId)
                 ApiResult.Success(Unit)
             }
-            else -> result
+            else -> result.also { if (it is ApiResult.Success) _closedByThisDevice.tryEmit(lease.roomId) }
         }
     }
 

@@ -2074,7 +2074,9 @@ fun TvPlayerScreen(
                         onCancelScrub = { viewModel.cancelScrub() },
                         focusRequest = idleOverlayFocusRequest,
                         onPlayPause = {
-                            if (!canPlayPauseInRoom && !viewModel.isRoomHeld) return@TvPlayerIdleOverlay
+                            // In a room every press goes to the room, which
+                            // applies it or refuses with a notice, like the
+                            // remote's play/pause key.
                             if (watchParty != null) {
                                 watchParty.togglePlayPause()
                             } else {

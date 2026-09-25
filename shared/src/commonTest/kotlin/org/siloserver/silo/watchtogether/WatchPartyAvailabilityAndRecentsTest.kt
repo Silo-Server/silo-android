@@ -10,6 +10,7 @@ import org.siloserver.silo.network.IdentityTransitionKind
 import org.siloserver.silo.network.apiv2.PlaybackCapabilitiesV2
 import org.siloserver.silo.repository.WatchPartyEndReason
 import org.siloserver.silo.repository.WatchPartyEnded
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -135,6 +136,27 @@ class WatchPartyAvailabilityAndRecentsTest {
         assertEquals("room-1", recents.current()?.roomId)
 
         ended.value = WatchPartyEnded("room-1", "K7PQ2M4X", WatchPartyEndReason.HostLeft, wasHost = false)
+        runCurrent()
+        assertNull(recents.current())
+    }
+
+    @Test
+    fun `recorder forgets a party this device ended but keeps one it left`() = runTest {
+        val storage = MemoryStorage()
+        val recents = RecentWatchParties(storage, owner = { ownerA }, nowEpochMs = { 5L })
+        val room = MutableStateFlow<RoomSnapshot?>(null)
+        val closed = MutableSharedFlow<String>(extraBufferCapacity = 1)
+        val barrier = DefaultIdentityTransitionBarrier()
+        WatchPartyRecentsRecorder(recents, room, MutableStateFlow(null), backgroundScope, barrier, closed)
+
+        room.value = RoomSnapshot(roomId = "room-1", code = "K7PQ2M4X", selfRole = MemberRole.Host)
+        runCurrent()
+        // Leave clears the engagement without an end reason; Rejoin stays.
+        room.value = null
+        runCurrent()
+        assertEquals("room-1", recents.current()?.roomId)
+
+        closed.emit("room-1")
         runCurrent()
         assertNull(recents.current())
     }

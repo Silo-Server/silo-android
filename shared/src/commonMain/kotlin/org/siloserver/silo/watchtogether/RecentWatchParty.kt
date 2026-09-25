@@ -1,9 +1,11 @@
 package org.siloserver.silo.watchtogether
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -122,8 +124,9 @@ class RecentWatchParties(
 
 /**
  * Keeps the recent party in step with the engagement: remembered while a
- * membership is live, kept after a replacement or lost connection so the user
- * can rejoin, and forgotten when the room itself ended. Sign-out, account
+ * membership is live, kept after a replacement, a lost connection, or Leave so
+ * the user can rejoin, and forgotten when the room itself ended, including
+ * when this device ended it ([closedByThisDevice]). Sign-out, account
  * replacement, and server removal clear it before the identity changes.
  */
 class WatchPartyRecentsRecorder(
@@ -132,12 +135,16 @@ class WatchPartyRecentsRecorder(
     ended: StateFlow<WatchPartyEnded?>,
     scope: CoroutineScope,
     identityTransitions: IdentityTransitionBarrier,
+    closedByThisDevice: Flow<String> = emptyFlow(),
 ) {
     init {
         identityTransitions.installGate { transition ->
             if (transition.phase == IdentityTransitionPhase.WILL_CHANGE && transition.kind in CLEARING_KINDS) {
                 recents.forget()
             }
+        }
+        scope.launch {
+            closedByThisDevice.collect { roomId -> recents.forget(roomId) }
         }
         scope.launch {
             // Snapshots arrive often during playback; persist only identity changes.
