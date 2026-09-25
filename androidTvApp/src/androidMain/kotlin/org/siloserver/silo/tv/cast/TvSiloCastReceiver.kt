@@ -443,7 +443,10 @@ class TvSiloCastReceiver(
                 session.handoffJob = scope?.launch {
                     try {
                         val outgoing = identityManager.activeIdentity?.generationId
-                        if (outgoing != null && !identityManager.matches(offer, controllerId)) {
+                        // A rejected identity is replaced even for the same
+                        // phone, so its title has to go first as well.
+                        val outgoingRejected = outgoing in identityManager.rejectedGenerations.value
+                        if (outgoing != null && (outgoingRejected || !identityManager.matches(offer, controllerId))) {
                             // Another phone or profile: finish the title playing
                             // under the current identity first, so its final
                             // stop still authenticates (tvOS does the same).
