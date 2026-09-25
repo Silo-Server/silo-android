@@ -171,6 +171,10 @@ class SiloCastController(
     @Volatile
     private var sessionIsAutoResumed = false
 
+    /** The title the launch in flight sent; see [SiloCastControllerState.isLaunching]. */
+    @Volatile
+    private var launchingContentId: String? = null
+
     // We let go of an auto-resumed session on our own (quietDisconnect); a
     // `close` the TV sends meanwhile is not the TV ending it on us.
     @Volatile
@@ -221,8 +225,13 @@ class SiloCastController(
                     ensureConnected(target, allowCrossServer = true)
                     // AFTER ensureConnected: its teardown of any previous session
                     // resets the flag, so setting it earlier would be undone.
+                    launchingContentId = null
                     _state.update { it.copy(isLaunching = true) }
                     prepareRemoteIdentity(request)
+                    // Only the TV's state for this title ends the launch, and only
+                    // once it is sent: until then the outgoing player keeps
+                    // reporting, and a Resume of what is on names the same title.
+                    launchingContentId = request.playback.contentId
                     send(SiloCastMessage.Launch(request))
                     // A cross-server handoff changes the TV's advertised
                     // server after the socket was opened. Persist the actual
@@ -245,16 +254,8 @@ class SiloCastController(
                 }
                 throw error
             } catch (error: Throwable) {
-                if (isCurrentLaunch(self)) {
-                    _state.update {
-                        it.copy(
-                            isConnecting = false,
-                            connectingDeviceId = null,
-                            isLaunching = false,
-                            error = error.message ?: "Unable to cast.",
-                        )
-                    }
-                }
+                Log.w(TAG, "SiloCast launch failed", error)
+                if (isCurrentLaunch(self)) failLaunch(error.message ?: "Unable to cast.")
             } finally {
                 synchronized(launchJobLock) {
                     if (launchJob === self) launchJob = null
@@ -271,6 +272,18 @@ class SiloCastController(
     }
 
     private fun isCurrentLaunch(job: Job): Boolean = synchronized(launchJobLock) { launchJob === job }
+
+    /**
+     * A failed launch ends the session, as on iOS: the remote then shows the
+     * reason with "Choose a TV", rather than an idle screen whose next state
+     * frame would clear the error before anyone could read it.
+     */
+    private suspend fun failLaunch(message: String) {
+        suppressReconnect = true
+        runCatching { send(SiloCastMessage.Close()) }
+        closeConnection()
+        _state.update { it.copy(error = message) }
+    }
 
     /**
      * Makes an active Remote Control session the destination for an ordinary
@@ -320,12 +333,14 @@ class SiloCastController(
     }
 
     fun playPause() {
+        if (controlsHeld) return
         sendControl(SiloCastControlCommand.playPause())
         clock.setOptimisticPlaying(!isPlaying(), nowMs())
     }
 
     /** Idempotent transport command used by Android system media controls. */
     fun setPlaying(playing: Boolean) {
+        if (controlsHeld) return
         sendControl(
             if (playing) SiloCastControlCommand.play() else SiloCastControlCommand.pause(),
         )
@@ -333,6 +348,7 @@ class SiloCastController(
     }
 
     fun seek(seconds: Double) {
+        if (controlsHeld) return
         sendControl(SiloCastControlCommand.seek(seconds))
         clock.setOptimisticTime(seconds, nowMs())
     }
@@ -362,6 +378,7 @@ class SiloCastController(
     }
 
     fun setVolume(volume: Double) {
+        if (controlsHeld) return
         val clamped = volume.coerceIn(0.0, 1.0)
         synchronized(volumeStateLock) {
             if (_state.value.playbackState != null) {
@@ -372,6 +389,7 @@ class SiloCastController(
     }
 
     fun setMuted(muted: Boolean) {
+        if (controlsHeld) return
         synchronized(volumeStateLock) {
             val now = nowMs()
             volumeReconciler.clearVolume()
@@ -402,7 +420,8 @@ class SiloCastController(
                 return false
             }
 
-            if (playback.isMuted && step < 0) return true
+            // Consumed without effect, as on iOS: the remote owns the keys.
+            if (controlsHeld || (playback.isMuted && step < 0)) return true
             if (playback.isMuted) {
                 val now = nowMs()
                 volumeReconciler.clearVolume()
@@ -546,7 +565,14 @@ class SiloCastController(
         }
     }
 
+    /** While a launch is in flight the controls belong to a title on its way
+     *  out, and the TV answers them with errors (`unauthorized` mid-handoff)
+     *  that would read as the launch being refused. The remote shows only the
+     *  launch status then; hardware volume and system media presses wait. */
+    private val controlsHeld: Boolean get() = _state.value.isLaunching
+
     private fun sendControl(command: SiloCastControlCommand) {
+        if (controlsHeld) return
         // Any outbound command counts as user engagement — the session is no
         // longer a passive auto-resume attachment after this.
         sessionIsAutoResumed = false
@@ -932,12 +958,16 @@ class SiloCastController(
                             isMuted = volumeReconciler.reconcileMuted(message.state.isMuted, now),
                         )
                     }
+                    // The TV acknowledges a launch at once with a loading placeholder for
+                    // the title; the launch is done only once its player reports in.
+                    val launched = !isIdle && message.state.contentId == launchingContentId &&
+                        (message.state.sessionId != null || !message.state.isLoading || message.state.error != null)
                     _state.update {
                         it.copy(
                             playbackState = next,
                             error = null,
                             isAutoResuming = if (!isIdle) false else it.isAutoResuming,
-                            isLaunching = if (!isIdle) false else it.isLaunching,
+                            isLaunching = if (launched) false else it.isLaunching,
                         )
                     }
                     next
@@ -960,7 +990,11 @@ class SiloCastController(
                     }
                 }
                 sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
-                else -> _state.update { it.copy(error = message.error.message, isLaunching = false) }
+                // The TV refused or couldn't open the title just sent. A
+                // control pressed mid-launch (player_not_ready) isn't that.
+                _state.value.isLaunching && message.error.code !in CONTROL_ERROR_CODES ->
+                    failLaunch(message.error.message)
+                else -> _state.update { it.copy(error = message.error.message) }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
             is SiloCastMessage.Pong -> missedHeartbeats = 0
@@ -1107,6 +1141,9 @@ class SiloCastController(
         const val AUTO_RESUME_CONFIRM_TIMEOUT_MS = 6_000L
         const val VOLUME_STEPS = 16.0
         const val SILENT_VOLUME = 0.001
+
+        /** Errors both TVs send in reply to a control command, never to a launch. */
+        val CONTROL_ERROR_CODES = setOf("player_not_ready", "command_failed")
 
         /** The TV refused a reconnect or resume because another phone holds it. */
         const val CONTROLLER_ACTIVE = "controller_active"
