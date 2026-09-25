@@ -327,6 +327,16 @@ private val preMainAuthRoutes: Set<String> = setOf(
     TvRoute.EditProfile.ROUTE,
 )
 
+// Routes where this TV holds no credentials: every sign-out lands here, so the
+// SiloCast receiver stops. Server and profile pickers are left out; they are
+// also reached while signed in.
+private val SignedOutRoutes: Set<String> = setOf(
+    TvRoute.ServerSetup.route,
+    TvRoute.Setup.route,
+    TvRoute.Signup.route,
+    TvRoute.Login.ROUTE,
+)
+
 /**
  * Page-to-page cross-fade duration (ms). A middle ground between Compose Nav's
  * sluggish 700ms default and a phone-snappy 200ms — a touch more deliberate for
@@ -554,6 +564,26 @@ fun TvAppNavigation(
     val currentEntry by navController.currentBackStackEntryAsState()
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
+    }
+    // A first sign-in reaches Home inside the running activity, so onStart
+    // (which starts the cast receiver) never runs for it: without this the TV
+    // stays invisible to phones until the app is restarted. start() is a
+    // no-op when already running; onStop still stops it. Signing out also
+    // happens inside the activity: stop there, as tvOS does when its signed-in
+    // view goes away, so a signed-out TV doesn't keep advertising its server.
+    val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+        .currentStateFlow.collectAsState()
+    val currentRoute = currentEntry?.destination?.route
+    val homeInForeground = currentRoute == TvRoute.Main.route &&
+        lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+    val signedOut = currentRoute in SignedOutRoutes
+    LaunchedEffect(homeInForeground, signedOut) {
+        when {
+            homeInForeground ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.start() }
+            signedOut ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
+        }
     }
     val overlaySessionKey by produceState<String?>(
         initialValue = null,
