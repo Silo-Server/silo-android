@@ -358,12 +358,14 @@ class SiloCastController(
     }
 
     fun playPause() {
+        if (controlsHeld) return
         sendControl(SiloCastControlCommand.playPause())
         clock.setOptimisticPlaying(!isPlaying(), nowMs())
     }
 
     /** Idempotent transport command used by Android system media controls. */
     fun setPlaying(playing: Boolean) {
+        if (controlsHeld) return
         sendControl(
             if (playing) SiloCastControlCommand.play() else SiloCastControlCommand.pause(),
         )
@@ -371,6 +373,7 @@ class SiloCastController(
     }
 
     fun seek(seconds: Double) {
+        if (controlsHeld) return
         sendControl(SiloCastControlCommand.seek(seconds))
         clock.setOptimisticTime(seconds, nowMs())
     }
@@ -400,6 +403,7 @@ class SiloCastController(
     }
 
     fun setVolume(volume: Double) {
+        if (controlsHeld) return
         val clamped = volume.coerceIn(0.0, 1.0)
         synchronized(volumeStateLock) {
             if (_state.value.playbackState != null) {
@@ -410,6 +414,7 @@ class SiloCastController(
     }
 
     fun setMuted(muted: Boolean) {
+        if (controlsHeld) return
         synchronized(volumeStateLock) {
             val now = nowMs()
             volumeReconciler.clearVolume()
@@ -440,7 +445,8 @@ class SiloCastController(
                 return false
             }
 
-            if (playback.isMuted && step < 0) return true
+            // Consumed without effect, as on iOS: the remote owns the keys.
+            if (controlsHeld || (playback.isMuted && step < 0)) return true
             if (playback.isMuted) {
                 val now = nowMs()
                 volumeReconciler.clearVolume()
@@ -584,7 +590,14 @@ class SiloCastController(
         }
     }
 
+    /** While a launch is in flight the controls belong to a title on its way
+     *  out, and the TV answers them with errors (`unauthorized` mid-handoff)
+     *  that would read as the launch being refused. The remote shows only the
+     *  launch status then; hardware volume and system media presses wait. */
+    private val controlsHeld: Boolean get() = _state.value.isLaunching
+
     private fun sendControl(command: SiloCastControlCommand) {
+        if (controlsHeld) return
         // Any outbound command counts as user engagement — the session is no
         // longer a passive auto-resume attachment after this.
         sessionIsAutoResumed = false
