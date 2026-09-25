@@ -147,7 +147,7 @@ class TvPairingAdvertiser(
             // SiloCast receiver's: Android's advertiser matches instance names
             // across service types, so registering this one as the receiver
             // stops (sign-out) would cancel the receiver's goodbye.
-            serviceName = "${identity.name} Setup"
+            serviceName = SiloCastDeviceName.instanceName(identity.name, suffix = " Setup")
             serviceType = PairingProtocol.SERVICE_TYPE
             this.port = port
             setAttribute("v", PairingProtocol.VERSION.toString())
