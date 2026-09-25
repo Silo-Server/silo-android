@@ -2510,14 +2510,15 @@ fun TvPlayerScreen(
             onIntroPromptSelect = { handleIntroPromptSelect() },
         )
 
-        if (!isInPictureInPictureMode) {
-            TvRemotePlaybackIdentityNotice(
-                contentId = contentId,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 48.dp),
-            )
-        }
+        // Stays composed through picture-in-picture, hidden, so leaving PiP
+        // doesn't restart its six seconds.
+        TvRemotePlaybackIdentityNotice(
+            contentId = contentId,
+            hidden = isInPictureInPictureMode,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 48.dp),
+        )
     }
 }
 
