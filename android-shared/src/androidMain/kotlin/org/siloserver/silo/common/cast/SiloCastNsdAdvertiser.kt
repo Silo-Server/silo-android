@@ -86,7 +86,7 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = null
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = name
+            serviceName = SiloCastDeviceName.instanceName(name)
             serviceType = SiloCastProtocol.serviceType
             port = registration.port
             record.forEach { (key, value) -> setAttribute(key, value) }
