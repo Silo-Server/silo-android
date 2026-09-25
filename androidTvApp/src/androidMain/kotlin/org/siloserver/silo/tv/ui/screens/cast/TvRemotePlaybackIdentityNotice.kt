@@ -44,6 +44,8 @@ import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 fun TvRemotePlaybackIdentityNotice(
     contentId: String,
     modifier: Modifier = Modifier,
+    /** Hides the notice (picture-in-picture) without restarting its timer. */
+    hidden: Boolean = false,
     identityManager: RemotePlaybackIdentityManager = koinInject(),
     serverRegistry: ServerRegistry = koinInject(),
 ) {
@@ -62,7 +64,7 @@ fun TvRemotePlaybackIdentityNotice(
     }
 
     AnimatedVisibility(
-        visible = visible,
+        visible = visible && !hidden,
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = modifier,
