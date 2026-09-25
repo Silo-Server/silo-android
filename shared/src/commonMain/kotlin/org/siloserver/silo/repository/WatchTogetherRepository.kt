@@ -37,7 +37,6 @@ import org.siloserver.silo.watchtogether.RoomDeliveryEcho
 import org.siloserver.silo.watchtogether.RoomDeliveryLatch
 import org.siloserver.silo.watchtogether.RoomPlaybackRoom
 import org.siloserver.silo.watchtogether.RoomProof
-import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.siloserver.silo.watchtogether.RoomSessionRepository
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.rankSuggestions
@@ -168,7 +167,7 @@ class WatchTogetherRepository(
     private val wallClockMs: () -> Long = ::wallClockMillis,
     private val timing: WatchPartyTiming = WatchPartyTiming(),
     private val random: Random = Random.Default,
-) : RoomSessionRepository, WatchTogetherEntryGateway, RoomPlaybackRoom {
+) : RoomSessionRepository, RoomPlaybackRoom {
     /** Successful delivery state follows the process connection, not a UI controller. */
     val roomDeliveryLatch = RoomDeliveryLatch()
 
@@ -289,7 +288,7 @@ class WatchTogetherRepository(
      * Create a room with the caller-selected identity in [request]. After an
      * uncertain outcome, retry with the same request: the server replays it.
      */
-    override suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Create) {
+    suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Create) {
         val scope = authScopeProvider() ?: return@action missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.createRoom(request, scope)
@@ -297,7 +296,7 @@ class WatchTogetherRepository(
         if (r is ApiResult.Success) installRoomResponse(r.data, scope, requestGeneration) else r
     }
 
-    override suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Join) {
+    suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Join) {
         val scope = authScopeProvider() ?: return@action missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.joinRoom(request, scope)
@@ -344,7 +343,7 @@ class WatchTogetherRepository(
 
     // ---- REST: host management ------------------------------------------------
 
-    override suspend fun stageSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
+    suspend fun stageSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
         roomAction(WatchPartyPendingAction.Stage) { lease, _ -> api.stageSelection(lease.roomId, request, lease.authScope) }
 
     suspend fun startPlayback(): ApiResult<RoomResponse> =
@@ -359,7 +358,7 @@ class WatchTogetherRepository(
         }
 
     /** Direct selection: starts playback. Never use it to stage. */
-    override suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
+    suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
         roomAction(WatchPartyPendingAction.Select) { lease, _ -> api.setSelection(lease.roomId, request, lease.authScope) }
 
     suspend fun updatePolicy(policy: GuestControlPolicy): ApiResult<RoomResponse> =
