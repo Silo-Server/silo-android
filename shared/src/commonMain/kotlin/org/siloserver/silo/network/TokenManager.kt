@@ -1,6 +1,8 @@
 package org.siloserver.silo.network
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 
 data class TemporaryAuthScope(
     val generationId: String,
@@ -287,4 +289,17 @@ interface TokenManager {
     suspend fun endTemporaryScope(): Boolean = false
 
     suspend fun hasTemporaryScope(): Boolean = false
+
+    /**
+     * Temporary overlay generations whose refresh the server rejected: the
+     * remote-playback session behind them is over. The auth plugin leaves such
+     * an overlay installed (dropping it would fall through to the saved
+     * account), so the overlay's owner watches this to end it.
+     */
+    val rejectedTemporaryGenerations: StateFlow<Set<String>> get() = NoRejectedTemporaryGenerations
+
+    /** Called by the auth plugin when the server repudiates a temporary overlay's refresh. */
+    fun reportTemporaryCredentialsRejected(generationId: String) {}
 }
+
+private val NoRejectedTemporaryGenerations: StateFlow<Set<String>> = MutableStateFlow(emptySet())

@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
@@ -24,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastError
@@ -71,6 +73,8 @@ class TvSiloCastReceiver(
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
+    /** Waits (bounded) for the last player's final stop to reach the server. */
+    private val awaitPlaybackTeardown: suspend () -> Unit = {},
 ) {
     data class StandbyState(
         val controllerName: String?,
@@ -101,6 +105,8 @@ class TvSiloCastReceiver(
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
     private var identityEndJob: Job? = null
+    /** Rejected generations already handled, so a repeat emission can't act twice. */
+    private val expiredGenerations = mutableSetOf<String>()
     // stop() cancels the receiver scope, so cleanup for a ready-but-unconsumed
     // temporary identity must have an owner that survives that cancellation.
     private val identityCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -124,24 +130,29 @@ class TvSiloCastReceiver(
             Log.i(TAG, "SiloCast listening on ${socket.localPort} for ${SiloCastProtocol.serviceType}")
             acceptLoop(socket)
         }
-        // Keep the Bonjour TXT record in sync with the active server while the
-        // receiver runs (it stays up across server switches until onStop), and
-        // drop the live controller session — its hello was authorized against
-        // the previous server, so keeping it would let an old-server remote
-        // drive playback on the new one.
+        // The server ended the phone's temporary session (its refresh was
+        // rejected): stop what it was playing and restore the TV's own profile.
         newScope.launch {
+            identityManager.rejectedGenerations.collect { rejected ->
+                val generation = identityManager.activeIdentity?.generationId ?: return@collect
+                if (generation in rejected) endExpiredIdentity(generation)
+            }
+        }
+        // Keep the Bonjour TXT record in sync with the active server while the
+        // receiver runs (it stays up across server switches until onStop). A
+        // real switch also drops the live controller session — its hello was
+        // authorized against the previous server, so keeping it would let an
+        // old-server remote drive playback on the new one. Other entry updates
+        // (a refreshed name, say) only refresh the record, as on tvOS.
+        newScope.launch {
+            var serverId = serverRegistry.activeEntry.value?.id
             serverRegistry.activeEntry.drop(1).collect { entry ->
-                closePreviousController()
-                identityManager.end()
-                val port = synchronized(this@TvSiloCastReceiver) { serverSocket?.localPort }
-                if (port != null) {
-                    advertiser.start(
-                        port = port,
-                        serverId = entry?.id,
-                        serverName = entry?.displayName,
-                        playing = activePlayer != null,
-                    )
+                if (entry?.id != serverId) {
+                    serverId = entry?.id
+                    closePreviousController()
+                    identityManager.end()
                 }
+                refreshAdvertisement()
             }
         }
     }
@@ -168,11 +179,12 @@ class TvSiloCastReceiver(
         scope = null
         if (identityGeneration != null) {
             identityCleanupScope.launch {
+                // A player closing with the app (Home) is still sending its
+                // final stop under this identity.
+                awaitPlaybackTeardown()
                 // Exact-generation guard: a rapid stop/start/new handoff must
                 // not let the old shutdown clean up the replacement identity.
-                if (identityManager.activeIdentity?.generationId == identityGeneration) {
-                    identityManager.end()
-                }
+                identityManager.end(expectedGenerationId = identityGeneration)
             }
         }
     }
@@ -202,9 +214,7 @@ class TvSiloCastReceiver(
                     DiagnosticsCastLogger.event("TV cast player unregistered")
                     activePlayer = null
                     advertiser.updatePlaying(false)
-                    if (player.identityGeneration != null) {
-                        scheduleIdentityEnd(player.identityGeneration)
-                    }
+                    player.identityGeneration?.let { scheduleIdentityEnd(it) }
                     refreshStandbyState()
                 }
             }
@@ -432,6 +442,31 @@ class TvSiloCastReceiver(
                 identityEndJob = null
                 session.handoffJob = scope?.launch {
                     try {
+                        val outgoing = identityManager.activeIdentity?.generationId
+                        // A rejected identity is replaced even for the same
+                        // phone, so its title has to go first as well.
+                        val outgoingRejected = outgoing in identityManager.rejectedGenerations.value
+                        if (outgoing != null && (outgoingRejected || !identityManager.matches(offer, controllerId))) {
+                            // Another phone or profile: finish the title playing
+                            // under the current identity first, so its final
+                            // stop still authenticates (tvOS does the same).
+                            // This handoff ends that identity itself; the
+                            // player's own delayed end would otherwise land
+                            // mid-handoff and drop the new phone.
+                            synchronized(this@TvSiloCastReceiver) {
+                                activePlayer?.identityGeneration = null
+                                if (pendingPlayerIdentityGeneration == outgoing) pendingPlayerIdentityGeneration = null
+                            }
+                            // Not cancellable: a phone leaving mid-handoff must
+                            // not leave the previous phone's profile installed,
+                            // and the player no longer ends it on its own.
+                            withContext(NonCancellable) {
+                                stopActivePlayer()
+                                awaitPlaybackTeardown()
+                                identityManager.end(expectedGenerationId = outgoing)
+                                refreshAdvertisement()
+                            }
+                        }
                         val ready = identityManager.prepare(
                             offer = offer,
                             controllerDeviceId = controllerId,
@@ -442,7 +477,11 @@ class TvSiloCastReceiver(
                             }
                         }
                         if (activeSession !== session) {
-                            identityManager.end()
+                            identityManager.activeIdentity?.generationId?.let { generation ->
+                                if (activePlayer == null) {
+                                    withContext(NonCancellable) { identityManager.end(expectedGenerationId = generation) }
+                                }
+                            }
                             return@launch
                         }
                         session.isAuthorized = true
@@ -450,6 +489,7 @@ class TvSiloCastReceiver(
                         session.remoteLaunchReady = true
                         refreshStandbyState()
                         refreshAdvertisement()
+                        val readyGeneration = identityManager.activeIdentity?.generationId
                         session.send(SiloCastMessage.HandoffReady(ready))
                         session.send(SiloCastMessage.State(currentState()))
                         session.readyTimeoutJob?.cancel()
@@ -462,7 +502,7 @@ class TvSiloCastReceiver(
                             if (activeSession === session && session.remoteLaunchReady) {
                                 session.remoteLaunchReady = false
                                 if (activePlayer == null) {
-                                    identityManager.end()
+                                    identityManager.end(expectedGenerationId = readyGeneration)
                                     refreshAdvertisement()
                                     session.send(
                                         SiloCastMessage.Error(
@@ -480,7 +520,9 @@ class TvSiloCastReceiver(
                         throw e
                     } catch (t: Throwable) {
                         if (session.remoteLaunchReady && activePlayer == null) {
-                            identityManager.end()
+                            identityManager.activeIdentity?.generationId?.let {
+                                identityManager.end(expectedGenerationId = it)
+                            }
                             session.remoteLaunchReady = false
                             refreshAdvertisement()
                         }
@@ -616,22 +658,72 @@ class TvSiloCastReceiver(
         identityEndJob = owner.launch {
             delay(delayMs)
             if (identityManager.activeIdentity?.generationId != generationId) return@launch
-            identityManager.end()
+            // The outgoing player's final stop authenticates as this identity.
+            awaitPlaybackTeardown()
+            // A replacement title may have claimed the identity meanwhile.
+            if (activePlayer != null || pendingPlayerIdentityGeneration == generationId) return@launch
+            identityManager.end(expectedGenerationId = generationId)
             pendingPlayerIdentityGeneration = null
             refreshAdvertisement()
-            val session = activeSession
-            if (session != null) {
-                session.isAuthorized = AndroidServerRegistry.serverIdsMatch(
-                    session.controllerServerId,
-                    serverRegistry.activeServerId.value,
+            reconcileAuthorizationAfterRestore()
+        }
+    }
+
+    /** The TV's own profile is back: only a phone on the same server stays in control. */
+    private suspend fun reconcileAuthorizationAfterRestore() {
+        val session = activeSession ?: return
+        session.remoteLaunchReady = false
+        session.isAuthorized = AndroidServerRegistry.serverIdsMatch(
+            session.controllerServerId,
+            serverRegistry.activeServerId.value,
+        )
+        if (session.isAuthorized) {
+            session.send(SiloCastMessage.State(currentState()))
+            refreshStandbyState()
+        } else {
+            closePreviousController()
+        }
+    }
+
+    /**
+     * The server ended the phone's temporary session. Mirrors tvOS
+     * `temporaryAuthExpired`: tell the phone, close the player, and restore the
+     * TV's own profile without a logout call the dead credentials would fail.
+     */
+    private suspend fun endExpiredIdentity(generation: String) {
+        if (!synchronized(expiredGenerations) { expiredGenerations.add(generation) }) return
+        Log.i(TAG, "SiloCast temporary session expired")
+        DiagnosticsCastLogger.warning("TV cast temporary session expired")
+        activeSession?.let { session ->
+            runCatching {
+                session.send(
+                    SiloCastMessage.Error(
+                        SiloCastError(
+                            code = "temporary_session_expired",
+                            message = "The phone profile session expired.",
+                        ),
+                    ),
                 )
-                if (session.isAuthorized) {
-                    session.send(SiloCastMessage.State(currentState()))
-                    refreshStandbyState()
-                } else {
-                    closePreviousController()
-                }
             }
+        }
+        identityEndJob?.cancel()
+        identityEndJob = null
+        activeSession?.readyTimeoutJob?.cancel()
+        stopActivePlayer()
+        pendingPlayerIdentityGeneration = null
+        identityManager.end(expectedGenerationId = generation, notifyServer = false)
+        refreshAdvertisement()
+        reconcileAuthorizationAfterRestore()
+    }
+
+    /** Closes the player, if any, and waits (bounded) for it to unregister. */
+    private suspend fun stopActivePlayer() {
+        val player = synchronized(this) { activePlayer } ?: return
+        withContext(Dispatchers.Main.immediate) {
+            player.adapter.handle(SiloCastControlCommand.stop())
+        }
+        withTimeoutOrNull(PLAYER_EXIT_TIMEOUT_MS) {
+            while (synchronized(this@TvSiloCastReceiver) { activePlayer === player }) delay(50)
         }
     }
 
@@ -836,7 +928,7 @@ class TvSiloCastReceiver(
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,
         val stateProvider: () -> SiloCastPlaybackState,
-        val identityGeneration: String?,
+        var identityGeneration: String?,
     )
 
     private companion object {
@@ -850,6 +942,7 @@ class TvSiloCastReceiver(
         const val GOODBYE_TIMEOUT_MS = 1_000L
         const val READY_TIMEOUT_MS = 60_000L
         const val IDENTITY_END_GRACE_MS = 2_000L
+        const val PLAYER_EXIT_TIMEOUT_MS = 5_000L
 
         /** Refusal of a `resume` hello while another phone holds the TV. */
         const val CONTROLLER_ACTIVE = "controller_active"

@@ -253,6 +253,8 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                         // teardown path is what removes it.
                         temporaryGeneration != null -> {
                             deadCredentialGenerations.update { it + temporaryGeneration }
+                            // Tells the overlay's owner the session is over.
+                            tokenManager.reportTemporaryCredentialsRejected(temporaryGeneration)
                             return@withLock RefreshOutcome.CredentialsDead
                         }
 
@@ -508,6 +510,9 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                             refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()
                         ) {
                             deadCredentialGenerations.update { it + pinnedGeneration }
+                            // Playback's pinned calls are usually the first to
+                            // notice: tell the overlay's owner the session is over.
+                            tokenManager.reportTemporaryCredentialsRejected(pinnedGeneration)
                         }
                         // Don't invalidate the active session for a background scope.
                         // Re-check in case a concurrent path refreshed it in flight.

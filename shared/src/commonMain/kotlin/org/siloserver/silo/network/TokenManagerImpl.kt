@@ -2,8 +2,12 @@ package org.siloserver.silo.network
 
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.time.Duration.Companion.milliseconds
@@ -51,6 +55,13 @@ class TokenManagerImpl(
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     override val sessionExpired: SharedFlow<Unit> = _sessionExpired.asSharedFlow()
+
+    private val _rejectedTemporaryGenerations = MutableStateFlow<Set<String>>(emptySet())
+    override val rejectedTemporaryGenerations: StateFlow<Set<String>> = _rejectedTemporaryGenerations.asStateFlow()
+
+    override fun reportTemporaryCredentialsRejected(generationId: String) {
+        _rejectedTemporaryGenerations.update { it + generationId }
+    }
 
     override suspend fun getAccessToken(): String? = mutex.withLock {
         temporaryScope?.accessToken ?: accessToken
