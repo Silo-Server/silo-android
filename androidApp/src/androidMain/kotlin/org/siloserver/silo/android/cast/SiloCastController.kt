@@ -49,6 +49,7 @@ import org.siloserver.silo.common.cast.SiloCastNsdBrowser
 import org.siloserver.silo.common.cast.SiloCastTarget
 import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsClientSession
+import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -113,6 +114,7 @@ class SiloCastController(
     private val tokenManager: TokenManager,
     private val deviceLoginApi: DeviceLoginApi,
     private val lastTargetStore: SiloCastLastTargetStore,
+    private val activeProfileStore: ActiveProfileStore,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
 ) {
@@ -719,7 +721,8 @@ class SiloCastController(
                         serverURL = server.url,
                         serverName = server.displayName,
                         profileId = profileId,
-                        profileName = null,
+                        // Display only: the TV names whose profile is playing.
+                        profileName = activeProfileStore.activeProfile.value?.takeIf { it.id == profileId }?.name,
                     ),
                 ),
             )
