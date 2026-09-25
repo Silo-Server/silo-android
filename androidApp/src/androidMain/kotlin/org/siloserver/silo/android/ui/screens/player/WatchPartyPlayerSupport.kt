@@ -8,8 +8,6 @@ import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
 import org.siloserver.silo.model.playback.PlaybackTimeline
 import org.siloserver.silo.playback.PlaybackAction
-import org.siloserver.silo.repository.WatchPartyEndReason
-import org.siloserver.silo.repository.WatchPartyEnded
 import org.siloserver.silo.watchtogether.RoomPlaybackNotice
 import org.siloserver.silo.watchtogether.RoomPlayerObservation
 import org.siloserver.silo.watchtogether.RoomPlayerPort
@@ -146,9 +144,4 @@ internal fun watchPartyNoticeText(notice: RoomPlaybackNotice): String = when (no
     }
     RoomPlaybackNotice.Reconnecting -> "Reconnecting to the party…"
     RoomPlaybackNotice.Undelivered -> "Couldn't reach the party. Try again."
-}
-
-internal fun watchPartyEndedText(ended: WatchPartyEnded): String = when (ended.reason) {
-    WatchPartyEndReason.Replaced -> "You joined this Watch Party on another device."
-    else -> "The Watch Party ended."
 }

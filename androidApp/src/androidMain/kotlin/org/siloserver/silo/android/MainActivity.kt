@@ -48,6 +48,10 @@ import org.siloserver.silo.android.ui.navigation.hasLocalDownloadsForScope
 import org.siloserver.silo.android.ui.navigation.inviteClaimRouteOrNull
 import org.siloserver.silo.android.ui.navigation.notificationNavigationRouteOrNull
 import org.siloserver.silo.android.ui.navigation.shouldStartOnDownloads
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHandoff
+import org.siloserver.silo.android.ui.screens.watchparty.watchPartyAppLinkOrNull
+import org.siloserver.silo.android.ui.screens.watchparty.watchPartyInviteRoute
+import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.android.ui.screens.onboarding.OnboardingTourLocalCache
 import org.siloserver.silo.android.ui.theme.SiloTheme
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
@@ -346,8 +350,15 @@ class MainActivity : ComponentActivity() {
         val notificationRoute = notification?.first
         val contentRoute = contentDeepLinkRouteOrNull(intent?.dataString)
         val inviteRoute = inviteClaimRouteOrNull(intent?.dataString)
+        // A Watch Party invitation (silo://watch-party). Ignored while Watch
+        // Party is turned off (D1). The join token stays in memory in
+        // WatchPartyHandoff; the route, and the consumed-route marker saved
+        // across process death, carry only an opaque id derived from it.
+        val partyLink = watchPartyAppLinkOrNull(intent?.dataString)
+            ?.takeIf { get<WatchPartyExperiment>(WatchPartyExperiment::class.java).enabled.value }
+        val partyRoute = partyLink?.let(::watchPartyInviteRoute)
 
-        val route = notificationRoute ?: contentRoute ?: deviceRoute ?: inviteRoute ?: return
+        val route = notificationRoute ?: contentRoute ?: deviceRoute ?: inviteRoute ?: partyRoute ?: return
         if (route == consumedExternalRoute) return
 
         val scope = when {
@@ -358,12 +369,18 @@ class MainActivity : ComponentActivity() {
             // produced it, and that requires a complete identity.
             route === notificationRoute -> checkNotNull(notification).second
             route === contentRoute -> currentIdentityScope()
+            // Pinned like a content link: a server, account, or profile change
+            // before delivery drops it, and a newer link replaces it.
+            route === partyRoute -> currentIdentityScope()
             // An invite claim carries its own target server and is designed to
             // work before authentication, so it must NOT be pinned to the
             // current identity.
             else -> ExternalRouteScope.Unscoped
         }
 
+        if (route === partyRoute && partyLink != null) {
+            get<WatchPartyHandoff>(WatchPartyHandoff::class.java).offerInvite(partyLink)
+        }
         pendingExternalRouteRequests.value =
             externalRouteRequestFactory.create(route = route, scope = scope)
     }

@@ -549,7 +549,7 @@ class PlayerViewModel(
     /**
      * Unconditional seek channel for room-driven corrective seeks. The normal
      * position mirror in PlayerScreen applies a 2.0s deadband (to avoid feedback
-     * loops between playback-progress updates and user scrubs), but Watch Together
+     * loops between playback-progress updates and user scrubs), but Watch Party
      * corrective seeks can be as small as the engine's 0.35s drift threshold and
      * MUST always reach the player. PlayerScreen collects this and calls
      * `mediaController.seekTo` with no deadband. See [seekImmediate].
@@ -636,7 +636,7 @@ class PlayerViewModel(
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
-     * double-tap, Watch Together skips): the profile-wide values on a
+     * double-tap, Watch Party skips): the profile-wide values on a
      * revision-9 server, otherwise the phone's pre-revision-9 10s/10s. Read at
      * press time, so a settings change applies to the next skip mid-playback.
      */
@@ -1000,7 +1000,7 @@ class PlayerViewModel(
         // internal auto-advance and recovery positions must not become route
         // intent.
         routeResumePositionSeconds: Double? = null,
-        // True for Watch Together (the synced anchor must land exactly — no
+        // True for Watch Party (the synced anchor must land exactly — no
         // skip-back nudge). The request's roomId is always null on mobile, so WT
         // can't be inferred from it the way the TV starter does.
         suppressResumeRewind: Boolean = false,
@@ -4438,7 +4438,7 @@ class PlayerViewModel(
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
         if (nextUpTransitionGate.isActive) return
-        // Watch Together is authoritative — never auto-advance a room member.
+        // Watch Party is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
         if (autoAdvanceHandled) {
             if (videoEnded) {

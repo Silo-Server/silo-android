@@ -111,9 +111,22 @@ import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.android.cast.SiloCastState
 import org.siloserver.silo.android.ui.navigation.Route
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyPanelSheet
+import org.siloserver.silo.android.ui.screens.watchparty.formatWatchPartyNames
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartyReconnectNotice
+import org.siloserver.silo.android.ui.screens.watchparty.watchPartyLeftBehindNames
+import org.siloserver.silo.android.ui.screens.watchparty.watchPartyWaitingNames
+import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.RoomSession
+import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
+import org.siloserver.silo.watchtogether.watchPartyEligibility
+import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyInviteUrl
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -151,6 +164,9 @@ private val NoCastInWatchParty = SiloCastState()
 
 /** How long a Watch Party player waits for its room before giving up. */
 private const val ROOM_PRESENCE_TIMEOUT_MS = 5_000L
+
+/** How long a one-time room event ("The party kept playing") stays on screen. */
+private const val ROOM_EVENT_NOTICE_MS = 4_000L
 
 /** Room position samples: fresh enough that drift decisions (0.35 s deadband) are not skewed. */
 private const val ROOM_ENGINE_SAMPLE_MS = 100L
@@ -393,11 +409,18 @@ fun PlayerScreen(
         if (!navController.popBackStack()) activity?.finish()
     }
 
-    // Back from a party player: the host has confirmed ending the party for
-    // everyone (see PlayerOverlay); anyone else leaves it.
-    fun leaveRoomFromPlayer() {
-        val party = watchParty ?: return
-        if (party.room.value?.selfRole == MemberRole.Host) party.endForEveryone() else party.leave()
+    // Replaces the player with the Watch Party hub: after process death (the
+    // room token was memory-only, so nothing is re-adopted; the hub offers
+    // Rejoin) and when the party ended (the hub explains why).
+    fun replacePlayerWithHub() {
+        if (exitRequested) return
+        exitRequested = true
+        viewModel.onExit()
+        if (!navController.popBackStack(Route.WatchPartyHub.ROUTE, inclusive = false)) {
+            navController.navigate(Route.WatchPartyHub().route) {
+                popUpTo(Route.Player.ROUTE) { inclusive = true }
+            }
+        }
     }
 
     // Every play/pause input in a party. While playback is held locally
@@ -430,6 +453,12 @@ fun PlayerScreen(
     LaunchedEffect(watchParty) {
         val party = watchParty ?: return@LaunchedEffect
         val id = roomId ?: return@LaunchedEffect
+        // A restored party route with no live membership (process death):
+        // open the hub, which offers Rejoin, instead of re-adopting silently.
+        if (party.room.value == null && party.ended.value == null) {
+            replacePlayerWithHub()
+            return@LaunchedEffect
+        }
         val present = withTimeoutOrNull(ROOM_PRESENCE_TIMEOUT_MS) {
             party.room.first { it?.roomId == id }
         }
@@ -446,9 +475,12 @@ fun PlayerScreen(
                 // An ended party is explained by the effect below.
                 snapshot == null || snapshot.roomId != id -> if (party.ended.value == null) exitPlayer()
                 snapshot.phase == RoomPhase.Lobby -> {
+                    if (snapshot.selfRole != MemberRole.Host) {
+                        Toast.makeText(context, "The host stopped playback", Toast.LENGTH_SHORT).show()
+                    }
                     exitRequested = true
                     viewModel.onExit()
-                    navController.navigate(Route.WatchTogetherLobby(id).route) {
+                    navController.navigate(Route.WatchPartyLobby(id).route) {
                         popUpTo(Route.Player.ROUTE) { inclusive = true }
                     }
                 }
@@ -457,15 +489,75 @@ fun PlayerScreen(
     }
 
     // The party ended (the host ended it or left, or this profile joined on
-    // another device): say so and leave the player. The engagement is already
-    // over, so nothing is left; its reason stays for the Watch Party hub.
+    // another device): leave the player for the hub, which says why and
+    // offers Rejoin when the party itself goes on.
     LaunchedEffect(watchParty) {
         val party = watchParty ?: return@LaunchedEffect
-        val ended = party.ended.filterNotNull().first()
-        if (exitRequested) return@LaunchedEffect
-        Toast.makeText(context, watchPartyEndedText(ended), Toast.LENGTH_SHORT).show()
-        exitPlayer()
+        party.ended.filterNotNull().first()
+        replacePlayerWithHub()
     }
+
+    // In-playback status the room implies: who it waits for, whether this
+    // viewer is catching up, whether the host is away, and a reconnect that
+    // has lasted two seconds. Events that happen once (the party kept
+    // playing, it went on without someone) show briefly above it.
+    val roomConnection by watchTogetherRepository.connectionState.collectAsState()
+    val showRoomReconnect = rememberWatchPartyReconnectNotice(
+        disconnected = inRoom && roomSnapshot != null && !roomConnection.writable,
+        since = roomConnection.disconnectedAtMs,
+    )
+    val roomStatus: String? = roomSnapshot?.let { room ->
+        val waitingFor = watchPartyWaitingNames(room)
+        when {
+            showRoomReconnect -> if (roomConnection.disconnectedAtMs == null) {
+                "Connecting to the party…"
+            } else {
+                "Reconnecting to the party…"
+            }
+            !room.hostConnected && room.selfRole != MemberRole.Host ->
+                "The host lost connection. The party ends in two minutes unless the host returns."
+            roomCatchingUp -> "Catching up to the party"
+            room.playbackState == RoomPlaybackState.Waiting -> if (waitingFor.isEmpty()) {
+                "Syncing playback"
+            } else {
+                "Syncing playback · Waiting for ${formatWatchPartyNames(waitingFor)}"
+            }
+            else -> null
+        }
+    }
+    var roomEventNotice by remember { mutableStateOf<Pair<Long, String>?>(null) }
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        var previous = party.room.value
+        party.room.collect { next ->
+            val leftBehind = watchPartyLeftBehindNames(previous, next)
+            if (leftBehind.isNotEmpty()) {
+                roomEventNotice = SystemClock.elapsedRealtime() to
+                    "Continuing without ${formatWatchPartyNames(leftBehind)}"
+            }
+            previous = next
+        }
+    }
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        var wasCatchingUp = party.catchingUp.value
+        party.catchingUp.collect { catchingUp ->
+            if (catchingUp && !wasCatchingUp) {
+                roomEventNotice = SystemClock.elapsedRealtime() to "The party kept playing"
+            }
+            wasCatchingUp = catchingUp
+        }
+    }
+    LaunchedEffect(roomEventNotice?.first) {
+        val shown = roomEventNotice ?: return@LaunchedEffect
+        delay(ROOM_EVENT_NOTICE_MS)
+        if (roomEventNotice?.first == shown.first) roomEventNotice = null
+    }
+
+    // Back in a party opens the party panel over the retained player; the
+    // panel's own actions decide whether the player goes away.
+    var partyPanelVisible by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = inRoom && !partyPanelVisible) { partyPanelVisible = true }
 
     // Denied, reconnecting, and undelivered inputs each show, repeats included.
     LaunchedEffect(watchParty) {
@@ -494,7 +586,7 @@ fun PlayerScreen(
 
     // Per-session playback control socket (admin remote control). Bound for the
     // lifetime of a sessionId; the loop reconnects on its own and never
-    // interrupts playback. Separate from the Watch Together socket.
+    // interrupts playback. Separate from the Watch Party socket.
     val playbackRealtimeClient: org.siloserver.silo.network.PlaybackRealtimeClient = koinInject()
     LaunchedEffect(uiState.sessionId) {
         val id = uiState.sessionId ?: return@LaunchedEffect
@@ -1788,7 +1880,7 @@ fun PlayerScreen(
                         roomSnapshot = roomSnapshot,
                         inRoom = inRoom,
                         roomSuspended = roomSuspended,
-                        roomCatchingUp = roomCatchingUp,
+                        roomStatus = roomStatus,
                         orientationLockSupported =
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,
@@ -1824,10 +1916,9 @@ fun PlayerScreen(
                         },
                         isFastForwardHoldActive = fastForwardHoldActive,
                         onBack = {
-                            // In a party the host has already confirmed ending it
-                            // for everyone (PlayerOverlay); anyone else leaves it.
-                            leaveRoomFromPlayer()
-                            exitPlayer()
+                            // In a party, Back opens the party panel over the
+                            // retained player instead of leaving.
+                            if (inRoom) partyPanelVisible = true else exitPlayer()
                         },
                         onPlayPause = {
                             // In a party every play/pause asks the room; the player
@@ -1895,6 +1986,29 @@ fun PlayerScreen(
             }
         }
 
+        // Party only: a one-time room event (the party kept playing, or went
+        // on without someone), shown briefly below the room status.
+        roomEventNotice?.let { (_, text) ->
+            if (!isInPictureInPictureMode) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.78f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(top = 64.dp, start = 16.dp, end = 16.dp)
+                        .widthIn(max = 420.dp),
+                ) {
+                    Text(
+                        text = text,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
+            }
+        }
+
         // Non-fatal quality/version-switch message: a dismissable pill over the
         // still-playing video, not a fatal full-screen error.
         uiState.versionSwitchMessage?.let { message ->
@@ -1917,6 +2031,54 @@ fun PlayerScreen(
                 )
             }
         }
+    }
+
+    // The party panel (D2) over the retained player. Dismissing it never
+    // touches playback; only Leave and End take the player away.
+    val party = watchParty
+    if (party != null && partyPanelVisible) {
+        val availability by watchPartyAvailability.availability.collectAsState()
+        val serverRegistry: ServerRegistry = koinInject()
+        val activeServer by serverRegistry.activeEntry.collectAsState()
+        // Actions are not hidden while another request finishes; the room
+        // owner runs them one at a time.
+        val eligibility = watchPartyEligibility(
+            room = roomSnapshot,
+            features = (availability as? WatchPartyAvailability.Available)?.features,
+            busy = false,
+            personalVotesKnown = true,
+        )
+        WatchPartyPanelSheet(
+            room = roomSnapshot,
+            eligibility = eligibility,
+            inviteUrl = roomSnapshot
+                ?.takeIf { it.selfRole == MemberRole.Host }
+                ?.let { room -> activeServer?.url?.let { watchPartyInviteUrl(it, room.invitePath) } },
+            onReturnToLobby = {
+                partyPanelVisible = false
+                roomScope.launch {
+                    val result = watchTogetherRepository.stopPlayback()
+                    if (result !is ApiResult.Success) {
+                        Toast.makeText(
+                            context,
+                            watchPartyErrorMessage(result, "Couldn't return everyone to the lobby."),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+            onEndForEveryone = {
+                partyPanelVisible = false
+                party.endForEveryone()
+                exitPlayer()
+            },
+            onLeave = {
+                partyPanelVisible = false
+                party.leave()
+                exitPlayer()
+            },
+            onDismiss = { partyPanelVisible = false },
+        )
     }
 }
 

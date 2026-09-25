@@ -17,18 +17,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.outlined.Bedtime
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,7 +47,6 @@ import org.siloserver.silo.android.ui.util.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.watchtogether.MemberRole
-import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
@@ -70,7 +68,9 @@ fun PlayerOverlay(
     // Playback is held locally (audio focus, sleep timer, background): Play
     // stays available so the viewer can resume this device.
     roomSuspended: Boolean = false,
-    roomCatchingUp: Boolean = false,
+    // The party's current status line (waiting, catching up, host away,
+    // reconnecting); null shows the member count.
+    roomStatus: String? = null,
     isFastForwardHoldActive: Boolean = false,
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
@@ -105,9 +105,6 @@ fun PlayerOverlay(
     var statsSheetVisible by remember { mutableStateOf(false) }
     var subtitleSearchVisible by remember { mutableStateOf(false) }
     var aiTranslateVisible by remember { mutableStateOf(false) }
-    // Host close-room confirm dialog (Watch Together): the host backing out of
-    // the player tears the room down for everyone, so confirm first.
-    var showCloseConfirm by remember { mutableStateOf(false) }
 
     // Watch Party transport gating. Seek is host-only (the server rejects
     // guest seeks regardless of policy), so the scrubber, skips, chapters, and
@@ -122,11 +119,8 @@ fun PlayerOverlay(
     // the Skip pill as a room seek, and nobody else sees it (D8).
     val introPillAllowed = !inRoom || seekEnabled
 
-    // Back intercept: a host in a room confirms the room close; everyone else
-    // (guest, or solo playback) backs out immediately.
-    val handleBack: () -> Unit = {
-        if (inRoom && isRoomHost) showCloseConfirm = true else onBack()
-    }
+    // In a party, Back opens the party panel (PlayerScreen); solo backs out.
+    val handleBack: () -> Unit = onBack
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
     // Resolved profile-wide video intervals; read at press time so a change
     // made in settings applies to the next skip without restarting playback.
@@ -307,10 +301,9 @@ fun PlayerOverlay(
             }
         }
 
-        // Watch Together room indicator (top-center). Member count + host-offline
-        // / waiting-barrier state, and the invite code for the host. Stays
-        // visible regardless of controls visibility so members always know the
-        // room status.
+        // Watch Party status (top-center): the room's status line, or the
+        // member count, and the code for the host. Stays visible regardless of
+        // controls visibility so members always know the room status.
         if (roomSnapshot != null) {
             Box(
                 modifier = Modifier
@@ -332,13 +325,14 @@ fun PlayerOverlay(
                         modifier = Modifier.size(14.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    val label = when {
-                        roomCatchingUp -> "Catching up to the party"
-                        roomSnapshot.playbackState == RoomPlaybackState.Waiting -> "Waiting for members…"
-                        !roomSnapshot.hostConnected -> "${roomSnapshot.memberCount} · host offline"
-                        else -> "${roomSnapshot.memberCount} watching"
-                    }
-                    Text(text = label, color = Color.White, fontSize = 13.sp)
+                    val label = roomStatus ?: "${roomSnapshot.memberCount} watching"
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        modifier = Modifier.widthIn(max = 360.dp),
+                    )
                     if (isRoomHost && roomSnapshot.code.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -512,26 +506,6 @@ fun PlayerOverlay(
                 SleepTimerChip(remainingSeconds = active.remainingSeconds)
             }
         }
-    }
-
-    // Host end-party confirmation (Watch Party). Ending it stops the party for
-    // everyone; the end itself happens in onBack (WatchPartyPlayback's
-    // endForEveryone, called from PlayerScreen).
-    if (showCloseConfirm) {
-        AlertDialog(
-            onDismissRequest = { showCloseConfirm = false },
-            title = { Text("End the Watch Party for everyone?") },
-            text = { Text("Leaving as host ends the Watch Party for all members.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showCloseConfirm = false
-                    onBack()
-                }) { Text("End party") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCloseConfirm = false }) { Text("Cancel") }
-            },
-        )
     }
 
     // Combined audio + subtitle picker — opened from the top-bar

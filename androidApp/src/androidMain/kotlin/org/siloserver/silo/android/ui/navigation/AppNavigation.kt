@@ -67,8 +67,13 @@ import org.siloserver.silo.android.ui.screens.collections.CollectionsScreen
 import org.siloserver.silo.android.ui.screens.collections.LibraryCollectionsScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailScreen
 import org.siloserver.silo.android.ui.screens.detail.ItemDetailViewModel
-import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherEntrySheet
-import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherLobbyScreen
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHandoff
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHubScreen
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartyLobbyScreen
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
+import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.android.ui.screens.people.PersonDetailScreen
 import org.siloserver.silo.android.ui.screens.people.PersonDetailViewModel
 import org.siloserver.silo.android.ui.screens.notifications.InboxScreen
@@ -161,6 +166,42 @@ fun AppNavigation(
     var activePlayerTargetProvider by remember {
         mutableStateOf<PlayerTargetProviderRegistration?>(null)
     }
+    val watchTogetherRepository: WatchTogetherRepository = koinInject()
+    val watchPartyHandoff: WatchPartyHandoff = koinInject()
+    // D5: an external link that starts solo playback asks to leave a party first.
+    val externalSoloGuard = rememberWatchPartySoloGuard()
+
+    // The party player loads from the room itself; the route's content
+    // arguments are placeholders only. There is one party player at a time:
+    // when this room's player is already in the back stack, return to it; it
+    // follows the room's selection on its own.
+    fun openPartyPlayer(room: RoomSnapshot, replacing: String?) {
+        val topPlayer = navController.currentBackStack.value
+            .lastOrNull { it.destination.route == Route.Player.ROUTE }
+        if (topPlayer?.arguments?.getString("roomId") == room.roomId) {
+            navController.popBackStack(Route.Player.ROUTE, inclusive = false)
+            return
+        }
+        navController.navigate(
+            Route.Player(
+                contentId = room.selectedContentId?.takeIf { it.isNotBlank() } ?: PARTY_PLAYER_PLACEHOLDER_ID,
+                fileId = room.selectedFileId,
+                libraryId = room.selectedLibraryId,
+                roomId = room.roomId,
+            ).route,
+        ) {
+            if (replacing != null) popUpTo(replacing) { inclusive = true }
+        }
+    }
+
+    // Back to the hub below, or replace [replacing] with a new hub.
+    fun openPartyHub(replacing: String) {
+        if (!navController.popBackStack(Route.WatchPartyHub.ROUTE, inclusive = false)) {
+            navController.navigate(Route.WatchPartyHub().route) {
+                popUpTo(replacing) { inclusive = true }
+            }
+        }
+    }
 
     DisposableEffect(siloCastController) {
         siloCastController.startBrowsing()
@@ -176,6 +217,74 @@ fun AppNavigation(
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
+            }
+        }
+    }
+
+    fun navigateExternalRoute(route: String) {
+        // An external link to a TAB (silo://downloads) must switch tabs,
+        // not push a second copy of that tab. A duplicate tab entry also
+        // makes the tab anchor ambiguous: popUpTo(route) resolves to the
+        // NEWEST match, so the older anchor entry would survive and Back
+        // could loop through a hidden tab.
+        if (tabForRoute(route) != null) {
+            // Tear the player down BEFORE the tab switch, and without
+            // saving it. tabSwitchNavOptions saves state so a tab keeps
+            // its stack, which is right for a tab — but a saved player
+            // entry keeps its ViewModelStore alive, so onCleared never
+            // runs and the playback session it owns is never stopped.
+            // The save is also keyed to the LOWEST popped destination,
+            // so a later clearBackStack on the player route would not
+            // even find it. Popping first means the player's teardown
+            // runs the ordinary way.
+            // ONLY when the player is the current destination. An
+            // inclusive pop also removes everything above its target,
+            // so a player sitting BELOW other entries — an external
+            // item link pushed over it, say — would take those with it
+            // and silently discard state the viewer expected back.
+            // Leaving that rarer case saved is the pre-existing
+            // behaviour; destroying history to fix it is worse.
+            if (shouldPopPlayerBeforeExternalTab(
+                    navController.currentBackStackEntry?.destination?.route,
+                )
+            ) {
+                navController.popBackStack(
+                    route = Route.Player.ROUTE,
+                    inclusive = true,
+                    saveState = false,
+                )
+            }
+            navController.navigate(route) {
+                tabSwitchNavOptions(navController.bottomMostTabRoute())
+            }
+        } else {
+            val replaceCurrentPlayer = shouldReplaceCurrentPlayer(
+                currentDestinationRoute = navController.currentBackStackEntry
+                    ?.destination?.route,
+                targetRoute = route,
+            )
+            // Single-top only when the arguments agree it really is the
+            // same screen. AndroidX matches the destination NODE, so an
+            // external link to item B while item A's detail is showing
+            // reused A's entry and Back skipped A entirely — the same
+            // defect this branch fixes for in-app navigation.
+            val useSingleTop = navController.currentBackStackEntry?.arguments?.getString("libraryId") == null &&
+                shouldLaunchExternalRouteSingleTop(
+                    currentDestinationRoute = navController.currentBackStackEntry
+                        ?.destination?.route,
+                    currentContentId = navController.currentBackStackEntry
+                        ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
+                        ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
+                    targetRoute = route,
+                )
+            navController.navigate(route) {
+                if (replaceCurrentPlayer) {
+                    popUpTo(Route.Player.ROUTE) { inclusive = true }
+                }
+                // Decided from the finite external-route producer set,
+                // not punctuation. A route's spelling does not say
+                // whether its arguments identify a distinct request.
+                launchSingleTop = useSingleTop
             }
         }
     }
@@ -199,70 +308,11 @@ fun AppNavigation(
                 )
             },
             navigate = { route ->
-                // An external link to a TAB (silo://downloads) must switch tabs,
-                // not push a second copy of that tab. A duplicate tab entry also
-                // makes the tab anchor ambiguous: popUpTo(route) resolves to the
-                // NEWEST match, so the older anchor entry would survive and Back
-                // could loop through a hidden tab.
-                if (tabForRoute(route) != null) {
-                    // Tear the player down BEFORE the tab switch, and without
-                    // saving it. tabSwitchNavOptions saves state so a tab keeps
-                    // its stack, which is right for a tab — but a saved player
-                    // entry keeps its ViewModelStore alive, so onCleared never
-                    // runs and the playback session it owns is never stopped.
-                    // The save is also keyed to the LOWEST popped destination,
-                    // so a later clearBackStack on the player route would not
-                    // even find it. Popping first means the player's teardown
-                    // runs the ordinary way.
-                    // ONLY when the player is the current destination. An
-                    // inclusive pop also removes everything above its target,
-                    // so a player sitting BELOW other entries — an external
-                    // item link pushed over it, say — would take those with it
-                    // and silently discard state the viewer expected back.
-                    // Leaving that rarer case saved is the pre-existing
-                    // behaviour; destroying history to fix it is worse.
-                    if (shouldPopPlayerBeforeExternalTab(
-                            navController.currentBackStackEntry?.destination?.route,
-                        )
-                    ) {
-                        navController.popBackStack(
-                            route = Route.Player.ROUTE,
-                            inclusive = true,
-                            saveState = false,
-                        )
-                    }
-                    navController.navigate(route) {
-                        tabSwitchNavOptions(navController.bottomMostTabRoute())
-                    }
+                // D5: solo playback from a link asks to leave a party first.
+                if (route.startsWith("player/") && !route.contains("roomId=")) {
+                    externalSoloGuard.run { navigateExternalRoute(route) }
                 } else {
-                    val replaceCurrentPlayer = shouldReplaceCurrentPlayer(
-                        currentDestinationRoute = navController.currentBackStackEntry
-                            ?.destination?.route,
-                        targetRoute = route,
-                    )
-                    // Single-top only when the arguments agree it really is the
-                    // same screen. AndroidX matches the destination NODE, so an
-                    // external link to item B while item A's detail is showing
-                    // reused A's entry and Back skipped A entirely — the same
-                    // defect this branch fixes for in-app navigation.
-                    val useSingleTop = navController.currentBackStackEntry?.arguments?.getString("libraryId") == null &&
-                        shouldLaunchExternalRouteSingleTop(
-                            currentDestinationRoute = navController.currentBackStackEntry
-                                ?.destination?.route,
-                            currentContentId = navController.currentBackStackEntry
-                                ?.savedStateHandle?.get<String>(DisplayedDetailContentIdKey)
-                                ?: navController.currentBackStackEntry?.arguments?.getString("contentId"),
-                            targetRoute = route,
-                        )
-                    navController.navigate(route) {
-                        if (replaceCurrentPlayer) {
-                            popUpTo(Route.Player.ROUTE) { inclusive = true }
-                        }
-                        // Decided from the finite external-route producer set,
-                        // not punctuation. A route's spelling does not say
-                        // whether its arguments identify a distinct request.
-                        launchSingleTop = useSingleTop
-                    }
+                    navigateExternalRoute(route)
                 }
             },
             isStillValidForScope = { scope ->
@@ -936,7 +986,6 @@ fun AppNavigation(
             // Keep the destination scope available to media cards nested in
             // the detail page so the poster shared-element hand-off still runs.
             CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
-            var wtTarget by remember { mutableStateOf<Pair<String, Int?>?>(null) }
             val initialContentId = backStackEntry.arguments?.getString("contentId").orEmpty()
             val openingArtworkUrl = remember(initialContentId) { heroSourceHandoff.pendingArtworkUrl }
             val openingArtworkThumbhash = remember(initialContentId) {
@@ -1035,44 +1084,76 @@ fun AppNavigation(
                 onBookReadClick = { contentId, fileId ->
                     navController.navigate(Route.BookReader(contentId, fileId, libraryId).route)
                 },
-                onWatchTogether = { contentId, fileId -> wtTarget = contentId to fileId },
+                libraryId = libraryId,
+                onWatchParty = { item ->
+                    navController.navigate(Route.WatchPartyHub(host = watchPartyHandoff.offerHost(item)).route)
+                },
+                onPartySelected = { room -> openPartyPlayer(room, replacing = null) },
                 onOpenCastRemote = {
                     navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
                 },
                 viewModel = detailViewModel,
             )
             }
-            wtTarget?.let { (cid, fid) ->
-                WatchTogetherEntrySheet(
-                    contentId = cid,
-                    fileId = fid,
-                    onNavigate = { route -> navController.navigate(route) },
-                    onDismiss = { wtTarget = null },
-                )
-            }
             }
             }
         }
 
-        // ---- Watch Together lobby ----
+        // ---- Watch Party ----
         composable(
-            route = Route.WatchTogetherLobby.ROUTE,
+            route = Route.WatchPartyHub.ROUTE,
             arguments = listOf(
-                navArgument(Route.WatchTogetherLobby.ARG_ROOM_ID) { type = NavType.StringType },
+                navArgument(Route.WatchPartyHub.ARG_INVITE) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument(Route.WatchPartyHub.ARG_HOST) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { backStackEntry ->
+            WatchPartyHubScreen(
+                inviteId = backStackEntry.arguments?.getString(Route.WatchPartyHub.ARG_INVITE),
+                hostId = backStackEntry.arguments?.getString(Route.WatchPartyHub.ARG_HOST),
+                onBack = { navController.popBackStack() },
+                // The hub stays below the lobby: it owns a create that may
+                // still be staging the host's item.
+                onOpenLobby = { roomId -> navController.navigate(Route.WatchPartyLobby(roomId).route) },
+                onOpenPlayer = { room -> openPartyPlayer(room, replacing = null) },
+            )
+        }
+
+        composable(
+            route = Route.WatchPartyLobby.ROUTE,
+            arguments = listOf(
+                navArgument(Route.WatchPartyLobby.ARG_ROOM_ID) { type = NavType.StringType },
             ),
         ) { backStackEntry ->
             val roomId = backStackEntry.arguments
-                ?.getString(Route.WatchTogetherLobby.ARG_ROOM_ID)
+                ?.getString(Route.WatchPartyLobby.ARG_ROOM_ID)
                 .orEmpty()
-            WatchTogetherLobbyScreen(
-                roomId = roomId,
-                onNavigateToPlayer = { route ->
-                    navController.navigate(route) {
-                        popUpTo(Route.WatchTogetherLobby.ROUTE) { inclusive = true }
-                    }
-                },
-                onBack = { navController.popBackStack() },
-            )
+            // A lobby restored without a live membership (process death):
+            // the room token was memory-only, so open the hub and its Rejoin
+            // instead of re-adopting silently.
+            val live = remember(roomId) {
+                watchTogetherRepository.roomSnapshot.value?.roomId == roomId ||
+                    watchTogetherRepository.ended.value?.roomId == roomId
+            }
+            if (!live) {
+                LaunchedEffect(roomId) { openPartyHub(replacing = Route.WatchPartyLobby.ROUTE) }
+            } else {
+                WatchPartyLobbyScreen(
+                    roomId = roomId,
+                    onBack = { navController.popBackStack() },
+                    onOpenPlayer = { room -> openPartyPlayer(room, replacing = Route.WatchPartyLobby.ROUTE) },
+                    onPartyEnded = { openPartyHub(replacing = Route.WatchPartyLobby.ROUTE) },
+                    onLeft = { navController.popBackStack() },
+                    onOpenDetail = { contentId -> navController.navigate(Route.ItemDetail(contentId).route) },
+                )
+            }
         }
 
         // ---- Audiobook player (audio-only UI) ----
@@ -1358,12 +1439,17 @@ fun AppNavigation(
                     .padding(bottom = if (currentRoute in tabRoutes) 80.dp else 0.dp),
             )
         }
+
+        WatchPartySoloGuardDialog(externalSoloGuard)
     }
     }
     }
     }
     }
 }
+
+/** Route placeholder for a party player; the room, not the route, decides what plays. */
+private const val PARTY_PLAYER_PLACEHOLDER_ID = "watch-party"
 
 /**
  * Exact player redelivery is idempotent. Navigating the same concrete route
@@ -1378,7 +1464,7 @@ private fun NavHostController.isDisplayingExactPlayerRoute(
     if (entry.destination.route != Route.Player.ROUTE) return false
     val arguments = entry.arguments ?: return false
     // A normal silo://play link is a solo-playback request. Never swallow it
-    // merely because a Watch Together room currently happens to play the same
+    // merely because a Watch Party room currently happens to play the same
     // content/file.
     if (!arguments.getString("roomId").isNullOrBlank()) return false
     if (arguments.getString("libraryId") != null) return false

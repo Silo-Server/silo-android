@@ -111,7 +111,7 @@ fun PlayerControls(
     playbackSpeedEnabled: Boolean = true,
     nextEpisode: PlayerViewModel.NextEpisodeInfo? = null,
     brightnessFraction: Float = 0.5f,
-    // Watch Together guest gate: when false the scrubber + skip buttons are
+    // Watch Party guest gate: when false the scrubber + skip buttons are
     // inert and dimmed (seek is host-only, so disabled for all guests).
     // Defaults true for solo playback.
     seekEnabled: Boolean = true,

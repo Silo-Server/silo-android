@@ -271,7 +271,7 @@ internal class MobileVideoPlaybackStarter(
                 capabilities = capabilities,
             )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
-            // Suppressed for Start Over / retry (request flag) and Watch Together
+            // Suppressed for Start Over / retry (request flag) and Watch Party
             // (roomId — all participants must land on the synced anchor). The same
             // rewound value drives BOTH the server seek and the player start, so
             // a transcode cut and the player position never disagree.
