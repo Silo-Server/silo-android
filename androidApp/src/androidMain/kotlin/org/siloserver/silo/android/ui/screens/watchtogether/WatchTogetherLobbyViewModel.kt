@@ -3,7 +3,6 @@ package org.siloserver.silo.android.ui.screens.watchtogether
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.navigation.Route
-import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -80,7 +79,7 @@ class WatchTogetherLobbyViewModel(
     /** Host: promote a suggestion to the room selection (moves everyone to the player). */
     fun promote(suggestionId: String) =
         launchOperation("Could not start suggestion") {
-            repository.promoteSuggestion(PromoteSuggestionRequest(suggestionId = suggestionId))
+            repository.promoteSuggestion(suggestionId)
         }
 
     fun closeRoom() = launchOperation("Could not close room") { repository.closeRoom() }

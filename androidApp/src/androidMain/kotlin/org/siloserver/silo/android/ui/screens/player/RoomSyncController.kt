@@ -7,7 +7,6 @@ import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.TransportAction
-import org.siloserver.silo.repository.PongSample
 import org.siloserver.silo.repository.ScheduledTransportCommand
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.RoomTransportIntent
@@ -25,10 +24,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.time.Instant
 
 /**
  * Binds a Watch Together room to the mobile [PlayerViewModel] for the lifetime
@@ -38,8 +37,7 @@ import java.time.Instant
  * lives in the binding, not the repo). It:
  *  - adopts the application-scoped room session and attaches the player's
  *    playback session id once it resolves;
- *  - drives a ping loop so pongs flow, stamps `clientReceivedMs` on each pong and
- *    feeds [RoomSyncEngine.recordPongSample] to keep the clock offset fresh;
+ *  - adopts the room owner's server clock estimate, sampled on the room socket;
  *  - feeds each [ScheduledTransportCommand] into [RoomSyncEngine.decide] and
  *    applies the resulting [SyncDecision] (seek / setPlaying) at the engine-
  *    scheduled local delay, auto-emitting `ready` on the waiting barrier;
@@ -72,7 +70,6 @@ class RoomSyncController(
         private const val REPORT_CADENCE_MS = 1_500L
         private const val SUPPRESS_WINDOW_MS = 250L
         private const val REPORT_TICK_MS = 250L
-        private const val PING_INTERVAL_MS = 15_000L
     }
 
     /** Live room snapshot for the overlay. */
@@ -115,32 +112,15 @@ class RoomSyncController(
                 }
         }
 
-        // Clock-sync: drive pings (once on start + every PING_INTERVAL_MS) and
-        // fold pongs into the engine's offset estimate.
+        // The room owner samples the server clock on its socket; keep the
+        // engine's offset in step with that estimate.
         controllerScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            combine(
-                viewModel.uiState.map { it.sessionId }.distinctUntilChanged(),
-                repository.connectionState,
-            ) { sessionId, connection ->
-                deliveryLatch.keyOrNull(connection, sessionId) to connection.writable
-            }
-                .distinctUntilChanged()
-                .collectLatest { (key, writable) ->
-                    if (!writable || key == null) return@collectLatest
-                    while (!deliveryLatch.isAttached(key)) delay(10)
-                    while (isActive) {
-                        repository.ping(clientSentAt = nowWallClockRfc3339())
-                        delay(PING_INTERVAL_MS)
-                    }
-                }
-        }
-        controllerScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            repository.pongs.collect { pong -> recordPong(pong) }
+            repository.clock.collect { estimate -> engine.setServerTimeOffset(estimate.offsetMs) }
         }
 
         // Apply engine decisions for each scheduled transport command.
         controllerScope.launch(start = CoroutineStart.UNDISPATCHED) {
-            repository.transportCommands.collect { scheduled -> handleCommand(scheduled) }
+            repository.latestTransportCommand.filterNotNull().collect { scheduled -> handleCommand(scheduled) }
         }
 
         // Drift reporting loop (suppressed around a pending execute).
@@ -230,22 +210,6 @@ class RoomSyncController(
         roomSession.adopt(roomId)
     }
 
-    /**
-     * Stamp `clientReceivedMs` (wall clock) at collection time and feed the NTP
-     * sample to the engine. Null guards: a sample with any missing server
-     * timestamp can't update the offset, so we drop it.
-     */
-    private fun recordPong(pong: PongSample) {
-        val clientSent = pong.clientSentMs ?: return
-        val serverReceived = pong.serverReceivedMs ?: return
-        val serverSent = pong.serverSentMs ?: return
-        engine.recordPongSample(
-            clientSentMs = clientSent,
-            serverReceivedMs = serverReceived,
-            serverSentMs = serverSent,
-            clientReceivedMs = System.currentTimeMillis(),
-        )
-    }
 
     private fun handleCommand(scheduled: ScheduledTransportCommand) {
         if (!scheduled.connection.writable ||
@@ -412,8 +376,6 @@ class RoomSyncController(
         lifetime.dispose()
     }
 
-    /** Wall-clock RFC3339 string for the ping `client_sent_at`. */
-    private fun nowWallClockRfc3339(): String = Instant.ofEpochMilli(System.currentTimeMillis()).toString()
 
     /** Monotonic clock for local-only cadence/scheduling. */
     private fun monotonicMs(): Long = SystemClock.elapsedRealtime()

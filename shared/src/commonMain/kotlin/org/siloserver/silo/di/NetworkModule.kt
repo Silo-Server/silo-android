@@ -59,6 +59,6 @@ val networkModule = module {
     single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get()) }
     single<NotificationsApi> { NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get(), get(), get()) }
-    single<WatchTogetherApi> { DefaultWatchTogetherApi(get(), get()) }
+    single<WatchTogetherApi> { DefaultWatchTogetherApi(get(), get(), get()) }
     single<DiagnosticsApi> { DefaultDiagnosticsApi(get(), gate = get()) }
 }

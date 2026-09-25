@@ -12,5 +12,10 @@ interface WatchTogetherEntryGateway {
     val roomSnapshot: StateFlow<RoomSnapshot?>
     suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse>
     suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse>
+
+    /** Stage an item in a host-pick lobby. Nothing plays until the host starts it. */
+    suspend fun stageSelection(request: SetSelectionRequest): ApiResult<RoomResponse>
+
+    /** Direct selection: starts playback for everyone. Never used to stage. */
     suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse>
 }

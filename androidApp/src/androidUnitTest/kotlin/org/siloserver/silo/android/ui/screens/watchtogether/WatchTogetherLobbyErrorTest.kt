@@ -15,6 +15,13 @@ import org.robolectric.annotation.Config
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
+import org.siloserver.silo.model.watchtogether.MemberStateRequest
+import org.siloserver.silo.model.watchtogether.MemberStateResponse
+import org.siloserver.silo.model.watchtogether.PickerResponse
+import org.siloserver.silo.model.watchtogether.SelectionModeRequest
+import org.siloserver.silo.model.watchtogether.SourceFallbackRequest
+import org.siloserver.silo.model.watchtogether.SuggestionReceipt
+import org.siloserver.silo.model.watchtogether.WatchTogetherCapabilitiesV2
 import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
 import org.siloserver.silo.model.watchtogether.RoomResponse
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -55,7 +62,7 @@ class WatchTogetherLobbyErrorTest {
             api = api,
             authScopeProvider = { AUTH_SCOPE },
         )
-        repository.createRoom(CreateRoomRequest())
+        repository.createRoom(CreateRoomRequest(roomId = "room-1"))
         val roomSession = RoomSession(repository, backgroundScope, DefaultIdentityTransitionBarrier())
         val viewModel = WatchTogetherLobbyViewModel("room-1", repository, roomSession)
         val messages = mutableListOf<String>()
@@ -85,7 +92,7 @@ class WatchTogetherLobbyErrorTest {
             api = FailingLobbyApi(),
             authScopeProvider = { AUTH_SCOPE },
         )
-        repository.createRoom(CreateRoomRequest())
+        repository.createRoom(CreateRoomRequest(roomId = "room-1"))
         val viewModel = SuggestToRoomViewModel(repository)
 
         viewModel.suggest("movie-1", "movie", "Movie One", null, null)
@@ -100,30 +107,30 @@ class WatchTogetherLobbyErrorTest {
         private val roomResponse =
             ApiResult.Success(RoomResponse(RoomSnapshot(roomId = "room-1"), "room-token"))
 
+        override suspend fun capabilities(scope: AuthScopeSnapshot) = ApiResult.Success(WatchTogetherCapabilitiesV2())
         override suspend fun createRoom(request: CreateRoomRequest, scope: AuthScopeSnapshot) = roomResponse
         override suspend fun joinRoom(request: JoinRoomRequest, scope: AuthScopeSnapshot) = roomResponse
         override suspend fun getRoom(roomId: String, roomToken: String, scope: AuthScopeSnapshot) = roomResponse
-        override suspend fun setSelection(
+        override suspend fun updatePolicy(roomId: String, request: UpdatePolicyRequest, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun stageSelection(roomId: String, request: SetSelectionRequest, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun startPlayback(roomId: String, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun stopPlayback(roomId: String, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun setSelectionMode(roomId: String, request: SelectionModeRequest, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun setSelection(roomId: String, request: SetSelectionRequest, scope: AuthScopeSnapshot) = roomResponse
+        override suspend fun closeRoom(roomId: String, scope: AuthScopeSnapshot) = ApiResult.Success(Unit)
+        override suspend fun sourceFallback(
             roomId: String,
             roomToken: String,
-            request: SetSelectionRequest,
+            request: SourceFallbackRequest,
             scope: AuthScopeSnapshot,
         ) = roomResponse
-
-        override suspend fun updatePolicy(
-            roomId: String,
-            roomToken: String,
-            request: UpdatePolicyRequest,
-            scope: AuthScopeSnapshot,
-        ) = roomResponse
-
-        override suspend fun closeRoom(roomId: String, roomToken: String, scope: AuthScopeSnapshot) =
-            ApiResult.Success(Unit)
 
         override suspend fun listSuggestions(
             roomId: String,
             roomToken: String,
             scope: AuthScopeSnapshot,
+            cursor: String?,
+            limit: Int,
         ) = ApiResult.Success(SuggestionsResponse())
 
         override suspend fun addSuggestion(
@@ -131,30 +138,17 @@ class WatchTogetherLobbyErrorTest {
             roomToken: String,
             request: AddSuggestionRequest,
             scope: AuthScopeSnapshot,
-        ): ApiResult<SuggestionsResponse> =
+        ): ApiResult<SuggestionReceipt> =
             ApiResult.Error(409, "suggestions_locked", "Suggestions are locked")
 
-        override suspend fun deleteSuggestion(
-            roomId: String,
-            roomToken: String,
-            suggestionId: String,
-            scope: AuthScopeSnapshot,
-        ) = ApiResult.Success(SuggestionsResponse())
+        override suspend fun deleteSuggestion(roomId: String, roomToken: String, suggestionId: String, scope: AuthScopeSnapshot) =
+            ApiResult.Success(Unit)
 
-        override suspend fun vote(
-            roomId: String,
-            roomToken: String,
-            suggestionId: String,
-            scope: AuthScopeSnapshot,
-        ): ApiResult<SuggestionsResponse> =
+        override suspend fun vote(roomId: String, roomToken: String, suggestionId: String, scope: AuthScopeSnapshot): ApiResult<Unit> =
             ApiResult.Error(409, "voting_disabled", "Voting is disabled")
 
-        override suspend fun unvote(
-            roomId: String,
-            roomToken: String,
-            suggestionId: String,
-            scope: AuthScopeSnapshot,
-        ) = ApiResult.Success(SuggestionsResponse())
+        override suspend fun unvote(roomId: String, roomToken: String, suggestionId: String, scope: AuthScopeSnapshot) =
+            ApiResult.Success(Unit)
 
         override suspend fun promoteSuggestion(
             roomId: String,
@@ -163,6 +157,12 @@ class WatchTogetherLobbyErrorTest {
             scope: AuthScopeSnapshot,
         ): ApiResult<RoomResponse> =
             ApiResult.Error(403, "host_required", "Only the host can promote")
+
+        override suspend fun memberState(roomId: String, roomToken: String, request: MemberStateRequest, scope: AuthScopeSnapshot) =
+            ApiResult.Success(MemberStateResponse())
+
+        override suspend fun picker(roomId: String, roomToken: String, scope: AuthScopeSnapshot) =
+            ApiResult.Success(PickerResponse())
     }
 
     private companion object {

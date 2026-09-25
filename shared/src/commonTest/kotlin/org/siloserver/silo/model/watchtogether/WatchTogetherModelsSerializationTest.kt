@@ -231,12 +231,18 @@ class WatchTogetherModelsSerializationTest {
     // ---- Request models (encode → correct wire keys, omit nulls) --------------
 
     @Test
-    fun `create request encodes selection_mode`() {
+    fun `create request encodes caller room_id and selection_mode`() {
         val out = json.encodeToString(
             CreateRoomRequest.serializer(),
-            CreateRoomRequest(selectionMode = "vote"),
+            CreateRoomRequest(roomId = "7b1b0a3c-0000-4000-8000-000000000001", selectionMode = "vote"),
         )
-        assertEquals(setOf("selection_mode"), json.parseToJsonElement(out).jsonObject.keys)
+        val body = json.parseToJsonElement(out).jsonObject
+        assertEquals(setOf("room_id", "selection_mode"), body.keys)
+    }
+
+    @Test
+    fun `create request defaults to host picks`() {
+        assertEquals("host_pick", CreateRoomRequest(roomId = "r").selectionMode)
     }
 
     @Test
@@ -272,10 +278,10 @@ class WatchTogetherModelsSerializationTest {
     fun `add suggestion request encodes required fields and omits null optionals`() {
         val out = json.encodeToString(
             AddSuggestionRequest.serializer(),
-            AddSuggestionRequest(contentId = "c", contentType = "movie", title = "T"),
+            AddSuggestionRequest(suggestionId = "s-1", contentId = "c", contentType = "movie", title = "T"),
         )
         assertEquals(
-            setOf("content_id", "content_type", "title"),
+            setOf("suggestion_id", "content_id", "content_type", "title"),
             json.parseToJsonElement(out).jsonObject.keys,
         )
     }

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.watchtogether
 
+import org.siloserver.silo.watchtogether.newWatchPartyId
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.navigation.Route
@@ -86,7 +87,7 @@ class WatchTogetherEntryViewModel(
         viewModelScope.launch {
             when (
                 val created = gateway.createRoom(
-                    CreateRoomRequest(selectionMode = selectionMode.wire),
+                    CreateRoomRequest(roomId = newWatchPartyId(), selectionMode = selectionMode.wire),
                 )
             ) {
                 is ApiResult.Success -> {
@@ -114,7 +115,7 @@ class WatchTogetherEntryViewModel(
         viewModelScope.launch {
             when (
                 val created = gateway.createRoom(
-                    CreateRoomRequest(selectionMode = RoomSelectionMode.Vote.wire),
+                    CreateRoomRequest(roomId = newWatchPartyId(), selectionMode = RoomSelectionMode.Vote.wire),
                 )
             ) {
                 is ApiResult.Success -> finish(created.data.room)

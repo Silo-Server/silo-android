@@ -2,10 +2,9 @@ package org.siloserver.silo.tv.ui.screens.watchtogether
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
-import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
+import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.WatchTogetherRepository
@@ -58,13 +57,13 @@ class TvWatchTogetherLobbyViewModel(
     /** Host: promote a suggestion to the room selection (moves everyone to the player). */
     fun promote(suggestionId: String) =
         launchOperation("Could not start suggestion") {
-            repository.promoteSuggestion(PromoteSuggestionRequest(suggestionId = suggestionId))
+            repository.promoteSuggestion(suggestionId)
         }
 
     /** Host: change the guest-control policy. */
     fun updatePolicy(guestControlPolicyWire: String) =
         launchOperation("Could not update room policy") {
-            repository.updatePolicy(UpdatePolicyRequest(guestControlPolicy = guestControlPolicyWire))
+            repository.updatePolicy(GuestControlPolicy.fromWire(guestControlPolicyWire))
         }
 
     /** Host: close the room for everyone. */

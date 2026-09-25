@@ -97,13 +97,16 @@ class RoomFrameDecoderTest {
     }
 
     @Test
-    fun `snapshot with malformed room payload returns null`() {
-        // room present but missing required room_id → decode fails → null, no throw.
-        assertNull(decodeRoomFrame(json, """{"type":"snapshot","room":{"phase":"lobby"}}"""))
+    fun `snapshot with malformed room payload is reported, not thrown`() {
+        // room present but missing required room_id: the owner reconciles by reading the room.
+        assertEquals(
+            RoomRealtimeEvent.Malformed("snapshot"),
+            decodeRoomFrame(json, """{"type":"snapshot","room":{"phase":"lobby"}}"""),
+        )
     }
 
     @Test
-    fun `transport_command missing command returns null`() {
-        assertNull(decodeRoomFrame(json, """{"type":"transport_command"}"""))
+    fun `transport_command missing command is reported as malformed`() {
+        assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, """{"type":"transport_command"}"""))
     }
 }

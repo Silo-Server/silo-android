@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.watchtogether
 
+import org.siloserver.silo.watchtogether.newWatchPartyId
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +39,7 @@ class TvSuggestToRoomViewModel(
         viewModelScope.launch {
             val result = repository.addSuggestion(
                 AddSuggestionRequest(
+                    suggestionId = newWatchPartyId(),
                     contentId = contentId,
                     contentType = contentType,
                     title = title,

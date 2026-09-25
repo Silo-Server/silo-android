@@ -1,31 +1,53 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.RoomSyncEngine
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
+import org.siloserver.silo.model.watchtogether.MemberRole
+import org.siloserver.silo.model.watchtogether.MemberStateRequest
+import org.siloserver.silo.model.watchtogether.MemberStateResponse
+import org.siloserver.silo.model.watchtogether.PickerResponse
 import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
+import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomResponse
+import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.model.watchtogether.SelectionModeRequest
 import org.siloserver.silo.model.watchtogether.SetSelectionRequest
+import org.siloserver.silo.model.watchtogether.SourceFallbackReason
+import org.siloserver.silo.model.watchtogether.SourceFallbackRequest
 import org.siloserver.silo.model.watchtogether.Suggestion
-import org.siloserver.silo.model.watchtogether.SuggestionsResponse
+import org.siloserver.silo.model.watchtogether.SuggestionReceipt
 import org.siloserver.silo.model.watchtogether.TransportCommand
 import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
+import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.RoomRealtimeEvent
+import org.siloserver.silo.network.RoomTicketExpiringException
+import org.siloserver.silo.network.RoomTicketRefusedException
 import org.siloserver.silo.network.WatchTogetherRealtimeClient
 import org.siloserver.silo.network.api.WatchTogetherApi
+import org.siloserver.silo.util.formatEpochMillisRfc3339
 import org.siloserver.silo.util.parseRfc3339ToEpochMillis
+import org.siloserver.silo.util.wallClockMillis
+import org.siloserver.silo.watchtogether.RoomClockEstimate
+import org.siloserver.silo.watchtogether.RoomClockEstimator
 import org.siloserver.silo.watchtogether.RoomDeliveryEcho
 import org.siloserver.silo.watchtogether.RoomDeliveryLatch
+import org.siloserver.silo.watchtogether.RoomProof
 import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.siloserver.silo.watchtogether.RoomSessionRepository
 import org.siloserver.silo.watchtogether.RoomTransportIntent
+import org.siloserver.silo.watchtogether.rankSuggestions
+import org.siloserver.silo.watchtogether.roomProofExpiryMs
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,41 +55,35 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlin.random.Random
 import kotlin.time.TimeSource
 
 /**
  * A transport command paired with its `execute_at` already parsed to a
  * server-epoch millisecond value, so the player binding never has to touch the
  * RFC3339Nano wire string. [executeAtMs] is null when the wire timestamp is
- * malformed (the binding should then apply immediately / fall back).
+ * malformed. [receivedAtMs] is the monotonic receipt time.
  */
 data class ScheduledTransportCommand(
     val command: TransportCommand,
     val executeAtMs: Long?,
     val connection: WatchTogetherConnectionState,
+    val receivedAtMs: Long = 0L,
 )
 
 /**
- * A pong frame with its three server-clock RFC3339Nano timestamps parsed to
- * epoch millis. The fourth NTP sample value, `clientReceivedMs`, is NOT here:
- * it must be stamped by the player binding at the instant it receives the pong
- * (the shared module has no wall clock — `Date.now()`/`System.currentTimeMillis`
- * are platform APIs), and supplied when the binding calls
- * `RoomSyncEngine.recordPongSample(clientSentMs, serverReceivedMs, serverSentMs, clientReceivedMs)`.
- * Any field is null when its wire timestamp was malformed.
+ * [disconnectedAtMs] is the monotonic time the room socket stopped being
+ * writable, so the UI can wait before warning about a routine reconnect.
  */
-data class PongSample(
-    val clientSentMs: Long?,
-    val serverReceivedMs: Long?,
-    val serverSentMs: Long?,
-)
-
 data class WatchTogetherConnectionState(
     val generation: Long = 0L,
     val epoch: Long = 0L,
     val writable: Boolean = false,
+    val disconnectedAtMs: Long? = null,
 )
 
 /** Immutable, atomically-published authority for one room + physical socket. */
@@ -79,55 +95,147 @@ class RoomTransportAuthorization internal constructor(
     val snapshot: RoomSnapshot,
 )
 
+/** Why this device's Watch Party engagement ended. */
+object WatchPartyEndReason {
+    /** The host ended the party, or the host-disconnect grace ran out. The server does not say which. */
+    const val HostLeft = "host_left"
+    const val NotFound = "not_found"
+    const val Ended = "ended"
+    /** This profile joined the party on another device. The room keeps going. */
+    const val Replaced = "connection_replaced"
+    const val ConnectionLost = "connection_lost"
+    const val Unauthorized = "unauthorized"
+}
+
+/** The last engagement that ended on this device, kept so the UI can explain it and offer Rejoin. */
+data class WatchPartyEnded(
+    val roomId: String,
+    val code: String,
+    val reason: String,
+    val wasHost: Boolean,
+)
+
+/** A room or vote mutation in flight. One runs at a time so repeated taps cannot reorder work. */
+enum class WatchPartyPendingAction {
+    Create, Join, Stage, Start, Stop, End, Mode, Policy, Select, Promote, Suggest, RemoveSuggestion, Vote, Fallback,
+}
+
+/** Client timing choices; the web client's values unless evidence says otherwise. */
+data class WatchPartyTiming(
+    val pingIntervalMs: Long = 15_000L,
+    val initialPings: Int = 3,
+    val initialPingSpacingMs: Long = 1_000L,
+    /** Renew the room proof this long before it expires: a socket lifetime plus a ticket. */
+    val proofRenewalMarginMs: Long = 6 * 60_000L,
+    val proofUnknownRenewalMs: Long = 60 * 60_000L,
+    val proofRetryMs: Long = 30_000L,
+    val stableConnectionMs: Long = 30_000L,
+    /** Keep reconnecting at least this long after the last healthy socket; covers the host grace. */
+    val reconnectBudgetMs: Long = 150_000L,
+    val maxReconnectFailures: Int = 6,
+    val backoffMs: List<Long> = listOf(500L, 1_000L, 2_000L, 5_000L),
+    val expiringTicketRetryMs: Long = 1_500L,
+    /** Test seam: background pings and proof renewal off. */
+    val backgroundWork: Boolean = true,
+)
+
 /**
- * Singleton owner of one Watch Together room's state and websocket lifecycle.
- * The per-room WS IS the feature (no REST fallback); the REST calls are for
- * create/join + host management + suggestion mutations.
+ * The single owner of this device's Watch Party engagement: membership, room
+ * proof, the room socket, the server clock estimate, snapshot ordering,
+ * suggestions, and room actions. The per-room socket IS the feature (no REST
+ * fallback); REST carries create/join, host management, reads, and suggestion
+ * mutations.
  *
- * Holds the **room JWT** internally after create/join so every room-scoped op
- * passes it transparently. Folds snapshot/suggestions WS events into
- * [roomSnapshot]/[suggestions] StateFlows, re-merging `voted_by_me` (forced
- * false in broadcasts) from a locally-tracked vote set. Exposes the
- * sync-relevant client→server send passthroughs and a [transportCommands] flow
- * the player binding feeds to its [RoomSyncEngine] (the engine needs the
- * player's local position/playing/clock, which live in the binding, not here).
+ * Identities are kept apart. A membership ([RoomBinding]) is the room, the
+ * captured authority, and a local generation; joining the same room again
+ * creates a new membership. The room proof renews from every successful room
+ * response without changing membership. Socket attempts are fenced by a
+ * connection owner and epoch.
  *
- * [realtimeFactory] is injected so tests supply a fake event flow.
+ * Snapshot ordering: `generation` orders transport changes, not membership or
+ * readiness updates. An HTTP snapshot is accepted only when its generation is
+ * newer, or equal with no socket snapshot received since the request started,
+ * so a delayed response cannot erase a newer attachment or readiness update.
+ * A terminal engagement is never reopened by a late result.
  */
 class WatchTogetherRepository(
     private val api: WatchTogetherApi,
     private val realtimeFactory: () -> WatchTogetherRealtimeClient? = { null },
     private val monotonicNowMs: () -> Long = { MONOTONIC_ORIGIN.elapsedNow().inWholeMilliseconds },
     private val authScopeProvider: suspend () -> AuthScopeSnapshot? = { null },
+    private val wallClockMs: () -> Long = ::wallClockMillis,
+    private val timing: WatchPartyTiming = WatchPartyTiming(),
+    private val random: Random = Random.Default,
 ) : RoomSessionRepository, WatchTogetherEntryGateway {
     /** Successful delivery state follows the process connection, not a UI controller. */
     val roomDeliveryLatch = RoomDeliveryLatch()
 
     private data class RoomBinding(
         val roomId: String,
-        val roomToken: String,
         val authScope: AuthScopeSnapshot,
         val generation: Long,
-    )
+    ) {
+        override fun toString(): String = "RoomBinding(roomId=<redacted>, generation=$generation)"
+    }
 
     private val stateMutex = Mutex()
+    private val actionMutex = Mutex()
+    private val suggestionReadMutex = Mutex()
     private var nextGeneration = 0L
     private var latestRoomRequest = 0L
     private var binding: RoomBinding? = null
+    private var proof: RoomProof? = null
     private var terminalGeneration: Long? = null
     private var realtimeGeneration: Long? = null
     private var realtimeConnectionId: Long? = null
     private var nextConnectionOwner = 0L
     private var activeConnectionOwner: Long? = null
+    private var socketSnapshotSeq = 0L
+    private var socketSuggestionsSeq = 0L
+    private var suggestionReadRequests = 0L
+    private var suggestionReadStartedAt = 0L
+    private var rawSuggestions: List<Suggestion> = emptyList()
+    private val clockEstimator = RoomClockEstimator()
+
     private val _roomSnapshot = MutableStateFlow<RoomSnapshot?>(null)
     private val _suggestions = MutableStateFlow<List<Suggestion>>(emptyList())
+    private val _personalVotesKnown = MutableStateFlow(false)
     private val _roomDeliveryEcho = MutableStateFlow<RoomDeliveryEcho?>(null)
+    private val _connectionState = MutableStateFlow(WatchTogetherConnectionState())
+    private val _latestCommand = MutableStateFlow<ScheduledTransportCommand?>(null)
+    private val _clock = MutableStateFlow(clockEstimator.estimate)
+    private val _roomClosedReason = MutableStateFlow<String?>(null)
+    private val _ended = MutableStateFlow<WatchPartyEnded?>(null)
+    private val _pendingAction = MutableStateFlow<WatchPartyPendingAction?>(null)
 
     override val roomSnapshot: StateFlow<RoomSnapshot?> = _roomSnapshot.asStateFlow()
+
+    /** Suggestions in vote order, with this profile's own votes merged in. */
     val suggestions: StateFlow<List<Suggestion>> = _suggestions.asStateFlow()
+
+    /**
+     * False until an authenticated suggestion read has told this profile which
+     * suggestions it voted for. Socket broadcasts never carry personal votes.
+     */
+    val personalVotesKnown: StateFlow<Boolean> = _personalVotesKnown.asStateFlow()
     val roomDeliveryEcho: StateFlow<RoomDeliveryEcho?> = _roomDeliveryEcho.asStateFlow()
-    private val _connectionState = MutableStateFlow(WatchTogetherConnectionState())
     val connectionState: StateFlow<WatchTogetherConnectionState> = _connectionState.asStateFlow()
+
+    /**
+     * The newest accepted transport command. Commands supersede each other, so
+     * the binding needs only the latest; a slow collector can never lose it.
+     */
+    val latestTransportCommand: StateFlow<ScheduledTransportCommand?> = _latestCommand.asStateFlow()
+
+    /** Server clock estimate, sampled on the room socket from the moment it opens. */
+    val clock: StateFlow<RoomClockEstimate> = _clock.asStateFlow()
+
+    /** The action in flight, if any. */
+    val pendingAction: StateFlow<WatchPartyPendingAction?> = _pendingAction.asStateFlow()
+
+    /** The last engagement that ended, with its reason. Cleared by [reset] and by a new membership. */
+    val ended: StateFlow<WatchPartyEnded?> = _ended.asStateFlow()
+
     @kotlin.concurrent.Volatile
     private var transportAuthorization: RoomTransportAuthorization? = null
 
@@ -135,45 +243,15 @@ class WatchTogetherRepository(
     fun currentTransportAuthorization(): RoomTransportAuthorization? = transportAuthorization
 
     /**
-     * Transport commands surfaced for the player binding to feed to its
-     * [RoomSyncEngine]. Buffered + drop-oldest so emission never suspends the
-     * collect loop. replay=0 — a late subscriber should not re-apply a stale
-     * command.
+     * Why the engagement ended — terminal only (see [WatchPartyEndReason]).
+     * Transient server `error` frames never populate this; they flow on
+     * [errors].
      */
-    private val _transportCommands = MutableSharedFlow<ScheduledTransportCommand>(
-        replay = 0,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val transportCommands: SharedFlow<ScheduledTransportCommand> = _transportCommands.asSharedFlow()
-
-    /**
-     * Pong samples for the player binding's engine clock-sync, with the three
-     * server-clock timestamps parsed to epoch millis. The binding stamps
-     * `clientReceivedMs` itself (see [PongSample]).
-     */
-    private val _pongs = MutableSharedFlow<PongSample>(
-        replay = 0,
-        extraBufferCapacity = 16,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    val pongs: SharedFlow<PongSample> = _pongs.asSharedFlow()
-
-    /**
-     * Why the room ended — TERMINAL only. Set exclusively on the server
-     * `room_closed` / [RoomRealtimeEvent.Closed] reason path (host left / explicit
-     * close); the player observes this and exits. Cleared on [reset] and at the
-     * start of a fresh [connect]. Transient server `error` frames do NOT populate
-     * this (they would eject the user) — see [errors].
-     */
-    private val _roomClosedReason = MutableStateFlow<String?>(null)
     override val roomClosedReason: StateFlow<String?> = _roomClosedReason.asStateFlow()
 
     /**
-     * Transient, non-terminal server `error` frames (e.g. a rejected
-     * transport_request). The UI may surface these as a snackbar/toast WITHOUT
-     * exiting the room. Buffered + drop-oldest so emission never suspends the
-     * fold; replay=0 so a late subscriber doesn't re-show a stale error.
+     * Transient, non-terminal notices (a rejected transport request, a local
+     * delivery failure). Buffered + drop-oldest; a missed notice is harmless.
      */
     private val _errors = MutableSharedFlow<String>(
         replay = 0,
@@ -187,53 +265,35 @@ class WatchTogetherRepository(
         if (message.isNotBlank()) _errors.tryEmit(message)
     }
 
-    // Locally-tracked vote set: ids the local user has voted for. Used to
-    // re-merge voted_by_me into broadcast suggestion lists (which force false).
+    // Ids this profile has voted for, known only after an authenticated read.
     private val votedIds = mutableSetOf<String>()
 
     @kotlin.concurrent.Volatile
     private var realtime: WatchTogetherRealtimeClient? = null
 
-    // ---- REST: create / join (store the room token) ---------------------------
+    override suspend fun membershipGeneration(): Long? = activeBinding()?.generation
 
-    override suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> {
-        val scope = authScopeProvider() ?: return missingAuthScope()
+    // ---- REST: create / join ------------------------------------------------
+
+    /**
+     * Create a room with the caller-selected identity in [request]. After an
+     * uncertain outcome, retry with the same request: the server replays it.
+     */
+    override suspend fun createRoom(request: CreateRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Create) {
+        val scope = authScopeProvider() ?: return@action missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.createRoom(request, scope)
-        if (authScopeProvider() != scope) return obsoleteRoomRequest()
-        return if (r is ApiResult.Success) installRoomResponse(r.data, scope, requestGeneration) else r
+        if (authScopeProvider() != scope) return@action obsoleteRoomRequest()
+        if (r is ApiResult.Success) installRoomResponse(r.data, scope, requestGeneration) else r
     }
 
-    override suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> {
-        val scope = authScopeProvider() ?: return missingAuthScope()
+    override suspend fun joinRoom(request: JoinRoomRequest): ApiResult<RoomResponse> = action(WatchPartyPendingAction.Join) {
+        val scope = authScopeProvider() ?: return@action missingAuthScope()
         val requestGeneration = beginRoomRequest()
         val r = api.joinRoom(request, scope)
-        if (authScopeProvider() != scope) return obsoleteRoomRequest()
-        if (r !is ApiResult.Success) return r
-        val installed = installRoomResponse(r.data, scope, requestGeneration)
-        if (installed !is ApiResult.Success) return installed
-
-        // The realtime handshake's initial event is a room snapshot; it does
-        // not replay suggestions that existed before this member connected.
-        // Hydrate them while the join lease is current so a re-entered lobby
-        // does not render an empty vote list until somebody mutates it.
-        val lease = stateMutex.withLock {
-            binding?.takeIf { current ->
-                latestRoomRequest == requestGeneration &&
-                    current.roomId == r.data.room.roomId &&
-                    isCurrentLocked(current)
-            }
-        } ?: return obsoleteRoomRequest()
-        publishSuggestionsResponse(
-            lease,
-            api.listSuggestions(lease.roomId, lease.roomToken, lease.authScope),
-            expectedRoomRequest = requestGeneration,
-        )
-        val stillCurrent = stateMutex.withLock {
-            latestRoomRequest == requestGeneration && isCurrentLocked(lease)
-        }
-        if (!stillCurrent) return obsoleteRoomRequest()
-        return installed
+        if (authScopeProvider() != scope) return@action obsoleteRoomRequest()
+        if (r !is ApiResult.Success) return@action r
+        installRoomResponse(r.data, scope, requestGeneration)
     }
 
     private suspend fun beginRoomRequest(): Long = stateMutex.withLock { ++latestRoomRequest }
@@ -250,17 +310,21 @@ class WatchTogetherRepository(
             if (requestGeneration != latestRoomRequest) return obsoleteRoomRequest()
             val installed = RoomBinding(
                 roomId = data.room.roomId,
-                roomToken = data.roomAccessToken,
                 authScope = scope,
                 generation = ++nextGeneration,
             )
             binding = installed
+            proof = RoomProof(data.roomAccessToken, roomProofExpiryMs(data.roomAccessToken))
             terminalGeneration = null
             votedIds.clear()
+            rawSuggestions = emptyList()
             _suggestions.value = emptyList()
+            _personalVotesKnown.value = false
             _roomClosedReason.value = null
+            _ended.value = null
             _roomSnapshot.value = data.room
             _roomDeliveryEcho.value = null
+            _latestCommand.value = null
             _connectionState.value = WatchTogetherConnectionState(generation = installed.generation)
             realtimeConnectionId = null
             refreshTransportAuthorizationLocked()
@@ -270,74 +334,312 @@ class WatchTogetherRepository(
 
     // ---- REST: host management ------------------------------------------------
 
-    override suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.setSelection(lease.roomId, lease.roomToken, request, lease.authScope)
-        return publishRoomResponse(lease, r)
+    override suspend fun stageSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Stage) { lease, _ -> api.stageSelection(lease.roomId, request, lease.authScope) }
+
+    suspend fun startPlayback(): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Start) { lease, _ -> api.startPlayback(lease.roomId, lease.authScope) }
+
+    suspend fun stopPlayback(): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Stop) { lease, _ -> api.stopPlayback(lease.roomId, lease.authScope) }
+
+    suspend fun setSelectionMode(mode: RoomSelectionMode): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Mode) { lease, _ ->
+            api.setSelectionMode(lease.roomId, SelectionModeRequest(mode.wire), lease.authScope)
+        }
+
+    /** Direct selection: starts playback. Never use it to stage. */
+    override suspend fun setSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Select) { lease, _ -> api.setSelection(lease.roomId, request, lease.authScope) }
+
+    suspend fun updatePolicy(policy: GuestControlPolicy): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Policy) { lease, _ ->
+            api.updatePolicy(lease.roomId, UpdatePolicyRequest(policy.wire), lease.authScope)
+        }
+
+    /** End the party for everyone (host). */
+    override suspend fun closeRoom(): ApiResult<Unit> = action(WatchPartyPendingAction.End) {
+        val lease = activeBinding() ?: return@action missingRoom()
+        val result = api.closeRoom(lease.roomId, lease.authScope)
+        when {
+            !isCurrent(lease) -> obsoleteRoomRequest()
+            result is ApiResult.Error && result.code == 409 -> {
+                // Already ended: converge on the ended state.
+                endIfCurrent(lease, WatchPartyEndReason.Ended)
+                ApiResult.Success(Unit)
+            }
+            else -> result
+        }
     }
 
-    suspend fun updatePolicy(request: UpdatePolicyRequest): ApiResult<RoomResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.updatePolicy(lease.roomId, lease.roomToken, request, lease.authScope)
-        return publishRoomResponse(lease, r)
+    suspend fun promoteSuggestion(suggestionId: String): ApiResult<RoomResponse> =
+        roomAction(WatchPartyPendingAction.Promote) { lease, token ->
+            api.promoteSuggestion(lease.roomId, token, PromoteSuggestionRequest(suggestionId), lease.authScope)
+        }
+
+    /**
+     * Ask the server to move the whole room to another source after an
+     * approved playback refusal. Fenced by [selectionRevision] and
+     * [failedFileId]; a stale request returns the current snapshot.
+     */
+    suspend fun requestSourceFallback(
+        selectionRevision: Long,
+        failedFileId: String,
+        reason: SourceFallbackReason,
+    ): ApiResult<RoomResponse> = roomAction(WatchPartyPendingAction.Fallback) { lease, token ->
+        api.sourceFallback(
+            lease.roomId,
+            token,
+            SourceFallbackRequest(selectionRevision, failedFileId, reason.wire),
+            lease.authScope,
+        )
     }
 
-    override suspend fun closeRoom(): ApiResult<Unit> {
+    /** Read the room, adopting its snapshot (when newer) and renewed proof. */
+    suspend fun refreshRoom(): ApiResult<RoomResponse> {
         val lease = activeBinding() ?: return missingRoom()
-        val result = api.closeRoom(lease.roomId, lease.roomToken, lease.authScope)
+        return reconcileRoom(lease)
+    }
+
+    // ---- REST: shared browsing -----------------------------------------------
+
+    suspend fun memberState(contentIds: List<String>): ApiResult<MemberStateResponse> {
+        val lease = activeBinding() ?: return missingRoom()
+        val token = proofToken(lease) ?: return missingRoom()
+        val result = api.memberState(lease.roomId, token, MemberStateRequest(contentIds), lease.authScope)
+        return if (isCurrent(lease)) result else obsoleteRoomRequest()
+    }
+
+    suspend fun picker(): ApiResult<PickerResponse> {
+        val lease = activeBinding() ?: return missingRoom()
+        val token = proofToken(lease) ?: return missingRoom()
+        val result = api.picker(lease.roomId, token, lease.authScope)
         return if (isCurrent(lease)) result else obsoleteRoomRequest()
     }
 
     // ---- REST: suggestions ----------------------------------------------------
 
-    suspend fun refreshSuggestions(): ApiResult<SuggestionsResponse> {
+    /**
+     * Read every suggestion page under one captured membership and publish the
+     * merged list with authoritative personal votes. Concurrent requests
+     * coalesce: a caller whose request predates a read that already started
+     * gets that read's result.
+     */
+    suspend fun refreshSuggestions(): ApiResult<List<Suggestion>> {
         val lease = activeBinding() ?: return missingRoom()
-        val r = api.listSuggestions(lease.roomId, lease.roomToken, lease.authScope)
-        return publishSuggestionsResponse(lease, r)
+        val ticket = stateMutex.withLock { ++suggestionReadRequests }
+        return suggestionReadMutex.withLock {
+            if (stateMutex.withLock { suggestionReadStartedAt >= ticket }) {
+                return@withLock ApiResult.Success(_suggestions.value)
+            }
+            val socketSeqAtStart = stateMutex.withLock {
+                suggestionReadStartedAt = suggestionReadRequests
+                socketSuggestionsSeq
+            }
+            val pages = mutableListOf<Suggestion>()
+            var cursor: String? = null
+            while (true) {
+                val token = proofToken(lease) ?: return@withLock missingRoom()
+                when (val page = api.listSuggestions(lease.roomId, token, lease.authScope, cursor)) {
+                    is ApiResult.Success -> {
+                        pages += page.data.suggestions
+                        cursor = page.data.page?.nextCursor?.takeIf { page.data.page.hasMore }
+                        if (cursor == null) break
+                    }
+                    is ApiResult.Error -> return@withLock page
+                    is ApiResult.NetworkError -> return@withLock page
+                }
+            }
+            val merged = pages.distinctBy { it.id }
+            val published = stateMutex.withLock {
+                if (!isCurrentLocked(lease)) return@withLock false
+                votedIds.clear()
+                votedIds.addAll(merged.filter { it.votedByMe }.map { it.id })
+                _personalVotesKnown.value = true
+                // A socket broadcast that arrived during the read carries newer
+                // tallies; keep its rows and take only personal votes from HTTP.
+                if (socketSuggestionsSeq == socketSeqAtStart) rawSuggestions = merged
+                publishSuggestionsLocked()
+                true
+            }
+            if (published) ApiResult.Success(_suggestions.value) else obsoleteRoomRequest()
+        }
     }
 
-    suspend fun addSuggestion(request: AddSuggestionRequest): ApiResult<SuggestionsResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.addSuggestion(lease.roomId, lease.roomToken, request, lease.authScope)
-        return publishSuggestionsResponse(lease, r)
+    /**
+     * Add a suggestion with the caller-selected id in [request]. After an
+     * uncertain outcome, retry with the same request. A failed list refresh
+     * after the receipt does not fail the suggestion.
+     */
+    suspend fun addSuggestion(request: AddSuggestionRequest): ApiResult<SuggestionReceipt> =
+        suggestionAction(WatchPartyPendingAction.Suggest) { lease, token ->
+            api.addSuggestion(lease.roomId, token, request, lease.authScope)
+        }
+
+    /** Remove a suggestion (host, or its suggester). A 404 means it is already gone. */
+    suspend fun deleteSuggestion(suggestionId: String): ApiResult<Unit> {
+        val result = suggestionAction(WatchPartyPendingAction.RemoveSuggestion) { lease, token ->
+            api.deleteSuggestion(lease.roomId, token, suggestionId, lease.authScope)
+        }
+        return if (result is ApiResult.Error && result.code == 404 && result.error != "no_active_room") {
+            ApiResult.Success(Unit)
+        } else {
+            result
+        }
     }
 
-    suspend fun deleteSuggestion(suggestionId: String): ApiResult<SuggestionsResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.deleteSuggestion(lease.roomId, lease.roomToken, suggestionId, lease.authScope)
-        return publishSuggestionsResponse(lease, r)
+    suspend fun vote(suggestionId: String): ApiResult<Unit> = setVote(suggestionId, voted = true)
+
+    suspend fun unvote(suggestionId: String): ApiResult<Unit> = setVote(suggestionId, voted = false)
+
+    private suspend fun setVote(suggestionId: String, voted: Boolean): ApiResult<Unit> =
+        suggestionAction(WatchPartyPendingAction.Vote) { lease, token ->
+            val result = if (voted) {
+                api.vote(lease.roomId, token, suggestionId, lease.authScope)
+            } else {
+                api.unvote(lease.roomId, token, suggestionId, lease.authScope)
+            }
+            if (result is ApiResult.Success) {
+                stateMutex.withLock {
+                    if (isCurrentLocked(lease)) {
+                        if (voted) votedIds.add(suggestionId) else votedIds.remove(suggestionId)
+                        publishSuggestionsLocked()
+                    }
+                }
+            }
+            result
+        }
+
+    private fun publishSuggestionsLocked() {
+        _suggestions.value = rankSuggestions(rawSuggestions).map { s ->
+            if ((s.id in votedIds) != s.votedByMe) s.copy(votedByMe = s.id in votedIds) else s
+        }
     }
 
-    suspend fun vote(suggestionId: String): ApiResult<SuggestionsResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.vote(lease.roomId, lease.roomToken, suggestionId, lease.authScope)
-        if (r !is ApiResult.Success) return r
+    // ---- Actions ---------------------------------------------------------------
+
+    private suspend fun <T> action(kind: WatchPartyPendingAction, block: suspend () -> ApiResult<T>): ApiResult<T> =
+        actionMutex.withLock {
+            _pendingAction.value = kind
+            try {
+                block()
+            } finally {
+                _pendingAction.value = null
+            }
+        }
+
+    /**
+     * One room mutation returning a snapshot. Success publishes it (and the
+     * renewed proof). An uncertain outcome (network failure, malformed
+     * response) or an ambiguous refusal (403, 404, 409) reconciles by reading
+     * the room; the read, not the refusal, decides whether the room ended.
+     * Nothing is replayed.
+     */
+    private suspend fun roomAction(
+        kind: WatchPartyPendingAction,
+        call: suspend (RoomBinding, String) -> ApiResult<RoomResponse>,
+    ): ApiResult<RoomResponse> = action(kind) {
+        val lease = activeBinding() ?: return@action missingRoom()
+        val token = proofToken(lease) ?: return@action missingRoom()
+        val seq = stateMutex.withLock { socketSnapshotSeq }
+        when (val result = call(lease, token)) {
+            is ApiResult.Success -> publishRoomResponse(lease, result, seq)
+            is ApiResult.Error -> {
+                if (result.code in RECONCILE_STATUSES || result.error == INVALID_RESPONSE) reconcileRoom(lease)
+                result
+            }
+            is ApiResult.NetworkError -> {
+                reconcileRoom(lease)
+                result
+            }
+        }
+    }
+
+    private suspend fun <T> suggestionAction(
+        kind: WatchPartyPendingAction,
+        call: suspend (RoomBinding, String) -> ApiResult<T>,
+    ): ApiResult<T> {
+        val (lease, result) = action(kind) {
+            val lease = activeBinding() ?: return@action missingRoom()
+            val token = proofToken(lease) ?: return@action missingRoom()
+            ApiResult.Success(lease to call(lease, token))
+        }.let { outer ->
+            when (outer) {
+                is ApiResult.Success -> outer.data
+                is ApiResult.Error -> return outer
+                is ApiResult.NetworkError -> return outer
+            }
+        }
+        if (!isCurrent(lease)) return obsoleteRoomRequest()
+        // Reconcile the list whatever the outcome; the mutation result stands
+        // even if this read fails.
+        refreshSuggestions()
+        if (result is ApiResult.Error && result.code == 409) reconcileRoom(lease)
+        return result
+    }
+
+    // ---- Publication ------------------------------------------------------------
+
+    private suspend fun proofToken(lease: RoomBinding): String? = stateMutex.withLock {
+        if (isCurrentLocked(lease)) proof?.token else null
+    }
+
+    private suspend fun publishRoomResponse(
+        lease: RoomBinding,
+        result: ApiResult.Success<RoomResponse>,
+        socketSeqAtRequest: Long,
+    ): ApiResult<RoomResponse> {
+        val response = result.data
+        if (response.room.roomId != lease.roomId || response.roomAccessToken.isBlank()) return invalidRoomResponse()
+        var ended = false
         val published = stateMutex.withLock {
             if (!isCurrentLocked(lease)) return@withLock false
-            votedIds.add(suggestionId)
-            applySuggestions(r.data.suggestions, fromBroadcast = true)
+            proof = RoomProof(response.roomAccessToken, roomProofExpiryMs(response.roomAccessToken))
+            if (response.room.phase == RoomPhase.Ended) {
+                endLocked(lease, WatchPartyEndReason.Ended)
+                ended = true
+                return@withLock true
+            }
+            val current = _roomSnapshot.value
+            val newer = current == null ||
+                response.room.generation > current.generation ||
+                (response.room.generation == current.generation && socketSnapshotSeq == socketSeqAtRequest)
+            if (newer) {
+                _roomSnapshot.value = response.room
+                val echo = _roomDeliveryEcho.value
+                if (echo != null && echo.playbackSessionId != response.room.attachedSessionId) {
+                    _roomDeliveryEcho.value = null
+                }
+                refreshTransportAuthorizationLocked()
+            }
             true
         }
-        return if (published) r else obsoleteRoomRequest()
-    }
-
-    suspend fun unvote(suggestionId: String): ApiResult<SuggestionsResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.unvote(lease.roomId, lease.roomToken, suggestionId, lease.authScope)
-        if (r !is ApiResult.Success) return r
-        val published = stateMutex.withLock {
-            if (!isCurrentLocked(lease)) return@withLock false
-            votedIds.remove(suggestionId)
-            applySuggestions(r.data.suggestions, fromBroadcast = true)
-            true
+        return when {
+            !published -> obsoleteRoomRequest()
+            ended -> ApiResult.Error(409, WatchPartyEndReason.Ended, "The Watch Party has ended.")
+            else -> result
         }
-        return if (published) r else obsoleteRoomRequest()
     }
 
-    suspend fun promoteSuggestion(request: PromoteSuggestionRequest): ApiResult<RoomResponse> {
-        val lease = activeBinding() ?: return missingRoom()
-        val r = api.promoteSuggestion(lease.roomId, lease.roomToken, request, lease.authScope)
-        return publishRoomResponse(lease, r)
+    /**
+     * Read the room to settle an uncertain or ambiguous outcome. A 403, 404,
+     * or 409 here means this device can no longer take part.
+     */
+    private suspend fun reconcileRoom(lease: RoomBinding): ApiResult<RoomResponse> {
+        val token = proofToken(lease) ?: return missingRoom()
+        val seq = stateMutex.withLock { socketSnapshotSeq }
+        return when (val r = api.getRoom(lease.roomId, token, lease.authScope)) {
+            is ApiResult.Success -> publishRoomResponse(lease, r, seq)
+            is ApiResult.Error -> {
+                when (r.code) {
+                    404 -> endIfCurrent(lease, WatchPartyEndReason.NotFound)
+                    409 -> endIfCurrent(lease, WatchPartyEndReason.Ended)
+                    403 -> endIfCurrent(lease, WatchPartyEndReason.Unauthorized)
+                }
+                r
+            }
+            is ApiResult.NetworkError -> r
+        }
     }
 
     private suspend fun activeBinding(): RoomBinding? = stateMutex.withLock {
@@ -370,72 +672,42 @@ class WatchTogetherRepository(
         }
     }
 
-    private suspend fun publishRoomResponse(
-        lease: RoomBinding,
-        result: ApiResult<RoomResponse>,
-    ): ApiResult<RoomResponse> {
-        if (result !is ApiResult.Success) return result
-        if (result.data.room.roomId != lease.roomId) return invalidRoomResponse()
-        val published = stateMutex.withLock {
-            if (!isCurrentLocked(lease)) return@withLock false
-            _roomSnapshot.value = result.data.room
-            _roomDeliveryEcho.value = null
-            refreshTransportAuthorizationLocked()
-            true
-        }
-        return if (published) result else obsoleteRoomRequest()
+    private suspend fun endIfCurrent(lease: RoomBinding, reason: String) {
+        stateMutex.withLock { if (isCurrentLocked(lease)) endLocked(lease, reason) }
     }
 
-    private suspend fun publishSuggestionsResponse(
-        lease: RoomBinding,
-        result: ApiResult<SuggestionsResponse>,
-        expectedRoomRequest: Long? = null,
-        expectedConnectionOwner: Long? = null,
-    ): ApiResult<SuggestionsResponse> {
-        if (result !is ApiResult.Success) return result
-        val published = stateMutex.withLock {
-            if (
-                !isCurrentLocked(lease) ||
-                (expectedRoomRequest != null && latestRoomRequest != expectedRoomRequest) ||
-                (expectedConnectionOwner != null && activeConnectionOwner != expectedConnectionOwner)
-            ) {
-                return@withLock false
-            }
-            applySuggestions(result.data.suggestions, fromBroadcast = false)
-            true
-        }
-        return if (published) result else obsoleteRoomRequest()
+    /** Terminal for this membership: nothing may reopen it. */
+    private fun endLocked(lease: RoomBinding, reason: String) {
+        val last = _roomSnapshot.value
+        terminalGeneration = lease.generation
+        _ended.value = WatchPartyEnded(
+            roomId = lease.roomId,
+            code = last?.code.orEmpty(),
+            reason = reason,
+            wasHost = last?.selfRole == MemberRole.Host,
+        )
+        _roomClosedReason.value = reason
+        _roomSnapshot.value = null
+        _roomDeliveryEcho.value = null
+        _latestCommand.value = null
+        _connectionState.value = _connectionState.value.copy(writable = false)
+        realtimeConnectionId = null
+        refreshTransportAuthorizationLocked()
     }
 
     private fun invalidRoomResponse(): ApiResult.Error =
         ApiResult.Error(502, "invalid_room_response", "The room response was missing or mismatched.")
 
     private fun missingRoom(): ApiResult.Error =
-        ApiResult.Error(409, "no_active_room", "No active Watch Together room.")
+        ApiResult.Error(409, "no_active_room", "No active Watch Party.")
 
     private fun missingAuthScope(): ApiResult.Error =
-        ApiResult.Error(401, "missing_auth_scope", "No authenticated Watch Together scope.")
+        ApiResult.Error(401, "missing_auth_scope", "No authenticated Watch Party scope.")
 
     private fun obsoleteRoomRequest(): ApiResult.Error =
-        ApiResult.Error(409, "obsolete_room_request", "The Watch Together identity changed.")
+        ApiResult.Error(409, "obsolete_room_request", "The Watch Party identity changed.")
 
-    /**
-     * Publish suggestions, re-merging `voted_by_me` from the local [votedIds]
-     * set. Authoritative REST lists replace [votedIds]; broadcasts and
-     * optimistic vote mutation responses preserve the local set because their
-     * per-recipient vote flags are not authoritative.
-     */
-    private fun applySuggestions(list: List<Suggestion>, fromBroadcast: Boolean) {
-        if (!fromBroadcast) {
-            votedIds.clear()
-            votedIds.addAll(list.filter { it.votedByMe }.map { it.id })
-        }
-        _suggestions.value = list.map { s ->
-            if (s.id in votedIds) s.copy(votedByMe = true) else s
-        }
-    }
-
-    // ---- WS: client→server send passthroughs ----------------------------------
+    // ---- WS: client→server sends ------------------------------------------------
 
     private suspend fun currentWritableRealtime(): WatchTogetherRealtimeClient? =
         stateMutex.withLock {
@@ -505,13 +777,16 @@ class WatchTogetherRepository(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
-    ): Boolean = currentWritableRealtime()?.stateReport(sessionId, positionSeconds, isPaused) ?: false
+        commandId: String? = null,
+        isReady: Boolean = false,
+    ): Boolean = currentWritableRealtime()?.stateReport(sessionId, positionSeconds, isPaused, commandId, isReady) ?: false
 
     suspend fun ready(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
-    ): Boolean = currentWritableRealtime()?.ready(sessionId, positionSeconds, isPaused) ?: false
+        commandId: String? = null,
+    ): Boolean = currentWritableRealtime()?.ready(sessionId, positionSeconds, isPaused, commandId) ?: false
 
     suspend fun buffering(
         sessionId: String,
@@ -519,16 +794,26 @@ class WatchTogetherRepository(
         isPaused: Boolean,
     ): Boolean = currentWritableRealtime()?.buffering(sessionId, positionSeconds, isPaused) ?: false
 
-    suspend fun ping(clientSentAt: String): Boolean =
-        currentWritableRealtime()?.ping(clientSentAt) ?: false
+    /** Advisory lobby Ready over the room socket. */
+    suspend fun setLobbyReady(ready: Boolean): Boolean =
+        currentWritableRealtime()?.lobbyReady(ready) ?: false
 
-    // ---- WS lifecycle: connect + reconnect-with-backoff ------------------------
+    // ---- WS lifecycle ------------------------------------------------------------
+
+    private sealed interface AttemptEnd {
+        data class Closed(val reason: String?) : AttemptEnd
+        data object Replaced : AttemptEnd
+        data class Transport(val cause: Throwable?) : AttemptEnd
+    }
 
     /**
-     * Collect the room socket with capped-backoff reconnect, folding each event
-     * into the state flows. Suspends until the caller's scope is cancelled OR a
-     * server `room_closed` arrives (which stops reconnecting). Backoff steps are
-     * [BACKOFF_MS]; a healthy event resets the index.
+     * Own the room socket for the current membership until the engagement ends
+     * or the caller's scope is cancelled. A socket that stayed up reconnects at
+     * once (the server rotates every socket after five minutes); a socket that
+     * fails quickly backs off. Reconnecting continues for at least
+     * [WatchPartyTiming.reconnectBudgetMs] after the last healthy socket, which
+     * covers the host's two-minute grace. Terminal frames and terminal ticket
+     * refusals end the engagement; `connection_replaced` never reclaims it.
      */
     override suspend fun connect(roomId: String) {
         val lease = activeBinding()?.takeIf { it.roomId == roomId } ?: return
@@ -543,100 +828,166 @@ class WatchTogetherRepository(
             _connectionState.value = _connectionState.value.copy(
                 generation = lease.generation,
                 writable = false,
+                disconnectedAtMs = monotonicNowMs(),
             )
-            _roomClosedReason.value = null
             refreshTransportAuthorizationLocked()
             newOwner
         }
+        try {
+            coroutineScope {
+                val renewal = if (timing.backgroundWork) launch { renewProofLoop(lease, owner) } else null
+                socketLoop(lease, owner, client, this)
+                renewal?.cancel()
+            }
+        } finally {
+            withContext(NonCancellable) { clearRealtimeIfCurrent(lease, client, owner) }
+        }
+    }
+
+    private suspend fun socketLoop(
+        lease: RoomBinding,
+        owner: Long,
+        client: WatchTogetherRealtimeClient,
+        scope: CoroutineScope,
+    ) {
         var backoffIndex = 0
         var failures = 0
-        while (true) {
-            if (!isCurrent(lease, owner)) break
-            var closedByServer = false
+        var lastHealthyMs = monotonicNowMs()
+        var proofRenewedForRefusal = false
+        while (isCurrent(lease, owner)) {
+            val token = proofToken(lease) ?: break
             var openedAtMs: Long? = null
             var sawSnapshot = false
+            var end: AttemptEnd = AttemptEnd.Transport(null)
+            var pings: Job? = null
             try {
-                client.connect(lease.roomId, lease.roomToken, lease.authScope).collect { event ->
+                client.connect(lease.roomId, token, lease.authScope).collect { event ->
                     if (!isCurrent(lease, owner)) throw ObsoleteBinding
-                    if (event is RoomRealtimeEvent.Closed) {
-                        // Any server-initiated close (with or without a reason) is terminal.
-                        // The event flow (a hot SharedFlow) never completes on its
-                        // own, so we stop collecting by throwing a private sentinel.
-                        closedByServer = true
-                        stateMutex.withLock {
-                            if (isCurrentOwnerLocked(lease, owner)) {
-                                terminalGeneration = lease.generation
-                                _roomClosedReason.value = event.reason ?: "room_closed"
-                                _roomSnapshot.value = null
-                                _roomDeliveryEcho.value = null
-                                refreshTransportAuthorizationLocked()
-                            }
+                    when (event) {
+                        RoomRealtimeEvent.Opened -> {
+                            openedAtMs = monotonicNowMs()
+                            markOpened(lease, owner, client.currentConnectionId())
+                            pings?.cancel()
+                            if (timing.backgroundWork) pings = scope.launch { pingLoop(lease, owner, client) }
+                            // Suggestions that predate this socket are not replayed on
+                            // it. Hydrate off the receive path.
+                            scope.launch { refreshSuggestions() }
                         }
-                        throw ServerClosed
-                    } else if (event is RoomRealtimeEvent.TransportTerminated) {
-                        markNotWritable(lease, owner)
-                        throw TransportEnded
-                    } else if (event is RoomRealtimeEvent.Opened) {
-                        openedAtMs = monotonicNowMs()
-                        markOpened(lease, owner, client.currentConnectionId())
-                        publishSuggestionsResponse(
-                            lease = lease,
-                            result = api.listSuggestions(
-                                lease.roomId,
-                                lease.roomToken,
-                                lease.authScope,
-                            ),
-                            expectedConnectionOwner = owner,
-                        )
-                    } else if (
-                        event is RoomRealtimeEvent.SnapshotEvent &&
-                        event.room.roomId == lease.roomId
-                    ) {
-                        sawSnapshot = true
+                        is RoomRealtimeEvent.Closed -> {
+                            end = AttemptEnd.Closed(event.reason)
+                            throw AttemptStopped
+                        }
+                        is RoomRealtimeEvent.ConnectionReplaced -> {
+                            end = AttemptEnd.Replaced
+                            throw AttemptStopped
+                        }
+                        is RoomRealtimeEvent.TransportTerminated -> {
+                            end = AttemptEnd.Transport(event.cause)
+                            throw AttemptStopped
+                        }
+                        is RoomRealtimeEvent.Malformed -> scope.launch { reconcileRoom(lease) }
+                        else -> {
+                            if (event is RoomRealtimeEvent.SnapshotEvent && event.room.roomId == lease.roomId) {
+                                sawSnapshot = true
+                            }
+                            fold(lease, owner, event)
+                        }
                     }
-                    fold(lease, owner, event)
                 }
-                markNotWritable(lease, owner)
-                if (isStableAttempt(openedAtMs, sawSnapshot)) {
-                    failures = 0
-                    backoffIndex = 0
-                }
-                failures++
             } catch (e: CancellationException) {
-                clearRealtimeIfCurrent(lease, client, owner)
+                pings?.cancel()
                 throw e
             } catch (_: ObsoleteBinding) {
+                pings?.cancel()
                 break
-            } catch (_: ServerClosed) {
-                // terminal — handled below via closedByServer
-            } catch (_: Throwable) {
-                // Any throw (including from a flapping server) counts as a failure,
-                // regardless of whether a healthy event arrived in the same attempt.
-                markNotWritable(lease, owner)
-                if (isStableAttempt(openedAtMs, sawSnapshot)) {
+            } catch (_: AttemptStopped) {
+                // `end` records why.
+            } catch (failure: Throwable) {
+                end = AttemptEnd.Transport(failure)
+            }
+            pings?.cancel()
+            markNotWritable(lease, owner)
+            when (val ended = end) {
+                is AttemptEnd.Closed -> {
+                    endIfOwner(lease, owner, ended.reason?.takeIf { it.isNotBlank() } ?: WatchPartyEndReason.HostLeft)
+                    break
+                }
+                AttemptEnd.Replaced -> {
+                    endIfOwner(lease, owner, WatchPartyEndReason.Replaced)
+                    break
+                }
+                is AttemptEnd.Transport -> when (val cause = ended.cause) {
+                    is RoomTicketRefusedException -> {
+                        if (cause.status == 403 && !proofRenewedForRefusal) {
+                            // The proof may have lapsed; one renewal decides.
+                            proofRenewedForRefusal = true
+                            if (reconcileRoom(lease) is ApiResult.Success) continue
+                        }
+                        if (cause.terminal) {
+                            endIfOwner(lease, owner, ticketEndReason(cause.status))
+                            break
+                        }
+                    }
+                    is RoomTicketExpiringException -> {
+                        val expiry = stateMutex.withLock { proof?.expiresAtEpochMs }
+                        if (expiry != null && expiry - wallClockMs() < timing.proofRenewalMarginMs) reconcileRoom(lease)
+                        delay(timing.expiringTicketRetryMs)
+                        continue
+                    }
+                    else -> Unit
+                }
+            }
+            if (!isCurrent(lease, owner)) break
+            val now = monotonicNowMs()
+            val opened = openedAtMs
+            if (opened != null && sawSnapshot) {
+                lastHealthyMs = now
+                proofRenewedForRefusal = false
+                if (now - opened >= timing.stableConnectionMs) {
+                    // Routine rotation: reconnect at once.
                     failures = 0
                     backoffIndex = 0
+                    continue
                 }
-                failures++
             }
-            if (closedByServer) break
-            if (!isCurrent(lease, owner)) break
-            if (failures >= MAX_RECONNECT_ATTEMPTS) {
-                stateMutex.withLock {
-                    if (isCurrentOwnerLocked(lease, owner)) {
-                        terminalGeneration = lease.generation
-                        _roomClosedReason.value = "connection_lost"
-                        _roomSnapshot.value = null
-                        _roomDeliveryEcho.value = null
-                        refreshTransportAuthorizationLocked()
-                    }
-                }
+            failures++
+            if (failures >= timing.maxReconnectFailures && now - lastHealthyMs >= timing.reconnectBudgetMs) {
+                endIfOwner(lease, owner, WatchPartyEndReason.ConnectionLost)
                 break
             }
-            delay(BACKOFF_MS[backoffIndex])
-            backoffIndex = (backoffIndex + 1).coerceAtMost(BACKOFF_MS.lastIndex)
+            val step = timing.backoffMs[backoffIndex.coerceAtMost(timing.backoffMs.lastIndex)]
+            delay(step + random.nextLong(0L, step / 4 + 1))
+            backoffIndex = (backoffIndex + 1).coerceAtMost(timing.backoffMs.lastIndex)
         }
-        clearRealtimeIfCurrent(lease, client, owner)
+    }
+
+    private fun ticketEndReason(status: Int): String = when (status) {
+        404 -> WatchPartyEndReason.NotFound
+        409 -> WatchPartyEndReason.Ended
+        else -> WatchPartyEndReason.Unauthorized
+    }
+
+    private suspend fun pingLoop(lease: RoomBinding, owner: Long, client: WatchTogetherRealtimeClient) {
+        var sent = 0
+        while (isCurrent(lease, owner)) {
+            client.ping(formatEpochMillisRfc3339(wallClockMs()))
+            sent++
+            delay(if (sent < timing.initialPings) timing.initialPingSpacingMs else timing.pingIntervalMs)
+        }
+    }
+
+    private suspend fun renewProofLoop(lease: RoomBinding, owner: Long) {
+        while (isCurrent(lease, owner)) {
+            val expiry = stateMutex.withLock { proof?.expiresAtEpochMs }
+            val waitMs = if (expiry == null) timing.proofUnknownRenewalMs else expiry - wallClockMs() - timing.proofRenewalMarginMs
+            if (waitMs > 0) delay(waitMs)
+            if (!isCurrent(lease, owner)) break
+            val renewed = reconcileRoom(lease)
+            if (renewed !is ApiResult.Success) {
+                if (!isCurrent(lease, owner)) break
+                delay(timing.proofRetryMs)
+            }
+        }
     }
 
     private suspend fun isCurrent(lease: RoomBinding): Boolean =
@@ -647,6 +998,10 @@ class WatchTogetherRepository(
 
     private fun isCurrentOwnerLocked(lease: RoomBinding, owner: Long): Boolean =
         isCurrentLocked(lease) && activeConnectionOwner == owner
+
+    private suspend fun endIfOwner(lease: RoomBinding, owner: Long, reason: String) {
+        stateMutex.withLock { if (isCurrentOwnerLocked(lease, owner)) endLocked(lease, reason) }
+    }
 
     private suspend fun clearRealtimeIfCurrent(
         lease: RoomBinding,
@@ -682,6 +1037,7 @@ class WatchTogetherRepository(
                     generation = lease.generation,
                     epoch = if (previous.generation == lease.generation) previous.epoch + 1 else 1,
                     writable = true,
+                    disconnectedAtMs = null,
                 )
                 refreshTransportAuthorizationLocked()
             }
@@ -691,78 +1047,109 @@ class WatchTogetherRepository(
     private suspend fun markNotWritable(lease: RoomBinding, owner: Long) {
         stateMutex.withLock {
             if (binding == lease && activeConnectionOwner == owner) {
-                _connectionState.value = _connectionState.value.copy(writable = false)
+                val previous = _connectionState.value
+                _connectionState.value = previous.copy(
+                    writable = false,
+                    disconnectedAtMs = previous.disconnectedAtMs ?: monotonicNowMs(),
+                )
                 realtimeConnectionId = null
                 refreshTransportAuthorizationLocked()
             }
         }
     }
 
-    private fun isStableAttempt(openedAtMs: Long?, sawSnapshot: Boolean): Boolean =
-        sawSnapshot && openedAtMs != null && monotonicNowMs() - openedAtMs >= STABLE_CONNECTION_MS
-
-    /** Sentinel to unwind the [connect] collect loop on a server `room_closed`. */
-    private object ServerClosed : Throwable()
-    private object TransportEnded : Throwable()
+    /** Sentinels that unwind one socket attempt's collect loop. */
+    private object AttemptStopped : Throwable()
     private object ObsoleteBinding : Throwable()
 
-    /** Pure-ish fold of one realtime event into the state flows + side streams. */
+    /** Fold one realtime event into the state flows. */
     private suspend fun fold(lease: RoomBinding, owner: Long, event: RoomRealtimeEvent) {
         stateMutex.withLock {
             if (!isCurrentOwnerLocked(lease, owner)) return
             when (event) {
-                RoomRealtimeEvent.Opened -> Unit
-                is RoomRealtimeEvent.SnapshotEvent ->
-                    if (event.room.roomId == lease.roomId) {
-                        _roomSnapshot.value = event.room
-                        _roomDeliveryEcho.value = event.room.attachedSessionId
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { sessionId ->
-                                val connection = _connectionState.value
-                                RoomDeliveryEcho(
-                                    connectionGeneration = connection.generation,
-                                    connectionEpoch = connection.epoch,
-                                    playbackSessionId = sessionId,
-                                )
-                            }
-                        refreshTransportAuthorizationLocked()
+                is RoomRealtimeEvent.SnapshotEvent -> {
+                    val room = event.room
+                    if (room.roomId != lease.roomId) return
+                    if (room.phase == RoomPhase.Ended) {
+                        endLocked(lease, WatchPartyEndReason.Ended)
+                        return
                     }
-                is RoomRealtimeEvent.SuggestionsEvent -> applySuggestions(event.suggestions, fromBroadcast = true)
-                is RoomRealtimeEvent.TransportCommandEvent -> _transportCommands.tryEmit(
-                    ScheduledTransportCommand(
+                    val current = _roomSnapshot.value
+                    if (current != null && room.generation < current.generation) return
+                    socketSnapshotSeq++
+                    _roomSnapshot.value = room
+                    _roomDeliveryEcho.value = room.attachedSessionId
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { sessionId ->
+                            val connection = _connectionState.value
+                            RoomDeliveryEcho(
+                                connectionGeneration = connection.generation,
+                                connectionEpoch = connection.epoch,
+                                playbackSessionId = sessionId,
+                            )
+                        }
+                    refreshTransportAuthorizationLocked()
+                }
+                is RoomRealtimeEvent.SuggestionsEvent -> {
+                    socketSuggestionsSeq++
+                    rawSuggestions = event.suggestions.filter { it.roomId.isBlank() || it.roomId == lease.roomId }
+                    publishSuggestionsLocked()
+                }
+                is RoomRealtimeEvent.TransportCommandEvent -> {
+                    _latestCommand.value = ScheduledTransportCommand(
                         command = event.command,
                         executeAtMs = parseRfc3339ToEpochMillis(event.command.executeAt),
                         connection = _connectionState.value,
-                    ),
-                )
-                is RoomRealtimeEvent.Pong -> _pongs.tryEmit(
-                    PongSample(
-                        clientSentMs = parseRfc3339ToEpochMillis(event.clientSentAt),
-                        serverReceivedMs = parseRfc3339ToEpochMillis(event.serverReceivedAt),
-                        serverSentMs = parseRfc3339ToEpochMillis(event.serverSentAt),
-                    ),
-                )
-                is RoomRealtimeEvent.Closed -> { /* lifecycle handled in connect() */ }
-                is RoomRealtimeEvent.TransportTerminated -> Unit
+                        receivedAtMs = monotonicNowMs(),
+                    )
+                }
+                is RoomRealtimeEvent.Pong -> {
+                    val sent = parseRfc3339ToEpochMillis(event.clientSentAt)
+                    val serverReceived = parseRfc3339ToEpochMillis(event.serverReceivedAt)
+                    val serverSent = parseRfc3339ToEpochMillis(event.serverSentAt)
+                    val received = event.clientReceivedMs
+                    if (sent != null && serverReceived != null && serverSent != null && received != null) {
+                        clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs())
+                        _clock.value = clockEstimator.estimate
+                    }
+                }
                 is RoomRealtimeEvent.Error ->
-                    // Transient, NON-terminal: a server `error` frame (e.g. a rejected
-                    // transport_request) must NOT feed roomClosedReason.
+                    // Transient, NON-terminal: a rejected request must not end the party.
                     _errors.tryEmit(event.message.ifBlank { event.code })
+                RoomRealtimeEvent.Opened,
+                is RoomRealtimeEvent.Closed,
+                is RoomRealtimeEvent.ConnectionReplaced,
+                is RoomRealtimeEvent.TransportTerminated,
+                is RoomRealtimeEvent.Malformed -> Unit
             }
         }
     }
 
-    /** Clear all room state on leave. The connect() loop ends via scope cancellation. */
+    /**
+     * Check the local wall clock against the monotonic clock. A jump resets
+     * the server-time estimate so no timing work uses a stale offset.
+     */
+    suspend fun checkClockContinuity(): RoomClockEstimate = stateMutex.withLock {
+        if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) _clock.value = clockEstimator.estimate
+        _clock.value
+    }
+
+    /** Clear all room state on leave or identity change. The connect() loop ends via scope cancellation. */
     override suspend fun reset() {
         stateMutex.withLock {
             nextGeneration++
             latestRoomRequest++
             binding = null
+            proof = null
             terminalGeneration = null
             _roomSnapshot.value = null
             _roomDeliveryEcho.value = null
+            _latestCommand.value = null
+            rawSuggestions = emptyList()
             _suggestions.value = emptyList()
+            _personalVotesKnown.value = false
             _roomClosedReason.value = null
+            _ended.value = null
             votedIds.clear()
             realtime = null
             realtimeGeneration = null
@@ -774,16 +1161,10 @@ class WatchTogetherRepository(
     }
 
     companion object {
-        /** Reconnect backoff steps (ms) — spec: not after room_closed. */
-        val BACKOFF_MS = longArrayOf(500L, 1_000L, 2_000L, 5_000L)
+        private const val INVALID_RESPONSE = "invalid_response"
 
-        /**
-         * Maximum number of consecutive connection failures (e.g. throws during
-         * [connect] collection, factory/handshake errors) before the reconnect
-         * loop gives up. Reset to zero on any healthy server event.
-         */
-        const val MAX_RECONNECT_ATTEMPTS = 6
-        const val STABLE_CONNECTION_MS = 30_000L
+        /** Refusals that may mean the room ended or this membership lapsed; the room read decides. */
+        private val RECONCILE_STATUSES = setOf(403, 404, 409)
         private val MONOTONIC_ORIGIN = TimeSource.Monotonic.markNow()
     }
 }

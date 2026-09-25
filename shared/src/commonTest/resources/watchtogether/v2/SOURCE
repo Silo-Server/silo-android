@@ -1,0 +1,13 @@
+server_repository=Silo-Server/silo-server
+server_commit=2812ac390829bec2b64328dcee29f0eb15a9b808
+vendored=capabilities.json (contracts/api/v2/fixtures/watch_together_capabilities.json, verbatim)
+derived=every other file, written from the server's Go wire types at the same commit
+
+Derived fixtures follow internal/apiv2/watch_together_room_read.go (HTTP v2
+snapshot, string ids), internal/watchtogether/types.go (socket Snapshot,
+MemberSummary, TransportCommand, Suggestion with numeric ids),
+internal/apiv2/watch_together_suggestions.go (suggestion page),
+internal/apiv2/watch_together_member_state.go, internal/apiv2/watch_together_picker.go,
+and internal/api/handlers/watch_together.go (connection_replaced text).
+Re-derive them when the server wire types change; the server does not
+publish contract fixtures for these operations yet.

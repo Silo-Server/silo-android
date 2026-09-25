@@ -48,7 +48,7 @@ class WatchTogetherEntryViewModelTest {
 
         viewModel.hostEmptyVoteRoom()
 
-        assertEquals(listOf(CreateRoomRequest(RoomSelectionMode.Vote.wire)), gateway.createRequests)
+        assertEquals(listOf(RoomSelectionMode.Vote.wire), gateway.createRequests.map { it.selectionMode })
         assertEquals(emptyList(), gateway.selectionRequests)
         assertEquals("watch_together/room-1", viewModel.uiState.value.destination)
     }
@@ -129,6 +129,9 @@ class WatchTogetherEntryViewModelTest {
             roomSnapshot.value = nextRoom
             return ApiResult.Success(RoomResponse(nextRoom, "test-room-token"))
         }
+
+        override suspend fun stageSelection(request: SetSelectionRequest): ApiResult<RoomResponse> =
+            setSelection(request)
 
         override suspend fun setSelection(
             request: SetSelectionRequest,
