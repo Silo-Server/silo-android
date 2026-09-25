@@ -249,7 +249,8 @@ class SequencedPlayback(
             val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, loginId, account.id,
                 request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
             save(entry)
-            scopes[entry.attemptId] = current
+            // Unless save() just pruned it: its temporary identity ended in between.
+            if (load().any { it.attemptId == entry.attemptId }) scopes[entry.attemptId] = current
             // A saved attempt is uncertainty, even if its owner changes before send.
             guard()
             sendStart(entry, current, expectedMetadataOwner = expectedMetadataOwner)
