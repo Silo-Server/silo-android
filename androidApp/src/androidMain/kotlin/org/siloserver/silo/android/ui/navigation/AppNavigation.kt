@@ -48,8 +48,10 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastPlayRouter
 import org.siloserver.silo.android.cast.SiloCastSessionManager
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
+import org.siloserver.silo.android.ui.screens.cast.SiloCastPlayDialogs
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
 import org.siloserver.silo.android.ui.screens.MainScreen
 import org.siloserver.silo.android.ui.screens.auth.LoginScreen
@@ -152,6 +154,10 @@ fun AppNavigation(
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
+    val siloCastPlayRouter: SiloCastPlayRouter = koinInject()
+    val openSiloCastRemote = {
+        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+    }
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
     // cancelled with that destination's own scope.
@@ -198,7 +204,11 @@ fun AppNavigation(
                     ),
                 )
             },
-            navigate = { route ->
+            navigate = navigate@{ route ->
+                // A silo://play link goes to an engaged TV, as iOS routes it.
+                playerRouteCastRequestOrNull(route)?.let { request ->
+                    if (siloCastPlayRouter.playStreaming(request, localRoute = route, onLaunched = openSiloCastRemote)) return@navigate
+                }
                 // An external link to a TAB (silo://downloads) must switch tabs,
                 // not push a second copy of that tab. A duplicate tab entry also
                 // makes the tab anchor ambiguous: popUpTo(route) resolves to the
@@ -982,7 +992,15 @@ fun AppNavigation(
                 openingArtworkThumbhash = openingArtworkThumbhash,
                 onBackClick = { navController.popBackStack() },
                 onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
-                    val launchedRemotely = siloCastController.launchOnConnectedTarget(
+                    val localRoute = Route.Player(
+                        libraryId = libraryId,
+                        contentId = contentId,
+                        fileId = fileId,
+                        audioTrackIndex = audioTrackIndex,
+                        subtitleTrackIndex = subtitleTrackIndex,
+                        resumePositionSeconds = resumePositionSeconds,
+                    ).route
+                    val sentToTv = siloCastPlayRouter.playStreaming(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
                             libraryId = libraryId,
@@ -992,21 +1010,10 @@ fun AppNavigation(
                             startFromBeginning = resumePositionSeconds == null,
                             resumePosition = resumePositionSeconds,
                         ),
+                        localRoute = localRoute,
+                        onLaunched = openSiloCastRemote,
                     )
-                    if (launchedRemotely) {
-                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                    } else {
-                        navController.navigate(
-                            Route.Player(
-                                libraryId = libraryId,
-                                contentId = contentId,
-                                fileId = fileId,
-                                audioTrackIndex = audioTrackIndex,
-                                subtitleTrackIndex = subtitleTrackIndex,
-                                resumePositionSeconds = resumePositionSeconds,
-                            ).route,
-                        )
-                    }
+                    if (!sentToTv) navController.navigate(localRoute)
                 },
                 onItemDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
@@ -1036,9 +1043,8 @@ fun AppNavigation(
                     navController.navigate(Route.BookReader(contentId, fileId, libraryId).route)
                 },
                 onWatchTogether = { contentId, fileId -> wtTarget = contentId to fileId },
-                onOpenCastRemote = {
-                    navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                },
+                onOpenCastRemote = openSiloCastRemote,
+                libraryId = libraryId,
                 viewModel = detailViewModel,
             )
             }
@@ -1309,6 +1315,15 @@ fun AppNavigation(
         // above the nav menu (iOS placement); the full remote and the local
         // player own their whole screen.
         val currentRoute = currentEntry?.destination?.route
+        val signedOutRoutes = setOf(
+            Route.ServerSetup.route,
+            Route.ServerList.route,
+            Route.Login.route,
+            Route.Setup.route,
+            Route.Signup.route,
+            Route.ProfileSelection.route,
+            Route.CreateProfile.route,
+        )
         val castBarInlineRoutes = setOf(
             Route.Home.route,
             Route.Libraries.route,
@@ -1327,6 +1342,16 @@ fun AppNavigation(
                     .navigationBarsPadding(),
             )
         }
+        // A question asked for the signed-in profile goes with it: signing out,
+        // an expired session and a server or profile switch all land here.
+        LaunchedEffect(currentRoute) {
+            if (currentRoute in signedOutRoutes) siloCastPlayRouter.dismissAll()
+        }
+        SiloCastPlayDialogs(
+            onOpenRemote = openSiloCastRemote,
+            onPlayHere = { route -> navController.navigate(route) },
+            router = siloCastPlayRouter,
+        )
 
         // Google Cast (Chromecast) mini controller — app-wide except the player,
         // which shows the full cast takeover overlay instead. On tab routes it

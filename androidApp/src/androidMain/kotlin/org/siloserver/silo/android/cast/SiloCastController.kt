@@ -81,6 +81,12 @@ data class SiloCastControllerState(
 ) {
     val isConnected: Boolean get() = connectedTarget != null && !isReconnecting
     val hasActiveSession: Boolean get() = connectedTarget != null || isReconnecting
+
+    /** The user has a TV engaged. Play routing, the remote pill and the mini
+     *  bar all read this one predicate (iOS `remotePlaybackEngaged`): true
+     *  through a reconnect, false while a silent auto-resume is unconfirmed,
+     *  including when that unconfirmed session is itself reconnecting. */
+    val isEngaged: Boolean get() = hasActiveSession && !isAutoResuming
 }
 
 /**
@@ -306,7 +312,8 @@ class SiloCastController(
      * to fall back to local playback without racing a separate state read.
      */
     fun launchOnConnectedTarget(playback: SiloCastPlaybackRequest): Boolean {
-        val target = _state.value.connectedTarget ?: return false
+        val current = _state.value
+        val target = current.connectedTarget?.takeIf { current.isEngaged } ?: return false
         val server = serverRegistry.activeEntry.value
         if (server == null) {
             _state.update { it.copy(error = "Choose a server before controlling a TV.") }

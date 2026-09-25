@@ -56,6 +56,7 @@ import org.siloserver.silo.android.ui.navigation.continueWatchingDetailRoute
 import org.siloserver.silo.android.ui.screens.calendar.CalendarScreen
 import org.siloserver.silo.android.ui.screens.home.HomeScreen
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastPlayRouter
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.libraries.LibrariesScreen
@@ -104,26 +105,28 @@ fun MainScreen(
     var showSiloCastTargetPicker by rememberSaveable { mutableStateOf(false) }
     var showWatchTogetherEntry by rememberSaveable { mutableStateOf(false) }
 
+    val siloCastPlayRouter: SiloCastPlayRouter = koinInject()
+    val openSiloCastRemote = {
+        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+    }
+
     fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) {
-        val launchedRemotely = siloCastController.launchOnConnectedTarget(
+        val localRoute = Route.Player(
+            contentId = contentId,
+            fileId = fileId,
+            resumePositionSeconds = resumePositionSeconds,
+        ).route
+        val sentToTv = siloCastPlayRouter.playStreaming(
             SiloCastPlaybackRequest(
                 contentId = contentId,
                 fileId = fileId,
                 startFromBeginning = resumePositionSeconds == null,
                 resumePosition = resumePositionSeconds,
             ),
+            localRoute = localRoute,
+            onLaunched = openSiloCastRemote,
         )
-        if (launchedRemotely) {
-            navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-        } else {
-            navController.navigate(
-                Route.Player(
-                    contentId = contentId,
-                    fileId = fileId,
-                    resumePositionSeconds = resumePositionSeconds,
-                ).route,
-            )
-        }
+        if (!sentToTv) navController.navigate(localRoute)
     }
     val librariesViewModel = if (currentTab == Tab.Libraries) {
         koinViewModel<LibrariesViewModel>()
@@ -418,7 +421,7 @@ fun MainScreen(
                             activeProfile = headerState.activeProfile,
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onRemoteControlClick = {
-                                if (siloCastState.hasActiveSession) {
+                                if (siloCastState.isEngaged) {
                                     navController.navigate(Route.SiloCastRemote.route)
                                 } else {
                                     showSiloCastTargetPicker = true
@@ -426,7 +429,7 @@ fun MainScreen(
                             },
                             onRemoteChooseTvClick = { showSiloCastTargetPicker = true },
                             onRemoteDisconnectClick = { siloCastController.disconnect() },
-                            isRemoteControlActive = siloCastState.hasActiveSession,
+                            isRemoteControlActive = siloCastState.isEngaged,
                             onRequestsClick = requestsMenuAction,
                             onWatchTogetherClick = watchTogetherMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
@@ -510,13 +513,19 @@ fun MainScreen(
                                         Route.AudiobookPlayer(item.contentId, item.fileId).route,
                                     )
                                 } else {
-                                    // Downloads are explicitly local/offline;
-                                    // bypass playVideo's active-cast redirect.
-                                    navController.navigate(
-                                        Route.Player(
+                                    // A download plays only here; with a TV
+                                    // engaged, ask first (iOS does the same).
+                                    val localRoute = Route.Player(
+                                        contentId = item.contentId,
+                                        fileId = item.fileId,
+                                    ).route
+                                    siloCastPlayRouter.playOffline(
+                                        request = SiloCastPlaybackRequest(
                                             contentId = item.contentId,
-                                            fileId = item.fileId,
-                                        ).route,
+                                            startFromBeginning = false,
+                                        ),
+                                        localRoute = localRoute,
+                                        playHere = { navController.navigate(localRoute) },
                                     )
                                 }
                             },

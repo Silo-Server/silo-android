@@ -44,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -64,6 +65,7 @@ import org.siloserver.silo.android.ui.theme.SiloOverlayPillSurface
 import org.siloserver.silo.android.ui.theme.SiloNavPillSurface
 import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastPlayRouter
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
 import org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel
@@ -82,6 +84,8 @@ import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.cast.SiloCastLaunchRequest
+import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.playback.selectPlaybackVersion
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -131,6 +135,8 @@ fun ItemDetailScreen(
     // Auto-presents the cast remote after "Play on device" launches, mirroring
     // Apple's playOnTV: the connect/handoff handshake renders in the remote.
     onOpenCastRemote: () -> Unit = {},
+    /** Scopes a title sent to a TV, as the Play button's own request does. */
+    libraryId: Int? = null,
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
@@ -148,9 +154,17 @@ fun ItemDetailScreen(
         }
     }
     val siloCastController: SiloCastController = koinInject()
+    val siloCastPlayRouter: SiloCastPlayRouter = koinInject()
     val siloCastState by siloCastController.state.collectAsState()
     var showRemoteTargetPicker by remember { mutableStateOf(false) }
     var remoteMenuExpanded by remember { mutableStateOf(false) }
+    // The visible movie or episode's Play, which the remote button sends to a
+    // TV (iOS handleRemoteControlTap). Null on series, season and book pages:
+    // they have no single title to send.
+    var directCastRequest by remember { mutableStateOf<SiloCastPlaybackRequest?>(null) }
+    // A title waiting for the person to pick a TV; the picker then lists TVs
+    // on other servers too, which play it under a temporary profile.
+    var pendingCastLaunch by remember { mutableStateOf<SiloCastLaunchRequest?>(null) }
 
     LaunchedEffect(state.selectedEpisodeContentId) {
         if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
@@ -867,6 +881,19 @@ fun ItemDetailScreen(
                         )
 
                         val movieResume = playbackResumePosition(detail.userData)
+                        val castRequest = SiloCastPlaybackRequest(
+                            contentId = detail.contentId,
+                            fileId = playbackFileId,
+                            audioTrackIndex = explicitAudioIndex,
+                            subtitleTrackIndex = explicitSubtitleIndex,
+                            startFromBeginning = movieResume == null,
+                            resumePosition = movieResume,
+                            libraryId = libraryId,
+                        )
+                        DisposableEffect(castRequest) {
+                            directCastRequest = castRequest
+                            onDispose { directCastRequest = null }
+                        }
                         MovieDetailContent(
                             translation = translationSlot,
                             detail = detail,
@@ -1011,6 +1038,14 @@ fun ItemDetailScreen(
                 controller = siloCastController,
             )
         }
+        pendingCastLaunch?.let { launch ->
+            SiloCastTargetPickerSheet(
+                launchRequest = launch,
+                onDismiss = { pendingCastLaunch = null },
+                onLaunched = onOpenCastRemote,
+                controller = siloCastController,
+            )
+        }
 
         pendingCancelDownloadAction?.let { confirmAction ->
             AlertDialog(
@@ -1129,10 +1164,19 @@ fun ItemDetailScreen(
         ) {
             IconButton(
                 onClick = {
-                    if (siloCastState.hasActiveSession) {
-                        remoteMenuExpanded = true
-                    } else {
-                        showRemoteTargetPicker = true
+                    val castRequest = directCastRequest
+                    val server = serverRegistry.activeEntry.value
+                    // A movie or episode: send this title to the TV, as iOS does. Asked
+                    // for the TV, so no fallback to the phone: a TV that has just gone
+                    // opens the picker instead.
+                    val sentToTv = castRequest != null && siloCastState.isEngaged &&
+                        siloCastPlayRouter.playStreaming(castRequest, localRoute = null, onLaunched = onOpenCastRemote)
+                    when {
+                        sentToTv -> Unit
+                        castRequest != null && server != null ->
+                            pendingCastLaunch = SiloCastLaunchRequest(serverId = server.id, playback = castRequest)
+                        siloCastState.isEngaged -> remoteMenuExpanded = true
+                        else -> showRemoteTargetPicker = true
                     }
                 },
                 // Solid pill while a cast session is live, translucent at
@@ -1141,7 +1185,7 @@ fun ItemDetailScreen(
                     .size(40.dp)
                     .clip(CircleShape)
                     .background(
-                        if (siloCastState.hasActiveSession) {
+                        if (siloCastState.isEngaged) {
                             SiloNavPillSurface
                         } else {
                             SiloOverlayPillSurface

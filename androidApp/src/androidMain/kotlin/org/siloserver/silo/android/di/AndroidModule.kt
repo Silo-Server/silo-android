@@ -88,6 +88,7 @@ import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsVi
 import org.siloserver.silo.android.cast.SharedPrefsSiloCastLastTargetStore
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastLastTargetStore
+import org.siloserver.silo.android.cast.SiloCastPlayRouter
 import org.siloserver.silo.android.cast.SiloCastSessionManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.workmanager.dsl.worker
@@ -218,6 +219,7 @@ val androidModule = module {
             deviceIdProvider = { PairingDeviceId.stable(androidContext()) },
         )
     }
+    single { SiloCastPlayRouter(get()) }
     single<AndroidPushTokenProvider> { FirebaseAndroidPushTokenProvider(androidContext()) }
     single {
         AndroidPushRegistrar(
