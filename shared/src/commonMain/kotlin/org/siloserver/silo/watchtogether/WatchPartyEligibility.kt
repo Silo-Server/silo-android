@@ -69,7 +69,9 @@ fun watchPartyEligibility(
         canStop = free && host && playing && features.stopPlayback,
         canSwitchMode = free && host && lobby && features.selectionModeSwitch && (hostPick || vote),
         canSetPolicy = free && host && (lobby || playing),
-        canLobbyReady = known && !host && lobby && staged && features.lobbyReady,
+        // Advisory and allowed in any lobby, as on Apple: the server clears it
+        // whenever the selection changes.
+        canLobbyReady = known && !host && lobby && features.lobbyReady,
         canSuggest = free && known && (lobby || playing) && (hostPick || vote),
         canVote = free && known && vote && (lobby || playing) && personalVotesKnown,
         canPromote = free && host && vote && (lobby || playing) && features.voteHostOverride,

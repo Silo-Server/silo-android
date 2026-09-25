@@ -2,17 +2,11 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -23,19 +17,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
-import androidx.tv.material3.MaterialTheme
-import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -46,25 +36,29 @@ import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
-import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.TvRestoreFocusOnModalDismiss
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.tvModalFocusBoundary
+import org.siloserver.silo.tv.ui.screens.watchparty.PARTY_KEY_OPTIONS
 import org.siloserver.silo.tv.ui.screens.watchparty.TV_WATCH_PARTY_HOST_AWAY_NOTE
 import org.siloserver.silo.tv.ui.screens.watchparty.TV_WATCH_PARTY_HOST_LEAVE_NOTE
-import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyActionRow
-import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyInvitation
-import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyMemberRow
 import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyNotice
-import org.siloserver.silo.tv.ui.screens.watchparty.TvPartySectionLabel
+import org.siloserver.silo.tv.ui.screens.watchparty.TvPartyRoomActions
 import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyConfirmDialog
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyInvitePage
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyOptionsOverlay
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyRoomView
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvPartyFocus
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvStagedPreview
 import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyReconnectNotice
+import org.siloserver.silo.tv.ui.screens.watchparty.tvPartyAnchorKey
 import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyLeftBehind
 import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyNameList
 import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyWaitingFor
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
-import org.siloserver.silo.watchtogether.watchPartyErrorMessage
 import org.siloserver.silo.watchtogether.watchPartyEligibility
+import org.siloserver.silo.watchtogether.watchPartyErrorMessage
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
 
 /**
@@ -207,8 +201,10 @@ private fun TvWatchPartyStatusOverlay(
 }
 
 /**
- * The party panel: members and their status, the invitation (code for
- * everyone, QR of the invitation link for the host), and D2's actions.
+ * The party room over the retained player, as tvOS does it: Back inside party
+ * playback opens the lobby itself, with Return to playback as the primary
+ * action. Invitation, playback policy, Return everyone to lobby, End, and
+ * Leave all live where they do in the lobby (the code pill and "···").
  */
 @Composable
 private fun TvWatchPartyPanel(
@@ -221,22 +217,53 @@ private fun TvWatchPartyPanel(
     availability: WatchPartyAvailabilityRepository = koinInject(),
 ) {
     val pending by repository.pendingAction.collectAsState()
+    val connection by repository.connectionState.collectAsState()
+    val suggestions by repository.suggestions.collectAsState()
+    val features = availability.features
     val eligibility = watchPartyEligibility(
         room = room,
-        features = availability.features,
+        features = features,
         busy = pending != null,
         personalVotesKnown = false,
     )
     val isHost = eligibility.isHost
-    val playing = room?.phase == RoomPhase.Playing
-    val stopSupported = availability.features?.stopPlayback == true
     val serverUrl = rememberProfileServerUrl()
     val inviteUrl = room?.takeIf { isHost }?.let { watchPartyInviteUrl(serverUrl, it.invitePath) }
-    val backFocus = remember { FocusRequester() }
+    val reconnect = rememberTvWatchPartyReconnectNotice(connection = connection, inRoom = room != null)
+    val staged = rememberTvStagedPreview(
+        contentId = room?.selectedContentId,
+        fileId = room?.selectedFileId,
+        libraryId = room?.selectedLibraryId,
+        suggestions = suggestions,
+    )
+    val focus = rememberTvPartyFocus()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var optionsOpen by remember { mutableStateOf(false) }
+    var inviteOpen by remember { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    val modalOpen = optionsOpen || inviteOpen || confirmEnd || confirmLeave
+    var opener by remember { mutableStateOf<String?>(null) }
+    fun openModal(open: () -> Unit) {
+        opener = focus.focusedKey
+        open()
+    }
+    val anchor = room?.let { tvPartyAnchorKey(it, features, suggestions) } ?: PARTY_KEY_OPTIONS
+    // The focusable popup hands focus to its first control (the code pill)
+    // on its own, so put it on Return to playback once the room is laid out.
+    LaunchedEffect(anchor, room != null) {
+        if (room == null || optionsOpen || inviteOpen || confirmEnd || confirmLeave) return@LaunchedEffect
+        requestFocusUntilObserved(
+            maxAttempts = PANEL_FOCUS_ATTEMPTS,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = focus.requester(anchor)::requestFocus,
+            isFocused = { focus.isFocused(anchor) },
+        )
+    }
 
     Popup(
-        alignment = Alignment.CenterEnd,
+        alignment = Alignment.Center,
         onDismissRequest = onClose,
         properties = PopupProperties(
             focusable = true,
@@ -245,77 +272,79 @@ private fun TvWatchPartyPanel(
             clippingEnabled = false,
         ),
     ) {
-        Row(
+        Box(
             modifier = Modifier
-                .width(PANEL_WIDTH)
-                .fillMaxHeight()
-                .background(DarkBackground.copy(alpha = 0.90f))
-                .border(0.6.dp, Color.White.copy(alpha = 0.16f))
-                .padding(horizontal = 24.dp, vertical = 28.dp)
+                .fillMaxSize()
+                .background(DarkBackground)
                 .tvModalFocusBoundary()
-                .then(rememberTvDialogInitialFocus(backFocus)),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
+                .then(rememberTvDialogInitialFocus(focus.requester(anchor))),
         ) {
-            Column(
-                modifier = Modifier.weight(0.5f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = "Watch Party",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
+            if (room != null) {
+                TvWatchPartyRoomView(
+                    room = room,
+                    suggestions = suggestions,
+                    features = features,
+                    eligibility = eligibility,
+                    personalVotesKnown = false,
+                    connection = connection,
+                    staged = staged,
+                    focus = focus,
+                    notice = reconnect,
+                    actions = TvPartyRoomActions(
+                        onInvite = { openModal { inviteOpen = true } },
+                        onOptions = { openModal { optionsOpen = true } },
+                        onReturnToPlayback = onClose,
+                    ),
                 )
-                TvPartyActionRow(
-                    title = "Back to playback",
-                    onClick = onClose,
-                    modifier = Modifier.focusRequester(backFocus),
-                )
-                if (isHost && playing && stopSupported) {
-                    TvPartyActionRow(
-                        title = "Return everyone to lobby",
-                        subtitle = "Stops playback so you can pick something else.",
-                        state = TvControlState.transient(eligibility.canStop),
-                        onClick = onReturnToLobby,
-                    )
-                }
-                if (isHost) {
-                    TvPartyActionRow(
-                        title = "End party for everyone",
-                        destructive = true,
-                        state = TvControlState.transient(eligibility.canEnd),
-                        onClick = { confirmEnd = true },
-                    )
-                }
-                TvPartyActionRow(
-                    title = "Leave party",
-                    subtitle = if (isHost) TV_WATCH_PARTY_HOST_LEAVE_NOTE else null,
-                    onClick = onLeave,
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .weight(0.5f)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (room != null) {
-                    TvPartyInvitation(code = room.code, inviteUrl = inviteUrl, qrSize = 104.dp)
-                    TvPartySectionLabel("In this party (${room.members.size})")
-                    room.members.sortedByDescending { it.isHost }.forEach { member ->
-                        TvPartyMemberRow(member = member, room = room)
-                    }
-                    if (!isHost && !room.hostConnected) {
-                        TvPartyNotice(title = "The host disconnected", detail = TV_WATCH_PARTY_HOST_AWAY_NOTE)
-                    }
-                }
             }
         }
     }
 
+    if (optionsOpen && room != null) {
+        TvWatchPartyOptionsOverlay(
+            room = room,
+            features = features,
+            eligibility = eligibility,
+            onSetMode = {},
+            onSetPolicy = { policy ->
+                scope.launch {
+                    val result = repository.updatePolicy(policy)
+                    if (result !is ApiResult.Success) {
+                        Toast.makeText(
+                            context,
+                            watchPartyErrorMessage(result, "Couldn't change who can play and pause."),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
+            onStopPlayback = {
+                optionsOpen = false
+                onReturnToLobby()
+            },
+            onEnd = {
+                optionsOpen = false
+                confirmEnd = true
+            },
+            onLeave = {
+                optionsOpen = false
+                if (isHost) confirmLeave = true else onLeave()
+            },
+            onDismiss = { optionsOpen = false },
+        )
+    }
+    if (inviteOpen && room != null) {
+        TvWatchPartyInvitePage(
+            code = room.code,
+            inviteUrl = inviteUrl,
+            backdropUrl = staged?.backdropUrl,
+            backdropThumbhash = staged?.backdropThumbhash,
+            onDismiss = { inviteOpen = false },
+        )
+    }
     if (confirmEnd) {
         TvWatchPartyConfirmDialog(
-            title = "End the party for everyone?",
+            title = "End this party for everyone?",
             message = "Playback stops for everyone and the party closes.",
             confirmLabel = "End party",
             destructive = true,
@@ -326,7 +355,25 @@ private fun TvWatchPartyPanel(
             onDismiss = { confirmEnd = false },
         )
     }
+    if (confirmLeave) {
+        TvWatchPartyConfirmDialog(
+            title = "Leave the party?",
+            message = TV_WATCH_PARTY_HOST_LEAVE_NOTE,
+            confirmLabel = "Leave party",
+            destructive = true,
+            onConfirm = {
+                confirmLeave = false
+                onLeave()
+            },
+            onDismiss = { confirmLeave = false },
+        )
+    }
+    TvRestoreFocusOnModalDismiss(
+        visible = modalOpen,
+        opener = opener?.let(focus::requester),
+        isOpenerFocused = { focus.isFocused(opener) },
+    )
 }
 
-private val PANEL_WIDTH = 620.dp
 private const val LEFT_BEHIND_NOTICE_MS = 6_000L
+private const val PANEL_FOCUS_ATTEMPTS = 10

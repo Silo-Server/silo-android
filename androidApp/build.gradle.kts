@@ -117,6 +117,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.coil.compose)
+            implementation(libs.zxing.core)
             implementation(libs.haze)
             implementation(libs.coil.network.okhttp)
             // Ktor client (download worker wiring). Previously satisfied

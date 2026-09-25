@@ -1,33 +1,41 @@
 package org.siloserver.silo.android.ui.screens.watchparty
 
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.ContentPaste
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -39,28 +47,36 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.cast.SiloCastSessionManager
 import org.siloserver.silo.android.ui.components.SiloConfirmDialog
-import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.theme.SiloOnSurface
+import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.MemberRole
+import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.repository.WatchPartyPendingAction
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.viewmodel.WatchPartyHubViewModel
 import org.siloserver.silo.watchtogether.RoomSession
-import org.siloserver.silo.watchtogether.WATCH_PARTY_CODE_LENGTH
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyDestination
-import org.siloserver.silo.watchtogether.normalizeWatchPartyCode
 
 /**
  * The Watch Party hub, opened from the profile menu, a detail page's Watch
@@ -132,7 +148,7 @@ fun WatchPartyHubScreen(
         if (current == null) viewModel.refresh()
     }
     val join: () -> Unit = {
-        if (!busy) viewModel.join(code)
+        if (!busy) viewModel.join(code.trim())
     }
 
     // A party uses this device's player. Wait for the receiver to disconnect
@@ -148,204 +164,214 @@ fun WatchPartyHubScreen(
         return
     }
 
-    Scaffold(
-        topBar = { SiloTopBar(title = "Watch Party", onBackClick = onBack) },
-    ) { padding ->
+    val canEnter = enabled && available && !busy
+    Box(Modifier.fillMaxSize()) {
+        WatchPartyBackdrop(url = null)
         Column(
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier
-                .padding(padding)
+            Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)),
         ) {
-            // Why the last party ended; Rejoin when the party itself goes on.
-            val ended = state.ended
-            val endedKey = ended?.let { "${it.roomId}:${it.reason}" }
-            val showEnded = ended != null && current == null && dismissedEnded != endedKey
-            val endedRejoin = showEnded && enabled && available && ended != null &&
-                watchPartyEndedOffersRejoin(ended.reason) && state.recent?.roomId == ended.roomId
-            if (showEnded && ended != null) {
-                WatchPartyBanner(
-                    text = watchPartyEndedMessage(ended.reason),
-                    action = {
-                        if (endedRejoin) {
-                            TextButton(onClick = viewModel::rejoinRecent, enabled = !busy) { Text("Rejoin") }
-                        }
-                        IconButton(onClick = { dismissedEnded = endedKey }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Dismiss")
-                        }
-                    },
-                )
-            }
+            WatchPartyTopBar(onBack = onBack)
+            Column(
+                verticalArrangement = Arrangement.spacedBy(28.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .padding(horizontal = WatchPartyMetrics.pageInset)
+                    .padding(bottom = 40.dp),
+            ) {
+                HubHeadline(Modifier.padding(top = 24.dp))
 
-            if (!enabled) {
-                Text(
-                    "Watch Party is turned off. Turn it on in Settings, under Experimental.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                return@Column
-            }
-
-            when (val availability = state.availability) {
-                null -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Text("Checking this server…", style = MaterialTheme.typography.bodyLarge)
+                // Why the last party ended; Rejoin when the party itself goes on.
+                val ended = state.ended
+                val endedKey = ended?.let { "${it.roomId}:${it.reason}" }
+                val showEnded = ended != null && current == null && dismissedEnded != endedKey
+                val endedRejoin = showEnded && enabled && available && ended != null &&
+                    watchPartyEndedOffersRejoin(ended.reason) && state.recent?.roomId == ended.roomId
+                val banners = showEnded || !enabled || !available || state.error != null || busy
+                if (banners) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (showEnded && ended != null) {
+                            WatchPartyBanner(
+                                text = watchPartyEndedMessage(ended.reason),
+                                action = {
+                                    if (endedRejoin) {
+                                        TextButton(onClick = viewModel::rejoinRecent, enabled = !busy) {
+                                            Text("Rejoin", color = SiloOnSurface)
+                                        }
+                                    }
+                                    DismissButton { dismissedEnded = endedKey }
+                                },
+                            )
+                        }
+                        if (!enabled) {
+                            WatchPartyBanner("Watch Party is turned off. Turn it on in Settings, under Experimental.")
+                        } else {
+                            when (state.availability) {
+                                null -> WatchPartyBanner("Checking Watch Party support…")
+                                is WatchPartyAvailability.Unsupported ->
+                                    WatchPartyBanner("This server doesn't support Watch Party yet.")
+                                WatchPartyAvailability.NotAllowed ->
+                                    WatchPartyBanner("Your account can't use Watch Party.")
+                                is WatchPartyAvailability.ProbeFailed -> WatchPartyBanner(
+                                    "Couldn't check whether this server supports Watch Party.",
+                                    tone = WatchPartyBannerTone.Warning,
+                                )
+                                is WatchPartyAvailability.Available -> Unit
+                            }
+                        }
+                        // Errors stay inline; an uncertain create keeps its room id for Retry.
+                        state.error?.let { message ->
+                            WatchPartyBanner(
+                                text = message,
+                                tone = WatchPartyBannerTone.Warning,
+                                action = {
+                                    if (state.createRetryable) {
+                                        TextButton(onClick = viewModel::retryCreate, enabled = !busy) {
+                                            Text("Retry", color = SiloOnSurface)
+                                        }
+                                    }
+                                    DismissButton(viewModel::clearError)
+                                },
+                            )
+                        }
+                        if (busy) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(
+                                    color = SiloSecondaryText,
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    when (state.busy) {
+                                        WatchPartyPendingAction.Create -> "Starting your party…"
+                                        WatchPartyPendingAction.Join -> "Joining…"
+                                        WatchPartyPendingAction.Stage -> "Adding your title…"
+                                        else -> "Working…"
+                                    },
+                                    fontSize = WatchPartyMetrics.BODY.sp,
+                                    color = SiloSecondaryText,
+                                )
+                            }
+                        }
+                    }
                 }
-                is WatchPartyAvailability.Unsupported -> Text(
-                    "This server doesn't support Watch Party yet.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                WatchPartyAvailability.NotAllowed -> Text(
-                    "Your account can't use Watch Party.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                is WatchPartyAvailability.ProbeFailed -> WatchPartyBanner(
-                    text = "Couldn't check whether this server supports Watch Party.",
-                    action = {
-                        TextButton(onClick = { viewModel.refresh(force = true) }) { Text("Retry") }
-                    },
-                )
-                is WatchPartyAvailability.Available -> Unit
-            }
 
-            // Errors stay inline; an uncertain create keeps its room id for Retry.
-            state.error?.let { message ->
-                WatchPartyBanner(
-                    text = message,
-                    action = {
-                        if (state.createRetryable) {
-                            TextButton(onClick = viewModel::retryCreate, enabled = !busy) { Text("Retry") }
+                if (!enabled) return@Column
+
+                if (current != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        WatchPartyEyebrow("You're in a Watch Party")
+                        if (current.code.isNotBlank()) {
+                            Text(
+                                current.code,
+                                fontSize = WatchPartyMetrics.CODE.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = (WatchPartyMetrics.CODE * 0.18f).sp,
+                                color = SiloOnSurface,
+                            )
                         }
-                        IconButton(onClick = viewModel::clearError) {
-                            Icon(Icons.Filled.Close, contentDescription = "Dismiss")
-                        }
-                    },
-                )
-            }
-
-            if (busy) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        when (state.busy) {
-                            WatchPartyPendingAction.Create -> "Starting your party…"
-                            WatchPartyPendingAction.Join -> "Joining…"
-                            WatchPartyPendingAction.Stage -> "Adding your title…"
-                            else -> "Working…"
-                        },
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                }
-            }
-
-            if (current != null) {
-                Text(
-                    "You're in a Watch Party" + current.code.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty() + ".",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Button(
-                    onClick = viewModel::returnToParty,
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) { Text("Return to Party") }
-                OutlinedButton(
-                    onClick = {
-                        if (current.selfRole == MemberRole.Host) confirmHostLeave = true else roomSession.depart()
-                    },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) { Text("Leave party") }
-                Text(
-                    "Leave this party to host or join another one.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                return@Column
-            }
-
-            if (!available) return@Column
-
-            state.recent?.takeIf { !endedRejoin }?.let { recent ->
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Recent party", style = MaterialTheme.typography.titleSmall)
-                    OutlinedButton(
-                        onClick = viewModel::rejoinRecent,
-                        enabled = !busy,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                    ) {
+                        WatchPartyButton(
+                            text = "Return to party",
+                            icon = Icons.Filled.PlayArrow,
+                            onClick = viewModel::returnToParty,
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        WatchPartyButton(
+                            text = "Leave party",
+                            kind = WatchPartyButtonKind.Secondary,
+                            onClick = {
+                                if (current.selfRole == MemberRole.Host) confirmHostLeave = true else roomSession.depart()
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         Text(
-                            recent.title?.takeIf { it.isNotBlank() }?.let { "Rejoin $it (${recent.code})" }
-                                ?: "Rejoin ${recent.code}",
+                            "Leave this party to host or join another one.",
+                            fontSize = WatchPartyMetrics.CAPTION.sp,
+                            color = SiloSecondaryText,
+                        )
+                    }
+                    return@Column
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WatchPartyButton(
+                        text = "Start a party",
+                        icon = Icons.Filled.Add,
+                        onClick = { viewModel.host() },
+                        enabled = canEnter,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    WatchPartyButton(
+                        text = "Start a party and let everyone vote",
+                        kind = WatchPartyButtonKind.Secondary,
+                        onClick = { viewModel.host(RoomSelectionMode.Vote) },
+                        enabled = canEnter,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    state.recent?.takeIf { !endedRejoin }?.let { recent ->
+                        WatchPartyButton(
+                            text = recent.title?.takeIf { it.isNotBlank() }?.let { "Rejoin $it" }
+                                ?: "Rejoin recent party",
+                            icon = Icons.Filled.Refresh,
+                            kind = WatchPartyButtonKind.Outlined,
+                            onClick = viewModel::rejoinRecent,
+                            enabled = canEnter,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    WatchPartyEyebrow("Have a code?")
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        WatchPartyCodeField(
+                            value = code,
+                            onValueChange = { code = it },
+                            enabled = !busy,
+                            onGo = { if (code.isNotBlank() && canEnter) join() },
+                            modifier = Modifier.weight(1f),
+                        )
+                        WatchPartyCircleButton(
+                            icon = Icons.Outlined.ContentPaste,
+                            contentDescription = "Paste",
+                            size = 52.dp,
+                            shape = RoundedCornerShape(14.dp),
+                            enabled = !busy,
+                            onClick = {
+                                val pasted = clipboard.getText()?.text?.trim().orEmpty()
+                                if (pasted.isEmpty()) {
+                                    Toast.makeText(context, "Copy an invitation or party code first.", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    code = pasted
+                                }
+                            },
+                        )
+                    }
+                    WatchPartyButton(
+                        text = "Join party",
+                        kind = WatchPartyButtonKind.Secondary,
+                        onClick = join,
+                        enabled = canEnter && code.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (state.availability != null && !available) {
+                        WatchPartyButton(
+                            text = "Check again",
+                            kind = WatchPartyButtonKind.Secondary,
+                            onClick = { viewModel.refresh(force = true) },
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
             }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Host", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "You pick what everyone watches. Guests can suggest titles.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(
-                    onClick = { viewModel.host() },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) { Text("Host a party") }
-            }
-
-            HorizontalDivider()
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Join", style = MaterialTheme.typography.titleSmall)
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { input ->
-                        code = input.uppercase()
-                            .filterNot { it.isWhitespace() || it == '-' }
-                            .take(WATCH_PARTY_CODE_LENGTH)
-                    },
-                    label = { Text("Party code") },
-                    singleLine = true,
-                    enabled = !busy,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Characters,
-                        autoCorrectEnabled = false,
-                        keyboardType = KeyboardType.Ascii,
-                        imeAction = ImeAction.Go,
-                    ),
-                    keyboardActions = KeyboardActions(onGo = {
-                        if (normalizeWatchPartyCode(code) != null) join()
-                    }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(
-                    onClick = join,
-                    enabled = !busy && normalizeWatchPartyCode(code) != null,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) { Text("Join with code") }
-                OutlinedButton(
-                    onClick = {
-                        val pasted = clipboard.getText()?.text?.trim().orEmpty()
-                        if (pasted.isEmpty()) {
-                            Toast.makeText(context, "Copy an invitation or party code first.", Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.join(pasted)
-                        }
-                    },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                ) {
-                    Icon(Icons.Outlined.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Paste invitation")
-                }
-            }
-            Spacer(Modifier.height(24.dp))
         }
     }
 
@@ -358,4 +384,71 @@ fun WatchPartyHubScreen(
             onDismiss = { confirmHostLeave = false },
         )
     }
+}
+
+@Composable
+private fun HubHeadline(modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy((WatchPartyMetrics.BODY * 0.6f).dp)) {
+        WatchPartyEyebrow("Watch Party")
+        WatchPartyHeroTitle("Watch something\ntogether")
+        Text(
+            "Pick a title, share the code, and everyone's playback stays in step.",
+            fontSize = WatchPartyMetrics.BODY.sp,
+            color = SiloSecondaryText,
+        )
+    }
+}
+
+@Composable
+private fun DismissButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        Icon(Icons.Filled.Close, contentDescription = "Dismiss", tint = SiloSecondaryText)
+    }
+}
+
+/** "Party code or invite link": monospaced, in the lobby's chrome. */
+@Composable
+private fun WatchPartyCodeField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+    onGo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    val style = TextStyle(
+        fontSize = 17.sp,
+        fontWeight = FontWeight.Medium,
+        fontFamily = FontFamily.Monospace,
+        color = SiloOnSurface,
+    )
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        enabled = enabled,
+        singleLine = true,
+        textStyle = style,
+        cursorBrush = SolidColor(SiloOnSurface),
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.Characters,
+            autoCorrectEnabled = false,
+            keyboardType = KeyboardType.Uri,
+            imeAction = ImeAction.Go,
+        ),
+        keyboardActions = KeyboardActions(onGo = { onGo() }),
+        modifier = modifier
+            .height(52.dp)
+            .clip(shape)
+            .background(WatchPartyColors.chromeFill)
+            .border(1.dp, WatchPartyColors.chromeBorder, shape)
+            .semantics { contentDescription = "Party code or invite link" },
+        decorationBox = { inner ->
+            Box(Modifier.fillMaxSize().padding(horizontal = 14.dp), contentAlignment = Alignment.CenterStart) {
+                if (value.isEmpty()) {
+                    Text("Party code or invite link", style = style.copy(color = SiloSecondaryText.copy(alpha = 0.5f)), maxLines = 1)
+                }
+                inner()
+            }
+        },
+    )
 }

@@ -41,10 +41,10 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
-import org.siloserver.silo.tv.ui.screens.player.TvDialogActionRow
-import org.siloserver.silo.tv.ui.theme.DarkBackground
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.watchtogether.WATCH_PARTY_CODE_ALPHABET
 import org.siloserver.silo.watchtogether.WATCH_PARTY_CODE_LENGTH
 import org.siloserver.silo.watchtogether.canDismissRoomEntry
@@ -75,12 +75,11 @@ private val JoinCodeKeys: List<Char> = WATCH_PARTY_CODE_ALPHABET.toList()
 private const val KEYS_PER_ROW = 8
 
 /**
- * D-pad Watch Party join-by-code dialog. Panel + row idiom mirrors
- * [org.siloserver.silo.tv.ui.screens.player.TvSubtitleSearchDialog]. Shows a large
- * mono display of the running code (placeholder dashes for unfilled slots), a
- * focusable key grid of the code alphabet (each key appends into a
- * [JoinCodeState]), a Delete row (backspace), and a "Join" row enabled when the
- * code is complete and not busy. [onJoin] receives the normalized code.
+ * D-pad Watch Party join-by-code dialog on the party's card: one slot per
+ * code character, a focusable pill-key grid of the code alphabet (each key
+ * appends into a [JoinCodeState]), Delete (backspace), and Join party, which
+ * acts once the code is complete and nothing is in flight. [onJoin] receives
+ * the normalized code.
  */
 @Composable
 fun TvJoinCodeDialog(
@@ -104,104 +103,118 @@ fun TvJoinCodeDialog(
             clippingEnabled = false,
         ),
     ) {
-        // A scrim and a near-opaque panel, as the party's other dialogs use:
-        // the hub's text sits right behind the keypad.
+        // A scrim and the party's card: the hub's text sits right behind the keypad.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.72f))
-                .padding(start = 36.dp, top = 40.dp, end = 36.dp, bottom = 30.dp),
+                .padding(start = 36.dp, top = 30.dp, end = 36.dp, bottom = 30.dp),
             contentAlignment = Alignment.Center,
         ) {
-            val panelShape = RoundedCornerShape(14.dp)
+            val panelShape = RoundedCornerShape(15.dp)
             Column(
                 modifier = Modifier
-                    .width(360.dp)
-                    .background(color = DarkBackground.copy(alpha = 0.94f), shape = panelShape)
-                    .border(0.6.dp, Color.White.copy(alpha = 0.20f), panelShape)
-                    .padding(horizontal = 14.dp, vertical = 14.dp)
+                    .width(420.dp)
+                    .background(color = DarkSurfaceElevated, shape = panelShape)
+                    .border(1.dp, PartyChromeBorder, panelShape)
+                    .padding(horizontal = 22.dp, vertical = 18.dp)
                     .then(rememberTvDialogInitialFocus(firstKeyFocus)),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                TvPartyEyebrow("Join a Watch Party")
                 Text(
-                    text = "JOIN A WATCH PARTY",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 16.sp,
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold,
-                    ),
-                    color = Color.White.copy(alpha = 0.58f),
-                    modifier = Modifier.padding(horizontal = 8.dp),
+                    text = "Enter the party code",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SiloOnSurface,
                 )
 
-                // Large mono display: filled chars + dashes for empty slots.
-                val display = (0 until JoinCodeState.LENGTH).joinToString(" ") { i ->
-                    state.code.getOrNull(i)?.toString() ?: "–"
-                }
-                Text(
-                    text = display,
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 16.sp,
-                        letterSpacing = 2.sp,
-                        fontWeight = FontWeight.Bold,
-                    ),
-                    color = Color.White,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-
-                // Focusable A–Z / 0–9 grid.
-                JoinCodeKeys.chunked(KEYS_PER_ROW).forEachIndexed { rowIndex, rowKeys ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        rowKeys.forEachIndexed { colIndex, ch ->
-                            JoinCodeKey(
-                                char = ch,
-                                // Joining is in flight, not a dead end — the
-                                // grid keeps its focus so the ring survives a
-                                // failed join.
-                                controlState = TvControlState.transient(!isBusy),
-                                onClick = { state = state.append(ch) },
-                                modifier = if (rowIndex == 0 && colIndex == 0) {
-                                    Modifier
-                                        .weight(1f)
-                                        .focusRequester(firstKeyFocus)
-                                } else {
-                                    Modifier.weight(1f)
-                                },
+                // One slot per character; the next one to fill is outlined.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    (0 until JoinCodeState.LENGTH).forEach { i ->
+                        val char = state.code.getOrNull(i)
+                        val next = i == state.code.length
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(40.dp)
+                                .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
+                                .border(
+                                    width = if (next) 1.5.dp else 1.dp,
+                                    color = if (next) SiloOnSurface.copy(alpha = 0.7f) else PartyChromeBorder,
+                                    shape = RoundedCornerShape(8.dp),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = char?.toString() ?: "",
+                                fontSize = 20.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = SiloOnSurface,
                             )
-                        }
-                        // Pad the final partial row so keys keep a consistent width.
-                        repeat(KEYS_PER_ROW - rowKeys.size) {
-                            Box(modifier = Modifier.weight(1f))
                         }
                     }
                 }
 
-                TvDialogActionRow(
-                    title = "Delete",
-                    enabled = !isBusy && state.code.isNotEmpty(),
-                    onClick = { state = state.backspace() },
-                )
+                // Focusable code-alphabet grid.
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
+                    JoinCodeKeys.chunked(KEYS_PER_ROW).forEachIndexed { rowIndex, rowKeys ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            rowKeys.forEachIndexed { colIndex, ch ->
+                                JoinCodeKey(
+                                    char = ch,
+                                    // Joining is in flight, not a dead end — the
+                                    // grid keeps its focus so the ring survives a
+                                    // failed join.
+                                    controlState = TvControlState.transient(!isBusy),
+                                    onClick = { state = state.append(ch) },
+                                    modifier = if (rowIndex == 0 && colIndex == 0) {
+                                        Modifier
+                                            .weight(1f)
+                                            .focusRequester(firstKeyFocus)
+                                    } else {
+                                        Modifier.weight(1f)
+                                    },
+                                )
+                            }
+                            // Pad the final partial row so keys keep a consistent width.
+                            repeat(KEYS_PER_ROW - rowKeys.size) {
+                                Box(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
 
-                TvDialogActionRow(
-                    title = if (isBusy) "Joining…" else "Join",
-                    enabled = state.isComplete && !isBusy,
-                    onClick = { state.normalized?.let(onJoin) },
-                )
-
-                error?.let { message ->
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFEF4444),
-                        modifier = Modifier.padding(horizontal = 8.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                ) {
+                    TvPartyButton(
+                        label = "Delete",
+                        kind = TvPartyButtonKind.Secondary,
+                        state = TvControlState.transient(!isBusy && state.code.isNotEmpty()),
+                        onClick = { state = state.backspace() },
+                        height = 34.dp,
+                    )
+                    TvPartyButton(
+                        label = if (isBusy) "Joining…" else "Join party",
+                        state = TvControlState.transient(state.isComplete && !isBusy),
+                        onClick = { state.normalized?.let(onJoin) },
+                        height = 34.dp,
+                        fontSize = 15.sp,
                     )
                 }
+
+                error?.let { message -> TvPartyBanner(message = message, warning = true) }
             }
         }
     }
@@ -218,7 +231,7 @@ private fun JoinCodeKey(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(100.dp)
     val enabled = controlState.actionable
 
     Surface(
@@ -231,7 +244,7 @@ private fun JoinCodeKey(
         // disabled colour path.
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (enabled) {
-                Color.White.copy(alpha = 0.06f)
+                PartyChromeFill
             } else {
                 Color.White.copy(alpha = 0.03f)
             },
@@ -246,7 +259,7 @@ private fun JoinCodeKey(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
         border = ClickableSurfaceDefaults.border(
             focusedBorder = Border(
-                border = BorderStroke(2.dp, DarkBackground.copy(alpha = 0.82f)),
+                border = BorderStroke(0.dp, Color.Transparent),
                 shape = shape,
             ),
         ),
@@ -257,14 +270,7 @@ private fun JoinCodeKey(
             ),
         ),
         modifier = modifier
-            .height(24.dp)
-            .then(
-                if (isFocused) {
-                    Modifier.border(2.dp, Color.White.copy(alpha = 0.98f), shape)
-                } else {
-                    Modifier
-                },
-            )
+            .height(30.dp)
             .tvControlSemantics(controlState),
     ) {
         Box(

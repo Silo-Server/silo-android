@@ -2,23 +2,16 @@ package org.siloserver.silo.tv.ui.screens.watchparty
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -27,55 +20,49 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
-import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.ItemMemberState
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.repository.WatchTogetherRepository
-import org.siloserver.silo.tv.ui.components.TvDialogOption
-import org.siloserver.silo.tv.ui.components.TvOptionDialog
-import org.siloserver.silo.tv.ui.components.TvPoster
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.TvRestoreFocusOnModalDismiss
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
+import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel
 import org.siloserver.silo.watchtogether.WatchPartyDestination
-import org.siloserver.silo.watchtogether.WatchPartyEligibility
 import org.siloserver.silo.watchtogether.canRemoveSuggestion
 import org.siloserver.silo.watchtogether.roomVoteWinner
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
 
 /**
- * The Watch Party lobby: the staged item (or the empty state), members with
- * the host badge and lobby Ready, Start for the host and Ready for guests,
- * the host's options, Leave, the invitation, and suggestions.
+ * The Watch Party lobby, laid out as the tvOS lobby ([TvWatchPartyRoomView]):
+ * the staged film full-bleed, the hero, the ballot or suggestions, seats, and
+ * the one foregrounded action. Settings, End, and Leave sit behind "···"; the
+ * code pill and the Invite seat open the invitation page.
  *
  * Only the room's phase opens the player ([WatchPartyLobbyViewModel.destination]).
- * Every control is always composed for its role and gated transiently, and
- * rows are keyed by suggestion id, so live snapshots and vote reordering never
- * move or drop focus. If a focused row disappears (removed or promoted), focus
- * goes to the nearest remaining row, else the primary action.
+ * Every control is composed from role and room alone and gated transiently,
+ * and cards are keyed by suggestion id, so live snapshots and vote reordering
+ * never move or drop focus. If a focused card disappears (removed, promoted),
+ * focus goes to the nearest card that still has an action, else the primary
+ * action. Modals hand focus back to whatever opened them.
  */
 @Composable
 fun TvWatchPartyLobbyScreen(
@@ -123,64 +110,64 @@ fun TvWatchPartyLobbyScreen(
         }
     }
 
-    var pickerOpen by rememberSaveable { mutableStateOf(false) }
+    /** "select" stages a pick, "suggest" adds a suggestion; null is closed. */
+    var pickerPurpose by rememberSaveable { mutableStateOf<String?>(null) }
     var optionsOpen by rememberSaveable { mutableStateOf(false) }
+    var inviteOpen by rememberSaveable { mutableStateOf(false) }
     var confirmEnd by rememberSaveable { mutableStateOf(false) }
-    val modalOpen = pickerOpen || optionsOpen || confirmEnd
+    var confirmLeave by rememberSaveable { mutableStateOf(false) }
+    var menuSuggestionId by remember { mutableStateOf<String?>(null) }
+    val modalOpen = pickerPurpose != null || optionsOpen || inviteOpen || confirmEnd || confirmLeave ||
+        menuSuggestionId != null
 
     BackHandler(enabled = !modalOpen) { onBack() }
 
     val room = state.room?.takeIf { it.roomId == roomId }
     val eligibility = state.eligibility
+    val suggestions = state.suggestions
     // Role comes from the snapshot, so the layout is right before the
     // capability probe (which eligibility also needs) has answered.
     val isHost = room?.let { it.selfRole == MemberRole.Host && it.selfCanManageRoom } == true
-    val hostPick = room?.selectionMode == RoomSelectionMode.HostPick
-    // Which controls exist depends on role and room only, never on a request
-    // in flight: busy gating is transient, so no focused control disappears.
-    val stagesPick = isHost && hostPick && state.features?.stagedSelection == true
-    val canAdd = room != null && room.selfRole != MemberRole.Unknown &&
-        (room.selectionMode == RoomSelectionMode.HostPick || room.selectionMode == RoomSelectionMode.Vote)
-    // Start and lobby Ready apply to a staged pick, which only Host Picks has;
-    // a voting room starts when the host plays a suggestion.
-    val showStart = isHost && hostPick
-    val showReady = !isHost && hostPick && state.features?.lobbyReady == true
-    val primaryRow = when {
-        room == null -> LobbyPrimary.Back
-        showStart -> LobbyPrimary.Start
-        showReady -> LobbyPrimary.Ready
-        canAdd -> LobbyPrimary.Add
-        else -> LobbyPrimary.Leave
-    }
-    val showPromote = isHost && room?.selectionMode == RoomSelectionMode.Vote && state.features?.voteHostOverride == true
 
-    val primaryFocus = remember { FocusRequester() }
-    val addFocus = remember { FocusRequester() }
-    val optionsFocus = remember { FocusRequester() }
-    var addFocused by remember { mutableStateOf(false) }
-    var optionsFocused by remember { mutableStateOf(false) }
-    val rowFocus = remember { mutableMapOf<String, FocusRequester>() }
+    val focus = rememberTvPartyFocus()
     var lobbyHasFocus by remember { mutableStateOf(false) }
     var lastFocusedSuggestion by remember { mutableStateOf<Int?>(null) }
-
-    val suggestions = state.suggestions
-    val actionableIds = suggestions.filter { suggestionHasActions(it, room, isHost, hostPick) }.map { it.id }
+    val actionableIds = if (room == null) {
+        emptyList()
+    } else {
+        suggestions.filter { tvPartySuggestionFocusable(room, it) }.map { it.id }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val latestActionableIds by rememberUpdatedState(actionableIds)
     val latestSuggestionIds by rememberUpdatedState(suggestions.map { it.id })
+    val anchorKey = room?.let { tvPartyAnchorKey(it, state.features, suggestions) } ?: PARTY_KEY_BACK
+    val latestAnchorKey by rememberUpdatedState(anchorKey)
+
+    // Remember which card had focus, so a card that vanishes under focus
+    // hands it to its neighbour rather than the page.
+    val focusedKey = focus.focusedKey
+    LaunchedEffect(focusedKey) {
+        val key = focusedKey ?: return@LaunchedEffect
+        lastFocusedSuggestion = if (key.startsWith("s:")) {
+            latestSuggestionIds.indexOf(key.removePrefix("s:")).takeIf { it >= 0 }
+        } else {
+            null
+        }
+    }
 
     // One focus owner for first entry and for recovery: on entry, and
     // whenever focus leaves the lobby without a modal taking it (a focused
-    // suggestion was removed, promoted, or reordered away), land on the
-    // nearest suggestion that still has actions, else the primary action.
+    // suggestion was removed, promoted, or reordered away; a button's action
+    // swapped it for another), land on the nearest suggestion that still has
+    // actions, else the anchor action.
     LaunchedEffect(lobbyHasFocus, modalOpen, room != null) {
         if (lobbyHasFocus || modalOpen) return@LaunchedEffect
         delay(LOBBY_FOCUS_RESCUE_DELAY_MS)
         if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
         val target = lastFocusedSuggestion
             ?.let { index -> nearestActionable(latestSuggestionIds, latestActionableIds, index) }
-            ?.let { id -> rowFocus[id] }
-            ?: primaryFocus
+            ?.let { id -> focus.requester(tvPartySuggestionKey(id)) }
+            ?: focus.requester(latestAnchorKey)
         requestFocusUntilObserved(
             maxAttempts = 20,
             awaitAttempt = { delay(60) },
@@ -188,6 +175,39 @@ fun TvWatchPartyLobbyScreen(
             isFocused = { lobbyHasFocus },
         )
     }
+
+    // Entry focus goes to the anchor (the primary action). The anchor can
+    // change a moment after entry (the capability probe answers, a pick
+    // lands); while the viewer still sits on the old one, focus follows.
+    var initialFocusClaimed by rememberSaveable { mutableStateOf(false) }
+    var previousAnchor by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(room != null, anchorKey, modalOpen) {
+        if (room == null || modalOpen) return@LaunchedEffect
+        val previous = previousAnchor
+        previousAnchor = anchorKey
+        val follow = previous != null && previous != anchorKey && focus.isFocused(previous)
+        if (initialFocusClaimed && !follow) return@LaunchedEffect
+        val target = focus.requester(anchorKey)
+        requestFocusUntilObserved(
+            maxAttempts = 20,
+            awaitAttempt = { delay(60) },
+            requestFocus = target::requestFocus,
+            isFocused = { focus.isFocused(latestAnchorKey) },
+        )
+        initialFocusClaimed = true
+    }
+
+    // Modals return focus to the control that opened them.
+    var opener by remember { mutableStateOf<String?>(null) }
+    fun openModal(open: () -> Unit) {
+        opener = focus.focusedKey
+        open()
+    }
+    TvRestoreFocusOnModalDismiss(
+        visible = modalOpen,
+        opener = opener?.let(focus::requester),
+        isOpenerFocused = { focus.isFocused(opener) },
+    )
 
     val serverUrl = rememberProfileServerUrl()
     val inviteUrl = room?.takeIf { isHost }?.let { watchPartyInviteUrl(serverUrl, it.invitePath) }
@@ -212,256 +232,148 @@ fun TvWatchPartyLobbyScreen(
         stagedId?.let { value = viewModel.memberState(it) }
     }
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .onFocusChanged { lobbyHasFocus = it.hasFocus }
-            .padding(start = 48.dp, end = 48.dp, top = 32.dp),
-        horizontalArrangement = Arrangement.spacedBy(36.dp),
+            .onFocusChanged { lobbyHasFocus = it.hasFocus },
     ) {
-        // ---- Left: what's on, and what you can do --------------------------
-        Column(
-            modifier = Modifier
-                .weight(0.44f)
-                .fillMaxHeight()
-                .onFocusChanged { if (it.hasFocus) lastFocusedSuggestion = null }
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            TvPartySectionLabel("Watch Party")
-            if (room != null) {
-                Text(
-                    text = "${tvWatchPartyModeLabel(room.selectionMode)} · Play and pause: " +
-                        tvWatchPartyPolicyLabel(room.guestControlPolicy),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-            }
-            StagedCard(
+        if (room == null) {
+            ConnectingRoom(focus = focus, onBack = onBack)
+        } else {
+            TvWatchPartyRoomView(
                 room = room,
+                suggestions = suggestions,
+                features = state.features,
+                eligibility = eligibility,
+                personalVotesKnown = state.personalVotesKnown,
+                connection = connection,
                 staged = staged,
-                hostPick = hostPick,
-                isHost = isHost,
-                memberState = memberState,
-            )
-            if (reconnect != null) TvPartyNotice(title = reconnect)
-            if (room != null && !isHost && !room.hostConnected) {
-                TvPartyNotice(title = "The host disconnected", detail = TV_WATCH_PARTY_HOST_AWAY_NOTE)
-            }
-            if (showStopped && !isHost) TvPartyNotice(title = "The host stopped playback")
-
-            if (room == null) {
-                Text(
-                    text = "Connecting to the party…",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                TvPartyActionRow(title = "Back", onClick = onBack, modifier = Modifier.focusRequester(primaryFocus))
-                return@Column
-            }
-
-            if (showStart) {
-                val readiness = state.readiness
-                TvPartyActionRow(
-                    title = "Start",
-                    subtitle = when {
-                        stagedId == null -> "Add a title first."
-                        readiness.guests > 0 -> "${readiness.ready} of ${readiness.guests} guests ready"
-                        else -> "You can start on your own."
-                    },
-                    onClick = viewModel::start,
-                    state = TvControlState.transient(eligibility.canStart),
-                    modifier = Modifier.focusRequester(primaryFocus),
-                )
-            }
-            if (showReady) {
-                val ready = room.selfMember?.lobbyReady == true
-                TvPartyActionRow(
-                    title = if (ready) "You're ready" else "I'm ready",
-                    subtitle = when {
-                        stagedId == null -> "Available once the host picks a title."
-                        ready -> "Select to undo."
-                        else -> "Lets the host know you're set."
-                    },
-                    onClick = { viewModel.setLobbyReady(!ready) },
-                    state = TvControlState.transient(eligibility.canLobbyReady),
-                    modifier = Modifier.focusRequester(primaryFocus),
-                )
-            }
-            if (canAdd) {
-                TvPartyActionRow(
-                    title = if (stagesPick) "Add a title" else "Suggest a title",
-                    onClick = { pickerOpen = true },
-                    state = TvControlState.transient(eligibility.canStage || eligibility.canSuggest),
-                    modifier = Modifier
-                        .then(if (primaryRow == LobbyPrimary.Add) Modifier.focusRequester(primaryFocus) else Modifier)
-                        .focusRequester(addFocus)
-                        .onFocusChanged { addFocused = it.isFocused },
-                )
-            }
-            if (isHost) {
-                TvPartyActionRow(
-                    title = "Party options",
-                    subtitle = "Mode, who can play and pause, end the party",
-                    onClick = { optionsOpen = true },
-                    modifier = Modifier
-                        .focusRequester(optionsFocus)
-                        .onFocusChanged { optionsFocused = it.isFocused },
-                )
-            }
-            TvPartyActionRow(
-                title = "Leave party",
-                subtitle = if (isHost) TV_WATCH_PARTY_HOST_LEAVE_NOTE else null,
-                onClick = {
-                    viewModel.leave()
-                    onLeft()
+                focus = focus,
+                notice = reconnect ?: "The host stopped playback".takeIf { showStopped && !isHost },
+                memberStateLine = memberStateLine(room, memberState),
+                footer = state.suggestionRetry?.let { draft ->
+                    {
+                        SuggestionRetryRow(
+                            title = draft.title,
+                            onRetry = viewModel::retrySuggestion,
+                            onDismiss = viewModel::dismissSuggestionRetry,
+                        )
+                    }
                 },
-                modifier = if (primaryRow == LobbyPrimary.Leave) Modifier.focusRequester(primaryFocus) else Modifier,
+                actions = TvPartyRoomActions(
+                    onInvite = { openModal { inviteOpen = true } },
+                    onOptions = { openModal { optionsOpen = true } },
+                    onChooseTitle = { openModal { pickerPurpose = PICK_SELECT } },
+                    onSuggest = { openModal { pickerPurpose = PICK_SUGGEST } },
+                    onStart = {
+                        if (room.selectionMode == RoomSelectionMode.Vote) {
+                            roomVoteWinner(suggestions)?.let(viewModel::promote)
+                        } else {
+                            viewModel.start()
+                        }
+                    },
+                    onReady = viewModel::setLobbyReady,
+                    onVote = viewModel::vote,
+                    onQueue = { suggestion -> queue(viewModel, suggestion) },
+                    onSuggestionMenu = { suggestion ->
+                        if (suggestionMenuRows(room, suggestion, state.features?.voteHostOverride == true).isNotEmpty()) {
+                            openModal { menuSuggestionId = suggestion.id }
+                        }
+                    },
+                ),
             )
-        }
-
-        // ---- Right: invitation, members, suggestions -----------------------
-        Column(
-            modifier = Modifier
-                .weight(0.56f)
-                .fillMaxHeight()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (room == null) return@Column
-            TvPartyInvitation(code = room.code, inviteUrl = inviteUrl)
-
-            val readiness = state.readiness
-            TvPartySectionLabel(
-                "In this party (${room.members.size})" +
-                    if (readiness.guests > 0) " · ${readiness.ready} of ${readiness.guests} ready" else "",
-            )
-            if (room.members.none { it.isHost }) {
-                MemberPlaceholder("Host · connecting…")
-            }
-            room.members.sortedByDescending { it.isHost }.forEach { member ->
-                TvPartyMemberRow(member = member, room = room)
-            }
-
-            TvPartySectionLabel(
-                if (room.selectionMode == RoomSelectionMode.Vote) "Suggestions · vote for what's next" else "Suggestions",
-                modifier = Modifier.padding(top = 8.dp),
-            )
-            state.suggestionRetry?.let { draft ->
-                SuggestionRetryRow(
-                    title = draft.title,
-                    onRetry = viewModel::retrySuggestion,
-                    onDismiss = viewModel::dismissSuggestionRetry,
-                )
-            }
-            if (suggestions.isEmpty()) {
-                Text(
-                    text = if (canAdd) "No suggestions yet. Suggest a title to get things going." else "No suggestions yet.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.White.copy(alpha = 0.56f),
-                )
-            }
-            val winner = if (room.selectionMode == RoomSelectionMode.Vote) roomVoteWinner(suggestions) else null
-            suggestions.forEachIndexed { index, suggestion ->
-                key(suggestion.id) {
-                    SuggestionRow(
-                        suggestion = suggestion,
-                        room = room,
-                        eligibility = eligibility,
-                        isHost = isHost,
-                        personalVotesKnown = state.personalVotesKnown,
-                        hostPick = hostPick,
-                        showPromote = showPromote,
-                        leading = winner?.id == suggestion.id,
-                        firstChipFocus = rowFocus.getOrPut(suggestion.id) { FocusRequester() },
-                        onFocused = { lastFocusedSuggestion = index },
-                        onVote = { viewModel.vote(suggestion) },
-                        onPromote = { viewModel.promote(suggestion) },
-                        onQueue = {
-                            TvWatchPartyPreviews.put(
-                                WatchPartyItem(
-                                    contentId = suggestion.contentId,
-                                    contentType = suggestion.contentType,
-                                    title = suggestion.title,
-                                    subtitle = suggestion.subtitle.ifBlank { null },
-                                    posterUrl = suggestion.posterUrl.ifBlank { null },
-                                ),
-                            )
-                            viewModel.queue(suggestion)
-                        },
-                        onRemove = { viewModel.remove(suggestion) },
-                    )
-                }
-            }
         }
     }
 
-    if (pickerOpen) {
+    val purpose = pickerPurpose
+    if (purpose != null && room != null) {
+        // Host-pick hosts stage their pick; everyone else suggests.
+        val stages = purpose == PICK_SELECT && state.features?.stagedSelection == true
         TvWatchPartyPicker(
-            stages = stagesPick,
+            stages = stages,
+            members = room.members,
+            memberState = if (state.features?.memberState == true) viewModel::memberState else null,
             onPick = { item ->
-                pickerOpen = false
+                pickerPurpose = null
                 TvWatchPartyPreviews.put(item)
-                if (stagesPick) viewModel.stage(item) else viewModel.suggest(item)
+                if (stages) viewModel.stage(item) else viewModel.suggest(item)
             },
             onOpenSeries = { contentId ->
-                pickerOpen = false
+                pickerPurpose = null
                 onOpenDetail(contentId)
             },
-            onDismiss = { pickerOpen = false },
+            onDismiss = { pickerPurpose = null },
         )
     }
-    TvRestoreFocusOnModalDismiss(visible = pickerOpen, opener = addFocus, isOpenerFocused = { addFocused })
 
     if (optionsOpen && room != null) {
-        val otherMode = if (room.selectionMode == RoomSelectionMode.Vote) RoomSelectionMode.HostPick else RoomSelectionMode.Vote
-        val otherPolicy = if (room.guestControlPolicy == GuestControlPolicy.GuestPlayPause) {
-            GuestControlPolicy.HostOnly
-        } else {
-            GuestControlPolicy.GuestPlayPause
-        }
-        TvOptionDialog(
-            title = "Party options",
-            options = listOf(
-                TvDialogOption(
-                    key = "mode",
-                    title = "Mode: ${tvWatchPartyModeLabel(room.selectionMode)}",
-                    subtitle = "Switch to ${tvWatchPartyModeLabel(otherMode)}",
-                    enabled = eligibility.canSwitchMode,
-                    onClick = {
-                        optionsOpen = false
-                        viewModel.setMode(otherMode)
-                    },
-                ),
-                TvDialogOption(
-                    key = "policy",
-                    title = "Play and pause: ${tvWatchPartyPolicyLabel(room.guestControlPolicy)}",
-                    subtitle = "Change to ${tvWatchPartyPolicyLabel(otherPolicy)}",
-                    enabled = eligibility.canSetPolicy,
-                    onClick = {
-                        optionsOpen = false
-                        viewModel.setGuestPolicy(otherPolicy)
-                    },
-                ),
-                TvDialogOption(
-                    key = "end",
-                    title = "End party for everyone",
-                    enabled = eligibility.canEnd,
-                    onClick = {
-                        optionsOpen = false
-                        confirmEnd = true
-                    },
-                ),
-            ),
+        TvWatchPartyOptionsOverlay(
+            room = room,
+            features = state.features,
+            eligibility = eligibility,
+            onSetMode = viewModel::setMode,
+            onSetPolicy = viewModel::setGuestPolicy,
+            // The lobby is never playing; the player's panel owns this row.
+            onStopPlayback = { optionsOpen = false },
+            onEnd = {
+                optionsOpen = false
+                confirmEnd = true
+            },
+            onLeave = {
+                optionsOpen = false
+                if (isHost) {
+                    confirmLeave = true
+                } else {
+                    viewModel.leave()
+                    onLeft()
+                }
+            },
             onDismiss = { optionsOpen = false },
         )
     }
+
+    if (inviteOpen && room != null) {
+        TvWatchPartyInvitePage(
+            code = room.code,
+            inviteUrl = inviteUrl,
+            backdropUrl = staged?.backdropUrl,
+            backdropThumbhash = staged?.backdropThumbhash,
+            onDismiss = { inviteOpen = false },
+        )
+    }
+
+    val menuSuggestion = suggestions.firstOrNull { it.id == menuSuggestionId }
+    LaunchedEffect(menuSuggestionId, menuSuggestion == null) {
+        // The suggestion went away (removed, promoted) while its menu was open.
+        if (menuSuggestionId != null && menuSuggestion == null) menuSuggestionId = null
+    }
+    if (menuSuggestion != null && room != null) {
+        TvPartyMenuOverlay(
+            title = menuSuggestion.title,
+            onDismiss = { menuSuggestionId = null },
+            width = 380.dp,
+        ) {
+            suggestionMenuRows(room, menuSuggestion, state.features?.voteHostOverride == true).forEach { row ->
+                TvPartyOptionRow(
+                    title = row.title,
+                    destructive = row == SuggestionMenuRow.Remove,
+                    state = TvControlState.transient(!eligibility.busy),
+                    onClick = {
+                        menuSuggestionId = null
+                        when (row) {
+                            SuggestionMenuRow.StartThisOne -> viewModel.promote(menuSuggestion)
+                            SuggestionMenuRow.Queue -> queue(viewModel, menuSuggestion)
+                            SuggestionMenuRow.Remove -> viewModel.remove(menuSuggestion)
+                        }
+                    },
+                )
+            }
+        }
+    }
+
     if (confirmEnd) {
         TvWatchPartyConfirmDialog(
-            title = "End the party for everyone?",
+            title = "End this party for everyone?",
             message = "Everyone leaves the party.",
             confirmLabel = "End party",
             destructive = true,
@@ -473,25 +385,55 @@ fun TvWatchPartyLobbyScreen(
             onDismiss = { confirmEnd = false },
         )
     }
-    TvRestoreFocusOnModalDismiss(
-        visible = optionsOpen || confirmEnd,
-        opener = optionsFocus,
-        isOpenerFocused = { optionsFocused },
-    )
+    if (confirmLeave) {
+        TvWatchPartyConfirmDialog(
+            title = "Leave the party?",
+            message = TV_WATCH_PARTY_HOST_LEAVE_NOTE,
+            confirmLabel = "Leave party",
+            destructive = true,
+            onConfirm = {
+                confirmLeave = false
+                viewModel.leave()
+                onLeft()
+            },
+            onDismiss = { confirmLeave = false },
+        )
+    }
 }
 
-/** The action that owns focus on entry and when focus is lost. */
-private enum class LobbyPrimary { Back, Start, Ready, Add, Leave }
+private const val PICK_SELECT = "select"
+private const val PICK_SUGGEST = "suggest"
+internal const val PARTY_KEY_BACK = "back"
 
-private fun suggestionHasActions(
-    suggestion: Suggestion,
-    room: RoomSnapshot?,
-    isHost: Boolean,
-    hostPick: Boolean,
-): Boolean {
-    if (room == null) return false
-    if (!hostPick) return true
-    return (isHost && suggestion.contentId != room.selectedContentId) || canRemoveSuggestion(room, suggestion)
+private fun queue(viewModel: WatchPartyLobbyViewModel, suggestion: Suggestion) {
+    TvWatchPartyPreviews.put(
+        WatchPartyItem(
+            contentId = suggestion.contentId,
+            contentType = suggestion.contentType,
+            title = suggestion.title,
+            subtitle = suggestion.subtitle.ifBlank { null },
+            posterUrl = suggestion.posterUrl.ifBlank { null },
+        ),
+    )
+    viewModel.queue(suggestion)
+}
+
+private enum class SuggestionMenuRow(val title: String) {
+    StartThisOne("Start this one"),
+    Queue("Queue"),
+    Remove("Remove suggestion"),
+}
+
+/** A suggestion card's context actions for this member. */
+private fun suggestionMenuRows(room: RoomSnapshot, suggestion: Suggestion, voteHostOverride: Boolean): List<SuggestionMenuRow> {
+    val manages = room.selfRole == MemberRole.Host && room.selfCanManageRoom
+    return buildList {
+        if (manages && room.selectionMode == RoomSelectionMode.Vote && voteHostOverride) add(SuggestionMenuRow.StartThisOne)
+        if (manages && room.selectionMode == RoomSelectionMode.HostPick && suggestion.contentId != room.selectedContentId) {
+            add(SuggestionMenuRow.Queue)
+        }
+        if (canRemoveSuggestion(room, suggestion)) add(SuggestionMenuRow.Remove)
+    }
 }
 
 /** The actionable suggestion nearest [index] in the current list, preferring the one now in its place. */
@@ -503,70 +445,6 @@ private fun nearestActionable(ids: List<String>, actionable: List<String>, index
         ids.getOrNull(index - offset)?.takeIf { it in set }?.let { return it }
     }
     return null
-}
-
-@Composable
-private fun StagedCard(
-    room: RoomSnapshot?,
-    staged: TvStagedPreview?,
-    hostPick: Boolean,
-    isHost: Boolean,
-    memberState: ItemMemberState?,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(16.dp))
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (staged != null) {
-            TvPoster(
-                imageUrl = staged.posterUrl,
-                contentDescription = null,
-                modifier = Modifier.size(width = 72.dp, height = 108.dp),
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                TvPartySectionLabel(if (hostPick) "Up next" else "Selected")
-                Text(
-                    text = staged.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                listOfNotNull(staged.subtitle, staged.edition).joinToString(" · ").takeIf { it.isNotBlank() }?.let {
-                    Text(text = it, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.72f))
-                }
-                memberStateLine(room, memberState)?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                        color = Color.White.copy(alpha = 0.64f),
-                    )
-                }
-            }
-        } else {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "Nothing picked yet",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                )
-                Text(
-                    text = when {
-                        room == null -> "Waiting for the party…"
-                        !hostPick -> "Suggest titles and vote. The host starts the one everyone wants."
-                        isHost -> "Add a title, then start when everyone's ready."
-                        else -> "The host picks what everyone watches. You can suggest titles."
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-            }
-        }
-    }
 }
 
 /** "Seen by Ana · Part way: Ben" for the staged item, from member state (omitted members are unknown, not unplayed). */
@@ -586,138 +464,43 @@ private fun memberStateLine(room: RoomSnapshot?, state: ItemMemberState?): Strin
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
+/** Before the first snapshot: say so, and keep a focus owner so Back and Select work. */
 @Composable
-private fun MemberPlaceholder(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
-        color = Color.White.copy(alpha = 0.5f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
+private fun ConnectingRoom(focus: TvPartyFocus, onBack: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        TvPartyBackdrop(url = null)
+        Column(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(horizontal = TvPartyMetrics.pageInsetX),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            TvPartyEyebrow("Watch Party")
+            Text(text = "Connecting to the party…", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = SiloOnSurface)
+            TvPartyButton(
+                label = "Back",
+                kind = TvPartyButtonKind.Secondary,
+                onClick = onBack,
+                modifier = Modifier.partyFocus(focus, PARTY_KEY_BACK),
+            )
+        }
+    }
 }
 
 @Composable
 private fun SuggestionRetryRow(title: String, onRetry: () -> Unit, onDismiss: () -> Unit) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
             text = "Couldn't confirm your suggestion of $title.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White,
-            modifier = Modifier.weight(1f),
+            fontSize = TvPartyMetrics.caption,
+            color = SiloSecondaryText,
+            modifier = Modifier.weight(1f, fill = false),
         )
-        TvPartyChip(text = "Try again", onClick = onRetry)
-        TvPartyChip(text = "Dismiss", onClick = onDismiss)
-    }
-}
-
-@Composable
-private fun SuggestionRow(
-    suggestion: Suggestion,
-    room: RoomSnapshot,
-    eligibility: WatchPartyEligibility,
-    isHost: Boolean,
-    personalVotesKnown: Boolean,
-    hostPick: Boolean,
-    showPromote: Boolean,
-    leading: Boolean,
-    firstChipFocus: FocusRequester,
-    onFocused: () -> Unit,
-    onVote: () -> Unit,
-    onPromote: () -> Unit,
-    onQueue: () -> Unit,
-    onRemove: () -> Unit,
-) {
-    val upNext = hostPick && suggestion.contentId == room.selectedContentId
-    val canRemove = canRemoveSuggestion(room, suggestion)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.04f), RoundedCornerShape(12.dp))
-            .onFocusChanged { if (it.hasFocus) onFocused() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        TvPoster(
-            imageUrl = suggestion.posterUrl.ifBlank { null },
-            contentDescription = null,
-            modifier = Modifier.size(width = 32.dp, height = 48.dp),
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = suggestion.title,
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            val detail = buildList {
-                suggestion.subtitle.takeIf { it.isNotBlank() }?.let(::add)
-                if (!hostPick) add(if (suggestion.voteCount == 1) "1 vote" else "${suggestion.voteCount} votes")
-                if (upNext) add("Up next")
-                if (leading) add("Leading")
-            }.joinToString(" · ")
-            if (detail.isNotBlank()) {
-                Text(
-                    text = detail,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = Color.White.copy(alpha = 0.64f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        var firstAssigned = false
-        fun Modifier.firstChip(): Modifier =
-            if (!firstAssigned) {
-                firstAssigned = true
-                this.focusRequester(firstChipFocus)
-            } else {
-                this
-            }
-        if (!hostPick) {
-            TvPartyChip(
-                // Personal votes are unknown until an HTTP read confirms them.
-                text = if (!personalVotesKnown) "Vote" else if (suggestion.votedByMe) "Voted" else "Vote",
-                selected = personalVotesKnown && suggestion.votedByMe,
-                onClick = onVote,
-                state = TvControlState.transient(eligibility.canVote),
-                modifier = Modifier.firstChip(),
-            )
-            if (showPromote) {
-                TvPartyChip(
-                    text = "Play now",
-                    onClick = onPromote,
-                    state = TvControlState.transient(eligibility.canPromote),
-                    modifier = Modifier.firstChip(),
-                )
-            }
-        } else if (isHost && !upNext) {
-            TvPartyChip(
-                text = "Queue",
-                onClick = onQueue,
-                state = TvControlState.transient(eligibility.canQueue),
-                modifier = Modifier.firstChip(),
-            )
-        }
-        if (canRemove) {
-            TvPartyChip(
-                text = "Remove",
-                onClick = onRemove,
-                state = TvControlState.transient(!eligibility.busy),
-                modifier = Modifier.firstChip(),
-            )
-        }
+        TvPartyButton(label = "Try again", kind = TvPartyButtonKind.Secondary, onClick = onRetry, height = 32.dp, fontSize = 14.sp)
+        TvPartyButton(label = "Dismiss", kind = TvPartyButtonKind.Secondary, onClick = onDismiss, height = 32.dp, fontSize = 14.sp)
     }
 }
 

@@ -1,10 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.watchparty
 
-import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
-import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.repository.WatchPartyEndReason
 
@@ -65,32 +63,6 @@ private fun RoomMember.isSameMember(other: RoomMember): Boolean =
     } else {
         displayName == other.displayName
     }
-
-/** A member's state in the list: lobby Ready in the lobby, playback status while playing. */
-internal fun tvWatchPartyMemberStatus(member: RoomMember, room: RoomSnapshot): String? = when {
-    !member.connected -> "Away"
-    room.phase == RoomPhase.Lobby -> when {
-        member.isHost -> null
-        member.lobbyReady -> "Ready"
-        else -> "Not ready"
-    }
-    member.isSyncing -> "Syncing"
-    member.isBuffering -> "Buffering"
-    room.playbackState == RoomPlaybackState.Waiting && member.isReady -> "Ready"
-    else -> "Watching"
-}
-
-internal fun tvWatchPartyModeLabel(mode: RoomSelectionMode): String = when (mode) {
-    RoomSelectionMode.HostPick -> "Host picks"
-    RoomSelectionMode.Vote -> "Voting"
-    RoomSelectionMode.Unknown -> "Unknown"
-}
-
-internal fun tvWatchPartyPolicyLabel(policy: GuestControlPolicy): String = when (policy) {
-    GuestControlPolicy.HostOnly -> "Host only"
-    GuestControlPolicy.GuestPlayPause -> "Guests can play and pause"
-    GuestControlPolicy.Unknown -> "Unknown"
-}
 
 /** A room code split in two for reading aloud and typing: "ABCD 2345". */
 internal fun tvWatchPartyDisplayCode(code: String): String =

@@ -28,19 +28,26 @@ internal object TvWatchPartyPreviews {
     fun get(contentId: String): WatchPartyItem? = items[contentId]
 }
 
-/** What the lobby shows for the staged item. */
+/** What the room shows for the staged item. */
 internal data class TvStagedPreview(
     val title: String,
+    /** An episode's series and number; null for a movie. */
     val subtitle: String?,
     val posterUrl: String?,
-    /** The chosen edition, when the title has more than one. */
-    val edition: String?,
+    val posterThumbhash: String? = null,
+    val backdropUrl: String? = null,
+    val backdropThumbhash: String? = null,
+    val overview: String? = null,
+    /** "2021", "2h 35m". */
+    val facts: List<String> = emptyList(),
+    /** The chosen version's quality: "4K", "HDR". */
+    val chips: List<String> = emptyList(),
 )
 
 /**
- * The staged item's card content: a handed-over preview or a suggestion first,
- * then the catalog detail (cached, else fetched) for the full title and the
- * selected edition.
+ * The staged item's hero content: a handed-over preview or a suggestion first,
+ * then the catalog detail (cached, else fetched) for the full title, artwork,
+ * overview, and the selected version's quality.
  */
 @Composable
 internal fun rememberTvStagedPreview(
@@ -59,41 +66,54 @@ internal fun rememberTvStagedPreview(
     val id = contentId?.takeIf { it.isNotBlank() } ?: return null
     val loaded = detail?.takeIf { it.contentId == id }
     if (loaded != null) {
-        val edition = loaded.versions
-            .takeIf { it.size > 1 }
-            ?.firstOrNull { it.fileId == fileId }
-            ?.let { version ->
-                listOfNotNull(version.resolution?.takeIf { it.isNotBlank() }, "HDR".takeIf { version.hdr })
-                    .joinToString(" ")
-                    .ifBlank { null }
-            }
+        val version = loaded.versions.firstOrNull { it.fileId == fileId } ?: loaded.versions.singleOrNull()
         return TvStagedPreview(
             title = loaded.title,
             subtitle = tvDetailSubtitle(loaded),
             posterUrl = loaded.posterUrl,
-            edition = edition,
+            posterThumbhash = loaded.posterThumbhash,
+            backdropUrl = loaded.backdropUrl,
+            backdropThumbhash = loaded.backdropThumbhash,
+            overview = loaded.overview?.takeIf { it.isNotBlank() },
+            facts = listOfNotNull(
+                loaded.year.takeIf { it > 0 && loaded.type != "episode" }?.toString(),
+                loaded.runtime.takeIf { it > 0 }?.let(::tvWatchPartyRuntime),
+            ),
+            chips = listOfNotNull(
+                version?.resolution?.let(::tvWatchPartyResolutionChip),
+                "HDR".takeIf { version?.hdr == true },
+            ),
         )
     }
     TvWatchPartyPreviews.get(id)?.let { item ->
-        return TvStagedPreview(item.title, item.subtitle, item.posterUrl, edition = null)
+        return TvStagedPreview(item.title, item.subtitle, item.posterUrl)
     }
     suggestions.firstOrNull { it.contentId == id }?.let { suggestion ->
         return TvStagedPreview(
             title = suggestion.title,
             subtitle = suggestion.subtitle.ifBlank { null },
             posterUrl = suggestion.posterUrl.ifBlank { null },
-            edition = null,
         )
     }
-    return TvStagedPreview(title = "Loading…", subtitle = null, posterUrl = null, edition = null)
+    return TvStagedPreview(title = "Loading title…", subtitle = null, posterUrl = null)
 }
 
 private fun tvDetailSubtitle(detail: ItemDetail): String? = when (detail.type) {
     "episode" -> listOfNotNull(
         detail.seriesTitle?.takeIf { it.isNotBlank() },
-        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { "S${season}E$it" } },
+        detail.seasonNumber?.let { season -> detail.episodeNumber?.let { "S$season:E$it" } },
     ).joinToString(" · ").ifBlank { null }
-    else -> detail.year.takeIf { it > 0 }?.toString()
+    else -> null
+}
+
+/** "2h 35m", "48m". */
+internal fun tvWatchPartyRuntime(minutes: Int): String =
+    if (minutes >= 60) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
+
+private fun tvWatchPartyResolutionChip(resolution: String): String? = when (resolution.trim().lowercase()) {
+    "" -> null
+    "2160p", "4k", "uhd" -> "4K"
+    else -> resolution.trim().uppercase()
 }
 
 /** A detail page's item as the party sees it. */

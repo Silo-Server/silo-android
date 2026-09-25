@@ -120,16 +120,6 @@ internal fun watchPartyLeftBehindNames(previous: RoomSnapshot?, next: RoomSnapsh
 private fun RoomMember.isSameMemberAs(other: RoomMember): Boolean =
     userId.isNotBlank() && profileId.isNotBlank() && userId == other.userId && profileId == other.profileId
 
-/** A member's state for the party panel and lobby list, or null when there is nothing to say. */
-internal fun watchPartyMemberStatus(member: RoomMember, phase: RoomPhase): String? = when {
-    !member.connected -> "Disconnected"
-    phase == RoomPhase.Lobby -> if (!member.isHost && member.lobbyReady) "Ready" else null
-    member.isBuffering -> "Buffering"
-    member.isSyncing -> "Syncing"
-    member.isReady -> "Ready"
-    else -> null
-}
-
 /** Share text: the host's invitation link with the code, or the code alone for guests. */
 internal fun watchPartyShareText(code: String, inviteUrl: String?): String =
     if (inviteUrl != null) {
@@ -138,11 +128,18 @@ internal fun watchPartyShareText(code: String, inviteUrl: String?): String =
         "Join my Watch Party on Silo with the code $code."
     }
 
-/** A short edition label, for example "2160p · HDR". */
-internal fun watchPartyEditionLabel(version: FileVersion?): String? {
-    version ?: return null
+/** Quality chips for the staged version, for example "4K" and "HDR". */
+internal fun watchPartyQualityChips(version: FileVersion?): List<String> {
+    version ?: return emptyList()
+    val resolution = version.resolution?.lowercase().orEmpty()
     return listOfNotNull(
-        version.resolution?.takeIf { it.isNotBlank() },
+        "4K".takeIf { "2160" in resolution || "4k" in resolution },
         "HDR".takeIf { version.hdr },
-    ).joinToString(" · ").takeIf { it.isNotBlank() }
+    )
+}
+
+/** "2h 35m" or "48m", as Apple's `WatchPartyFacts.runtime`. */
+internal fun watchPartyRuntime(minutes: Int?): String? {
+    val value = minutes?.takeIf { it > 0 } ?: return null
+    return if (value >= 60) "${value / 60}h ${value % 60}m" else "${value}m"
 }
