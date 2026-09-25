@@ -23,6 +23,8 @@ sealed interface VideoPlayerUiState {
         val message: String,
         /** Why the start failed, when known; a server refusal carries its terminal reason. */
         val diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        /** The server's terminal refusal reason, when there was one. */
+        val terminalReason: String? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = false
     }

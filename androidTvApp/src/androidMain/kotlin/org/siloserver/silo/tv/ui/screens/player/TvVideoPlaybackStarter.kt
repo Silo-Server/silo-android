@@ -268,6 +268,7 @@ class TvVideoPlaybackStarter(
                     request.contentId,
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
+                    terminalReason = v3Start.reason,
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
@@ -456,6 +457,7 @@ class TvVideoPlaybackStarter(
         message: String,
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        terminalReason: String? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -464,6 +466,7 @@ class TvVideoPlaybackStarter(
             contentId = contentId,
             message = message,
             diagnosticsCode = diagnosticsCode,
+            terminalReason = terminalReason,
         )
     }
 

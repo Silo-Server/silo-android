@@ -121,6 +121,7 @@ import org.siloserver.silo.common.player.SubtitleManager
 import org.siloserver.silo.common.player.VideoPlayerMediaSpec
 import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.videoMountToken
+import org.siloserver.silo.common.player.backend.VideoPlaybackBackend
 import org.siloserver.silo.common.player.backend.VideoPlaybackBackendFactory
 import org.siloserver.silo.common.player.validatedColorRangeFallback
 import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
@@ -135,8 +136,11 @@ import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.activeOriginalHttpClaims
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
+import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.watchtogether.RoomTransportIntent
+import org.siloserver.silo.watchtogether.roomTransportAuthorized
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.cast.SiloCastVolumeState
@@ -249,10 +253,14 @@ fun TvPlayerScreen(
     contentId: String,
     libraryId: Int? = null,
     onExit: () -> Unit,
+    // Watch Party host Stop: the room is back in its lobby and this device is
+    // still a member. Receives the room id.
+    onReturnToWatchPartyLobby: (String) -> Unit,
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
-    // Watch Together room binding. When non-null, a [TvRoomSyncController]
-    // binds this player to the synced room for the lifetime of the screen.
+    // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
+    // to the room for the lifetime of the screen and the room's playback
+    // context, not the route's content, decides what plays.
     roomId: String? = null,
     resumePositionOverride: Double? = null,
     // Pre-playback track selections chosen on the detail screen (null = auto;
@@ -348,10 +356,6 @@ fun TvPlayerScreen(
     val aiTranslate by viewModel.aiTranslate.collectAsState()
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestOnExit by rememberUpdatedState(onExit)
-    val latestSiloCastPlaybackSpeed by rememberUpdatedState(playbackSpeed)
-    val latestSiloCastSubtitleDelayMs by rememberUpdatedState(subtitleDelayMs)
-    val latestSiloCastHdrEnabled by rememberUpdatedState(hdrEnabled)
-    val latestSiloCastSubtitleAppearance by rememberUpdatedState(subtitleAppearance)
     val context = LocalContext.current
     val hdrDisplayController = remember { HdrDisplayController() }
     // Bind the playback display before anything plans: the ViewModel's
@@ -424,34 +428,11 @@ fun TvPlayerScreen(
     var playerRootBounds by remember { mutableStateOf<Rect?>(null) }
     var pictureInPictureSourceRect by remember { mutableStateOf<Rect?>(null) }
 
-    // Watch Together binding. Built once per roomId; null for solo playback.
-    // The process RoomSession owns the WS; this controller owns only the
-    // screen's RoomSyncEngine and requests durable teardown on explicit leave.
-    val watchTogetherRepository: org.siloserver.silo.repository.WatchTogetherRepository = koinInject()
-    val roomSession: org.siloserver.silo.watchtogether.RoomSession = koinInject()
-    val roomScope = rememberCoroutineScope()
-    val roomController = remember(roomId) {
-        roomId?.takeIf { it.isNotBlank() }?.let { id ->
-            TvRoomSyncController(
-                roomId = id,
-                repository = watchTogetherRepository,
-                roomSession = roomSession,
-                viewModel = viewModel,
-                scope = roomScope,
-            )
-        }
-    }
-    DisposableEffect(roomController) {
-        roomController?.start()
-        // Repo teardown happens on explicit leave (Leave affordance) or
-        // room_closed; only this replaceable controller's child jobs are
-        // canceled on disposal.
-        onDispose { roomController?.dispose() }
-    }
-    val roomSnapshot by (roomController?.room ?: kotlinx.coroutines.flow.MutableStateFlow(null))
-        .collectAsState()
-    val roomClosedReason by (roomController?.closedReason ?: kotlinx.coroutines.flow.MutableStateFlow(null))
-        .collectAsState()
+    // Watch Party binding. Built once per roomId; null for solo playback.
+    // The process RoomSession owns the room socket; this screen owns only its
+    // playback binding, and disposing it never leaves the room.
+    val watchParty = rememberTvWatchParty(roomId, viewModel)
+    val roomSnapshot: RoomSnapshot? = watchParty?.playback?.room?.collectAsState()?.value
     var showLeaveDialog by remember { mutableStateOf(false) }
 
     // Per-session playback control socket (admin remote control). Bound for the
@@ -465,6 +446,11 @@ fun TvPlayerScreen(
             client = playbackRealtimeClient,
             viewModel = viewModel,
             scope = this, // cancelled when sessionId changes / screen leaves
+            // Admin transport follows the room; Stop ends only this device's
+            // engagement (the exit follows through remoteStopRequests).
+            roomTransport = watchParty?.let { party ->
+                { action -> party.onRemoteTransport(action, exit = viewModel::remoteStop) }
+            },
         ).start()
     }
 
@@ -510,94 +496,32 @@ fun TvPlayerScreen(
             )
         }
     }
-    val latestSiloCastMediaController by rememberUpdatedState(mediaController)
-    val latestSiloCastSessionPlayer by rememberUpdatedState(sessionPlayer)
-    DisposableEffect(siloCastReceiver, viewModel, contentId) {
-        val adapter = TvSiloCastPlayerAdapter(
-            play = {
-                // Watch Together is authoritative for transport: suppress
-                // SiloCast transport while in a room so a caster can't desync
-                // members, mirroring the realtime remote path's
-                // remoteTransportSuppressed gate. Non-room casting is unchanged.
-                if (!viewModel.remoteTransportSuppressed) {
-                    viewModel.setPaused(false)
-                    latestSiloCastMediaController?.play()
-                }
-            },
-            pause = {
-                if (!viewModel.remoteTransportSuppressed) {
-                    viewModel.setPaused(true)
-                    latestSiloCastMediaController?.pause()
-                }
-            },
-            playPause = { if (!viewModel.remoteTransportSuppressed) viewModel.onPlayPause() },
-            seek = { seconds ->
-                if (!viewModel.remoteTransportSuppressed) {
-                    viewModel.seekImmediate(seconds)
-                }
-            },
-            stop = { if (!viewModel.remoteTransportSuppressed) viewModel.remoteStop() },
-            selectAudio = { index -> viewModel.remoteSelectAudio(index.toInt()) },
-            selectSubtitle = { index -> viewModel.remoteSelectSubtitle(index?.toInt() ?: -1) },
-            setPlaybackSpeed = { speed ->
-                viewModel.onSetPlaybackSpeed(speed)
-                latestSiloCastMediaController?.playbackParameters = PlaybackParameters(speed.toFloat())
-            },
-            setQuality = { qualityId ->
-                val player = latestSiloCastMediaController ?: latestSiloCastSessionPlayer
-                if (player != null && selectVideoQuality(player, qualityId)) {
-                    val resolution = viewModel.uiState.value.videoQualities
-                        .firstOrNull { it.id == qualityId }
-                        ?.resolution
-                    viewModel.onVideoQualitySelectionApplied(resolution)
-                }
-            },
-            setVideoGravity = { value ->
-                viewModel.onVideoFillModeChanged(value.toSiloCastVideoFillMode())
-            },
-            setHdrEnabled = viewModel::onSetHdrEnabled,
-            setSubtitleSyncMs = viewModel::onSubtitleDelayChanged,
-            setSubtitlePosition = { value ->
-                viewModel.onSetSubtitleAppearance(
-                    latestSiloCastSubtitleAppearance.copy(position = value.toSiloCastSubtitlePosition()),
-                )
-            },
-            setVolume = { volume ->
-                latestSiloCastMediaController?.let { controller ->
-                    val next = volume.toFloat().coerceIn(0f, 1f)
-                    siloCastReceiver.recordPlayerVolume(next.toDouble())
-                    controller.volume = next
-                }
-            },
-            setMuted = { muted ->
-                latestSiloCastMediaController?.let { controller ->
-                    siloCastReceiver.recordPlayerMuted(muted, controller.volume.toDouble())
-                    controller.volume = if (muted) 0f else siloCastReceiver.retainedPlayerVolume().toFloat()
-                }
-            },
-            playNext = viewModel::playNextEpisodeNow,
-        )
-        val registration = siloCastReceiver.registerPlayer(adapter) {
-            val volumeState = siloCastReceiver.resolvePlayerVolume(
-                currentVolume = latestSiloCastMediaController?.volume?.toDouble(),
-            )
-            viewModel.uiState.value.toSiloCastPlaybackState(
-                playbackSpeed = latestSiloCastPlaybackSpeed,
-                hdrEnabled = latestSiloCastHdrEnabled,
-                subtitleDelayMs = latestSiloCastSubtitleDelayMs,
-                subtitleAppearance = latestSiloCastSubtitleAppearance,
-                volumeState = volumeState,
-            )
-        }
-        onDispose { registration.close() }
-    }
-    val stopPlaybackAndExit = {
+    TvSiloCastPlayerRegistration(
+        siloCastReceiver = siloCastReceiver,
+        viewModel = viewModel,
+        contentId = contentId,
+        watchParty = watchParty,
+        mediaController = mediaController,
+        sessionPlayer = sessionPlayer,
+        playbackSpeed = playbackSpeed,
+        subtitleDelayMs = subtitleDelayMs,
+        hdrEnabled = hdrEnabled,
+        subtitleAppearance = subtitleAppearance,
+    )
+    /**
+     * The one terminal exit. It leaves the Watch Party when [leaveRoom]
+     * (explicit host-close paths depart first; leaving is idempotent). Host
+     * Stop and an ended party exit without leaving: the first keeps the
+     * membership for the lobby, the second has nothing left to leave.
+     *
+     * Lambdas rather than local functions: every caller captures one value
+     * instead of the exit's dependencies, which keeps this composable's
+     * method within ART's JIT limit.
+     */
+    val exitPlayer: (Boolean, (() -> Unit)?) -> Unit = { leaveRoom, destination ->
         if (!exitRequested) {
             exitRequested = true
-            // Every terminal player exit must release the process-owned room
-            // session. Explicit host-close paths enqueue close first, then this
-            // idempotent local departure follows behind it.
-            roomController?.leave(closeRoom = false)
+            if (leaveRoom) watchParty?.leave()
             mediaController?.let { controller ->
                 viewModel.stopSessionForExitAsync(
                     positionMs = controller.currentPosition,
@@ -607,14 +531,31 @@ fun TvPlayerScreen(
                 controller.stop()
                 controller.clearMediaItems()
             } ?: viewModel.stopSessionForExitAsync()
-            latestOnExit()
+            (destination ?: latestOnExit)()
         }
     }
+    val stopPlaybackAndExit = { exitPlayer(true, null) }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { stopPlaybackAndExit() }
     }
-    val latestIntroSkipState by rememberUpdatedState(introSkipState)
+    val latestOnReturnToWatchPartyLobby by rememberUpdatedState(onReturnToWatchPartyLobby)
+    if (watchParty != null && roomId != null) {
+        TvWatchPartyEffects(
+            watchParty = watchParty,
+            roomId = roomId,
+            viewModel = viewModel,
+            player = mediaController,
+            onReturnToLobby = { exitPlayer(false) { latestOnReturnToWatchPartyLobby(roomId) } },
+            onPartyEnded = { exitPlayer(false, null) },
+        )
+    }
+    // Members who may not seek get no intro pill: its only action is a seek.
+    val canSeekInRoom = watchParty == null || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.Seek)
+    val canPlayPauseInRoom = watchParty == null ||
+        roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
+    val visibleIntroSkipState = if (canSeekInRoom) introSkipState else IntroAutoSkipState.Hidden
+    val latestIntroSkipState by rememberUpdatedState(visibleIntroSkipState)
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)
     val latestShowLeaveDialog by rememberUpdatedState(showLeaveDialog)
     val latestShowQuickSubtitlePicker by rememberUpdatedState(showQuickSubtitlePicker)
@@ -652,14 +593,13 @@ fun TvPlayerScreen(
         if (!latestIntroSkipState.isVisible) return false
         // The controller decides where Select goes — the intro's end for the
         // `ask` offer, its start for `always`'s undo — and resolves the intro.
-        // In a room the gate is checked BEFORE asking, so a guest's refused
+        // In a room the pill only shows to members who may seek, and its Skip
+        // is a room seek; permission is checked BEFORE resolving, so a refused
         // press leaves the pill (and the intro) exactly as it was.
-        if (roomController != null) {
-            if (tvRoomTransportGate(latestRoomSnapshot, TvTransportIntent.Seek) != TransportGate.Send) {
-                return true
-            }
+        if (watchParty != null) {
+            if (!watchParty.canSeek()) return true
             val target = viewModel.onSelectIntroPrompt() ?: return false
-            roomController.onUserSeek(target)
+            watchParty.seek(target)
         } else {
             val soloTarget = viewModel.onSelectIntroPrompt() ?: return false
             viewModel.seekImmediate(soloTarget)
@@ -699,23 +639,18 @@ fun TvPlayerScreen(
     ): Boolean {
         val controller = mediaController ?: return true
         val playerState = viewModel.uiState.value
-        if (roomController != null &&
-            tvRoomTransportGate(snapshot, TvTransportIntent.Seek) != TransportGate.Send
-        ) {
-            return true
-        }
         val duration = playerState.duration.takeIf { it > 0.0 }
             ?: if (playerState.playbackPlan == null) controller.duration / 1000.0 else 0.0
-        val targetSec = if (roomController == null) {
+        val targetSec = if (watchParty == null) {
             viewModel.onSkipBy(deltaMs / 1000.0)
         } else {
             (playerState.position + deltaMs / 1000.0)
                 .coerceAtLeast(0.0)
                 .let { if (duration > 0.0) it.coerceAtMost(duration) else it }
         }
-        if (roomController != null) {
-            roomController.onUserSeek(targetSec)
-        }
+        // In a room the skip is a request; a refused one changes nothing here
+        // and the room's notice explains why.
+        if (watchParty != null && !watchParty.seek(targetSec)) return true
         if (revealControls) {
             if (!playerState.showControls) {
                 requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Scrubber)
@@ -727,7 +662,7 @@ fun TvPlayerScreen(
         // press reads as the bar twitching. Room seeks commit per press with no
         // accumulator, so there the per-press delta IS the total.
         val burstDeltaSec = viewModel.quickSkipBurstOriginSec
-            ?.takeIf { roomController == null }
+            ?.takeIf { watchParty == null }
             ?.let { targetSec - it }
             ?: (deltaMs / 1000.0)
         skipSeekFeedback = SkipSeekFeedback(
@@ -736,7 +671,7 @@ fun TvPlayerScreen(
             durationSec = duration.coerceAtLeast(0.0),
             nonce = (skipSeekFeedback?.nonce ?: 0) + 1,
         )
-        if (captureQuickSkipBurst && roomController == null) {
+        if (captureQuickSkipBurst && watchParty == null) {
             armQuickSkipCapture()
         }
         return true
@@ -764,9 +699,13 @@ fun TvPlayerScreen(
     fun beginCleanPlaybackSeek(direction: Int, snapshot: RoomSnapshot?) {
         pendingCleanSeekBecameHold = true
         if (cleanSeekRate != 0 || mediaController == null) return
-        if (roomController != null &&
-            tvRoomTransportGate(snapshot, TvTransportIntent.Seek) != TransportGate.Send
-        ) {
+        if (watchParty != null && !watchParty.canSeek()) {
+            // Guests never seek: say so instead of scanning a preview nobody can commit.
+            viewModel.showPlayerMessage(
+                tvWatchPartyNoticeText(
+                    org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek),
+                ),
+            )
             return
         }
 
@@ -876,10 +815,8 @@ fun TvPlayerScreen(
     fun commitCleanPlaybackSeek(snapshot: RoomSnapshot?) {
         val targetSec = cleanSeekPreviewSec
         stopCleanPlaybackSeek()
-        if (roomController != null) {
-            if (tvRoomTransportGate(snapshot, TvTransportIntent.Seek) == TransportGate.Send) {
-                roomController.onUserSeek(targetSec)
-            }
+        if (watchParty != null) {
+            watchParty.seek(targetSec)
         } else {
             viewModel.seekImmediate(targetSec)
         }
@@ -921,6 +858,17 @@ fun TvPlayerScreen(
         }
     }
 
+    // After repeated stalls in a room: a one-line offer to step down the same
+    // file's quality ladder, taken with OK while the transport is hidden.
+    val qualityOffer = remember { TvWatchPartyQualityOfferState() }
+    val lowerQuality = tvWatchPartyLowerQuality(
+        watchParty = watchParty,
+        offerState = qualityOffer,
+        videoQualities = state.videoQualities,
+        selectedFileResolution = state.selectedFileResolution,
+    )
+    val latestLowerQuality by rememberUpdatedState(lowerQuality)
+
     // More-specific overlays register their own BackHandlers later in the
     // composition and therefore run first. This screen callback owns the
     // remaining player-state ladder on Android 16, where KEYCODE_BACK is no
@@ -941,6 +889,7 @@ fun TvPlayerScreen(
             // dispatchKeyEvent, so a countdown Back would otherwise fall
             // through to hiding the controls or exiting the player.
             latestIntroSkipState.isVisible -> viewModel.onDismissIntroPrompt()
+            lowerQuality != null && !state.showControls -> qualityOffer.dismissed = true
             showQuickSubtitlePicker -> showQuickSubtitlePicker = false
             // On the Up-Next overlay, Back exits the player (matches tvOS, where
             // the Up-Next "Back" button dismisses the whole player).
@@ -955,18 +904,15 @@ fun TvPlayerScreen(
             // In a room: Back surfaces the Leave affordance. Host gets a
             // close-confirm dialog (closing tears down the room for everyone);
             // a guest leaves immediately.
-            roomController != null && roomSnapshot?.isHost == true -> showLeaveDialog = true
-            roomController != null -> {
-                roomController.leave(closeRoom = false)
-                stopPlaybackAndExit()
-            }
+            watchParty != null && roomSnapshot?.selfRole == MemberRole.Host -> showLeaveDialog = true
+            watchParty != null -> stopPlaybackAndExit()
             else -> {
                 stopPlaybackAndExit()
             }
         }
     }
 
-    DisposableEffect(viewModel, roomController) {
+    DisposableEffect(viewModel, watchParty) {
         val handler: (KeyEvent) -> Boolean = handler@{ event ->
             val playerState = viewModel.uiState.value
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -1161,6 +1107,28 @@ fun TvPlayerScreen(
                 return@handler handleIntroPromptSelect()
             }
 
+            // The lower-quality offer owns OK and Back while the transport is
+            // hidden, like the intro pill.
+            val offeredQuality = latestLowerQuality
+            if (offeredQuality != null && !playerState.showControls && event.repeatCount == 0) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER,
+                    -> {
+                        if (event.action == KeyEvent.ACTION_DOWN) {
+                            qualityOffer.dismissed = true
+                            switchTvPlaybackQuality(viewModel, watchParty, offeredQuality.id)
+                        }
+                        return@handler true
+                    }
+                    KeyEvent.KEYCODE_BACK -> {
+                        if (event.action == KeyEvent.ACTION_DOWN) qualityOffer.dismissed = true
+                        return@handler true
+                    }
+                }
+            }
+
             // Back while PLAYING with the transport overlay up: hide the
             // overlay HERE, at the key-dispatch bridge, before Compose's
             // focus system can eat the press as a button focus-deselection
@@ -1189,17 +1157,12 @@ fun TvPlayerScreen(
 
             when (action) {
                 TvPlayerRemoteKeyAction.PlayPause -> {
-                    val canPlayPauseInRoom = roomController == null ||
-                        tvRoomTransportGate(
-                            latestRoomSnapshot,
-                            TvTransportIntent.PlayPause,
-                        ) == TransportGate.Send
-                    if (canPlayPauseInRoom) {
-                        if (roomController != null) {
-                            roomController.onUserPlayPause()
-                        } else {
-                            viewModel.onPlayPause()
-                        }
+                    // In a room every press goes to the room, which applies,
+                    // refuses with a notice, or resumes a local hold.
+                    if (watchParty != null) {
+                        watchParty.togglePlayPause()
+                    } else {
+                        viewModel.onPlayPause()
                     }
                     viewModel.setControlsVisible(true)
                     requestIdleOverlayFocus(TvIdleOverlayFocusTarget.Transport)
@@ -1247,15 +1210,6 @@ fun TvPlayerScreen(
         onDispose { TvPlayerRemoteKeyBridge.clear(handler) }
     }
 
-    // room_closed (TERMINAL only — host left / explicit close) → stop + exit
-    // back to detail. Transient server `error` frames never reach here (they
-    // flow on the repo's errors stream and do NOT eject the user).
-    LaunchedEffect(roomClosedReason) {
-        if (roomClosedReason != null && roomController != null) {
-            stopPlaybackAndExit()
-        }
-    }
-
     // A subtitle or audio change that failed has to say so. Stage, validation,
     // commit, rollback and mount failures all populated subtitleFailureMessage
     // and nothing ever read it: "Applying…" simply vanished and the tick
@@ -1266,19 +1220,6 @@ fun TvPlayerScreen(
         val message = state.subtitleFailureMessage ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         viewModel.onSubtitleFailureShown(state.subtitleFailureId)
-    }
-
-    // Surface transient Watch Together server rejections (e.g. a guest seek the
-    // server refuses) as a brief Toast. These flow on the repo errors stream and
-    // do NOT eject the user. Only collected while bound to a room.
-    LaunchedEffect(roomController) {
-        if (roomController != null) {
-            watchTogetherRepository.errors.collect { message ->
-                if (message.isNotBlank()) {
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
     }
 
     // Apply capability-aware track selection presets. Re-runs on HDMI
@@ -1367,9 +1308,10 @@ fun TvPlayerScreen(
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
-    val latestLifecycleRoomSnapshot by rememberUpdatedState(roomSnapshot)
-
     // Lifecycle pausing — send pause to the service when we're backgrounded.
+    // In a Watch Party leaving the foreground is a local hold instead: the
+    // player pauses, nothing is reported or asked of the room, and the
+    // membership survives. Coming back resyncs through the room binding.
     DisposableEffect(
         lifecycleOwner,
         mediaController,
@@ -1380,6 +1322,7 @@ fun TvPlayerScreen(
             when (event) {
                 Lifecycle.Event.ON_PAUSE,
                 Lifecycle.Event.ON_STOP -> if (!isInPictureInPictureMode) {
+                    if (watchParty != null) viewModel.holdRoomPlayback(TvRoomHold.Background)
                     mediaController?.let { controller ->
                         if (controller.playWhenReady) {
                             if (
@@ -1397,26 +1340,15 @@ fun TvPlayerScreen(
                     // destination too: the session cannot be resumed after
                     // teardown, and keeping this route mounted would show a
                     // stopped/black player when the activity resumes.
-                    if (event == Lifecycle.Event.ON_STOP && !exitRequested) {
+                    //
+                    // Not in a Watch Party: the room needs this session, and
+                    // backgrounding must never leave the room.
+                    if (event == Lifecycle.Event.ON_STOP && !exitRequested && watchParty == null) {
                         stopPlaybackAndExit()
                     }
                 }
-                Lifecycle.Event.ON_RESUME -> if (roomController != null) {
-                    val desired = latestLifecycleRoomSnapshot?.isPaused?.not()
-                    mediaController?.let { controller ->
-                        if (
-                            desired != null &&
-                            (controller.playWhenReady != desired ||
-                                playWhenReadyReconciliationGate.hasPendingChanges)
-                        ) {
-                            if (
-                                playWhenReadyReconciliationGate
-                                    .requestProgrammaticChange(desired)
-                            ) {
-                                controller.playWhenReady = desired
-                            }
-                        }
-                    }
+                Lifecycle.Event.ON_RESUME -> if (watchParty != null) {
+                    viewModel.releaseRoomPlayback(TvRoomHold.Background)
                 }
                 else -> Unit
             }
@@ -1509,22 +1441,51 @@ fun TvPlayerScreen(
                     val provenance = playWhenReadyReconciliationGate
                         .onPlayWhenReadyChanged(playWhenReady, reason)
                     provenance.followUpProgrammaticValue?.let { controller.playWhenReady = it }
+                    val party = watchParty ?: return
+                    party.sample(controller)
+                    // Audio focus loss and a noisy route are local holds:
+                    // nothing is sent to the room.
+                    if (!playWhenReady &&
+                        (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS ||
+                            reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
+                    ) {
+                        viewModel.holdRoomPlayback(TvRoomHold.AudioFocus)
+                        return
+                    }
                     if (!provenance.shouldReconcile) return
-                    roomController
-                        ?.onExternalPlayWhenReadyChanged(playWhenReady)
-                        ?.let { authoritative ->
-                            if (controller.playWhenReady != authoritative) {
-                                if (
-                                    playWhenReadyReconciliationGate
-                                        .requestProgrammaticChange(authoritative)
-                                ) {
-                                    controller.playWhenReady = authoritative
-                                }
-                            }
-                        }
+                    // A deliberate MediaSession play/pause: the room decides,
+                    // and the player goes back to its room-applied state now.
+                    val restore = party.onExternalPlayWhenReady(playWhenReady)
+                    if (controller.playWhenReady != restore &&
+                        playWhenReadyReconciliationGate.requestProgrammaticChange(restore)
+                    ) {
+                        controller.playWhenReady = restore
+                    }
+                }
+
+                override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+                    watchParty?.sample(controller)
+                }
+
+                override fun onPositionDiscontinuity(
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
+                    reason: Int,
+                ) {
+                    val party = watchParty ?: return
+                    party.sample(controller)
+                    // A seek this screen did not issue (notification, headset,
+                    // MediaSession seek back/forward, any other controller).
+                    // Mounts replace the item and never arrive as a seek.
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK &&
+                        oldPosition.mediaItemIndex == newPosition.mediaItemIndex
+                    ) {
+                        party.onSeekDiscontinuity(oldPosition.positionMs, newPosition.positionMs)
+                    }
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    watchParty?.sample(controller)
                     viewModel.onPlayingChanged(isPlaying)
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
@@ -1544,6 +1505,9 @@ fun TvPlayerScreen(
                     }
                 }
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    // Readiness is evaluated on every signal that can mean
+                    // playable media, not only on the sampling tick.
+                    watchParty?.sample(controller)
                     // Buffering during normal playback flips the centered
                     // spinner. This complements the lifecycle's Reconnecting
                     // state which the player can't observe (server-outage
@@ -1603,38 +1567,6 @@ fun TvPlayerScreen(
         }
     }
 
-    // Position polling — lifecycle-bounded so it doesn't outlive the screen.
-    LaunchedEffect(mediaController, state.sessionId, lifecycleOwner) {
-        val controller = mediaController ?: return@LaunchedEffect
-        val timelineWindow = Timeline.Window()
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (isActive && state.sessionId != null) {
-                viewModel.onPositionChanged(
-                    controller.currentPosition,
-                    controller.duration.coerceAtLeast(0L),
-                )
-                // Mounted-transport extent for the VM's native-first seek
-                // decision (see TvPlayerViewModel.mountedSeekableSourceRange).
-                // A seekable window with a known length can serve any target
-                // it spans without a server reanchor.
-                if (!controller.currentTimeline.isEmpty) {
-                    controller.currentTimeline.getWindow(
-                        controller.currentMediaItemIndex,
-                        timelineWindow,
-                    )
-                    viewModel.onPlayerWindowChanged(
-                        isSeekable = timelineWindow.isSeekable,
-                        windowEndPlayerMs = if (timelineWindow.durationUs != C.TIME_UNSET) {
-                            timelineWindow.durationUs / 1000
-                        } else {
-                            -1L
-                        },
-                    )
-                }
-                delay(500)
-            }
-        }
-    }
     LaunchedEffect(
         mediaController,
         state.sessionId,
@@ -1691,10 +1623,11 @@ fun TvPlayerScreen(
                     renderedOutputBufferCount = decoderCounters?.renderedOutputBufferCount,
                 )) {
                     PostResumeVideoStallDetector.Signal.SeekBack -> {
-                        controller.seekTo(
-                            (controller.currentPosition - PostResumeVideoStallDetector.SEEK_BACK_MS)
-                                .coerceAtLeast(0L),
-                        )
+                        val target = (controller.currentPosition - PostResumeVideoStallDetector.SEEK_BACK_MS)
+                            .coerceAtLeast(0L)
+                        // A local recovery action, never a room seek.
+                        watchParty?.recordIssuedSeek(target)
+                        controller.seekTo(target)
                         viewModel.onRuntimeCorrection(
                             "runtime_correction_applied",
                             "client_post_resume_video_recovery_v1",
@@ -1706,6 +1639,7 @@ fun TvPlayerScreen(
                         val resume = controller.playWhenReady
                         controller.stop()
                         controller.prepare()
+                        watchParty?.recordIssuedSeek(position)
                         controller.seekTo(position)
                         if (resume) controller.play()
                         viewModel.onRuntimeCorrection(
@@ -1739,26 +1673,6 @@ fun TvPlayerScreen(
     }
 
     // Prepare the player when a stream URL becomes available.
-    // Applies a local audio switch: the track is already in the mounted stream,
-    // so it only needs selecting on the player. The ViewModel does not commit
-    // on the strength of this call -- AudioTrackManager returns Unit and does
-    // nothing silently if the group is gone -- it waits for onTracksChanged to
-    // show the target selected.
-    LaunchedEffect(videoBackend) {
-        val backend = videoBackend ?: return@LaunchedEffect
-        viewModel.pendingLocalAudioSelection.collect { request ->
-            request ?: return@collect
-            backend.selectAudioTrack(
-                VideoPlayerTrackEntry(
-                    index = request.targetOrdinal,
-                    label = "",
-                    language = null,
-                    isSelected = true,
-                ),
-            )
-        }
-    }
-
     LaunchedEffect(
         videoBackend,
         state.sessionId,
@@ -1884,63 +1798,17 @@ fun TvPlayerScreen(
         backend.refresh(mediaSpec)
     }
 
-    // The single path from the subtitle transaction adapter to the player.
-    // Every request carries the owner that armed it, so the acknowledgement can
-    // never be dropped for want of one. Mirrors the seekRequests idiom.
-    LaunchedEffect(videoBackend) {
-        val backend = videoBackend ?: return@LaunchedEffect
-        viewModel.subtitleMountRequests.collect { request ->
-            if (!viewModel.canApplySubtitleMount(request)) return@collect
-            if (request.trackIndex == -1) {
-                if (backend.selectSubtitle(null)) {
-                    viewModel.onSubtitleSelectionApplied(request)
-                } else {
-                    viewModel.onSubtitleSelectionFailed(request)
-                }
-                return@collect
-            }
-            val selectedTrack = viewModel.uiState.value.subtitleTracks
-                .firstOrNull { it.index == request.trackIndex }
-                ?.toVideoTrackEntry()
-            if (selectedTrack != null && backend.selectSubtitle(selectedTrack)) {
-                viewModel.onSubtitleSelectionApplied(request)
-            } else {
-                viewModel.onSubtitleSelectionFailed(request)
-            }
-        }
-    }
-
-    // Remote set_audio_track / set_subtitle_track are latched and resolved in
-    // the ViewModel after stable track identities exist. Only the transaction
-    // adapter may emit a backend subtitle mount request.
-
-    // Mirror user-intent pause state into the player. Kept separate from the
-    // onPlayingChanged listener so a transient buffering stall can't flip the
-    // pause icon or cancel the auto-hide timer.
-    LaunchedEffect(mediaController, state.isPaused, playWhenReadyReconciliationGate) {
-        val controller = mediaController ?: return@LaunchedEffect
-        val desired = !state.isPaused
-        if (controller.playWhenReady != desired) {
-            if (playWhenReadyReconciliationGate.requestProgrammaticChange(desired)) {
-                controller.playWhenReady = desired
-            }
-        }
-    }
-
-    LaunchedEffect(mediaController) {
-        val controller = mediaController ?: return@LaunchedEffect
-        viewModel.seekRequests.collect { targetSec ->
-            controller.seekTo((targetSec * 1000).toLong())
-        }
-    }
-
-    // Apply per-profile playback speed to the MediaController. Uses
-    // PlaybackParameters because MediaController doesn't expose a direct
-    // setPlaybackSpeed setter that respects pitch correction defaults.
-    LaunchedEffect(mediaController, playbackSpeed) {
-        val controller = mediaController ?: return@LaunchedEffect
-        controller.playbackParameters = PlaybackParameters(playbackSpeed.toFloat())
-    }
+    TvPlayerCommandEffects(
+        videoBackend = videoBackend,
+        mediaController = mediaController,
+        sessionId = state.sessionId,
+        lifecycleOwner = lifecycleOwner,
+        viewModel = viewModel,
+        watchParty = watchParty,
+        isPaused = state.isPaused,
+        playWhenReadyReconciliationGate = playWhenReadyReconciliationGate,
+        playbackSpeed = playbackSpeed,
+    )
 
     // Apply user subtitle styling whenever the PlayerView mounts or the
     // appearance flow emits a new value. Mirrors the phone PlayerScreen.
@@ -2139,10 +2007,7 @@ fun TvPlayerScreen(
                     // In a room, transport authority gates what the local
                     // member may drive: a guest who can't seek gets a disabled
                     // scrubber + skip; play/pause only under guest_play_pause.
-                    val canSeekInRoom = roomController == null ||
-                        tvRoomTransportGate(roomSnapshot, TvTransportIntent.Seek) == TransportGate.Send
-                    val canPlayPauseInRoom = roomController == null ||
-                        tvRoomTransportGate(roomSnapshot, TvTransportIntent.PlayPause) == TransportGate.Send
+                    // (canSeekInRoom / canPlayPauseInRoom are computed above.)
                     val bufferedAheadSec = (
                         (mediaController?.bufferedPosition ?: 0L) -
                             (mediaController?.currentPosition ?: 0L)
@@ -2169,10 +2034,12 @@ fun TvPlayerScreen(
                         // command → engine applies the seek locally). Solo
                         // playback seeks the MediaController directly.
                         transportEnabled = canSeekInRoom,
-                        playPauseEnabled = canPlayPauseInRoom,
+                        // A local hold (audio focus, sleep timer) is the
+                        // viewer's own to clear, whatever the room policy.
+                        playPauseEnabled = canPlayPauseInRoom || viewModel.isRoomHeld,
                         skipBackSeconds = seekIntervals.backSeconds,
                         skipForwardSeconds = seekIntervals.forwardSeconds,
-                        canToggleAfterCommit = roomController == null,
+                        canToggleAfterCommit = watchParty == null,
                         onSkipBack = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
@@ -2196,8 +2063,8 @@ fun TvPlayerScreen(
                         onCommitScrub = {
                             val targetSec = viewModel.commitScrub()
                             if (!canSeekInRoom) return@TvPlayerIdleOverlay
-                            if (roomController != null) {
-                                roomController.onUserSeek(targetSec)
+                            if (watchParty != null) {
+                                watchParty.seek(targetSec)
                             } else {
                                 // seekImmediate pre-writes position so a scrub
                                 // committed into the credits region isn't mistaken
@@ -2209,9 +2076,9 @@ fun TvPlayerScreen(
                         onCancelScrub = { viewModel.cancelScrub() },
                         focusRequest = idleOverlayFocusRequest,
                         onPlayPause = {
-                            if (!canPlayPauseInRoom) return@TvPlayerIdleOverlay
-                            if (roomController != null) {
-                                roomController.onUserPlayPause()
+                            if (!canPlayPauseInRoom && !viewModel.isRoomHeld) return@TvPlayerIdleOverlay
+                            if (watchParty != null) {
+                                watchParty.togglePlayPause()
                             } else {
                                 viewModel.onPlayPause()
                             }
@@ -2237,12 +2104,8 @@ fun TvPlayerScreen(
                         },
                         onClose = {
                             when {
-                                roomController != null && roomSnapshot?.isHost == true ->
+                                watchParty != null && roomSnapshot?.selfRole == MemberRole.Host ->
                                     showLeaveDialog = true
-                                roomController != null -> {
-                                    roomController.leave(closeRoom = false)
-                                    stopPlaybackAndExit()
-                                }
                                 else -> stopPlaybackAndExit()
                             }
                         },
@@ -2271,6 +2134,8 @@ fun TvPlayerScreen(
                             fileVersions = state.fileVersions,
                             selectedFileId = state.selectedFileId ?: state.mediaFileId,
                             onSelectFileVersion = viewModel::onSelectFileVersion,
+                            // A Watch Party plays one exact file at 1x.
+                            versionAndSpeedControlsVisible = watchParty == null,
                             subtitleTracks = state.subtitleTracks,
                             subtitleUrls = state.subtitleUrls,
                             subtitlePresentation = subtitlePresentation,
@@ -2283,10 +2148,10 @@ fun TvPlayerScreen(
                             onSelectVideoQuality = { id ->
                                 // Server-transcode quality ladder (tvOS parity):
                                 // re-request the session at the chosen rung.
-                                viewModel.switchQuality(id)
+                                switchTvPlaybackQuality(viewModel, watchParty, id)
                             },
                             onVideoFillModeChanged = viewModel::onVideoFillModeChanged,
-                            playbackSpeed = playbackSpeed,
+                            playbackSpeed = if (watchParty != null) 1.0 else playbackSpeed,
                             onPlaybackSpeedChanged = viewModel::onSetPlaybackSpeed,
                             sleepTimerState = sleepTimerState,
                             onStartSleepTimer = viewModel::onStartSleepTimer,
@@ -2332,14 +2197,11 @@ fun TvPlayerScreen(
                             chapters = state.chapters,
                             onSelectChapter = { idx ->
                                 viewModel.onSeekToChapter(idx)?.let { sec ->
-                                    if (roomController != null) {
-                                        // In a room, route through the same gated
-                                        // path as scrub-commit / performRelativeSeek:
-                                        // transport authority decides (a guest is a
-                                        // no-op) and a permitted seek broadcasts.
-                                        if (tvRoomTransportGate(roomSnapshot, TvTransportIntent.Seek) == TransportGate.Send) {
-                                            roomController.onUserSeek(sec)
-                                        }
+                                    if (watchParty != null) {
+                                        // A chapter jump is a room seek: the
+                                        // host's is sent; anyone else's is
+                                        // refused with a notice.
+                                        watchParty.seek(sec)
                                     } else {
                                         // Solo: seekImmediate pre-writes position so a
                                         // chapter jump into credits isn't mistaken for
@@ -2471,7 +2333,7 @@ fun TvPlayerScreen(
             notice = notice,
             remoteMessage = remoteMessage,
             roomSnapshot = roomSnapshot,
-            roomActive = roomController != null,
+            roomActive = watchParty != null,
             showControls = state.showControls,
             hudOpen = state.hudOpen,
             showLeaveDialog = showLeaveDialog,
@@ -2481,7 +2343,7 @@ fun TvPlayerScreen(
             nextUpCountdownSeconds = state.nextUpCountdownSeconds,
             nextUpCountdownTotalSeconds = state.nextUpCountdownTotalSeconds,
             autoPlayNextEnabled = autoPlayNextEnabled,
-            introSkipState = introSkipState,
+            introSkipState = visibleIntroSkipState,
             introSkipCountdownRun = introSkipCountdownRun,
             introSkipTimerRunning = introSkipTimerRunning,
             introSkipTotalSeconds = viewModel.introSkipTotalSeconds,
@@ -2498,7 +2360,7 @@ fun TvPlayerScreen(
             ),
             onCloseRoom = {
                 showLeaveDialog = false
-                roomController?.leave(closeRoom = true)
+                watchParty?.endForEveryone()
                 stopPlaybackAndExit()
             },
             onCancelLeaveDialog = { showLeaveDialog = false },
@@ -2508,7 +2370,259 @@ fun TvPlayerScreen(
             onExitPlayback = { stopPlaybackAndExit() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
+            qualityOfferLabel = lowerQuality?.label?.takeIf {
+                !state.showControls && !state.hudOpen && !state.showNextUp
+            },
         )
+    }
+}
+
+/**
+ * The position poll and the ViewModel's requests to the player: local audio
+ * switches, subtitle mounts, the pause mirror, seeks, and the playback speed.
+ *
+ * Split out of [TvPlayerScreen] to keep that composable's generated method
+ * within ART's JIT limit (see [TvPlayerOverlays]).
+ */
+@Composable
+private fun TvPlayerCommandEffects(
+    videoBackend: VideoPlaybackBackend?,
+    mediaController: MediaController?,
+    sessionId: String?,
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    viewModel: TvPlayerViewModel,
+    watchParty: TvWatchPartyScreenController?,
+    isPaused: Boolean,
+    playWhenReadyReconciliationGate: PlayWhenReadyReconciliationGate,
+    playbackSpeed: Double,
+) {
+    // Position polling — lifecycle-bounded so it doesn't outlive the screen.
+    LaunchedEffect(mediaController, sessionId, lifecycleOwner) {
+        val controller = mediaController ?: return@LaunchedEffect
+        val timelineWindow = Timeline.Window()
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive && sessionId != null) {
+                viewModel.onPositionChanged(
+                    controller.currentPosition,
+                    controller.duration.coerceAtLeast(0L),
+                )
+                // Mounted-transport extent for the VM's native-first seek
+                // decision (see TvPlayerViewModel.mountedSeekableSourceRange).
+                // A seekable window with a known length can serve any target
+                // it spans without a server reanchor.
+                if (!controller.currentTimeline.isEmpty) {
+                    controller.currentTimeline.getWindow(
+                        controller.currentMediaItemIndex,
+                        timelineWindow,
+                    )
+                    viewModel.onPlayerWindowChanged(
+                        isSeekable = timelineWindow.isSeekable,
+                        windowEndPlayerMs = if (timelineWindow.durationUs != C.TIME_UNSET) {
+                            timelineWindow.durationUs / 1000
+                        } else {
+                            -1L
+                        },
+                    )
+                }
+                delay(500)
+            }
+        }
+    }
+
+    // Applies a local audio switch: the track is already in the mounted stream,
+    // so it only needs selecting on the player. The ViewModel does not commit
+    // on the strength of this call -- AudioTrackManager returns Unit and does
+    // nothing silently if the group is gone -- it waits for onTracksChanged to
+    // show the target selected.
+    LaunchedEffect(videoBackend) {
+        val backend = videoBackend ?: return@LaunchedEffect
+        viewModel.pendingLocalAudioSelection.collect { request ->
+            request ?: return@collect
+            backend.selectAudioTrack(
+                VideoPlayerTrackEntry(
+                    index = request.targetOrdinal,
+                    label = "",
+                    language = null,
+                    isSelected = true,
+                ),
+            )
+        }
+    }
+
+    // The single path from the subtitle transaction adapter to the player.
+    // Every request carries the owner that armed it, so the acknowledgement can
+    // never be dropped for want of one. Mirrors the seekRequests idiom.
+    LaunchedEffect(videoBackend) {
+        val backend = videoBackend ?: return@LaunchedEffect
+        viewModel.subtitleMountRequests.collect { request ->
+            if (!viewModel.canApplySubtitleMount(request)) return@collect
+            if (request.trackIndex == -1) {
+                if (backend.selectSubtitle(null)) {
+                    viewModel.onSubtitleSelectionApplied(request)
+                } else {
+                    viewModel.onSubtitleSelectionFailed(request)
+                }
+                return@collect
+            }
+            val selectedTrack = viewModel.uiState.value.subtitleTracks
+                .firstOrNull { it.index == request.trackIndex }
+                ?.toVideoTrackEntry()
+            if (selectedTrack != null && backend.selectSubtitle(selectedTrack)) {
+                viewModel.onSubtitleSelectionApplied(request)
+            } else {
+                viewModel.onSubtitleSelectionFailed(request)
+            }
+        }
+    }
+
+    // Remote set_audio_track / set_subtitle_track are latched and resolved in
+    // the ViewModel after stable track identities exist. Only the transaction
+    // adapter may emit a backend subtitle mount request.
+
+    // Mirror user-intent pause state into the player. Kept separate from the
+    // onPlayingChanged listener so a transient buffering stall can't flip the
+    // pause icon or cancel the auto-hide timer.
+    LaunchedEffect(mediaController, isPaused, playWhenReadyReconciliationGate) {
+        val controller = mediaController ?: return@LaunchedEffect
+        val desired = !isPaused
+        if (controller.playWhenReady != desired) {
+            if (playWhenReadyReconciliationGate.requestProgrammaticChange(desired)) {
+                controller.playWhenReady = desired
+            }
+        }
+    }
+
+    LaunchedEffect(mediaController) {
+        val controller = mediaController ?: return@LaunchedEffect
+        viewModel.seekRequests.collect { targetSec ->
+            val targetMs = (targetSec * 1000).toLong()
+            watchParty?.recordIssuedSeek(targetMs)
+            controller.seekTo(targetMs)
+        }
+    }
+
+    // Apply per-profile playback speed to the MediaController (a Watch Party
+    // runs at 1x or the room's correction rate instead).
+    TvPlaybackSpeedEffect(mediaController, watchParty != null, viewModel, playbackSpeed)
+}
+
+/**
+ * Registers this player with the SiloCast receiver for the screen's lifetime.
+ *
+ * Split out of [TvPlayerScreen] to keep that composable's generated method
+ * within ART's JIT limit (see [TvPlayerOverlays]).
+ */
+@Composable
+private fun TvSiloCastPlayerRegistration(
+    siloCastReceiver: TvSiloCastReceiver,
+    viewModel: TvPlayerViewModel,
+    contentId: String,
+    watchParty: TvWatchPartyScreenController?,
+    mediaController: MediaController?,
+    sessionPlayer: Player?,
+    playbackSpeed: Double,
+    subtitleDelayMs: Int,
+    hdrEnabled: Boolean,
+    subtitleAppearance: SubtitleAppearance,
+) {
+    val latestSiloCastPlaybackSpeed by rememberUpdatedState(playbackSpeed)
+    val latestSiloCastSubtitleDelayMs by rememberUpdatedState(subtitleDelayMs)
+    val latestSiloCastHdrEnabled by rememberUpdatedState(hdrEnabled)
+    val latestSiloCastSubtitleAppearance by rememberUpdatedState(subtitleAppearance)
+    val latestSiloCastMediaController by rememberUpdatedState(mediaController)
+    val latestSiloCastSessionPlayer by rememberUpdatedState(sessionPlayer)
+    DisposableEffect(siloCastReceiver, viewModel, contentId) {
+        // In a Watch Party a phone's transport is one more input: the TV
+        // membership's permissions decide, so a host's phone controls the
+        // room and a guest's is refused with a notice. Stop ends only this
+        // device's engagement. Solo casting is unchanged.
+        val adapter = TvSiloCastPlayerAdapter(
+            play = {
+                if (watchParty != null) {
+                    watchParty.setPlaying(play = true)
+                } else {
+                    viewModel.setPaused(false)
+                    latestSiloCastMediaController?.play()
+                }
+            },
+            pause = {
+                if (watchParty != null) {
+                    watchParty.setPlaying(play = false)
+                } else {
+                    viewModel.setPaused(true)
+                    latestSiloCastMediaController?.pause()
+                }
+            },
+            playPause = {
+                if (watchParty != null) watchParty.togglePlayPause() else viewModel.onPlayPause()
+            },
+            seek = { seconds ->
+                if (watchParty != null) watchParty.seek(seconds) else viewModel.seekImmediate(seconds)
+            },
+            stop = {
+                watchParty?.leave()
+                viewModel.remoteStop()
+            },
+            selectAudio = { index -> viewModel.remoteSelectAudio(index.toInt()) },
+            selectSubtitle = { index -> viewModel.remoteSelectSubtitle(index?.toInt() ?: -1) },
+            setPlaybackSpeed = { speed ->
+                // Refused in a Watch Party, and never written to the preference.
+                tvSiloCastPlaybackSpeed(inWatchParty = watchParty != null, requested = speed)?.let { applied ->
+                    viewModel.onSetPlaybackSpeed(applied)
+                    latestSiloCastMediaController?.playbackParameters = PlaybackParameters(applied.toFloat())
+                }
+            },
+            setQuality = { qualityId ->
+                val player = latestSiloCastMediaController ?: latestSiloCastSessionPlayer
+                if (player != null && selectVideoQuality(player, qualityId)) {
+                    val resolution = viewModel.uiState.value.videoQualities
+                        .firstOrNull { it.id == qualityId }
+                        ?.resolution
+                    viewModel.onVideoQualitySelectionApplied(resolution)
+                    watchParty?.onQualityChanged()
+                }
+            },
+            setVideoGravity = { value ->
+                viewModel.onVideoFillModeChanged(value.toSiloCastVideoFillMode())
+            },
+            setHdrEnabled = viewModel::onSetHdrEnabled,
+            setSubtitleSyncMs = viewModel::onSubtitleDelayChanged,
+            setSubtitlePosition = { value ->
+                viewModel.onSetSubtitleAppearance(
+                    latestSiloCastSubtitleAppearance.copy(position = value.toSiloCastSubtitlePosition()),
+                )
+            },
+            setVolume = { volume ->
+                latestSiloCastMediaController?.let { controller ->
+                    val next = volume.toFloat().coerceIn(0f, 1f)
+                    siloCastReceiver.recordPlayerVolume(next.toDouble())
+                    controller.volume = next
+                }
+            },
+            setMuted = { muted ->
+                latestSiloCastMediaController?.let { controller ->
+                    siloCastReceiver.recordPlayerMuted(muted, controller.volume.toDouble())
+                    controller.volume = if (muted) 0f else siloCastReceiver.retainedPlayerVolume().toFloat()
+                }
+            },
+            playNext = viewModel::playNextEpisodeNow,
+            // A phone's launch never silently replaces the party player.
+            launchRefusal = { watchParty?.refuseLaunch() },
+        )
+        val registration = siloCastReceiver.registerPlayer(adapter) {
+            val volumeState = siloCastReceiver.resolvePlayerVolume(
+                currentVolume = latestSiloCastMediaController?.volume?.toDouble(),
+            )
+            viewModel.uiState.value.toSiloCastPlaybackState(
+                // A Watch Party plays at 1x; its correction rate is never shown.
+                playbackSpeed = if (watchParty != null) 1.0 else latestSiloCastPlaybackSpeed,
+                hdrEnabled = latestSiloCastHdrEnabled,
+                subtitleDelayMs = latestSiloCastSubtitleDelayMs,
+                subtitleAppearance = latestSiloCastSubtitleAppearance,
+                volumeState = volumeState,
+            )
+        }
+        onDispose { registration.close() }
     }
 }
 
@@ -3588,6 +3702,8 @@ private fun TvPlayerOverlays(
     onExitPlayback: () -> Unit,
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
     onIntroPromptSelect: () -> Unit,
+    /** Watch Party: the lower rung offered after repeated stalls, or null. */
+    qualityOfferLabel: String? = null,
 ) {
         // Lifecycle-driven notice toast (top-start). Slides in for outage
         // recovery, fades out when the lifecycle clears the notice.
@@ -3801,6 +3917,30 @@ private fun TvPlayerOverlays(
                         // scrubber commits its seek on focus loss, so taking
                         // focus here would land a seek they never confirmed.
                         mayTakeFocus = introBannerMayTakeFocus,
+                    )
+                }
+            }
+        }
+
+        // Watch Party quality offer (bottom-start, clear of the intro pill).
+        // OK takes it and Back dismisses it, both through the remote bridge.
+        if (!isInPictureInPictureMode && qualityOfferLabel != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 56.dp, start = 32.dp),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(percent = 50))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        text = "Keeps buffering? Press OK to switch to $qualityOfferLabel.",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
                     )
                 }
             }

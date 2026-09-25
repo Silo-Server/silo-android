@@ -62,6 +62,12 @@ sealed interface VideoPlaybackStartResult {
         val contentId: String,
         val message: String,
         val diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        /**
+         * The server's terminal refusal reason exactly as sent, when the
+         * failure was a playback terminal. A Watch Party reports it to the
+         * room; [diagnosticsCode] keeps only the reasons safe for telemetry.
+         */
+        val terminalReason: String? = null,
     ) : VideoPlaybackStartResult
 
     /**

@@ -500,6 +500,15 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.Launch -> {
                 if (!requireAuthorized(session)) return true
+                // A Watch Party player is never silently replaced by a cast.
+                activePlayer?.adapter?.launchRefusal?.invoke()?.let { refusal ->
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(code = "watch_party_active", message = refusal),
+                        ),
+                    )
+                    return true
+                }
                 if (!session.remoteLaunchReady || identityManager.activeIdentity == null) {
                     session.send(
                         SiloCastMessage.Error(
