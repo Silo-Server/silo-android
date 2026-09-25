@@ -111,6 +111,11 @@ fun MainScreen(
     }
 
     fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) {
+        val localRoute = Route.Player(
+            contentId = contentId,
+            fileId = fileId,
+            resumePositionSeconds = resumePositionSeconds,
+        ).route
         val sentToTv = siloCastPlayRouter.playStreaming(
             SiloCastPlaybackRequest(
                 contentId = contentId,
@@ -118,17 +123,10 @@ fun MainScreen(
                 startFromBeginning = resumePositionSeconds == null,
                 resumePosition = resumePositionSeconds,
             ),
+            localRoute = localRoute,
             onLaunched = openSiloCastRemote,
         )
-        if (!sentToTv) {
-            navController.navigate(
-                Route.Player(
-                    contentId = contentId,
-                    fileId = fileId,
-                    resumePositionSeconds = resumePositionSeconds,
-                ).route,
-            )
-        }
+        if (!sentToTv) navController.navigate(localRoute)
     }
     val librariesViewModel = if (currentTab == Tab.Libraries) {
         koinViewModel<LibrariesViewModel>()
@@ -517,20 +515,17 @@ fun MainScreen(
                                 } else {
                                     // A download plays only here; with a TV
                                     // engaged, ask first (iOS does the same).
+                                    val localRoute = Route.Player(
+                                        contentId = item.contentId,
+                                        fileId = item.fileId,
+                                    ).route
                                     siloCastPlayRouter.playOffline(
                                         request = SiloCastPlaybackRequest(
                                             contentId = item.contentId,
                                             startFromBeginning = false,
                                         ),
-                                        playHere = {
-                                            navController.navigate(
-                                                Route.Player(
-                                                    contentId = item.contentId,
-                                                    fileId = item.fileId,
-                                                ).route,
-                                            )
-                                        },
-                                        onLaunched = openSiloCastRemote,
+                                        localRoute = localRoute,
+                                        playHere = { navController.navigate(localRoute) },
                                     )
                                 }
                             },

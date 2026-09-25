@@ -13,12 +13,26 @@ import org.siloserver.silo.android.cast.SiloCastPlayRouter
 /**
  * The two questions [SiloCastPlayRouter] asks before a Play, worded as on
  * iOS: replacing the title the TV is showing, and where a download should
- * play while a TV is engaged. Rendered once, at the root of the nav graph.
+ * play while a TV is engaged. Rendered once, at the root of the nav graph,
+ * with that graph's current navigation: [onOpenRemote] after a title goes
+ * to the TV, [onPlayHere] with a player route for the phone.
  */
 @Composable
-fun SiloCastPlayDialogs(router: SiloCastPlayRouter = koinInject()) {
+fun SiloCastPlayDialogs(
+    onOpenRemote: () -> Unit,
+    onPlayHere: (route: String) -> Unit,
+    router: SiloCastPlayRouter = koinInject(),
+) {
     val replace by router.pendingReplace.collectAsState()
     val offline by router.pendingOffline.collectAsState()
+
+    fun go(destination: SiloCastPlayRouter.Destination?) {
+        when (destination) {
+            SiloCastPlayRouter.Destination.Tv -> onOpenRemote()
+            is SiloCastPlayRouter.Destination.Here -> onPlayHere(destination.route)
+            null -> Unit
+        }
+    }
 
     replace?.let { choice ->
         AlertDialog(
@@ -26,7 +40,7 @@ fun SiloCastPlayDialogs(router: SiloCastPlayRouter = koinInject()) {
             title = { Text("Replace what's playing?") },
             text = { Text("${choice.targetName} is playing ${choice.currentTitle}. Playing this will stop it.") },
             confirmButton = {
-                TextButton(onClick = router::confirmReplace) { Text("Play on ${choice.targetName}") }
+                TextButton(onClick = { go(router.confirmReplace()) }) { Text("Play on ${choice.targetName}") }
             },
             dismissButton = {
                 TextButton(onClick = router::dismissReplace) { Text("Cancel") }
@@ -40,12 +54,12 @@ fun SiloCastPlayDialogs(router: SiloCastPlayRouter = koinInject()) {
             title = { Text("A TV is connected") },
             text = { Text("Downloads only play on this device. The TV can stream the same title from your server.") },
             confirmButton = {
-                TextButton(onClick = router::sendOfflineToTv) { Text("Play on ${choice.targetName}") }
+                TextButton(onClick = { go(router.sendOfflineToTv()) }) { Text("Play on ${choice.targetName}") }
             },
             dismissButton = {
                 Row {
                     TextButton(onClick = router::dismissOffline) { Text("Cancel") }
-                    TextButton(onClick = router::playOfflineHere) { Text("Play on this device") }
+                    TextButton(onClick = { go(router.playOfflineHere()) }) { Text("Play on this device") }
                 }
             },
         )

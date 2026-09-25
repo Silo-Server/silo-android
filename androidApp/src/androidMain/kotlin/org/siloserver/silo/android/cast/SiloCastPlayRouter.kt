@@ -13,22 +13,32 @@ import org.siloserver.silo.cast.SiloCastPlaybackRequest
  *
  * Two plays need the person's say before they happen, as on iOS: replacing a
  * different title the TV is showing, and a download (which can only play on
- * the phone) while a TV is engaged. [SiloCastPlayDialogs] asks both.
+ * the phone) while a TV is engaged. [SiloCastPlayDialogs] asks both. A
+ * pending question holds data only: this router outlives the screen that
+ * asked, so the dialogs navigate with the navigation host current when the
+ * person answers.
  */
 class SiloCastPlayRouter(private val controller: SiloCastController) {
     data class ReplaceChoice(
         val request: SiloCastPlaybackRequest,
         val currentTitle: String,
         val targetName: String,
-        val onLaunched: () -> Unit,
+        /** The phone's player route for the title, used if the TV is gone by the answer. */
+        val localRoute: String?,
     )
 
     data class OfflineChoice(
         val request: SiloCastPlaybackRequest,
         val targetName: String,
-        val playHere: () -> Unit,
-        val onLaunched: () -> Unit,
+        /** The download's player route on the phone. */
+        val localRoute: String,
     )
+
+    /** Where an answered question plays the title. */
+    sealed interface Destination {
+        data object Tv : Destination
+        data class Here(val route: String) : Destination
+    }
 
     private val _pendingReplace = MutableStateFlow<ReplaceChoice?>(null)
     val pendingReplace: StateFlow<ReplaceChoice?> = _pendingReplace.asStateFlow()
@@ -40,9 +50,11 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
      * Sends a streaming [request] to the engaged TV. Returns false when no TV
      * is engaged, so the caller plays on the phone. A TV playing a different
      * title asks first; the same title (Resume of what is on) goes straight
-     * through. [onLaunched] runs once the request is on its way to the TV.
+     * through. [onLaunched] runs when the request goes out right away.
+     * [localRoute] is where the title plays on the phone should the TV be
+     * gone when the person answers; null keeps it off the phone.
      */
-    fun playStreaming(request: SiloCastPlaybackRequest, onLaunched: () -> Unit): Boolean {
+    fun playStreaming(request: SiloCastPlaybackRequest, localRoute: String?, onLaunched: () -> Unit): Boolean {
         val state = controller.state.value
         if (!state.isEngaged) return false
         val current = state.playbackState?.takeIf { !it.contentId.isNullOrEmpty() }
@@ -51,19 +63,19 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
                 request = request,
                 currentTitle = current.title,
                 targetName = state.targetName,
-                onLaunched = onLaunched,
+                localRoute = localRoute,
             )
             return true
         }
-        launch(request, onLaunched)
+        if (controller.launchOnConnectedTarget(request)) onLaunched()
         return true
     }
 
     /**
      * A download plays only on the phone. With a TV engaged, asks whether to
-     * play it here or stream the same title on the TV instead.
+     * play it here (at [localRoute]) or stream the same title on the TV.
      */
-    fun playOffline(request: SiloCastPlaybackRequest, playHere: () -> Unit, onLaunched: () -> Unit) {
+    fun playOffline(request: SiloCastPlaybackRequest, localRoute: String, playHere: () -> Unit) {
         val state = controller.state.value
         if (!state.isEngaged) {
             playHere()
@@ -72,35 +84,37 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
         _pendingOffline.value = OfflineChoice(
             request = request,
             targetName = state.targetName,
-            playHere = playHere,
-            onLaunched = onLaunched,
+            localRoute = localRoute,
         )
     }
 
-    fun confirmReplace() {
-        val choice = _pendingReplace.getAndUpdate { null } ?: return
-        launch(choice.request, choice.onLaunched)
+    fun confirmReplace(): Destination? {
+        val choice = _pendingReplace.getAndUpdate { null } ?: return null
+        return sendToTv(choice.request, fallbackRoute = choice.localRoute)
     }
 
     fun dismissReplace() {
         _pendingReplace.value = null
     }
 
-    fun sendOfflineToTv() {
-        val choice = _pendingOffline.getAndUpdate { null } ?: return
-        launch(choice.request, choice.onLaunched)
+    fun sendOfflineToTv(): Destination? {
+        val choice = _pendingOffline.getAndUpdate { null } ?: return null
+        return sendToTv(choice.request, fallbackRoute = choice.localRoute)
     }
 
-    fun playOfflineHere() {
-        _pendingOffline.getAndUpdate { null }?.playHere?.invoke()
-    }
+    fun playOfflineHere(): Destination? =
+        _pendingOffline.getAndUpdate { null }?.let { Destination.Here(it.localRoute) }
 
     fun dismissOffline() {
         _pendingOffline.value = null
     }
 
-    private fun launch(request: SiloCastPlaybackRequest, onLaunched: () -> Unit) {
-        if (controller.launchOnConnectedTarget(request)) onLaunched()
+    // The TV can drop while the question is up: play here instead, as Play
+    // would with no TV, rather than losing the request.
+    private fun sendToTv(request: SiloCastPlaybackRequest, fallbackRoute: String?): Destination? = when {
+        controller.launchOnConnectedTarget(request) -> Destination.Tv
+        fallbackRoute != null -> Destination.Here(fallbackRoute)
+        else -> null
     }
 
     private val SiloCastControllerState.targetName: String
