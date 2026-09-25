@@ -114,15 +114,17 @@ fun WatchPartyHubScreen(
     val available = state.availability is WatchPartyAvailability.Available
     // Keep the handoff until this server supports room and playback
     // capabilities, including while a failed probe waits for Retry.
-    LaunchedEffect(inviteId, available, enabled, casting) {
-        if (!available || !enabled || casting) return@LaunchedEffect
+    // A forced re-check keeps the old answer published, so wait for it: the
+    // server may have turned Watch Party off since that answer.
+    LaunchedEffect(inviteId, available, enabled, casting, state.checking) {
+        if (!available || !enabled || casting || state.checking) return@LaunchedEffect
         handoff.takeInvite(inviteId)?.let(viewModel::joinInvite)
     }
 
     // A detail page's "Watch Party": host with that item once the server is
     // known to support hosting. Unsupported servers show why instead.
-    LaunchedEffect(hostId, available, enabled, casting) {
-        if (!available || !enabled || casting) return@LaunchedEffect
+    LaunchedEffect(hostId, available, enabled, casting, state.checking) {
+        if (!available || !enabled || casting || state.checking) return@LaunchedEffect
         handoff.takeHost(hostId)?.let(viewModel::hostWithItem)
     }
 

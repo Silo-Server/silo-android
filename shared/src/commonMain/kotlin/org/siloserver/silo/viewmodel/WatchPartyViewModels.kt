@@ -92,10 +92,18 @@ class WatchPartyHubViewModel(
         /** A create whose outcome is unknown can be retried with the same identity. */
         val createRetryable: Boolean = false,
         val destination: WatchPartyDestination? = null,
+        /**
+         * A forced re-check is running. [availability] still shows the last
+         * answer meanwhile, so one-shot handoffs wait for this to clear.
+         */
+        val checking: Boolean = false,
     )
 
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
+
+    /** Forced re-checks still running; overlapping ones must all finish. */
+    private val forcedChecks = MutableStateFlow(0)
 
     private var pendingCreate: CreateRoomRequest? = null
     private var pendingStage: WatchPartyItem? = null
@@ -123,9 +131,16 @@ class WatchPartyHubViewModel(
 
     /** Probe availability (again when [force]) and reload the recent party. */
     fun refresh(force: Boolean = false) {
+        if (force) forcedChecks.update { it + 1 }
+        _uiState.update { it.copy(checking = forcedChecks.value > 0) }
         viewModelScope.launch {
-            val result = availability.refresh(force)
-            _uiState.update { it.copy(availability = result, recent = recents.current()) }
+            try {
+                val result = availability.refresh(force)
+                _uiState.update { it.copy(availability = result, recent = recents.current()) }
+            } finally {
+                if (force) forcedChecks.update { it - 1 }
+                _uiState.update { it.copy(checking = forcedChecks.value > 0) }
+            }
         }
     }
 

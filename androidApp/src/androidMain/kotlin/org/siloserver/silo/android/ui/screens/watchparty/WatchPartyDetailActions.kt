@@ -88,10 +88,13 @@ class WatchPartyDetailViewModel(
             subtitle = item.subtitle,
             posterUrl = item.posterUrl,
         )
+        // Held before sending, so a second tap while this one is in flight
+        // resends the same suggestion id instead of adding a duplicate.
+        suggestionDraft = request
         viewModelScope.launch {
             when (val result = repository.addSuggestion(request)) {
                 is ApiResult.Success -> {
-                    suggestionDraft = null
+                    if (suggestionDraft == request) suggestionDraft = null
                     _messages.tryEmit("Suggested ${item.title} to the party.")
                 }
                 is ApiResult.NetworkError -> {
@@ -99,7 +102,7 @@ class WatchPartyDetailViewModel(
                     _messages.tryEmit("Couldn't confirm your suggestion. Try again.")
                 }
                 is ApiResult.Error -> {
-                    suggestionDraft = request.takeIf { result.error == "invalid_response" }
+                    if (suggestionDraft == request) suggestionDraft = request.takeIf { result.error == "invalid_response" }
                     _messages.tryEmit(watchPartyErrorMessage(result, "Couldn't suggest ${item.title}."))
                 }
             }
