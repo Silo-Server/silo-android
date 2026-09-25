@@ -8,10 +8,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -105,14 +108,16 @@ internal fun rememberTvWatchPartyDetailOption(
                 subtitle = "Make this the party's next title",
                 onSelect = { entry.request = TvDetailPartyRequest.Stage(current.roomId, item) },
             )
-        host && current.phase == RoomPhase.Playing -> TvWatchPartyDetailOption(
-            title = "Play for everyone",
-            subtitle = "Switch the party to this title",
-            onSelect = {
-                entry.selectConfirmed = false
-                entry.request = TvDetailPartyRequest.Select(current.roomId, item)
-            },
-        )
+        // The server refuses a direct selection in a voting room; those suggest instead.
+        host && current.phase == RoomPhase.Playing && current.selectionMode == RoomSelectionMode.HostPick ->
+            TvWatchPartyDetailOption(
+                title = "Play for everyone",
+                subtitle = "Switch the party to this title",
+                onSelect = {
+                    entry.selectConfirmed = false
+                    entry.request = TvDetailPartyRequest.Select(current.roomId, item)
+                },
+            )
         current.selfRole != MemberRole.Unknown && knownMode &&
             (current.phase == RoomPhase.Lobby || current.phase == RoomPhase.Playing) ->
             TvWatchPartyDetailOption(
@@ -301,7 +306,9 @@ private fun DetailSelectRunner(
 @Stable
 internal class TvWatchPartyPlayGuard internal constructor(
     private val engaged: () -> Boolean,
-    private val leave: () -> Unit,
+    /** Returns once the party is torn down, so no room command reaches the solo player. */
+    private val leave: suspend () -> Unit,
+    private val scope: CoroutineScope,
 ) {
     internal var pending by mutableStateOf<(() -> Unit)?>(null)
         private set
@@ -314,8 +321,10 @@ internal class TvWatchPartyPlayGuard internal constructor(
     internal fun confirm() {
         val play = pending ?: return
         pending = null
-        leave()
-        play()
+        scope.launch {
+            leave()
+            play()
+        }
     }
 
     internal fun cancel() {
@@ -327,11 +336,15 @@ internal class TvWatchPartyPlayGuard internal constructor(
 internal fun rememberTvWatchPartyPlayGuard(
     repository: WatchTogetherRepository = koinInject(),
     roomSession: RoomSession = koinInject(),
-): TvWatchPartyPlayGuard = remember(repository, roomSession) {
-    TvWatchPartyPlayGuard(
-        engaged = { repository.roomSnapshot.value != null },
-        leave = { roomSession.depart(closeRoom = false) },
-    )
+): TvWatchPartyPlayGuard {
+    val scope = rememberCoroutineScope()
+    return remember(repository, roomSession, scope) {
+        TvWatchPartyPlayGuard(
+            engaged = { repository.roomSnapshot.value != null },
+            leave = { roomSession.depart(closeRoom = false).join() },
+            scope = scope,
+        )
+    }
 }
 
 @Composable

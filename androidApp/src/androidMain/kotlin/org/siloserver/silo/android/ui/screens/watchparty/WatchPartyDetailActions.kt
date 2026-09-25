@@ -24,6 +24,7 @@ import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPhase
+import org.siloserver.silo.model.watchtogether.RoomSelectionMode
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.SetSelectionRequest
 import org.siloserver.silo.network.ApiResult
@@ -127,7 +128,8 @@ class WatchPartyDetailActions internal constructor(
         return when {
             host && party.phase == RoomPhase.Lobby && canStage ->
                 DetailPartyAction("Add to party") { viewModel.stage(item) }
-            host && party.phase == RoomPhase.Playing ->
+            // The server refuses a direct selection in a voting room; those suggest instead.
+            host && party.phase == RoomPhase.Playing && party.selectionMode == RoomSelectionMode.HostPick ->
                 DetailPartyAction("Play for everyone") { confirmSelect(item) }
             canSuggest -> DetailPartyAction("Suggest to Party") { viewModel.suggest(item) }
             else -> null
