@@ -227,12 +227,14 @@ class SiloCastController(
     }
 
     fun launchOnTarget(target: SiloCastTarget, request: SiloCastLaunchRequest) {
+        // Read now, not when the job runs: the reconnect can end in between.
+        val queuedDuringReconnect = _state.value.isReconnecting
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val self = currentCoroutineContext()[Job] ?: return@launch
             try {
                 // A Play during a reconnect waits for the link, as on iOS,
                 // instead of racing the retry loop with a one-shot connect.
-                if (_state.value.isReconnecting) {
+                if (queuedDuringReconnect) {
                     withTimeoutOrNull(LAUNCH_RECONNECT_WAIT_MS) { _state.first { !it.isReconnecting } }
                     // Only a restored link carries the Play on. A retry that
                     // gave up, was refused (another phone has the TV), was
