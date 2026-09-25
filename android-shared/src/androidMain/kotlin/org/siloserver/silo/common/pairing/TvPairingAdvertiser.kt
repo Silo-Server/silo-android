@@ -3,8 +3,8 @@ package org.siloserver.silo.common.pairing
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.os.Build
 import android.util.Log
+import org.siloserver.silo.common.cast.SiloCastDeviceName
 import org.siloserver.silo.pairing.PairingProtocol
 import org.siloserver.silo.pairing.PairingReceiverState
 import kotlinx.coroutines.CoroutineScope
@@ -143,7 +143,7 @@ class TvPairingAdvertiser(
     private fun registerService(port: Int, identity: PairingDeviceIdentity) {
         val sid = UUID.randomUUID().toString()
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = identity.name
+            serviceName = SiloCastDeviceName.instanceName(identity.name)
             serviceType = PairingProtocol.SERVICE_TYPE
             this.port = port
             setAttribute("v", PairingProtocol.VERSION.toString())
@@ -169,7 +169,7 @@ class TvPairingAdvertiser(
     }
 
     private fun currentIdentity(): PairingDeviceIdentity {
-        val name = Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
+        val name = SiloCastDeviceName.resolve(context, fallback = "Android TV")
         return PairingDeviceIdentity(name = name, deviceId = PairingDeviceId.stable(context))
     }
 }

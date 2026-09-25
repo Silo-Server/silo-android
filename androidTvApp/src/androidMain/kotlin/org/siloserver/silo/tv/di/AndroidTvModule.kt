@@ -324,7 +324,7 @@ val androidTvModule = module {
             deviceLogin = org.siloserver.silo.common.pairing.DeviceLoginRepositoryPort(get()),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(
-                    name = tvDeviceName(),
+                    name = tvDeviceName(androidContext()),
                     deviceId = org.siloserver.silo.common.pairing.PairingDeviceId
                         .stable(androidContext()),
                 )
@@ -355,21 +355,23 @@ val androidTvModule = module {
     }
     single { SiloCastNsdAdvertiser(androidContext()) }
     single {
+        val context = androidContext()
         RemotePlaybackIdentityManager(
             deviceLoginApi = get(),
             tokenManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { tvDeviceName(context) },
         )
     }
     single {
+        val context = androidContext()
         val playbackLifecycle: org.siloserver.silo.common.player.PlaybackSessionLifecycle = get()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
             identityManager = get(),
-            deviceNameProvider = ::tvDeviceName,
+            deviceNameProvider = { tvDeviceName(context) },
             deviceIdProvider = {
-                org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
+                org.siloserver.silo.common.pairing.PairingDeviceId.stable(context)
             },
             awaitPlaybackTeardown = { playbackLifecycle.awaitPendingStops(timeoutMs = 10_000L) },
         )
@@ -549,5 +551,5 @@ val androidTvModule = module {
     viewModel { TvDiagnosticsViewModel(get()) }
 }
 
-private fun tvDeviceName(): String =
-    android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
+private fun tvDeviceName(context: android.content.Context): String =
+    org.siloserver.silo.common.cast.SiloCastDeviceName.resolve(context, fallback = "Android TV")

@@ -213,7 +213,7 @@ val androidModule = module {
             deviceLoginApi = get(),
             lastTargetStore = get(),
             deviceNameProvider = {
-                android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"
+                org.siloserver.silo.common.cast.SiloCastDeviceName.resolve(androidContext(), fallback = "Android Phone")
             },
             deviceIdProvider = { PairingDeviceId.stable(androidContext()) },
         )

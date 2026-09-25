@@ -3,7 +3,6 @@ package org.siloserver.silo.common.cast
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
-import android.os.Build
 import android.util.Log
 import org.siloserver.silo.cast.SiloCastProtocol
 import org.siloserver.silo.common.pairing.PairingDeviceId
@@ -19,7 +18,7 @@ import org.siloserver.silo.common.pairing.PairingDeviceId
 class SiloCastNsdAdvertiser(
     context: Context,
     private val nameProvider: () -> String = {
-        Build.MODEL?.trim()?.ifBlank { null } ?: "Android TV"
+        SiloCastDeviceName.resolve(context, fallback = "Android TV")
     },
     private val deviceIdProvider: () -> String = {
         PairingDeviceId.stable(context)
@@ -61,7 +60,7 @@ class SiloCastNsdAdvertiser(
         registrationListener = null
         val name = nameProvider()
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = name
+            serviceName = SiloCastDeviceName.instanceName(name)
             serviceType = SiloCastProtocol.serviceType
             port = registration.port
             setAttribute("v", SiloCastProtocol.version.toString())
