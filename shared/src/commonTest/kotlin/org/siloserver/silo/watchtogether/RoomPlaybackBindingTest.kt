@@ -513,6 +513,23 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a new title starts with no stall history`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        repeat(2) {
+            player.update { copy(state = RoomPlayerState.Buffering) }
+            advanceTimeBy(2_300)
+            player.update { copy(state = RoomPlayerState.Ready) }
+            advanceTimeBy(300)
+        }
+        assertTrue(binding.offerLowerQuality.value)
+        room.roomSnapshot.value = playing(revision = 4)
+        advanceTimeBy(300)
+        assertFalse(binding.offerLowerQuality.value)
+    }
+
+    @Test
     fun `a viewer the room left behind acknowledges recovery until it is ready`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()

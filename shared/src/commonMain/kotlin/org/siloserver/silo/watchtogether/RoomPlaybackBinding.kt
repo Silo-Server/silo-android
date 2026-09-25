@@ -356,6 +356,11 @@ class RoomPlaybackBinding(
         if (snapshot.selectionRevision != lastRevision) {
             lastRevision = snapshot.selectionRevision
             resetEpoch()
+            // A new title is a new stream: the old one's reload backoff and
+            // stall history say nothing about it.
+            reloads.reset()
+            sustainedStalls.clear()
+            _offerLowerQuality.value = false
         }
         if (now - lastContinuityCheckMs >= 1_000L) {
             lastContinuityCheckMs = now

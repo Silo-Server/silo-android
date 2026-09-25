@@ -173,9 +173,16 @@ private fun DetailHostRunner(
     val state by hub.uiState.collectAsState()
     val latestNavigate by rememberUpdatedState(onNavigate)
     var started by remember(request) { mutableStateOf(false) }
+    // Re-check first, as the hub does: the cached answer may predate the
+    // server turning Watch Party off. `checking` is set before this returns.
+    var rechecked by remember(request) { mutableStateOf(false) }
+    LaunchedEffect(request) {
+        hub.refresh(force = true)
+        rechecked = true
+    }
 
-    LaunchedEffect(request, state.availability) {
-        if (started) return@LaunchedEffect
+    LaunchedEffect(request, state.availability, rechecked, state.checking) {
+        if (started || !rechecked || state.checking) return@LaunchedEffect
         when (state.availability ?: availability.availability.value) {
             null -> Unit // The hub's first probe is still running.
             is WatchPartyAvailability.Available -> {

@@ -402,7 +402,9 @@ class WatchPartyLobbyViewModel(
 
     /** Suggest [item]. After an uncertain outcome, [retrySuggestion] resends the same suggestion. */
     fun suggest(item: WatchPartyItem) {
-        val request = AddSuggestionRequest(
+        // An uncertain or in-flight suggestion of the same title resends its
+        // own id, so the server can't end up with the title twice.
+        val request = (suggestionDraft.value?.first ?: inFlightSuggestion)?.takeIf { it.contentId == item.contentId } ?: AddSuggestionRequest(
             suggestionId = newWatchPartyId(),
             contentId = item.contentId,
             contentType = item.contentType,
@@ -422,16 +424,24 @@ class WatchPartyLobbyViewModel(
         suggestionDraft.value = null
     }
 
+    /** The suggestion being sent now; a repeat of the same title reuses its id. */
+    private var inFlightSuggestion: AddSuggestionRequest? = null
+
     private fun sendSuggestion(request: AddSuggestionRequest, item: WatchPartyItem) {
+        inFlightSuggestion = request
+        // Only this request's own outcome may clear or replace the retry draft.
+        fun draftIsMineOrEmpty() = suggestionDraft.value?.first?.suggestionId.let { it == null || it == request.suggestionId }
         viewModelScope.launch {
-            when (val result = repository.addSuggestion(request)) {
-                is ApiResult.Success -> suggestionDraft.value = null
+            val result = repository.addSuggestion(request)
+            if (inFlightSuggestion == request) inFlightSuggestion = null
+            when (result) {
+                is ApiResult.Success -> if (draftIsMineOrEmpty()) suggestionDraft.value = null
                 is ApiResult.NetworkError -> {
                     suggestionDraft.value = request to item
                     _messages.tryEmit("Couldn't confirm your suggestion. Try again.")
                 }
                 is ApiResult.Error -> {
-                    suggestionDraft.value = (request to item).takeIf { result.error == "invalid_response" }
+                    if (draftIsMineOrEmpty()) suggestionDraft.value = (request to item).takeIf { result.error == "invalid_response" }
                     _messages.tryEmit(watchPartyErrorMessage(result, "Couldn't suggest ${item.title}."))
                 }
             }
