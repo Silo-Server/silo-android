@@ -84,8 +84,9 @@ data class SiloCastControllerState(
 
     /** The user has a TV engaged. Play routing, the remote pill and the mini
      *  bar all read this one predicate (iOS `remotePlaybackEngaged`): true
-     *  through a reconnect, false while a silent auto-resume is unconfirmed. */
-    val isEngaged: Boolean get() = (hasActiveSession && !isAutoResuming) || isReconnecting
+     *  through a reconnect, false while a silent auto-resume is unconfirmed,
+     *  including when that unconfirmed session is itself reconnecting. */
+    val isEngaged: Boolean get() = hasActiveSession && !isAutoResuming
 }
 
 /**
