@@ -46,6 +46,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import org.siloserver.silo.model.notifications.WsTicketResponse
 import org.siloserver.silo.network.apiv2.ApiV2Gate
 import org.siloserver.silo.network.apiv2.safeApiV2Call
+import org.siloserver.silo.util.parseRfc3339ToEpochMillis
 
 /**
  * Per-room websocket. One [connect] = one ticket mint at
@@ -432,6 +433,9 @@ fun decodeRoomFrame(json: Json, raw: String, receivedAtMs: Long? = null): RoomRe
             } catch (_: Exception) {
                 return RoomRealtimeEvent.Malformed(type)
             }
+            // A command must say when to run. Without that it can't be
+            // scheduled, so the room is reconciled instead of running it now.
+            if (parseRfc3339ToEpochMillis(parsed.executeAt) == null) return RoomRealtimeEvent.Malformed(type)
             RoomRealtimeEvent.TransportCommandEvent(parsed)
         }
         WatchTogetherRealtime.TypeSuggestionsUpdate -> {

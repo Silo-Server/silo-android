@@ -525,6 +525,16 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
+                // In a party lobby no party player is registered yet, but a
+                // solo launch would still take the shared player from the room.
+                if (inWatchParty()) {
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(code = "watch_party_active", message = "Leave the Watch Party on the TV first."),
+                        ),
+                    )
+                    return true
+                }
                 if (!session.remoteLaunchReady || identityManager.activeIdentity == null) {
                     session.send(
                         SiloCastMessage.Error(

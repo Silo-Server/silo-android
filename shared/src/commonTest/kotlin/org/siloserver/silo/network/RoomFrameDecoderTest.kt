@@ -106,6 +106,14 @@ class RoomFrameDecoderTest {
     }
 
     @Test
+    fun `transport_command with an unreadable execute_at is reported as malformed`() {
+        // Running it at once would skip the room's schedule; reconciling is safe.
+        val raw = """{"type":"transport_command","command":{"command_id":"cmd-1","action":"seek",
+            "position_seconds":42.0,"execute_at":"soon"}}"""
+        assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, raw))
+    }
+
+    @Test
     fun `transport_command missing command is reported as malformed`() {
         assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, """{"type":"transport_command"}"""))
     }

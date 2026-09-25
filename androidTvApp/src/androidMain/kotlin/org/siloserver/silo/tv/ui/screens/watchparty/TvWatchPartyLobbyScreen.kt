@@ -47,6 +47,7 @@ import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel
 import org.siloserver.silo.watchtogether.WatchPartyDestination
+import org.siloserver.silo.watchtogether.WatchPartyFeatures
 import org.siloserver.silo.watchtogether.canRemoveSuggestion
 import org.siloserver.silo.watchtogether.roomVoteWinner
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
@@ -276,7 +277,7 @@ fun TvWatchPartyLobbyScreen(
                     onVote = viewModel::vote,
                     onQueue = { suggestion -> queue(viewModel, suggestion) },
                     onSuggestionMenu = { suggestion ->
-                        if (suggestionMenuRows(room, suggestion, state.features?.voteHostOverride == true).isNotEmpty()) {
+                        if (suggestionMenuRows(room, suggestion, state.features).isNotEmpty()) {
                             openModal { menuSuggestionId = suggestion.id }
                         }
                     },
@@ -353,7 +354,7 @@ fun TvWatchPartyLobbyScreen(
             onDismiss = { menuSuggestionId = null },
             width = 380.dp,
         ) {
-            suggestionMenuRows(room, menuSuggestion, state.features?.voteHostOverride == true).forEach { row ->
+            suggestionMenuRows(room, menuSuggestion, state.features).forEach { row ->
                 TvPartyOptionRow(
                     title = row.title,
                     destructive = row == SuggestionMenuRow.Remove,
@@ -425,11 +426,16 @@ private enum class SuggestionMenuRow(val title: String) {
 }
 
 /** A suggestion card's context actions for this member. */
-private fun suggestionMenuRows(room: RoomSnapshot, suggestion: Suggestion, voteHostOverride: Boolean): List<SuggestionMenuRow> {
+private fun suggestionMenuRows(room: RoomSnapshot, suggestion: Suggestion, features: WatchPartyFeatures?): List<SuggestionMenuRow> {
     val manages = room.selfRole == MemberRole.Host && room.selfCanManageRoom
     return buildList {
-        if (manages && room.selectionMode == RoomSelectionMode.Vote && voteHostOverride) add(SuggestionMenuRow.StartThisOne)
-        if (manages && room.selectionMode == RoomSelectionMode.HostPick && suggestion.contentId != room.selectedContentId) {
+        if (manages && room.selectionMode == RoomSelectionMode.Vote && features?.voteHostOverride == true) {
+            add(SuggestionMenuRow.StartThisOne)
+        }
+        // Queueing stages the pick, which only servers with staged selection accept.
+        if (manages && room.selectionMode == RoomSelectionMode.HostPick && features?.stagedSelection == true &&
+            suggestion.contentId != room.selectedContentId
+        ) {
             add(SuggestionMenuRow.Queue)
         }
         if (canRemoveSuggestion(room, suggestion)) add(SuggestionMenuRow.Remove)
