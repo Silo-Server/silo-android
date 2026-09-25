@@ -1166,11 +1166,13 @@ fun ItemDetailScreen(
                 onClick = {
                     val castRequest = directCastRequest
                     val server = serverRegistry.activeEntry.value
+                    // A movie or episode: send this title to the TV, as iOS does. Asked
+                    // for the TV, so no fallback to the phone: a TV that has just gone
+                    // opens the picker instead.
+                    val sentToTv = castRequest != null && siloCastState.isEngaged &&
+                        siloCastPlayRouter.playStreaming(castRequest, localRoute = null, onLaunched = onOpenCastRemote)
                     when {
-                        // A movie or episode: send this title to the TV, as iOS does.
-                        castRequest != null && siloCastState.isEngaged ->
-                            // Asked for the TV: no fallback to the phone.
-                            siloCastPlayRouter.playStreaming(castRequest, localRoute = null, onLaunched = onOpenCastRemote)
+                        sentToTv -> Unit
                         castRequest != null && server != null ->
                             pendingCastLaunch = SiloCastLaunchRequest(serverId = server.id, playback = castRequest)
                         siloCastState.isEngaged -> remoteMenuExpanded = true
