@@ -902,14 +902,17 @@ class SiloCastController(
                         while (nowMs() < deadline) {
                             attempt++
                             // Back off 1–4 s, but dial at once when discovery
-                            // finds the TV at a new address.
-                            withTimeoutOrNull(attempt.coerceAtMost(4) * 1_000L) {
+                            // finds the TV at a new address. The last dial starts
+                            // inside the window, so with the connect timeout the
+                            // loop ends within the 45 s a waiting Play allows.
+                            withTimeoutOrNull(minOf(attempt.coerceAtMost(4) * 1_000L, deadline - nowMs())) {
                                 _state.first { current ->
                                     current.targets.firstOrNull { it.deviceId == target.deviceId }
                                         ?.let { (it.host to it.port) != lastDialed } == true
                                 }
                             }
                             if (suppressReconnect) return@launch
+                            if (nowMs() >= deadline) break
                             _state.value.targets.firstOrNull { it.deviceId == target.deviceId }
                                 ?.let { lastDialed = it.host to it.port }
                             val reconnected = connectionMutex.withLock {
