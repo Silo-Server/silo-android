@@ -297,6 +297,8 @@ open class PlaybackSessionManager(
         progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
         deferPublication: Boolean = false,
         expectedMetadataOwner: AuthScopeSnapshot? = null,
+        /** False pins [fileId] through every replan (Watch Party). Null keeps the server default. */
+        allowAlternateVersions: Boolean? = null,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
         if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
             return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
@@ -375,6 +377,7 @@ open class PlaybackSessionManager(
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
+                allowAlternateVersions = allowAlternateVersions,
             )
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")

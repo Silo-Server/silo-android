@@ -106,8 +106,24 @@ class TvVideoPlaybackStarter(
             val preferredQuality = request.preferredQualityOverride
                 ?: playerSettingsStore.preferredQualityFlow.first()
             val playbackQualityIntent = request.playbackQualityIntent ?: preferredQuality
+            val room = request.room
+            if (room != null && watchDetail.versions.none { it.fileId == room.fileId }) {
+                return failure(
+                    request.contentId,
+                    "The Watch Party's version of this title isn't available to this profile.",
+                    diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
+                )
+            }
+            // Room starts keep the file through every replan; renewals keep
+            // whatever the original start chose.
+            val allowAlternateVersions = if (room != null) {
+                false
+            } else {
+                request.recoveryStartParams?.allowAlternateVersions
+            }
             val resolvedEpisodeSelection = resolveTvPlaybackStartSelection(
-                preferredFileId = request.preferredFileId,
+                // A room plays exactly its file; never a preferred or remembered one.
+                preferredFileId = room?.fileId ?: request.preferredFileId,
                 episodeSelectionHandoff = request.episodeSelectionHandoff,
                 targetVersions = watchDetail.versions,
                 targetLastFileId = watchDetail.userData?.lastFileId,
@@ -184,7 +200,7 @@ class TvVideoPlaybackStarter(
             // Suppressed for Start Over / retry (request flag) and Watch Together
             // (roomId); the one rewound value drives both the server seek and the
             // player start so a transcode cut and the player position never disagree.
-            val suppressRewind = request.suppressResumeRewind || request.roomId != null ||
+            val suppressRewind = request.suppressResumeRewind || request.roomId != null || room != null ||
                 org.siloserver.silo.model.playback.isExplicitStartOver(request.resumePositionOverride)
             // Per-profile setting (default 7; 0 = off). Read once per start.
             val rewindSeconds = playerSettingsStore.resumeRewindSecondsFlow.first().toDouble()
@@ -195,7 +211,9 @@ class TvVideoPlaybackStarter(
                     rewindSeconds = rewindSeconds,
                 )
             }
-            val startRequestPosition = rewound(
+            // A room starts at the room position, including an explicit zero;
+            // personal resume never applies.
+            val startRequestPosition = room?.positionSeconds ?: rewound(
                 resolvePlaybackStartRequestPosition(
                     overridePosition = request.resumePositionOverride,
                     detailPosition = watchDetail.userData?.positionSeconds,
@@ -228,6 +246,7 @@ class TvVideoPlaybackStarter(
                     maxBitrateKbps = maxBitrateKbps,
                     deferPublication = true,
                     expectedMetadataOwner = expectedMetadataOwner,
+                    allowAlternateVersions = allowAlternateVersions,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -266,6 +285,15 @@ class TvVideoPlaybackStarter(
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
                 ?: version.fileId
+            if (room != null && effectiveFileId != room.fileId) {
+                discardUnpublishedSession(unpublishedSessionId, lifecycleAdopted)
+                unpublishedSessionId = null
+                return failure(
+                    request.contentId,
+                    "The server offered a different version than the Watch Party's.",
+                    diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
+                )
+            }
             val effectiveVersion = watchDetail.versions.firstOrNull { it.fileId == effectiveFileId }
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
@@ -311,6 +339,7 @@ class TvVideoPlaybackStarter(
                         qualityPreference = playbackQualityIntent,
                         startPosition = sourceStartPos,
                         clientPlaybackContext = readyV3.clientPlaybackContext,
+                        allowAlternateVersions = allowAlternateVersions,
                     ),
                     session = resolved,
                     deferPublication = true,
