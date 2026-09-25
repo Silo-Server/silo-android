@@ -81,6 +81,15 @@ class WatchPartyEntryRulesTest {
     }
 
     @Test
+    fun `hosting is offered unless the server is known not to host`() {
+        assertTrue(watchPartyHostingOffered(WatchPartyAvailability.Available(features)))
+        assertFalse(watchPartyHostingOffered(WatchPartyAvailability.Available(features.copy(stagedSelection = false))))
+        assertFalse(watchPartyHostingOffered(WatchPartyAvailability.NotAllowed))
+        // Unknown yet: the hub explains whatever the probe finds.
+        assertTrue(watchPartyHostingOffered(null))
+    }
+
+    @Test
     fun `unknown roles grant nothing`() {
         val e = watchPartyEligibility(room(role = MemberRole.Unknown), features, false, true)
         assertFalse(e.canSuggest || e.canLobbyReady || e.canVote)

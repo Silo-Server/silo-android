@@ -34,6 +34,7 @@ import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyHostingOffered
 
 /** The detail page's Watch Party row in its More menu. */
 internal data class TvWatchPartyDetailOption(
@@ -90,6 +91,7 @@ internal fun rememberTvWatchPartyDetailOption(
     if (!enabled || item == null) return null
     val current = room
     if (current == null) {
+        if (!watchPartyHostingOffered(available)) return null
         return TvWatchPartyDetailOption(
             title = "Watch Party",
             subtitle = "Host a party with this title",

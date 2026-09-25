@@ -81,6 +81,17 @@ fun watchPartyEligibility(
     )
 }
 
+/**
+ * Whether a "host a party" entry point should show. Hidden once the server is
+ * known not to host (no staged selection, unsupported, or not allowed); shown
+ * while unknown, since the hub then explains what the probe finds.
+ */
+fun watchPartyHostingOffered(availability: WatchPartyAvailability?): Boolean = when (availability) {
+    is WatchPartyAvailability.Available -> availability.features.stagedSelection
+    is WatchPartyAvailability.Unsupported, WatchPartyAvailability.NotAllowed -> false
+    is WatchPartyAvailability.ProbeFailed, null -> true
+}
+
 /** The host, or the suggester matched by both account and profile, may remove a suggestion. */
 fun canRemoveSuggestion(room: RoomSnapshot?, suggestion: Suggestion): Boolean {
     room ?: return false

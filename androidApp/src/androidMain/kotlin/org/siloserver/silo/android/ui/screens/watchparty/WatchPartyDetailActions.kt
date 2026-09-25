@@ -35,6 +35,7 @@ import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.newWatchPartyId
 import org.siloserver.silo.watchtogether.watchPartyEligibility
 import org.siloserver.silo.watchtogether.watchPartyErrorMessage
+import org.siloserver.silo.watchtogether.watchPartyHostingOffered
 
 /** The detail page's one Watch Party overflow action. */
 data class DetailPartyAction(val label: String, val onClick: () -> Unit)
@@ -116,6 +117,7 @@ class WatchPartyDetailActions internal constructor(
     private val room: RoomSnapshot?,
     private val canStage: Boolean,
     private val canSuggest: Boolean,
+    private val canHost: Boolean,
     private val onHost: (WatchPartyItem) -> Unit,
     private val viewModel: WatchPartyDetailViewModel,
     private val confirmSelect: (WatchPartyItem) -> Unit,
@@ -123,7 +125,7 @@ class WatchPartyDetailActions internal constructor(
     /** The action for [item], or null when Watch Party is off or nothing applies. */
     fun actionFor(item: WatchPartyItem?): DetailPartyAction? {
         if (!enabled || item == null) return null
-        val party = room ?: return DetailPartyAction("Watch Party") { onHost(item) }
+        val party = room ?: return if (canHost) DetailPartyAction("Watch Party") { onHost(item) } else null
         val host = party.selfRole == MemberRole.Host && party.selfCanManageRoom
         return when {
             host && party.phase == RoomPhase.Lobby && canStage ->
@@ -169,6 +171,7 @@ fun rememberWatchPartyDetailActions(
         room = room,
         canStage = eligibility.canStage,
         canSuggest = eligibility.canSuggest,
+        canHost = watchPartyHostingOffered(available),
         onHost = onHost,
         viewModel = viewModel,
         confirmSelect = { selecting = it },
