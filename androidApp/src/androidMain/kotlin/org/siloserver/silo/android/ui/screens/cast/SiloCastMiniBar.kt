@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Tv
@@ -106,6 +107,9 @@ fun SiloCastMiniBar(
                         modifier = Modifier.size(22.dp),
                         strokeWidth = 2.dp,
                     )
+                    IconButton(onClick = { controller.disconnect() }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Stop reconnecting")
+                    }
                 } else {
                     IconButton(onClick = { controller.playPause() }) {
                         Icon(

@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.cast
 
 import android.util.Log
+import java.io.IOException
 import java.io.OutputStream
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -26,6 +27,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastHello
@@ -218,9 +221,21 @@ class SiloCastController(
     }
 
     fun launchOnTarget(target: SiloCastTarget, request: SiloCastLaunchRequest) {
+        // Read now, not when the job runs: the reconnect can end in between.
+        val queuedDuringReconnect = _state.value.isReconnecting
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val self = currentCoroutineContext()[Job] ?: return@launch
             try {
+                // A Play during a reconnect waits for the link, as on iOS,
+                // instead of racing the retry loop with a one-shot connect.
+                if (queuedDuringReconnect) {
+                    withTimeoutOrNull(LAUNCH_RECONNECT_WAIT_MS) { _state.first { !it.isReconnecting } }
+                    // Only a restored link carries the Play on. A retry that
+                    // gave up, was refused (another phone has the TV), was
+                    // stopped by the person or is still running when the wait
+                    // ends must not reconnect and take the TV.
+                    if (suppressReconnect || !_state.value.isConnected) return@launch
+                }
                 launchMutex.withLock {
                     ensureConnected(target, allowCrossServer = true)
                     // AFTER ensureConnected: its teardown of any previous session
@@ -309,6 +324,7 @@ class SiloCastController(
             runCatching { ensureConnected(target) }
                 .onFailure { error ->
                     if (error !is CancellationException) {
+                        Log.w(TAG, "SiloCast connect failed", error)
                         _state.update {
                             it.copy(isConnecting = false, connectingDeviceId = null, error = error.message ?: "Unable to connect.")
                         }
@@ -323,6 +339,8 @@ class SiloCastController(
      */
     fun disconnect() {
         lastTargetStore.clear()
+        // A Play still waiting out a reconnect would otherwise go ahead.
+        synchronized(launchJobLock) { launchJob }?.cancel()
         cancelReconnect()
         cancelAutoResumeProbe()
         suppressReconnect = true
@@ -630,9 +648,19 @@ class SiloCastController(
         // discards the block's result and throws — the catch below is then
         // the only reference that can close the already-opened socket.
         var created: SiloCastTlsClientSession? = null
+        // A receiver can come back on a new port: tvOS re-creates its listener
+        // whenever it re-advertises, and Android TV rebinds after sleep. Dial
+        // the address discovery resolved last, not the one from connect time.
+        val live = _state.value.targets.firstOrNull { it.deviceId == target.deviceId } ?: target
         try {
             withContext(Dispatchers.IO) {
-                created = SiloCastTls.connect(target.host, target.port, CONNECT_TIMEOUT_MS)
+                created = try {
+                    SiloCastTls.connect(live.host, live.port, CONNECT_TIMEOUT_MS)
+                } catch (e: IOException) {
+                    // Refused, timed out, or TLS failed: say so the way iOS does,
+                    // not with the socket exception's text.
+                    throw IllegalStateException("Couldn't reach ${live.name}.", e)
+                }
             }
             val newSession = created ?: error("SiloCast connection failed.")
             session = newSession
@@ -653,7 +681,7 @@ class SiloCastController(
             controlTransport = ControlTransport(newSession.output)
             _state.update {
                 it.copy(
-                    connectedTarget = target,
+                    connectedTarget = live,
                     connectingDeviceId = null,
                     isConnecting = false,
                     isReconnecting = false,
@@ -858,9 +886,28 @@ class SiloCastController(
                 _state.update { it.copy(isReconnecting = true, isConnecting = false, isLaunching = false) }
                 reconnectJob = scope.launch {
                     try {
-                        for (attempt in 1..MAX_RECONNECT_ATTEMPTS) {
-                            delay((attempt.coerceAtMost(4)) * 1_000L)
+                        // A window, not a fixed count: a refused connect fails
+                        // at once, and a TV that restarts or wakes needs a few
+                        // seconds to listen again on a new port.
+                        val deadline = nowMs() + RECONNECT_WINDOW_MS
+                        var lastDialed = target.host to target.port
+                        var attempt = 0
+                        while (nowMs() < deadline) {
+                            attempt++
+                            // Back off 1–4 s, but dial at once when discovery
+                            // finds the TV at a new address. The last dial starts
+                            // inside the window, so with the connect timeout the
+                            // loop ends within the 45 s a waiting Play allows.
+                            withTimeoutOrNull(minOf(attempt.coerceAtMost(4) * 1_000L, deadline - nowMs())) {
+                                _state.first { current ->
+                                    current.targets.firstOrNull { it.deviceId == target.deviceId }
+                                        ?.let { (it.host to it.port) != lastDialed } == true
+                                }
+                            }
                             if (suppressReconnect) return@launch
+                            if (nowMs() >= deadline) break
+                            _state.value.targets.firstOrNull { it.deviceId == target.deviceId }
+                                ?.let { lastDialed = it.host to it.port }
                             val reconnected = connectionMutex.withLock {
                                 if (session != null) return@launch
                                 try {
@@ -1135,12 +1182,14 @@ class SiloCastController(
         const val READY_TIMEOUT_MS = 35_000L
         const val HEARTBEAT_INTERVAL_MS = 3_000L
         const val MAX_MISSED_HEARTBEATS = 3
-        const val MAX_RECONNECT_ATTEMPTS = 5
+        const val RECONNECT_WINDOW_MS = 30_000L
         const val AUTO_RESUME_SCAN_ROUNDS = 8
         const val AUTO_RESUME_SCAN_STEP_MS = 500L
         const val AUTO_RESUME_CONFIRM_TIMEOUT_MS = 6_000L
         const val VOLUME_STEPS = 16.0
         const val SILENT_VOLUME = 0.001
+
+        const val LAUNCH_RECONNECT_WAIT_MS = 45_000L
 
         /** Errors both TVs send in reply to a control command, never to a launch. */
         val CONTROL_ERROR_CODES = setOf("player_not_ready", "command_failed")
