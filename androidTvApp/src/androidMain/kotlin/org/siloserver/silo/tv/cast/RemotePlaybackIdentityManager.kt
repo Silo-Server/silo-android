@@ -66,7 +66,15 @@ class RemotePlaybackIdentityManager(
 
         val dead = activeIdentity?.generationId in tokenManager.rejectedTemporaryGenerations.value
         activeIdentity?.takeIf { !dead && matches(offer, controllerDeviceId) }?.let { active ->
-            return@withLock active.toReady(offer.requestId, reused = true)
+            // Same phone and profile, so the names can only have filled in or
+            // changed since (a phone that hadn't loaded its profile name yet).
+            val refreshed = active.copy(
+                serverName = offer.serverName ?: active.serverName,
+                profileName = offer.profileName ?: active.profileName,
+                controllerDeviceName = controllerDeviceName ?: active.controllerDeviceName,
+            )
+            activeIdentity = refreshed
+            return@withLock refreshed.toReady(offer.requestId, reused = true)
         }
 
         // A session the server already ended has nothing left to log out.
