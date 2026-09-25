@@ -31,10 +31,13 @@ class SiloCastNsdAdvertiser(
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var lastRegistration: Registration? = null
     private var lastRecord: Map<String, String>? = null
+    /** NsdManager confirmed the current registration. */
+    private var registered = false
 
     /** The live advertisement's name, port and TXT record, for the debug adb hook. */
     @Synchronized
     fun currentAdvertisement(): Triple<String, Int, Map<String, String>>? {
+        if (!registered) return null
         val registration = lastRegistration ?: return null
         val record = lastRecord ?: return null
         return Triple(record["name"].orEmpty(), registration.port, record)
@@ -61,6 +64,7 @@ class SiloCastNsdAdvertiser(
         registrationListener = null
         lastRegistration = null
         lastRecord = null
+        registered = false
     }
 
     private fun register(registration: Registration) {
@@ -90,6 +94,9 @@ class SiloCastNsdAdvertiser(
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
                 Log.i(TAG, "SiloCast registered on ${info.port}")
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) registered = true
+                }
             }
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
@@ -116,6 +123,7 @@ class SiloCastNsdAdvertiser(
         registrationListener = listener
         lastRegistration = registration
         lastRecord = record
+        registered = false
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 

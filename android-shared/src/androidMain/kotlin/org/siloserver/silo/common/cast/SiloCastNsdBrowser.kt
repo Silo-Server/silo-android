@@ -7,7 +7,6 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import org.siloserver.silo.cast.SiloCastProtocol
 import java.nio.charset.Charset
 import java.util.ArrayDeque
@@ -43,23 +42,30 @@ class SiloCastNsdBrowser(context: Context) {
     private val pendingResolutions = ArrayDeque<PendingResolution>()
     private var activeResolution: PendingResolution? = null
 
+    /** Targets resolved from mDNS; [targets] merges them with [debugTargets]. */
+    private var discoveredTargets: List<SiloCastTarget> = emptyList()
+
     /** Targets added by the debug adb hook; see [setDebugTargets]. */
     private var debugTargets: List<SiloCastTarget> = emptyList()
+
+    /** Publishes discovery plus debug targets; a debug target replaces a discovered one with its id. Hold the lock. */
+    private fun publishTargets() {
+        val injectedIds = debugTargets.map { it.deviceId }.toSet()
+        _targets.value = (discoveredTargets.filterNot { it.deviceId in injectedIds } + debugTargets)
+            .sortedBy { it.name.lowercase() }
+    }
 
     /**
      * Debug builds only (PlaybackDebugReceiver): targets supplied over adb.
      * An emulator sits behind NAT that mDNS can't cross, so a test harness
      * resolves TVs on the host and hands them in; they merge with (and
-     * survive a restart of) real discovery. An empty list removes them.
+     * survive a restart of) real discovery. An empty list removes them, and
+     * any discovered TV they replaced shows again.
      */
     @Synchronized
     fun setDebugTargets(targets: List<SiloCastTarget>) {
-        val replacedIds = debugTargets.map { it.deviceId }.toSet()
         debugTargets = targets
-        _targets.update { current ->
-            (current.filterNot { it.deviceId in replacedIds || targets.any { t -> t.deviceId == it.deviceId } } + targets)
-                .sortedBy { it.name.lowercase() }
-        }
+        publishTargets()
     }
 
     @Synchronized
@@ -85,10 +91,8 @@ class SiloCastNsdBrowser(context: Context) {
                         ?.takeIf { it.serviceInfo.serviceName == lostName }
                         ?.cancelled = true
                     pendingResolutions.removeAll { it.serviceInfo.serviceName == lostName }
-                }
-                _targets.update { targets ->
-                    val injectedIds = synchronized(this@SiloCastNsdBrowser) { debugTargets.map { it.deviceId }.toSet() }
-                    targets.filterNot { it.serviceName == lostName && it.deviceId !in injectedIds }
+                    discoveredTargets = discoveredTargets.filterNot { it.serviceName == lostName }
+                    publishTargets()
                 }
             }
 
@@ -117,7 +121,8 @@ class SiloCastNsdBrowser(context: Context) {
         discoveryListener = null
         pendingResolutions.clear()
         activeResolution = null
-        _targets.value = debugTargets
+        discoveredTargets = emptyList()
+        publishTargets()
     }
 
     /**
@@ -155,11 +160,10 @@ class SiloCastNsdBrowser(context: Context) {
                         discoveryListener != null && activeResolution === pending && !pending.cancelled
                     }
                     if (mayPublish) {
-                        // A debug-injected target wins over an mDNS record with its id.
-                        info.toSiloCastTarget()?.takeIf { found -> debugTargets.none { it.deviceId == found.deviceId } }?.let { target ->
-                            _targets.update { current ->
-                                (current.filterNot { it.deviceId == target.deviceId } + target)
-                                    .sortedBy { it.name.lowercase() }
+                        info.toSiloCastTarget()?.let { target ->
+                            synchronized(this@SiloCastNsdBrowser) {
+                                discoveredTargets = discoveredTargets.filterNot { it.deviceId == target.deviceId } + target
+                                publishTargets()
                             }
                         }
                     }
