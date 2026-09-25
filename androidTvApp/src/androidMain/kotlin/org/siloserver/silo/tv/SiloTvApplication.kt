@@ -7,6 +7,7 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import org.siloserver.silo.common.di.playerInfraModule
+import org.siloserver.silo.common.di.watchPartyModule
 import org.siloserver.silo.common.di.playerModule
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsStartup
@@ -35,7 +36,7 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         DiagnosticsStartup.installCrashCapture(this)
         val koinApp = startKoin {
             androidContext(this@SiloTvApplication)
-            modules(sharedModules() + playerModule + playerInfraModule + androidTvModule + diagnosticsModule)
+            modules(sharedModules() + playerModule + playerInfraModule + watchPartyModule + androidTvModule + diagnosticsModule)
         }
         DiagnosticsStartup.startCoordinator { koinApp.koin.get<DiagnosticsCoordinator>() }
         koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
