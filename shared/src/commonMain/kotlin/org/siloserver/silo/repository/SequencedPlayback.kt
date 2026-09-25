@@ -105,11 +105,20 @@ class SequencedPlayback(
         if (!entry.isTemporary) store.write(kept)
         // Only the identity that admitted a temporary attempt may act for it, so an ended
         // identity's attempts can never settle; drop them rather than keep them for the
-        // life of the process.
+        // life of the process, along with the scope and subtitle headers they captured.
         val liveTemporary = tokens.snapshotCurrentScope()?.credentialGenerationId?.let { TEMPORARY_LOGIN_PREFIX + it }
-        entries = kept + compactSettled(temporary.filter { it.loginId == liveTemporary })
+        val (current, ended) = temporary.partition { it.loginId == liveTemporary }
+        entries = kept + compactSettled(current)
+        ended.forEach { forget(it.attemptId) }
         if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
+    }
+
+    private fun forget(attemptId: String) {
+        scopes.remove(attemptId)
+        adopted.remove(attemptId)
+        auxiliaryHeaders.remove(attemptId)
+        auxiliaryGenerations = auxiliaryGenerations - attemptId
     }
 
     /**
