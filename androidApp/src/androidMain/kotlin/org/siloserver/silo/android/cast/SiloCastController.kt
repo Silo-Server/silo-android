@@ -174,6 +174,10 @@ class SiloCastController(
     @Volatile
     private var sessionIsAutoResumed = false
 
+    /** The title the launch in flight sent; see [SiloCastControllerState.isLaunching]. */
+    @Volatile
+    private var launchingContentId: String? = null
+
     // We let go of an auto-resumed session on our own (quietDisconnect); a
     // `close` the TV sends meanwhile is not the TV ending it on us.
     @Volatile
@@ -233,6 +237,9 @@ class SiloCastController(
                     ensureConnected(target, allowCrossServer = true)
                     // AFTER ensureConnected: its teardown of any previous session
                     // resets the flag, so setting it earlier would be undone.
+                    // Only the TV's state for this title ends the launch: while
+                    // replacing, the outgoing title keeps reporting meanwhile.
+                    launchingContentId = request.playback.contentId
                     _state.update { it.copy(isLaunching = true) }
                     prepareRemoteIdentity(request)
                     send(SiloCastMessage.Launch(request))
@@ -982,7 +989,7 @@ class SiloCastController(
                             playbackState = next,
                             error = null,
                             isAutoResuming = if (!isIdle) false else it.isAutoResuming,
-                            isLaunching = if (!isIdle) false else it.isLaunching,
+                            isLaunching = if (!isIdle && message.state.contentId == launchingContentId) false else it.isLaunching,
                         )
                     }
                     next
@@ -990,15 +997,21 @@ class SiloCastController(
                 clock.ingest(reconciled, now)
             }
             is SiloCastMessage.Error -> when {
-                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
-                // Another phone took the TV while ours was away; a reconnect
-                // must not take it back. The TV closes the session next.
+                // Another phone took the TV while ours was away; neither a
+                // reconnect nor a later auto-resume may take it back. The TV
+                // closes the session next.
                 message.error.code == CONTROLLER_ACTIVE -> {
-                    suppressReconnect = true
                     lastTargetStore.clear()
-                    closeConnection()
-                    _state.update { it.copy(error = message.error.message) }
+                    if (sessionIsAutoResumed && !remoteScreenVisible) {
+                        // Nothing on screen to explain it to; let go quietly.
+                        quietDisconnect()
+                    } else {
+                        suppressReconnect = true
+                        closeConnection()
+                        _state.update { it.copy(error = message.error.message) }
+                    }
                 }
+                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
                 // The TV refused or couldn't open the title just sent. A
                 // control pressed mid-launch (player_not_ready) isn't that.
                 _state.value.isLaunching && message.error.code !in CONTROL_ERROR_CODES ->
