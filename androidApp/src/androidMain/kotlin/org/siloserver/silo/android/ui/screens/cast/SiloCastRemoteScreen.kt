@@ -164,7 +164,9 @@ fun SiloCastRemoteScreen(
                 playback = playback,
                 onMinimize = onBack,
                 onChooseTv = { showTargetPicker = true },
-                onStopPlayback = { controller.stopPlayback() },
+                // Controls wait while a launch is in flight, and a Stop can't
+                // cancel one mid-handoff, so it isn't offered then.
+                onStopPlayback = if (state.isLaunching) null else ({ controller.stopPlayback() }),
                 onSetVideoGravity = controller::setVideoGravity,
                 onDisconnect = {
                     controller.disconnect()
@@ -279,7 +281,7 @@ private fun RemoteTopBar(
     playback: SiloCastPlaybackState?,
     onMinimize: () -> Unit,
     onChooseTv: () -> Unit,
-    onStopPlayback: () -> Unit,
+    onStopPlayback: (() -> Unit)?,
     onSetVideoGravity: (String) -> Unit,
     onDisconnect: () -> Unit,
     showBatterySettings: Boolean,
@@ -319,14 +321,16 @@ private fun RemoteTopBar(
                         onChooseTv()
                     },
                 )
-                DropdownMenuItem(
-                    text = { Text("Stop Playback") },
-                    leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
-                    onClick = {
-                        menuExpanded = false
-                        onStopPlayback()
-                    },
-                )
+                if (onStopPlayback != null) {
+                    DropdownMenuItem(
+                        text = { Text("Stop Playback") },
+                        leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
+                        onClick = {
+                            menuExpanded = false
+                            onStopPlayback()
+                        },
+                    )
+                }
                 if (playback?.supportsVideoGravity == true) {
                     DropdownMenuItem(
                         text = { Text("Aspect Ratio") },
