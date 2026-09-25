@@ -949,15 +949,21 @@ class SiloCastController(
                 clock.ingest(reconciled, now)
             }
             is SiloCastMessage.Error -> when {
-                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
-                // Another phone took the TV while ours was away; a reconnect
-                // must not take it back. The TV closes the session next.
+                // Another phone took the TV while ours was away; neither a
+                // reconnect nor a later auto-resume may take it back. The TV
+                // closes the session next.
                 message.error.code == CONTROLLER_ACTIVE -> {
-                    suppressReconnect = true
                     lastTargetStore.clear()
-                    closeConnection()
-                    _state.update { it.copy(error = message.error.message) }
+                    if (sessionIsAutoResumed && !remoteScreenVisible) {
+                        // Nothing on screen to explain it to; let go quietly.
+                        quietDisconnect()
+                    } else {
+                        suppressReconnect = true
+                        closeConnection()
+                        _state.update { it.copy(error = message.error.message) }
+                    }
                 }
+                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
                 // The TV refused or couldn't open the title just sent. A
                 // control pressed mid-launch (player_not_ready) isn't that.
                 _state.value.isLaunching && message.error.code !in CONTROL_ERROR_CODES ->
