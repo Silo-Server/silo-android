@@ -229,19 +229,22 @@ class SiloCastController(
                 if (_state.value.isReconnecting) {
                     withTimeoutOrNull(LAUNCH_RECONNECT_WAIT_MS) { _state.first { !it.isReconnecting } }
                     // Only a restored link carries the Play on. A retry that
-                    // gave up, was refused (another phone has the TV) or was
-                    // stopped by the person must not reconnect and take the TV.
-                    if (suppressReconnect || !_state.value.hasActiveSession) return@launch
+                    // gave up, was refused (another phone has the TV), was
+                    // stopped by the person or is still running when the wait
+                    // ends must not reconnect and take the TV.
+                    if (suppressReconnect || !_state.value.isConnected) return@launch
                 }
                 launchMutex.withLock {
                     ensureConnected(target, allowCrossServer = true)
                     // AFTER ensureConnected: its teardown of any previous session
                     // resets the flag, so setting it earlier would be undone.
-                    // Only the TV's state for this title ends the launch: while
-                    // replacing, the outgoing title keeps reporting meanwhile.
-                    launchingContentId = request.playback.contentId
+                    launchingContentId = null
                     _state.update { it.copy(isLaunching = true) }
                     prepareRemoteIdentity(request)
+                    // Only the TV's state for this title ends the launch, and only
+                    // once it is sent: until then the outgoing player keeps
+                    // reporting, and a Resume of what is on names the same title.
+                    launchingContentId = request.playback.contentId
                     send(SiloCastMessage.Launch(request))
                     // A cross-server handoff changes the TV's advertised
                     // server after the socket was opened. Persist the actual
