@@ -47,7 +47,7 @@ import org.siloserver.silo.viewmodel.WatchPartyHubViewModel
 import org.siloserver.silo.watchtogether.WatchPartyAvailability
 import org.siloserver.silo.watchtogether.WatchPartyDestination
 
-private enum class HubFocus { Return, Rejoin, Host, Retry }
+private enum class HubFocus { Return, Rejoin, Host, Join, Retry }
 
 /**
  * The Watch Party entry, reached from the profile menu, laid out as the tvOS
@@ -107,18 +107,22 @@ fun TvWatchPartyHubScreen(
         availability == null -> TvControlState.transient(false)
         else -> TvControlState.structural(false)
     }
+    // Hosting needs staged selection; a server without it can still be joined.
+    val canHost = (availability as? WatchPartyAvailability.Available)?.features?.stagedSelection == true
     val current = state.current
     val recent = state.recent.takeIf { available }
     val primary = when {
         current != null -> HubFocus.Return
         recent != null -> HubFocus.Rejoin
-        available || availability == null -> HubFocus.Host
+        canHost || availability == null -> HubFocus.Host
+        available -> HubFocus.Join
         else -> HubFocus.Retry
     }
     val primaryTarget = when (primary) {
         HubFocus.Return -> returnFocus
         HubFocus.Rejoin -> rejoinFocus
         HubFocus.Host -> hostFocus
+        HubFocus.Join -> joinFocus
         HubFocus.Retry -> retryFocus
     }
     val contentFocus = rememberTvContentInitialFocus(target = primaryTarget, contentKey = primary)
@@ -210,19 +214,27 @@ fun TvWatchPartyHubScreen(
                         )
                     } else {
                         TvPartyEyebrow("Host")
-                        TvPartyButton(
-                            label = if (state.busy == WatchPartyPendingAction.Create) "Starting your party…" else "Start a party",
-                            icon = Icons.Filled.Add,
-                            onClick = { viewModel.host() },
-                            state = entryState,
-                            modifier = Modifier.defaultTarget(HubFocus.Host, hostFocus),
-                        )
-                        TvPartyButton(
-                            label = "Start a party and let everyone vote",
-                            kind = TvPartyButtonKind.Secondary,
-                            onClick = { viewModel.host(RoomSelectionMode.Vote) },
-                            state = entryState,
-                        )
+                        if (available && !canHost) {
+                            Text(
+                                text = "This server can't host a Watch Party. You can still join one.",
+                                fontSize = TvPartyMetrics.caption,
+                                color = SiloSecondaryText,
+                            )
+                        } else {
+                            TvPartyButton(
+                                label = if (state.busy == WatchPartyPendingAction.Create) "Starting your party…" else "Start a party",
+                                icon = Icons.Filled.Add,
+                                onClick = { viewModel.host() },
+                                state = entryState,
+                                modifier = Modifier.defaultTarget(HubFocus.Host, hostFocus),
+                            )
+                            TvPartyButton(
+                                label = "Start a party and let everyone vote",
+                                kind = TvPartyButtonKind.Secondary,
+                                onClick = { viewModel.host(RoomSelectionMode.Vote) },
+                                state = entryState,
+                            )
+                        }
                         if (recent != null) {
                             TvPartyButton(
                                 label = if (state.busy == WatchPartyPendingAction.Join) {
@@ -264,7 +276,7 @@ fun TvWatchPartyHubScreen(
                             },
                             state = entryState,
                             modifier = Modifier
-                                .focusRequester(joinFocus)
+                                .defaultTarget(HubFocus.Join, joinFocus)
                                 .onFocusChanged { joinFocused = it.isFocused },
                         )
                         if (!available) {

@@ -1440,17 +1440,20 @@ fun TvPlayerScreen(
                         .onPlayWhenReadyChanged(playWhenReady, reason)
                     provenance.followUpProgrammaticValue?.let { controller.playWhenReady = it }
                     val party = watchParty ?: return
-                    party.sample(controller)
                     // Audio focus loss and a noisy route are local holds:
                     // nothing is sent to the room.
                     if (!playWhenReady &&
                         (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS ||
                             reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
                     ) {
+                        party.sample(controller)
                         viewModel.holdRoomPlayback(TvRoomHold.AudioFocus)
                         return
                     }
-                    if (!provenance.shouldReconcile) return
+                    if (!provenance.shouldReconcile) {
+                        party.sample(controller)
+                        return
+                    }
                     // A deliberate MediaSession play/pause: the room decides,
                     // and the player goes back to its room-applied state now.
                     val restore = party.onExternalPlayWhenReady(playWhenReady)
@@ -1459,6 +1462,9 @@ fun TvPlayerScreen(
                     ) {
                         controller.playWhenReady = restore
                     }
+                    // Sample only after the restore (the controller masks it
+                    // at once), so a report never carries the outside change.
+                    party.sample(controller)
                 }
 
                 override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {

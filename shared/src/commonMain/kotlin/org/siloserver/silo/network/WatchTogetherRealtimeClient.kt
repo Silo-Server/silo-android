@@ -1,5 +1,6 @@
 package org.siloserver.silo.network
 
+import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.model.watchtogether.TransportAction
@@ -434,9 +435,12 @@ fun decodeRoomFrame(json: Json, raw: String, receivedAtMs: Long? = null): RoomRe
             } catch (_: Exception) {
                 return RoomRealtimeEvent.Malformed(type)
             }
-            // A command must say what to do and when. Without either it can't
-            // be applied safely, so the room is reconciled instead.
-            if (parsed.action == TransportAction.Unknown || parseRfc3339ToEpochMillis(parsed.executeAt) == null) {
+            // A command must say what to do, when, and in what state the room
+            // ends up. Without any of those it can't be applied safely, so the
+            // room is reconciled instead. The server always sends all three.
+            if (parsed.action == TransportAction.Unknown || parsed.playbackState == RoomPlaybackState.Unknown ||
+                parseRfc3339ToEpochMillis(parsed.executeAt) == null
+            ) {
                 return RoomRealtimeEvent.Malformed(type)
             }
             RoomRealtimeEvent.TransportCommandEvent(parsed)

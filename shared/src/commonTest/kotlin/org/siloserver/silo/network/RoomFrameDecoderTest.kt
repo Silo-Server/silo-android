@@ -109,7 +109,7 @@ class RoomFrameDecoderTest {
     fun `transport_command with an unreadable execute_at is reported as malformed`() {
         // Running it at once would skip the room's schedule; reconciling is safe.
         val raw = """{"type":"transport_command","command":{"command_id":"cmd-1","action":"seek",
-            "position_seconds":42.0,"execute_at":"soon"}}"""
+            "position_seconds":42.0,"execute_at":"soon","playback_state":"playing"}}"""
         assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, raw))
     }
 
@@ -117,6 +117,14 @@ class RoomFrameDecoderTest {
     fun `transport_command with an unknown action is reported as malformed`() {
         // The binding would treat it as advancing playback; reconciling is safe.
         val raw = """{"type":"transport_command","command":{"command_id":"cmd-1","action":"rewind",
+            "position_seconds":42.0,"execute_at":"2026-06-12T09:30:00Z","playback_state":"playing"}}"""
+        assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, raw))
+    }
+
+    @Test
+    fun `transport_command without a playback_state is reported as malformed`() {
+        // Play and seek decide whether to run or hold from this state.
+        val raw = """{"type":"transport_command","command":{"command_id":"cmd-1","action":"seek",
             "position_seconds":42.0,"execute_at":"2026-06-12T09:30:00Z"}}"""
         assertEquals(RoomRealtimeEvent.Malformed("transport_command"), decodeRoomFrame(json, raw))
     }

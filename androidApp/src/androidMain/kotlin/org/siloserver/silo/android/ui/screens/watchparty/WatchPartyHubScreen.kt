@@ -166,6 +166,7 @@ fun WatchPartyHubScreen(
     }
 
     val canEnter = enabled && available && !busy
+    val canHost = (state.availability as? WatchPartyAvailability.Available)?.features?.stagedSelection == true
     Box(Modifier.fillMaxSize()) {
         WatchPartyBackdrop(url = null)
         Column(
@@ -303,20 +304,25 @@ fun WatchPartyHubScreen(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    WatchPartyButton(
-                        text = "Start a party",
-                        icon = Icons.Filled.Add,
-                        onClick = { viewModel.host() },
-                        enabled = canEnter,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    WatchPartyButton(
-                        text = "Start a party and let everyone vote",
-                        kind = WatchPartyButtonKind.Secondary,
-                        onClick = { viewModel.host(RoomSelectionMode.Vote) },
-                        enabled = canEnter,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    // Hosting needs staged selection; a server without it can still be joined.
+                    if (!available || canHost) {
+                        WatchPartyButton(
+                            text = "Start a party",
+                            icon = Icons.Filled.Add,
+                            onClick = { viewModel.host() },
+                            enabled = canEnter,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        WatchPartyButton(
+                            text = "Start a party and let everyone vote",
+                            kind = WatchPartyButtonKind.Secondary,
+                            onClick = { viewModel.host(RoomSelectionMode.Vote) },
+                            enabled = canEnter,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        WatchPartyBanner(text = "This server can't host a Watch Party. You can still join one.")
+                    }
                     state.recent?.takeIf { !endedRejoin }?.let { recent ->
                         WatchPartyButton(
                             text = recent.title?.takeIf { it.isNotBlank() }?.let { "Rejoin $it" }

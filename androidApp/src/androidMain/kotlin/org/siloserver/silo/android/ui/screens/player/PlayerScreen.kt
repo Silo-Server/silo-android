@@ -1177,17 +1177,20 @@ fun PlayerScreen(
                         .onPlayWhenReadyChanged(playWhenReady, reason)
                     provenance.followUpProgrammaticValue?.let { controller.playWhenReady = it }
                     val party = watchParty ?: return
-                    sampleRoomEngine(controller)
                     // Audio focus loss and a noisy route pause this device
                     // only. The room hears nothing until the viewer resumes.
                     if (!playWhenReady &&
                         (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS ||
                             reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
                     ) {
+                        sampleRoomEngine(controller)
                         viewModel.beginRoomSuspension(PlayerViewModel.RoomSuspensionReason.AudioFocus)
                         return
                     }
-                    if (!provenance.shouldReconcile) return
+                    if (!provenance.shouldReconcile) {
+                        sampleRoomEngine(controller)
+                        return
+                    }
                     // A notification, headset, or Assistant play/pause: ask
                     // the room, then restore the room's state locally until
                     // its command arrives.
@@ -1198,6 +1201,9 @@ fun PlayerScreen(
                     ) {
                         controller.playWhenReady = authoritative
                     }
+                    // Sample only after the restore (the controller masks it
+                    // at once), so a report never carries the outside change.
+                    sampleRoomEngine(controller)
                 }
 
                 override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
