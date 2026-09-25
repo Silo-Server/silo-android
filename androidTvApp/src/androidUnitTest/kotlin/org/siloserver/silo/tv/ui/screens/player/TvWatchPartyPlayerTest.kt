@@ -231,12 +231,6 @@ class TvWatchPartyPlayerTest {
     }
 
     @Test
-    fun `an ended party explains itself`() {
-        assertEquals("The Watch Party ended.", tvWatchPartyEndedText("host_left"))
-        assertEquals("You joined this Watch Party on another device.", tvWatchPartyEndedText("connection_replaced"))
-    }
-
-    @Test
     fun `room notices use plain copy`() {
         assertEquals("Only the host can seek.", tvWatchPartyNoticeText(RoomPlaybackNotice.Denied(RoomTransportIntent.Seek)))
         assertEquals(

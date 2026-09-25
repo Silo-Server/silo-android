@@ -1,4 +1,4 @@
-package org.siloserver.silo.tv.ui.screens.watchtogether
+package org.siloserver.silo.tv.ui.screens.watchparty
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -45,36 +45,42 @@ import org.siloserver.silo.tv.ui.screens.player.TvDialogActionRow
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
+import org.siloserver.silo.watchtogether.WATCH_PARTY_CODE_ALPHABET
+import org.siloserver.silo.watchtogether.WATCH_PARTY_CODE_LENGTH
 import org.siloserver.silo.watchtogether.canDismissRoomEntry
+import org.siloserver.silo.watchtogether.normalizeWatchPartyCode
 
 /**
- * Pure 8-char D-pad join-code accumulator. Appends only A–Z / 0–9 (uppercasing
- * letters), caps at [LENGTH], and supports backspace/clear. Kept free of any
- * Android types so it is unit-testable without Robolectric.
+ * Pure D-pad join-code accumulator. Appends only characters from the room
+ * code alphabet (uppercasing letters; 0, 1, I and O never appear in a code),
+ * caps at [LENGTH], and supports backspace/clear. Kept free of Android types
+ * so it is unit-testable without Robolectric.
  */
 data class JoinCodeState(val code: String = "") {
-    val isComplete: Boolean get() = code.length == LENGTH
+    /** A complete, well-formed code, normalized the same way as a typed or pasted one. */
+    val normalized: String? get() = normalizeWatchPartyCode(code)
+    val isComplete: Boolean get() = normalized != null
     fun append(c: Char): JoinCodeState {
         if (code.length >= LENGTH) return this
         val up = c.uppercaseChar()
-        return if (up in 'A'..'Z' || up in '0'..'9') copy(code = code + up) else this
+        return if (up in WATCH_PARTY_CODE_ALPHABET) copy(code = code + up) else this
     }
     fun backspace() = if (code.isEmpty()) this else copy(code = code.dropLast(1))
     fun clear() = JoinCodeState()
-    companion object { const val LENGTH = 8 }
+    companion object { const val LENGTH = WATCH_PARTY_CODE_LENGTH }
 }
 
-/** Keys laid out in the focusable A–Z / 0–9 grid, six per row. */
-private val JoinCodeKeys: List<Char> = ('A'..'Z') + ('0'..'9')
-private const val KEYS_PER_ROW = 6
+/** Keys laid out in the focusable code-alphabet grid, eight per row. */
+private val JoinCodeKeys: List<Char> = WATCH_PARTY_CODE_ALPHABET.toList()
+private const val KEYS_PER_ROW = 8
 
 /**
- * D-pad join-by-code dialog. Panel + row idiom mirrors
+ * D-pad Watch Party join-by-code dialog. Panel + row idiom mirrors
  * [org.siloserver.silo.tv.ui.screens.player.TvSubtitleSearchDialog]. Shows a large
  * mono display of the running code (placeholder dashes for unfilled slots), a
- * focusable A–Z/0–9 key grid (each key appends into a [JoinCodeState]), a Delete
- * row (backspace), and a "Join" [TvDialogActionRow] enabled when the code is
- * complete and not busy.
+ * focusable key grid of the code alphabet (each key appends into a
+ * [JoinCodeState]), a Delete row (backspace), and a "Join" row enabled when the
+ * code is complete and not busy. [onJoin] receives the normalized code.
  */
 @Composable
 fun TvJoinCodeDialog(
@@ -107,7 +113,7 @@ fun TvJoinCodeDialog(
             val panelShape = RoundedCornerShape(14.dp)
             Column(
                 modifier = Modifier
-                    .width(280.dp)
+                    .width(360.dp)
                     .background(color = DarkBackground.copy(alpha = 0.68f), shape = panelShape)
                     .border(0.6.dp, Color.White.copy(alpha = 0.20f), panelShape)
                     .padding(horizontal = 14.dp, vertical = 14.dp)
@@ -115,7 +121,7 @@ fun TvJoinCodeDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "JOIN BY CODE",
+                    text = "JOIN A WATCH PARTY",
                     style = MaterialTheme.typography.labelMedium.copy(
                         fontSize = 16.sp,
                         letterSpacing = 1.1.sp,
@@ -182,7 +188,7 @@ fun TvJoinCodeDialog(
                 TvDialogActionRow(
                     title = if (isBusy) "Joining…" else "Join",
                     enabled = state.isComplete && !isBusy,
-                    onClick = { onJoin(state.code) },
+                    onClick = { state.normalized?.let(onJoin) },
                 )
 
                 error?.let { message ->

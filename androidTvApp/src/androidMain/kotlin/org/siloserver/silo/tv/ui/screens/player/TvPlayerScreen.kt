@@ -62,8 +62,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -136,8 +134,6 @@ import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.activeOriginalHttpClaims
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
-import org.siloserver.silo.model.watchtogether.MemberRole
-import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
@@ -148,7 +144,6 @@ import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
-import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
@@ -256,6 +251,9 @@ fun TvPlayerScreen(
     // Watch Party host Stop: the room is back in its lobby and this device is
     // still a member. Receives the room id.
     onReturnToWatchPartyLobby: (String) -> Unit,
+    // The Watch Party ended under this player (or its membership is gone);
+    // the hub explains why and offers Rejoin.
+    onWatchPartyEnded: () -> Unit = onExit,
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
@@ -433,11 +431,12 @@ fun TvPlayerScreen(
     // playback binding, and disposing it never leaves the room.
     val watchParty = rememberTvWatchParty(roomId, viewModel)
     val roomSnapshot: RoomSnapshot? = watchParty?.playback?.room?.collectAsState()?.value
-    var showLeaveDialog by remember { mutableStateOf(false) }
+    // Back in a party opens the party panel over the retained player.
+    var showPartyPanel by remember { mutableStateOf(false) }
 
     // Per-session playback control socket (admin remote control). Bound for the
     // lifetime of a sessionId; reconnects on its own and never interrupts
-    // playback. Separate from the Watch Together socket above.
+    // playback. Separate from the Watch Party room socket above.
     val playbackRealtimeClient: org.siloserver.silo.network.PlaybackRealtimeClient = koinInject()
     LaunchedEffect(state.sessionId) {
         val id = state.sessionId ?: return@LaunchedEffect
@@ -540,6 +539,7 @@ fun TvPlayerScreen(
         viewModel.remoteStopRequests.collect { stopPlaybackAndExit() }
     }
     val latestOnReturnToWatchPartyLobby by rememberUpdatedState(onReturnToWatchPartyLobby)
+    val latestOnWatchPartyEnded by rememberUpdatedState(onWatchPartyEnded)
     if (watchParty != null && roomId != null) {
         TvWatchPartyEffects(
             watchParty = watchParty,
@@ -547,7 +547,7 @@ fun TvPlayerScreen(
             viewModel = viewModel,
             player = mediaController,
             onReturnToLobby = { exitPlayer(false) { latestOnReturnToWatchPartyLobby(roomId) } },
-            onPartyEnded = { exitPlayer(false, null) },
+            onPartyEnded = { exitPlayer(false) { latestOnWatchPartyEnded() } },
         )
     }
     // Members who may not seek get no intro pill: its only action is a seek.
@@ -557,7 +557,7 @@ fun TvPlayerScreen(
     val visibleIntroSkipState = if (canSeekInRoom) introSkipState else IntroAutoSkipState.Hidden
     val latestIntroSkipState by rememberUpdatedState(visibleIntroSkipState)
     val latestRoomSnapshot by rememberUpdatedState(roomSnapshot)
-    val latestShowLeaveDialog by rememberUpdatedState(showLeaveDialog)
+    val latestShowPartyPanel by rememberUpdatedState(showPartyPanel)
     val latestShowQuickSubtitlePicker by rememberUpdatedState(showQuickSubtitlePicker)
     val selectTvSubtitle: (SubtitleIdentity) -> Unit = { identity ->
         subtitleFocusedStableId = tvSubtitleOptionStableId(identity)
@@ -895,17 +895,15 @@ fun TvPlayerScreen(
             // the Up-Next "Back" button dismisses the whole player).
             state.showNextUp -> stopPlaybackAndExit()
             state.hudOpen -> viewModel.closeHUD()
-            showLeaveDialog -> showLeaveDialog = false
+            showPartyPanel -> showPartyPanel = false
             // While PLAYING, Back steps controls -> hidden before exiting.
             // While PAUSED, hiding controls would just strand a frozen frame,
             // so Back falls through to the exit (or room-leave) flow instead —
             // Apple parity (silo-apple f12a928).
             state.showControls && !state.isPaused -> viewModel.setControlsVisible(false)
-            // In a room: Back surfaces the Leave affordance. Host gets a
-            // close-confirm dialog (closing tears down the room for everyone);
-            // a guest leaves immediately.
-            watchParty != null && roomSnapshot?.selfRole == MemberRole.Host -> showLeaveDialog = true
-            watchParty != null -> stopPlaybackAndExit()
+            // In a party: Back opens the party panel over the retained
+            // player (Leave, and for the host Stop and End). Never an exit.
+            watchParty != null -> showPartyPanel = true
             else -> {
                 stopPlaybackAndExit()
             }
@@ -1040,7 +1038,7 @@ fun TvPlayerScreen(
                 viewModel.setControlsVisible(true)
             }
             if (latestShowQuickSubtitlePicker ||
-                playerState.hudOpen || latestShowLeaveDialog ||
+                playerState.hudOpen || latestShowPartyPanel ||
                 // The Up-Next overlay is a focus-trapping Compose surface that
                 // owns its own remote input (Play Now / Keep Watching / Back) —
                 // don't let the transport bridge toggle play/pause underneath it.
@@ -1141,7 +1139,7 @@ fun TvPlayerScreen(
                 !playerState.hudOpen &&
                 !playerState.showNextUp &&
                 !latestShowQuickSubtitlePicker &&
-                !latestShowLeaveDialog
+                !latestShowPartyPanel
             ) {
                 if (event.action == KeyEvent.ACTION_UP) {
                     // While scrubbing, Back cancels the in-flight scrub (drop the
@@ -2103,11 +2101,7 @@ fun TvPlayerScreen(
                             null
                         },
                         onClose = {
-                            when {
-                                watchParty != null && roomSnapshot?.selfRole == MemberRole.Host ->
-                                    showLeaveDialog = true
-                                else -> stopPlaybackAndExit()
-                            }
+                            if (watchParty != null) showPartyPanel = true else stopPlaybackAndExit()
                         },
                     )
                     }
@@ -2336,7 +2330,6 @@ fun TvPlayerScreen(
             roomActive = watchParty != null,
             showControls = state.showControls,
             hudOpen = state.hudOpen,
-            showLeaveDialog = showLeaveDialog,
             showNextUp = state.showNextUp,
             nextEpisode = state.nextEpisode,
             nextUpVideoEnded = state.nextUpVideoEnded,
@@ -2358,12 +2351,6 @@ fun TvPlayerScreen(
                 showNextUp = state.showNextUp,
                 isInPictureInPictureMode = isInPictureInPictureMode,
             ),
-            onCloseRoom = {
-                showLeaveDialog = false
-                watchParty?.endForEveryone()
-                stopPlaybackAndExit()
-            },
-            onCancelLeaveDialog = { showLeaveDialog = false },
             onPlayNextNow = viewModel::playNextEpisodeNow,
             onKeepWatching = viewModel::dismissNextUp,
             onToggleAutoPlayNext = { viewModel.onSetAutoPlayNext(!autoPlayNextEnabled) },
@@ -2374,6 +2361,17 @@ fun TvPlayerScreen(
                 !state.showControls && !state.hudOpen && !state.showNextUp
             },
         )
+        if (watchParty != null) {
+            TvWatchPartyPlayerOverlays(
+                watchParty = watchParty,
+                panelOpen = showPartyPanel,
+                isInPictureInPictureMode = isInPictureInPictureMode,
+                playerFocus = rootFocus,
+                playerFocused = playerRootHasFocus,
+                onPanelOpenChange = { showPartyPanel = it },
+                exit = stopPlaybackAndExit,
+            )
+        }
     }
 }
 
@@ -2952,14 +2950,12 @@ private fun TvQuickSubtitlePicker(
 }
 
 /**
- * Top-end Watch Together status pill. Shows the live member count, a "Waiting
- * for members…" line while the room sits on the wait barrier, and the join
- * code for a member who can manage the room (host).
+ * Top-end Watch Party pill: the live member count, and the party code for a
+ * member who can manage the room (host).
  */
 @Composable
 private fun TvRoomIndicator(
     memberCount: Int,
-    waiting: Boolean,
     joinCode: String?,
 ) {
     Column(
@@ -2971,20 +2967,13 @@ private fun TvRoomIndicator(
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         androidx.tv.material3.Text(
-            text = "Watch Together · $memberCount in room",
+            text = "Watch Party · $memberCount watching",
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
         )
         if (joinCode != null) {
             androidx.tv.material3.Text(
-                text = "Code $joinCode",
-                color = Color.White.copy(alpha = 0.80f),
-                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-            )
-        }
-        if (waiting) {
-            androidx.tv.material3.Text(
-                text = "Waiting for members…",
+                text = "Party code $joinCode",
                 color = Color.White.copy(alpha = 0.80f),
                 style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
             )
@@ -3236,65 +3225,6 @@ private fun TvCountdownRing(seconds: Int, totalSeconds: Int) {
             color = Color.White,
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
         )
-    }
-}
-
-@Composable
-private fun TvRoomCloseConfirmDialog(
-    onClose: () -> Unit,
-    onCancel: () -> Unit,
-) {
-    val closeActionFocus = remember { FocusRequester() }
-
-    Popup(
-        alignment = Alignment.Center,
-        onDismissRequest = onCancel,
-        properties = PopupProperties(
-            focusable = true,
-            dismissOnBackPress = true,
-            dismissOnClickOutside = false,
-            clippingEnabled = false,
-        ),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.72f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black.copy(alpha = 0.92f))
-                    .padding(40.dp)
-                    .then(rememberTvDialogInitialFocus(closeActionFocus)),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                androidx.tv.material3.Text(
-                    text = "Close this room?",
-                    color = Color.White,
-                    style = androidx.tv.material3.MaterialTheme.typography.titleLarge,
-                )
-                androidx.tv.material3.Text(
-                    text = "Closing ends Watch Together for everyone in the room.",
-                    color = Color.White.copy(alpha = 0.80f),
-                    style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
-                )
-                TvDialogActionRow(
-                    title = "Close room for everyone",
-                    onClick = onClose,
-                    modifier = Modifier
-                        .width(360.dp)
-                        .focusRequester(closeActionFocus),
-                )
-                TvDialogActionRow(
-                    title = "Keep watching",
-                    onClick = onCancel,
-                    modifier = Modifier.width(360.dp),
-                )
-            }
-        }
     }
 }
 
@@ -3656,7 +3586,7 @@ internal fun selectVideoQuality(player: Player, id: String): Boolean {
 
 /**
  * The overlay layer stacked above the player surface: lifecycle notice, remote
- * message toast, Watch Together indicator and close confirmation, the Up Next
+ * message toast, Watch Party indicator, the Up Next
  * surface, the intro auto-skip banner, and the reconnect spinner.
  *
  * Split out of [TvPlayerScreen] to keep that composable's generated method
@@ -3674,7 +3604,6 @@ private fun TvPlayerOverlays(
     roomActive: Boolean,
     showControls: Boolean,
     hudOpen: Boolean,
-    showLeaveDialog: Boolean,
     showNextUp: Boolean,
     nextEpisode: NextEpisodeState?,
     nextUpVideoEnded: Boolean,
@@ -3694,8 +3623,6 @@ private fun TvPlayerOverlays(
     isBuffering: Boolean,
     sleepTimerState: SleepTimerState,
     showSpinner: Boolean,
-    onCloseRoom: () -> Unit,
-    onCancelLeaveDialog: () -> Unit,
     onPlayNextNow: () -> Unit,
     onKeepWatching: () -> Unit,
     onToggleAutoPlayNext: () -> Unit,
@@ -3745,10 +3672,10 @@ private fun TvPlayerOverlays(
             }
         }
 
-        // Watch Together room indicator (top-end so it doesn't collide with
-        // the top-start lifecycle notice). Member count, a "Waiting for
-        // members…" pill while the room is on the wait barrier, and the join
-        // code for the host. Only shown while the idle overlay is up.
+        // Watch Party indicator (top-end so it doesn't collide with the
+        // top-start lifecycle notice): member count and, for the host, the
+        // party code. Only shown while the idle overlay is up. Waiting and
+        // catching-up status is the party status overlay's job.
         val snapshot = roomSnapshot
         if (!isInPictureInPictureMode && roomActive && snapshot != null && showControls && !hudOpen) {
             Box(
@@ -3759,7 +3686,6 @@ private fun TvPlayerOverlays(
             ) {
                 TvRoomIndicator(
                     memberCount = snapshot.memberCount,
-                    waiting = snapshot.playbackState == RoomPlaybackState.Waiting,
                     joinCode = snapshot.code.takeIf { snapshot.selfCanManageRoom && it.isNotBlank() },
                 )
             }
@@ -3855,15 +3781,6 @@ private fun TvPlayerOverlays(
                     }
                 }
             }
-        }
-
-        // Host close-confirm dialog. Closing tears the room down for everyone
-        // (server emits room_closed → every member exits). Cancel resumes.
-        if (!isInPictureInPictureMode && showLeaveDialog && roomActive) {
-            TvRoomCloseConfirmDialog(
-                onClose = onCloseRoom,
-                onCancel = onCancelLeaveDialog,
-            )
         }
 
         // F2 / Up-Next end-of-playback surface. Replaces the old "Still

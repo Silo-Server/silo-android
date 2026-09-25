@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -52,11 +53,10 @@ import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsPromp
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsReportScreen
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSurfacePresence
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherLobbyScreen
-import org.siloserver.silo.tv.ui.screens.watchtogether.tvWatchTogetherDestination
-import org.siloserver.silo.model.watchtogether.RoomSnapshot
-import org.siloserver.silo.watchtogether.WatchTogetherEntryTarget
-import org.siloserver.silo.watchtogether.watchTogetherEntryTarget
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyHubScreen
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyLobbyScreen
+import org.siloserver.silo.repository.WatchTogetherRepository
+import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.common.cards.ProvideCardPresentation
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
@@ -250,29 +250,76 @@ private fun NavHostController.navigateToTvPlayback(
     )
 }
 
+/** Whether [entry] is the party screen for [destination]. */
+private fun tvIsWatchPartyEntry(entry: NavBackStackEntry, destination: WatchPartyDestination): Boolean =
+    when (destination) {
+        is WatchPartyDestination.Lobby ->
+            entry.destination.route == TvRoute.WatchPartyLobby.ROUTE &&
+                entry.arguments?.getString(TvRoute.WatchPartyLobby.ARG_ROOM_ID) == destination.roomId
+        is WatchPartyDestination.Player ->
+            entry.destination.route == TvRoute.Player.ROUTE &&
+                entry.arguments?.getString(TvRoute.Player.ARG_ROOM_ID) == destination.roomId
+    }
+
 /**
- * Watch Together enters either a lobby or a player. The player case is an
- * ordinary playback navigation and must go through [navigateToTvPlayback] —
- * it used `launchSingleTop`, which mutates the existing player entry's
- * arguments while PRESERVING its id, so a recorded solo request could still
- * look current afterwards and suppress the user's next real request.
+ * Shows a Watch Party screen: the hub (null), the room's lobby, or its
+ * player. A party screen already on the back stack is returned to instead of
+ * stacked again, so Back never walks through stale party screens. The player
+ * goes through [navigateToTvPlayback] like every other playback request.
  */
-private fun NavHostController.navigateToTvWatchTogether(
-    room: RoomSnapshot,
+private fun NavHostController.navigateToWatchParty(
+    destination: WatchPartyDestination?,
+    repository: WatchTogetherRepository,
     lastPlaybackNavigation: MutableState<TvPlaybackNavigation?>,
 ) {
-    val destination = tvWatchTogetherDestination(room)
-    val contentId = room.selectedContentId
-    if (watchTogetherEntryTarget(room) == WatchTogetherEntryTarget.Player && contentId != null) {
-        navigateToTvPlayback(
-            destination = destination,
-            contentId = contentId,
-            lastPlaybackNavigation = lastPlaybackNavigation,
-        )
-    } else {
-        navigate(destination) { launchSingleTop = true }
+    // The topmost entry of the party screen's destination, if it is this
+    // room's. (One party at a time, and D5 keeps solo players off a party's
+    // stack, so the topmost entry is the only candidate.)
+    val existing = destination?.let { target ->
+        val pattern = when (target) {
+            is WatchPartyDestination.Lobby -> TvRoute.WatchPartyLobby.ROUTE
+            is WatchPartyDestination.Player -> TvRoute.Player.ROUTE
+        }
+        runCatching { getBackStackEntry(pattern) }.getOrNull()?.takeIf { tvIsWatchPartyEntry(it, target) }
+    }
+    if (existing != null) {
+        popBackStack(existing.destination.id, inclusive = false)
+        return
+    }
+    val fromHub = currentBackStackEntry?.destination?.route == TvRoute.WatchPartyHub.ROUTE
+    when (destination) {
+        null -> navigate(TvRoute.WatchPartyHub().route) { launchSingleTop = true }
+        is WatchPartyDestination.Lobby -> navigate(TvRoute.WatchPartyLobby(destination.roomId).route) {
+            // Back from the lobby returns to where the viewer came from, not the hub.
+            if (fromHub) popUpTo(TvRoute.WatchPartyHub.ROUTE) { inclusive = true }
+        }
+        is WatchPartyDestination.Player -> {
+            val room = repository.roomSnapshot.value?.takeIf { it.roomId == destination.roomId }
+            val contentId = room?.selectedContentId?.takeIf { it.isNotBlank() } ?: destination.roomId
+            // The player replaces the hub, as the lobby does, so leaving the
+            // party returns to where the viewer came from.
+            if (fromHub) popBackStack()
+            navigateToTvPlayback(
+                destination = TvRoute.Player(
+                    contentId = contentId,
+                    fileId = room?.selectedFileId,
+                    libraryId = room?.selectedLibraryId,
+                    roomId = destination.roomId,
+                ).route,
+                contentId = contentId,
+                lastPlaybackNavigation = lastPlaybackNavigation,
+            )
+        }
     }
 }
+
+/**
+ * Whether a party route for [roomId] is backed by a live membership. The
+ * room token lives only in memory, so after process death a restored lobby or
+ * player route has nothing behind it and must not silently re-adopt.
+ */
+private fun tvHasLiveWatchParty(repository: WatchTogetherRepository, roomId: String?): Boolean =
+    roomId != null && repository.roomSnapshot.value?.roomId == roomId
 
 /** Pushes item detail, collapsing only an exact repeat of the current page. */
 private fun NavHostController.navigateToTvItemDetail(
@@ -353,6 +400,7 @@ fun TvAppNavigation(
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
     val watchNextSeeder: WatchNextSeeder = koinInject()
     val siloCastReceiver: TvSiloCastReceiver = koinInject()
+    val watchPartyRepository: WatchTogetherRepository = koinInject()
     val diagnosticsViewModel = koinViewModel<TvDiagnosticsViewModel>()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     val pendingDeepLink: MutableStateFlow<Uri?> =
@@ -448,6 +496,13 @@ fun TvAppNavigation(
             if (route == null || route in preMainAuthRoutes) return@collect // unauthenticated flow: keep queued until Main
             val contentId = uri.pathSegments.lastOrNull() ?: run {
                 pendingDeepLink.value = null
+                return@collect
+            }
+            // D5: a launcher play link while this TV is in a Watch Party opens
+            // the title's page instead, where Play asks to leave the party
+            // first. Playing it outright would hide the departure.
+            if (uri.host == "play" && watchPartyRepository.roomSnapshot.value != null) {
+                pendingDeepLink.value = uri.buildUpon().authority("item").clearQuery().build()
                 return@collect
             }
             // Arrived: the current destination is this link's target, so the
@@ -794,8 +849,8 @@ fun TvAppNavigation(
                         episodeContentId = episodeContentId,
                     )
                 },
-                onOpenWatchTogether = { room ->
-                    navController.navigateToTvWatchTogether(room, lastPlaybackNavigation)
+                onOpenWatchParty = {
+                    navController.navigateToWatchParty(null, watchPartyRepository, lastPlaybackNavigation)
                 },
                 onOpenLibraryCollectionDetail = { libraryId, collectionId, title, libraryType ->
                     navController.navigate(
@@ -1029,8 +1084,8 @@ fun TvAppNavigation(
                 onSeasonClick = { seriesId, selectedSeason ->
                     navController.navigateToTvItemDetail(seriesId, selectedSeason, libraryId = libraryId)
                 },
-                onWatchTogether = { snapshot ->
-                    navController.navigateToTvWatchTogether(snapshot, lastPlaybackNavigation)
+                onWatchParty = { destination ->
+                    navController.navigateToWatchParty(destination, watchPartyRepository, lastPlaybackNavigation)
                 },
                 onOpenPerson = { personId ->
                     navController.navigate(TvRoute.PersonDetail(personId).route) {
@@ -1111,8 +1166,7 @@ fun TvAppNavigation(
                     defaultValue = null
                 },
                 navArgument(TvRoute.Player.ARG_ROOM_ID) {
-                    // Watch Together room binding; null for solo play. Consumed
-                    // by TvPlayerScreen in T3.
+                    // Watch Party room binding; null for solo play.
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
@@ -1198,6 +1252,19 @@ fun TvAppNavigation(
                     targetContentId = contentId,
                 )
             }
+            // A party player restored with no live membership (process death)
+            // opens the hub, which offers Rejoin, instead of re-adopting.
+            val livePartyRoute = remember(backStack.id) {
+                roomId == null || tvHasLiveWatchParty(watchPartyRepository, roomId)
+            }
+            if (!livePartyRoute) {
+                LaunchedEffect(backStack.id) {
+                    navController.navigate(TvRoute.WatchPartyHub().route) {
+                        popUpTo(TvRoute.Player.ROUTE) { inclusive = true }
+                    }
+                }
+                return@composable
+            }
             // TvPlayerViewModel starts loading in its initializer, which runs
             // while TvPlayerScreen's default parameters are evaluated. Bind
             // the playback display first so the very first capability probe
@@ -1230,7 +1297,14 @@ fun TvAppNavigation(
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.
                 onReturnToWatchPartyLobby = { id ->
-                    navController.navigate(TvRoute.WatchTogetherLobby(id).route) {
+                    navController.navigate(TvRoute.WatchPartyLobby(id, hostStopped = true).route) {
+                        popUpTo(TvRoute.Player.ROUTE) { inclusive = true }
+                    }
+                },
+                // The party ended under the player: the hub says why and
+                // offers Rejoin when the room may still be going.
+                onWatchPartyEnded = {
+                    navController.navigate(TvRoute.WatchPartyHub(showEnded = true).route) {
                         popUpTo(TvRoute.Player.ROUTE) { inclusive = true }
                     }
                 },
@@ -1268,25 +1342,85 @@ fun TvAppNavigation(
         }
 
         composable(
-            route = TvRoute.WatchTogetherLobby.ROUTE,
+            route = TvRoute.WatchPartyHub.ROUTE,
             arguments = listOf(
-                navArgument(TvRoute.WatchTogetherLobby.ARG_ROOM_ID) { type = NavType.StringType },
+                navArgument(TvRoute.WatchPartyHub.ARG_SHOW_ENDED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
             ),
         ) { backStack ->
-            val roomId = backStack.arguments
-                ?.getString(TvRoute.WatchTogetherLobby.ARG_ROOM_ID)
-                ?: return@composable
-            TvWatchTogetherLobbyScreen(
-                roomId = roomId,
-                // The lobby computes the synced-player route from its snapshot
-                // (T2). We pop the lobby so Back from the player exits the room
-                // rather than returning to a stale lobby.
-                onNavigateToPlayer = { route ->
-                    navController.navigate(route) {
-                        popUpTo(TvRoute.WatchTogetherLobby.ROUTE) { inclusive = true }
+            TvWatchPartyHubScreen(
+                showEnded = backStack.arguments?.getBoolean(TvRoute.WatchPartyHub.ARG_SHOW_ENDED) == true,
+                onDestination = { destination ->
+                    if (navController.currentBackStackEntry?.id == backStack.id) {
+                        navController.navigateToWatchParty(destination, watchPartyRepository, lastPlaybackNavigation)
                     }
                 },
                 onBack = { navController.popBackStack() },
+            )
+        }
+
+        composable(
+            route = TvRoute.WatchPartyLobby.ROUTE,
+            arguments = listOf(
+                navArgument(TvRoute.WatchPartyLobby.ARG_ROOM_ID) { type = NavType.StringType },
+                navArgument(TvRoute.WatchPartyLobby.ARG_HOST_STOPPED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
+        ) { backStack ->
+            val roomId = backStack.arguments
+                ?.getString(TvRoute.WatchPartyLobby.ARG_ROOM_ID)
+                ?: return@composable
+            // A lobby restored with no live membership (process death) opens
+            // the hub, which offers Rejoin, instead of re-adopting silently.
+            val live = remember(backStack.id) { tvHasLiveWatchParty(watchPartyRepository, roomId) }
+            if (!live) {
+                LaunchedEffect(backStack.id) {
+                    navController.navigate(TvRoute.WatchPartyHub().route) {
+                        popUpTo(TvRoute.WatchPartyLobby.ROUTE) { inclusive = true }
+                    }
+                }
+                return@composable
+            }
+            // Only the entry on top may navigate: an exiting lobby still
+            // composed during its fade must not act on a late snapshot.
+            val isTop = { navController.currentBackStackEntry?.id == backStack.id }
+            TvWatchPartyLobbyScreen(
+                roomId = roomId,
+                hostStopped = backStack.arguments?.getBoolean(TvRoute.WatchPartyLobby.ARG_HOST_STOPPED) == true,
+                // The lobby is replaced by the player, so Back from the
+                // player never returns to a stale lobby.
+                onOpenPlayer = { destination ->
+                    if (isTop()) {
+                        val room = watchPartyRepository.roomSnapshot.value?.takeIf { it.roomId == destination.roomId }
+                        val contentId = room?.selectedContentId?.takeIf { it.isNotBlank() } ?: destination.roomId
+                        navController.navigate(
+                            TvRoute.Player(
+                                contentId = contentId,
+                                fileId = room?.selectedFileId,
+                                libraryId = room?.selectedLibraryId,
+                                roomId = destination.roomId,
+                            ).route,
+                        ) {
+                            popUpTo(TvRoute.WatchPartyLobby.ROUTE) { inclusive = true }
+                        }
+                    }
+                },
+                onOpenDetail = { contentId ->
+                    if (isTop()) navController.navigateToTvItemDetail(contentId)
+                },
+                onEnded = {
+                    if (isTop()) {
+                        navController.navigate(TvRoute.WatchPartyHub(showEnded = true).route) {
+                            popUpTo(TvRoute.WatchPartyLobby.ROUTE) { inclusive = true }
+                        }
+                    }
+                },
+                onLeft = { if (isTop()) navController.popBackStack() },
+                onBack = { if (isTop()) navController.popBackStack() },
             )
         }
 

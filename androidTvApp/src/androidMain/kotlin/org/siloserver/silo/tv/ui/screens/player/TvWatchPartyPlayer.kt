@@ -27,7 +27,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
-import org.siloserver.silo.repository.WatchPartyEndReason
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
@@ -348,7 +347,7 @@ internal fun TvWatchPartyEffects(
         watchParty.playback.ended.filterNotNull().collect { ended ->
             if (ended.roomId != roomId) return@collect
             watchParty.markEnded()
-            Toast.makeText(context, tvWatchPartyEndedText(ended.reason), Toast.LENGTH_SHORT).show()
+            // The hub this leads to says why the party ended and offers Rejoin.
             latestPartyEnded()
         }
     }
@@ -441,13 +440,6 @@ internal fun tvRoomStartContext(
         ?: currentSourcePositionSeconds.takeIf { it.isFinite() && it > 0.0 }
         ?: room.positionSeconds
     return room.copy(positionSeconds = position)
-}
-
-/** Plain-language text for why this device's party ended. */
-internal fun tvWatchPartyEndedText(reason: String): String = when (reason) {
-    WatchPartyEndReason.Replaced -> "You joined this Watch Party on another device."
-    WatchPartyEndReason.ConnectionLost -> "Lost the connection to the Watch Party."
-    else -> "The Watch Party ended."
 }
 
 /**

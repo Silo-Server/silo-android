@@ -483,21 +483,43 @@ val androidTvModule = module {
             capabilityDetector = get(),
         )
     }
-    // Watch Together entry (create/join orchestration) — backs the entry +
-    // join-code dialogs on the detail screen.
+    // Watch Party: the shared hub, lobby (keyed per room; roomId is the
+    // positional parameter), and picker ViewModels.
     viewModel {
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel(get())
+        val serverRegistry = get<ServerRegistry>()
+        org.siloserver.silo.viewmodel.WatchPartyHubViewModel(
+            repository = get(),
+            roomSession = get(),
+            availability = get(),
+            recents = get(),
+            isCurrentServer = { url ->
+                org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyServerMatches(
+                    linkServerUrl = url,
+                    activeServerUrl = serverRegistry.activeEntry.value?.url,
+                )
+            },
+        )
     }
-    viewModel {
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvSuggestToRoomViewModel(get())
-    }
-    // Watch Together lobby — keyed per roomId (koinViewModel key="wt-lobby-$roomId");
-    // roomId is read from the positional parameter.
     viewModel { params ->
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherLobbyViewModel(
+        org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel(
             roomId = params.get(),
             repository = get(),
             roomSession = get(),
+            availability = get(),
+        )
+    }
+    viewModel {
+        val catalog = get<org.siloserver.silo.repository.CatalogRepository>()
+        org.siloserver.silo.viewmodel.WatchPartyPickerViewModel(
+            repository = get(),
+            availability = get(),
+            search = { query ->
+                when (val result = catalog.browse(query = query, limit = 30)) {
+                    is ApiResult.Success -> ApiResult.Success(result.data.items)
+                    is ApiResult.Error -> result
+                    is ApiResult.NetworkError -> result
+                }
+            },
         )
     }
     viewModel { params ->
