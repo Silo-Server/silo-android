@@ -207,7 +207,7 @@ fun AppNavigation(
             navigate = navigate@{ route ->
                 // A silo://play link goes to an engaged TV, as iOS routes it.
                 playerRouteCastRequestOrNull(route)?.let { request ->
-                    if (siloCastPlayRouter.playStreaming(request, onLaunched = openSiloCastRemote)) return@navigate
+                    if (siloCastPlayRouter.playStreaming(request, localRoute = route, onLaunched = openSiloCastRemote)) return@navigate
                 }
                 // An external link to a TAB (silo://downloads) must switch tabs,
                 // not push a second copy of that tab. A duplicate tab entry also
@@ -992,6 +992,14 @@ fun AppNavigation(
                 openingArtworkThumbhash = openingArtworkThumbhash,
                 onBackClick = { navController.popBackStack() },
                 onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
+                    val localRoute = Route.Player(
+                        libraryId = libraryId,
+                        contentId = contentId,
+                        fileId = fileId,
+                        audioTrackIndex = audioTrackIndex,
+                        subtitleTrackIndex = subtitleTrackIndex,
+                        resumePositionSeconds = resumePositionSeconds,
+                    ).route
                     val sentToTv = siloCastPlayRouter.playStreaming(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
@@ -1002,20 +1010,10 @@ fun AppNavigation(
                             startFromBeginning = resumePositionSeconds == null,
                             resumePosition = resumePositionSeconds,
                         ),
+                        localRoute = localRoute,
                         onLaunched = openSiloCastRemote,
                     )
-                    if (!sentToTv) {
-                        navController.navigate(
-                            Route.Player(
-                                libraryId = libraryId,
-                                contentId = contentId,
-                                fileId = fileId,
-                                audioTrackIndex = audioTrackIndex,
-                                subtitleTrackIndex = subtitleTrackIndex,
-                                resumePositionSeconds = resumePositionSeconds,
-                            ).route,
-                        )
-                    }
+                    if (!sentToTv) navController.navigate(localRoute)
                 },
                 onItemDetailClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
@@ -1335,7 +1333,11 @@ fun AppNavigation(
                     .navigationBarsPadding(),
             )
         }
-        SiloCastPlayDialogs(router = siloCastPlayRouter)
+        SiloCastPlayDialogs(
+            onOpenRemote = openSiloCastRemote,
+            onPlayHere = { route -> navController.navigate(route) },
+            router = siloCastPlayRouter,
+        )
 
         // Google Cast (Chromecast) mini controller — app-wide except the player,
         // which shows the full cast takeover overlay instead. On tab routes it
