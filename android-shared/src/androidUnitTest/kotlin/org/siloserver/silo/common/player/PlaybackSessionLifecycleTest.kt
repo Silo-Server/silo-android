@@ -90,6 +90,34 @@ class PlaybackSessionLifecycleTest {
         assertEquals(2, manager.progressCallCount)
     }
 
+    @Test fun `sequenced progress warns only after consecutive failures and clears on success`() = runTest {
+        val failure = ApiResult.Error(401, "invalid_token", "expired")
+        val manager = object : FakeSessionManager() {
+            override fun isSequenced(sessionId: String) = true
+        }.apply {
+            progressResults = ArrayDeque(listOf(failure, ApiResult.Success(Unit), failure, failure, failure))
+            progressDefault = ApiResult.Success(Unit)
+        }
+        val lifecycle = newLifecycle(manager)
+        lifecycle.adoptActiveSession(defaultStartParams(), makeSession("sequenced"))
+        lifecycle.reportOwnedPosition(10.0, 100.0, false)
+        val tick = PlaybackSessionLifecycle.PROGRESS_REPORT_INTERVAL_MS
+
+        // One failure, then a success: the streak resets and nothing shows.
+        advanceTimeBy(tick * 2 + 100)
+        assertNull(lifecycle.notice.value)
+        // Two more failures stay quiet; the third consecutive one warns.
+        advanceTimeBy(tick * 2)
+        assertNull(lifecycle.notice.value)
+        advanceTimeBy(tick)
+        assertNotNull(lifecycle.notice.value)
+        // The next accepted sample clears it.
+        advanceTimeBy(tick)
+        assertNull(lifecycle.notice.value)
+        assertEquals(6, manager.progressCallCount)
+        assertTrue(lifecycle.state.value is SessionState.Active)
+    }
+
 
     @Test
     fun `adoptActiveSession reports progress without starting duplicate session`() = runTest {

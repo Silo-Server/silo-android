@@ -134,12 +134,19 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
             }
         }
 
+    /**
+     * Unlike the other session mutations, progress may be refreshed and resent
+     * once after a 401. Otherwise an access token that expires mid-session
+     * fails every tick until unrelated traffic happens to refresh it. The
+     * resend carries the same sequenced sample, which the server settles as
+     * `replayed` at worst.
+     */
     suspend fun progress(scope: AuthScopeSnapshot, sessionId: String,
         body: PlaybackProgressV2): ApiResult<PlaybackMutationV2> =
         exchange<PlaybackMutationV2, PlaybackMutationV2>(HttpStatusCode.OK, {
             client.post {
                 url { path("", "api", "v2", "playback", sessionId, "progress") }
-                authScope(scope); requireSiloAuth(); singleAttempt()
+                authScope(scope); requireSiloAuth()
                 contentType(ContentType.Application.Json); setBody(body)
             }
         }) { it }
