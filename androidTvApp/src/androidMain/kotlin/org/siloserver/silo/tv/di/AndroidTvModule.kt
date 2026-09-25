@@ -157,6 +157,20 @@ val androidTvModule = module {
     // androidModule for why every identity reporter resolves this instead of
     // deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    // Settings → Experimental → Watch Party: on by default only in debug builds.
+    single {
+        org.siloserver.silo.common.watchparty.WatchPartyExperiment(
+            prefs = androidContext().getSharedPreferences(
+                org.siloserver.silo.common.watchparty.WatchPartyExperiment.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+            defaultEnabled = BuildConfig.DEBUG,
+            onDisabled = { get<org.siloserver.silo.watchtogether.RoomSession>().depart() },
+        )
+    }
+    single<org.siloserver.silo.model.feature.WatchPartyExposure> {
+        get<org.siloserver.silo.common.watchparty.WatchPartyExperiment>()
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
             androidContext(),
