@@ -103,7 +103,11 @@ class SequencedPlayback(
         // Compacted apart, so titles a phone launched never crowd durable tombstones out.
         val kept = compactSettled(durable)
         if (!entry.isTemporary) store.write(kept)
-        entries = kept + compactSettled(temporary)
+        // Only the identity that admitted a temporary attempt may act for it, so an ended
+        // identity's attempts can never settle; drop them rather than keep them for the
+        // life of the process.
+        val liveTemporary = tokens.snapshotCurrentScope()?.credentialGenerationId?.let { TEMPORARY_LOGIN_PREFIX + it }
+        entries = kept + compactSettled(temporary.filter { it.loginId == liveTemporary })
         if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
     }

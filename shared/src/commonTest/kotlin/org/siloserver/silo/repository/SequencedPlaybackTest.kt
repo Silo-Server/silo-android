@@ -533,6 +533,28 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun endedRemotePlaybackAttemptsAreDroppedOnTheNextSave() = runTest {
+        val identity = remotePlaybackIdentity()
+        var starts = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply(adoptedDecision.replace("session-1", "session-$starts"), HttpStatusCode.Created) }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            assertTrue(runtime.owns("session-1"))
+            // The TV restores its own login before the phone's title stopped.
+            identity.temporary = false
+            identity.scope = identity.scope.copy(credentialGenerationId = null, identityGeneration = 2)
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertFalse(runtime.owns("session-1"))
+            assertTrue(runtime.owns("session-2"))
+        } finally { c.close() }
+    }
+
     @Test fun endedRemotePlaybackIdentityCannotActForItsAttempt() = runTest {
         val identity = remotePlaybackIdentity()
         val store = Store()
