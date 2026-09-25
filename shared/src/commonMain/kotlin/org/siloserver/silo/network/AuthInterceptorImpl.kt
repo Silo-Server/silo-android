@@ -97,6 +97,13 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
     // refreshing dead credentials again on every subsequent 401.
     val deadCredentialGenerations = MutableStateFlow<Set<String>>(emptySet())
 
+    // Saved-account refresh tokens the server definitively rejected on the
+    // pinned path. That path must not invalidate the scope, so without this a
+    // pinned heartbeat (playback progress) would repeat the same doomed refresh
+    // every tick. A new sign-in or rotation installs a different token, which
+    // is never in this set.
+    val rejectedPinnedRefreshTokens = MutableStateFlow<Set<String>>(emptySet())
+
     /**
      * One refresh of [refreshScope], serialised on [refreshMutex].
      *
@@ -477,7 +484,9 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                     return@withLock true
                 }
                 val refreshToken = tokenManager.getRefreshTokenForScope(pinnedScope)
-                if (refreshToken.isNullOrBlank() || pinnedScope.serverUrl.isBlank()) {
+                if (refreshToken.isNullOrBlank() || pinnedScope.serverUrl.isBlank() ||
+                    refreshToken in rejectedPinnedRefreshTokens.value
+                ) {
                     return@withLock false
                 }
                 try {
@@ -504,10 +513,12 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                         after != null && after != sentAuth
                     } else {
                         diagnosticsObserver.safeAuthRefresh("failed")
-                        if (pinnedGeneration != null &&
-                            refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()
-                        ) {
-                            deadCredentialGenerations.update { it + pinnedGeneration }
+                        if (refreshResponse.status.shouldInvalidateSessionAfterRefreshFailure()) {
+                            if (pinnedGeneration != null) {
+                                deadCredentialGenerations.update { it + pinnedGeneration }
+                            } else {
+                                rejectedPinnedRefreshTokens.update { it + refreshToken }
+                            }
                         }
                         // Don't invalidate the active session for a background scope.
                         // Re-check in case a concurrent path refreshed it in flight.

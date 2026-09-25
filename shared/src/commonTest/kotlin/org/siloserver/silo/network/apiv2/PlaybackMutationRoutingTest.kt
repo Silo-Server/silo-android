@@ -108,4 +108,45 @@ class PlaybackMutationRoutingTest {
             assertEquals(listOf(sample, sample), bodies)
         } finally { client.close() }
     }
+
+    @Test fun progressDoesNotRepeatARejectedPinnedRefreshOnLaterTicks() = runTest {
+        val owner = AuthScopeSnapshot("saved-owner", "captured-profile", "https://fixture.example:9443", "captured-profile-proof")
+        val tokens = object : TokenManager by TokenManagerImpl() {
+            override suspend fun getServerUrl() = "https://ambient.example:8443"
+            override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot) = "expired-access"
+            override suspend fun getRefreshTokenForScope(scope: AuthScopeSnapshot) = "revoked-refresh"
+            override suspend fun invalidateSession() = fail("A pinned refresh must not end the active session.")
+            override suspend fun invalidateSessionForScope(scope: AuthScopeSnapshot): Boolean =
+                fail("A pinned refresh must not end the captured session.")
+        }
+        val progress = PlaybackProgressV2("installation", 7, 9.0, false)
+        var refreshes = 0
+        var ticks = 0
+        val client = HttpClient(MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/api/v2/auth/refresh" -> {
+                    refreshes++
+                    respond("""{"code":"invalid_token","detail":"Refresh token revoked."}""",
+                        HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/problem+json"))
+                }
+                "/api/v2/playback/owned-session/progress" -> {
+                    ticks++
+                    respond("""{"code":"invalid_token","detail":"Access token expired."}""",
+                        HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/problem+json"))
+                }
+                else -> fail("Unexpected ${request.url}")
+            }
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = tokens }
+        }
+        try {
+            val api = PlaybackV2Api(client, ApiV2Gate.Unrestricted)
+            repeat(3) {
+                assertEquals(401, assertIs<ApiResult.Error>(api.progress(owner, "owned-session", progress)).code)
+            }
+            assertEquals(3, ticks)
+            assertEquals(1, refreshes)
+        } finally { client.close() }
+    }
 }
