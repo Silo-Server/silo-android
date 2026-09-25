@@ -92,6 +92,8 @@
             <intent-filter>
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_STATUS" />
                 <action android:name="org.siloserver.silo.debug.PLAYBACK_COMMAND" />
+                <action android:name="org.siloserver.silo.debug.CAST_STATUS" />
+                <action android:name="org.siloserver.silo.debug.CAST_TARGET" />
             </intent-filter>
         </receiver>
 

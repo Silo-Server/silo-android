@@ -32,6 +32,14 @@ class SiloCastNsdAdvertiser(
     private var lastRegistration: Registration? = null
     private var lastRecord: Map<String, String>? = null
 
+    /** The live advertisement's name, port and TXT record, for the debug adb hook. */
+    @Synchronized
+    fun currentAdvertisement(): Triple<String, Int, Map<String, String>>? {
+        val registration = lastRegistration ?: return null
+        val record = lastRecord ?: return null
+        return Triple(record["name"].orEmpty(), registration.port, record)
+    }
+
     @Synchronized
     fun start(port: Int, serverId: String?, serverName: String?, playing: Boolean = false) {
         register(Registration(port, serverId, serverName, playing))

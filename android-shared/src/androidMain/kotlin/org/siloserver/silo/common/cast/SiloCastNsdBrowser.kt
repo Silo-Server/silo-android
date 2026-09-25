@@ -43,6 +43,25 @@ class SiloCastNsdBrowser(context: Context) {
     private val pendingResolutions = ArrayDeque<PendingResolution>()
     private var activeResolution: PendingResolution? = null
 
+    /** Targets added by the debug adb hook; see [setDebugTargets]. */
+    private var debugTargets: List<SiloCastTarget> = emptyList()
+
+    /**
+     * Debug builds only (PlaybackDebugReceiver): targets supplied over adb.
+     * An emulator sits behind NAT that mDNS can't cross, so a test harness
+     * resolves TVs on the host and hands them in; they merge with (and
+     * survive a restart of) real discovery. An empty list removes them.
+     */
+    @Synchronized
+    fun setDebugTargets(targets: List<SiloCastTarget>) {
+        val replacedIds = debugTargets.map { it.deviceId }.toSet()
+        debugTargets = targets
+        _targets.update { current ->
+            (current.filterNot { it.deviceId in replacedIds || targets.any { t -> t.deviceId == it.deviceId } } + targets)
+                .sortedBy { it.name.lowercase() }
+        }
+    }
+
     @Synchronized
     fun start() {
         if (discoveryListener != null) return
@@ -67,7 +86,10 @@ class SiloCastNsdBrowser(context: Context) {
                         ?.cancelled = true
                     pendingResolutions.removeAll { it.serviceInfo.serviceName == lostName }
                 }
-                _targets.update { targets -> targets.filterNot { it.serviceName == lostName } }
+                _targets.update { targets ->
+                    val injectedIds = synchronized(this@SiloCastNsdBrowser) { debugTargets.map { it.deviceId }.toSet() }
+                    targets.filterNot { it.serviceName == lostName && it.deviceId !in injectedIds }
+                }
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
@@ -95,7 +117,7 @@ class SiloCastNsdBrowser(context: Context) {
         discoveryListener = null
         pendingResolutions.clear()
         activeResolution = null
-        _targets.value = emptyList()
+        _targets.value = debugTargets
     }
 
     /**
@@ -133,7 +155,8 @@ class SiloCastNsdBrowser(context: Context) {
                         discoveryListener != null && activeResolution === pending && !pending.cancelled
                     }
                     if (mayPublish) {
-                        info.toSiloCastTarget()?.let { target ->
+                        // A debug-injected target wins over an mDNS record with its id.
+                        info.toSiloCastTarget()?.takeIf { found -> debugTargets.none { it.deviceId == found.deviceId } }?.let { target ->
                             _targets.update { current ->
                                 (current.filterNot { it.deviceId == target.deviceId } + target)
                                     .sortedBy { it.name.lowercase() }
@@ -166,34 +189,35 @@ class SiloCastNsdBrowser(context: Context) {
 
     private fun NsdServiceInfo.toSiloCastTarget(): SiloCastTarget? {
         val host = this.host?.hostAddress ?: return null
-        val port = port.takeIf { it > 0 } ?: return null
-        val name = attributes.string("name") ?: serviceName
-        val mdnsName = serviceName
-        val deviceId = attributes.string("deviceId") ?: attributes.string("id") ?: "$host:$port"
-        // Every v2 receiver advertises `v`; one that doesn't predates it (iOS reads it the same way).
-        val version = attributes.string("v")?.toIntOrNull() ?: 1
-        return SiloCastTarget(
-            serviceName = mdnsName,
-            deviceId = deviceId,
-            name = name,
-            host = host,
-            port = port,
-            version = version,
-            serverId = attributes.string("server"),
-            serverName = attributes.string("serverName"),
-            isPlaying = attributes.string("playing") == "1",
-        )
+        val record = attributes.mapValues { (_, value) -> value?.toString(Charset.forName("UTF-8")).orEmpty() }
+        return targetFromRecord(host = host, port = port, serviceName = serviceName, txt = record)
     }
 
-    private fun Map<String, ByteArray>.string(key: String): String? =
-        this[key]?.toString(Charset.forName("UTF-8"))?.takeIf { it.isNotBlank() }
+    companion object {
+        /** A resolved `_silocast._tcp` record, read the way iOS reads it. */
+        fun targetFromRecord(host: String, port: Int, serviceName: String, txt: Map<String, String>): SiloCastTarget? {
+            if (port <= 0) return null
+            fun string(key: String): String? = txt[key]?.takeIf { it.isNotBlank() }
+            val deviceId = string("deviceId") ?: string("id") ?: "$host:$port"
+            return SiloCastTarget(
+                serviceName = serviceName,
+                deviceId = deviceId,
+                name = string("name") ?: serviceName,
+                host = host,
+                port = port,
+                // Every v2 receiver advertises `v`; one that doesn't predates it (iOS reads it the same way).
+                version = string("v")?.toIntOrNull() ?: 1,
+                serverId = string("server"),
+                serverName = string("serverName"),
+                isPlaying = string("playing") == "1",
+            )
+        }
+
+        private const val TAG = "SiloCastNsdBrowser"
+    }
 
     private class PendingResolution(
         val serviceInfo: NsdServiceInfo,
         var cancelled: Boolean = false,
     )
-
-    private companion object {
-        const val TAG = "SiloCastNsdBrowser"
-    }
 }

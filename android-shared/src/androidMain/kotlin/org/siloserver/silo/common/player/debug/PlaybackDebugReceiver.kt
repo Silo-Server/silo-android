@@ -10,6 +10,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import org.json.JSONObject
 import org.koin.java.KoinJavaComponent
 import org.siloserver.silo.common.BuildConfig
+import org.siloserver.silo.common.cast.SiloCastNsdAdvertiser
+import org.siloserver.silo.common.cast.SiloCastNsdBrowser
+import org.siloserver.silo.common.cast.SiloCastTarget
 import org.siloserver.silo.common.player.ActivePlayerHolder
 
 /**
@@ -24,6 +27,11 @@ import org.siloserver.silo.common.player.ActivePlayerHolder
  *     -a org.siloserver.silo.debug.PLAYBACK_STATUS
  * Command:
  *   ... -a org.siloserver.silo.debug.PLAYBACK_COMMAND --es cmd seek --el positionMs 300000
+ * Remote Control (emulators sit behind NAT that mDNS can't cross):
+ *   ... -a org.siloserver.silo.debug.CAST_STATUS    (TV: the live port + TXT record)
+ *   ... -a org.siloserver.silo.debug.CAST_TARGET --es host 10.0.2.2 --ei port 4711 \
+ *       --es name "Den TV" --es txt "v=2;id=tv-1;server=srv;serverName=Home;playing=0"
+ *       (phone: adds or replaces a target; `--ez clear true` removes them all)
  *
  * The JSON comes back in `am broadcast`'s printed `data=` result. The explicit
  * component (`-n`) is required — implicit broadcasts don't reach
@@ -45,7 +53,46 @@ class PlaybackDebugReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_STATUS -> setResultData(statusJson(player).toString())
             ACTION_COMMAND -> setResultData(runCommand(player, intent).toString())
+            ACTION_CAST_STATUS -> setResultData(castStatusJson().toString())
+            ACTION_CAST_TARGET -> setResultData(setCastTarget(intent).toString())
         }
+    }
+
+    private fun castStatusJson(): JSONObject {
+        val advertiser = runCatching {
+            KoinJavaComponent.get<SiloCastNsdAdvertiser>(SiloCastNsdAdvertiser::class.java)
+        }.getOrNull() ?: return JSONObject().put("advertising", false).put("reason", "no receiver in this app")
+        val (name, port, record) = advertiser.currentAdvertisement()
+            ?: return JSONObject().put("advertising", false)
+        return JSONObject()
+            .put("advertising", true)
+            .put("name", name)
+            .put("port", port)
+            .put("txt", JSONObject(record))
+    }
+
+    private fun setCastTarget(intent: Intent): JSONObject {
+        val browser = runCatching {
+            KoinJavaComponent.get<SiloCastNsdBrowser>(SiloCastNsdBrowser::class.java)
+        }.getOrNull() ?: return JSONObject().put("ok", false).put("reason", "no browser in this app")
+        if (intent.getBooleanExtra(EXTRA_CLEAR, false)) {
+            injectedCastTargets.clear()
+            browser.setDebugTargets(emptyList())
+            return JSONObject().put("ok", true).put("targets", 0)
+        }
+        val txt = intent.getStringExtra(EXTRA_TXT).orEmpty()
+            .split(';')
+            .filter { '=' in it }
+            .associate { it.substringBefore('=').trim() to it.substringAfter('=').trim() }
+        val target = SiloCastNsdBrowser.targetFromRecord(
+            host = intent.getStringExtra(EXTRA_HOST) ?: return JSONObject().put("ok", false).put("reason", "host missing"),
+            port = intent.getIntExtra(EXTRA_PORT, 0),
+            serviceName = intent.getStringExtra(EXTRA_NAME) ?: txt["name"].orEmpty(),
+            txt = txt,
+        ) ?: return JSONObject().put("ok", false).put("reason", "port missing")
+        injectedCastTargets[target.deviceId] = target
+        browser.setDebugTargets(injectedCastTargets.values.toList())
+        return JSONObject().put("ok", true).put("targets", injectedCastTargets.size)
     }
 
     private fun statusJson(player: Player?): JSONObject {
@@ -117,7 +164,17 @@ class PlaybackDebugReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_STATUS = "org.siloserver.silo.debug.PLAYBACK_STATUS"
         const val ACTION_COMMAND = "org.siloserver.silo.debug.PLAYBACK_COMMAND"
+        const val ACTION_CAST_STATUS = "org.siloserver.silo.debug.CAST_STATUS"
+        const val ACTION_CAST_TARGET = "org.siloserver.silo.debug.CAST_TARGET"
         const val EXTRA_CMD = "cmd"
         const val EXTRA_POSITION_MS = "positionMs"
+        const val EXTRA_HOST = "host"
+        const val EXTRA_PORT = "port"
+        const val EXTRA_NAME = "name"
+        const val EXTRA_TXT = "txt"
+        const val EXTRA_CLEAR = "clear"
+
+        /** Targets injected so far, keyed by device id; main-thread only. */
+        private val injectedCastTargets = linkedMapOf<String, SiloCastTarget>()
     }
 }
