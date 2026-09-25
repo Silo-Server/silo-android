@@ -173,7 +173,8 @@ class TvSiloCastReceiver(
 
     @Synchronized
     fun stop() {
-        DiagnosticsCastLogger.event("TV cast receiver stopped")
+        // Navigation re-applies the stopped state on every signed-out route.
+        if (scope != null) DiagnosticsCastLogger.event("TV cast receiver stopped")
         advertiser.stop()
         val identityGeneration = identityManager.activeIdentity?.generationId
         pendingPlayerIdentityGeneration = null

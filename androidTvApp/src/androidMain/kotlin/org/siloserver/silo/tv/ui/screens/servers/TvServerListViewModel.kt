@@ -37,6 +37,7 @@ class TvServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
+    private val siloCastReceiver: org.siloserver.silo.tv.cast.TvSiloCastReceiver? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerListUiState())
@@ -60,10 +61,20 @@ class TvServerListViewModel(
         }
     }
 
+    /**
+     * The registry switches before the new server's probe returns, and the
+     * receiver would advertise the new server meanwhile, with no profile chosen
+     * on it yet. Navigation starts it again once the new server reaches Home.
+     */
+    private suspend fun stopCastReceiver() {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver?.stop() }
+    }
+
     fun onSelect(serverId: String) {
         if (_uiState.value.activeId == serverId) return
         _uiState.update { it.copy(pendingSwitchToId = serverId) }
         viewModelScope.launch {
+            stopCastReceiver()
             // Switch the registry + token scope and probe the target server.s contract.
             authRepository.switchToServer(serverId)
 
@@ -118,6 +129,7 @@ class TvServerListViewModel(
             // full switch path also moves the token scope and probes the
             // promoted server's identity and v2 contract verdict (it is
             // idempotent when the registry is already there).
+            stopCastReceiver()
             authRepository.switchToServer(promotedId)
 
             // Land on the deepest screen the promoted server's stored

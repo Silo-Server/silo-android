@@ -592,7 +592,9 @@ fun TvAppNavigation(
     val signedInForeground = homeInStack && !signedOut && hasProfile == true &&
         currentRoute != TvRoute.ProfileSelection.route &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-    LaunchedEffect(signedInForeground, signedOut, hasProfile) {
+    // Keyed on the route too, so every navigation re-applies the wanted state:
+    // a server switch stops the receiver without changing these flags.
+    LaunchedEffect(signedInForeground, signedOut, hasProfile, currentRoute) {
         when {
             signedInForeground -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 siloCastReceiver.start()
