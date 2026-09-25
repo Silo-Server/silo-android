@@ -473,4 +473,57 @@ class SequencedPlaybackTest {
         assertFailsWith<IllegalArgumentException> { decodePlaybackDecisionV2(body) }
     }
 
+    /** A title a phone launches on the TV plays under process-only remote-playback credentials. */
+    private fun remotePlaybackIdentity() = Identity().apply {
+        temporary = true
+        scope = scope.copy(credentialGenerationId = "remote-1")
+    }
+
+    @Test fun remotePlaybackIdentityPlaysWithoutTheDurableJournal() = runTest {
+        val identity = remotePlaybackIdentity()
+        val store = Store().apply { fail = true } // Any journal write would fail the call.
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> {
+                val sample = SiloJson.decodeFromString<PlaybackProgressV2>(req.body.toByteArray().decodeToString())
+                reply("""{"outcome":"applied","accepted":{"sequence":${sample.sequence},"position":${sample.position},"is_paused":${sample.isPaused}}}""")
+            }
+            "/api/v2/playback/session-1" -> reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            assertIs<ApiResult.Success<Unit>>(runtime.progress("session-1", 12.0, false))
+            assertIs<ApiResult.Success<Unit>>(runtime.stop("session-1"))
+            assertTrue(store.entries.isEmpty())
+            assertTrue(runtime.pending.value.isEmpty())
+        } finally { c.close() }
+    }
+
+    @Test fun endedRemotePlaybackIdentityCannotActForItsAttempt() = runTest {
+        val identity = remotePlaybackIdentity()
+        val store = Store()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            else -> error("Must not act for an ended identity: ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            // The TV restores its own saved login.
+            identity.temporary = false
+            identity.scope = identity.scope.copy(credentialGenerationId = null, identityGeneration = 2)
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.progress("session-1", 12.0, false)).error)
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.stop("session-1")).error)
+            // Nothing to recover later: the credentials are gone for good.
+            assertTrue(store.entries.isEmpty())
+            assertTrue(runtime.pending.value.isEmpty())
+        } finally { c.close() }
+    }
+
 }

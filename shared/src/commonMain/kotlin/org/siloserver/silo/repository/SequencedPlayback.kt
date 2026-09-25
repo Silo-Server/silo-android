@@ -59,7 +59,17 @@ class SequencedPlayback(
     private companion object {
         /** Settled attempts retained as tombstones. Bounds the journal's size. */
         const val SETTLED_TOMBSTONE_LIMIT = 8
+
+        /** Login marker for attempts admitted under a temporary remote-playback identity. */
+        const val TEMPORARY_LOGIN_PREFIX = "temporary:"
     }
+
+    /**
+     * Admitted under a phone's temporary remote-playback identity. Those
+     * credentials die with the process, so a restart could never replay the
+     * attempt: it stays in memory, out of the durable journal and recovery.
+     */
+    private val PlaybackJournalEntry.isTemporary: Boolean get() = loginId.startsWith(TEMPORARY_LOGIN_PREFIX)
 
     private val mutex = Mutex()
     private var entries: List<PlaybackJournalEntry>? = null
@@ -85,13 +95,15 @@ class SequencedPlayback(
     private fun publish() {
         liveAttempts = entries.orEmpty().filter { !it.terminal && it.stop == null }.map { it.attemptId }.toSet()
         _sessions.value = entries.orEmpty().mapNotNull { it.sessionId }.toSet()
-        _pending.value = entries.orEmpty().filter { it.needsRecovery() }
+        _pending.value = entries.orEmpty().filter { !it.isTemporary && it.needsRecovery() }
             .map { it.attemptId }
     }
     private suspend fun save(entry: PlaybackJournalEntry) {
-        val next = compactSettled(load().filterNot { it.attemptId == entry.attemptId } + entry)
-        store.write(next)
-        entries = next
+        val (temporary, durable) = (load().filterNot { it.attemptId == entry.attemptId } + entry).partition { it.isTemporary }
+        // Compacted apart, so titles a phone launched never crowd durable tombstones out.
+        val kept = compactSettled(durable)
+        if (!entry.isTemporary) store.write(kept)
+        entries = kept + compactSettled(temporary)
         if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
     }
@@ -129,8 +141,15 @@ class SequencedPlayback(
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
     private fun authorityChanged() = failure("identity_changed", "Playback authority changed.")
     private suspend fun scope(entry: PlaybackJournalEntry): AuthScopeSnapshot? {
-        val live = authorities.snapshotDurableLoginAuthority() ?: return null
         val captured = scopes[entry.attemptId] ?: return null // Restart requires explicit recovery.
+        if (entry.isTemporary) {
+            // Only the temporary identity that admitted the attempt may act for it.
+            return tokens.snapshotCurrentScope()?.takeIf {
+                captured.isSameIdentityAs(it) && it.credentialGenerationId == captured.credentialGenerationId &&
+                    it.serverId == entry.serverId && it.serverUrl == entry.origin && it.profileId == entry.profileId
+            }
+        }
+        val live = authorities.snapshotDurableLoginAuthority() ?: return null
         return live.scope.takeIf {
             live.loginId == entry.loginId && it.serverId == entry.serverId &&
                 it.serverUrl == entry.origin && it.profileId == entry.profileId &&
@@ -194,9 +213,13 @@ class SequencedPlayback(
             if (!capability.allowed || capability.state != PlaybackCapabilityStateV2.AVAILABLE || capability.installationId.isNullOrBlank() ||
                 3 !in capability.protocolVersions)
                 return@withStableIdentity failure("playback_unavailable", "Sequenced playback is unavailable for this profile.")
-            if (live == null || !current.isSameIdentityAs(live.scope) || live.scope.credentialGenerationId != null ||
-                current.profileId != request.profileId)
-                return@withStableIdentity failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
+            val loginId = when {
+                current.profileId != request.profileId -> null
+                // A phone launched this title on the TV under its own profile.
+                current.credentialGenerationId != null -> TEMPORARY_LOGIN_PREFIX + current.credentialGenerationId
+                live != null && current.isSameIdentityAs(live.scope) && live.scope.credentialGenerationId == null -> live.loginId
+                else -> null
+            } ?: return@withStableIdentity failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
             val account = when (val result = api.account(current)) {
                 is ApiResult.Success -> result.data
                 is ApiResult.Error -> return@withStableIdentity result
@@ -207,7 +230,7 @@ class SequencedPlayback(
             if (load().any { it.attemptId == request.playbackAttemptId })
                 return@withStableIdentity failure("attempt_exists", "This playback attempt is already recorded. Use recovery.")
             guard()
-            val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, live.loginId, account.id,
+            val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, loginId, account.id,
                 request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
             save(entry)
             scopes[entry.attemptId] = current
@@ -273,9 +296,12 @@ class SequencedPlayback(
         require(plan.sessionId == sessionId)
         val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, sessionId, references, headers) {
             // Lock-free: a playback request in flight under the mutex must not stall subtitle loads.
-            val live = authorities.snapshotDurableLoginAuthority()
-            live?.loginId == entry.loginId && live.scope == captured &&
-                auxiliaryGenerations[entry.attemptId] == generation && entry.attemptId in liveAttempts
+            val current = if (entry.isTemporary) {
+                tokens.snapshotCurrentScope()
+            } else {
+                authorities.snapshotDurableLoginAuthority()?.takeIf { it.loginId == entry.loginId }?.scope
+            }
+            current == captured && auxiliaryGenerations[entry.attemptId] == generation && entry.attemptId in liveAttempts
         }
         auxiliaryHeaders[entry.attemptId] = ephemeral
         return decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = ephemeral)))
