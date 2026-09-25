@@ -1315,6 +1315,15 @@ fun AppNavigation(
         // above the nav menu (iOS placement); the full remote and the local
         // player own their whole screen.
         val currentRoute = currentEntry?.destination?.route
+        val signedOutRoutes = setOf(
+            Route.ServerSetup.route,
+            Route.ServerList.route,
+            Route.Login.route,
+            Route.Setup.route,
+            Route.Signup.route,
+            Route.ProfileSelection.route,
+            Route.CreateProfile.route,
+        )
         val castBarInlineRoutes = setOf(
             Route.Home.route,
             Route.Libraries.route,
@@ -1332,6 +1341,11 @@ fun AppNavigation(
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding(),
             )
+        }
+        // A question asked for the signed-in profile goes with it: signing out,
+        // an expired session and a server or profile switch all land here.
+        LaunchedEffect(currentRoute) {
+            if (currentRoute in signedOutRoutes) siloCastPlayRouter.dismissAll()
         }
         SiloCastPlayDialogs(
             onOpenRemote = openSiloCastRemote,

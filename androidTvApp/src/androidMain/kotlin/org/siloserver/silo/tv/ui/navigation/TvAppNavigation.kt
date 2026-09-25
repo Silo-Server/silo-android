@@ -582,9 +582,13 @@ fun TvAppNavigation(
     // Signed-out routes win: adding a server pushes its setup and sign-in
     // over Home, and the TV isn't signed in to that server yet.
     val signedOut = currentRoute in SignedOutRoutes
-    // Nor does choosing a profile start it: after adding a server, Home is still
-    // in the stack, but no profile is chosen on the new server yet.
-    val signedInForeground = homeInStack && !signedOut &&
+    // Nor does anything before a profile is chosen start it: after adding a
+    // server and signing in, Home is still in the stack, but the new server has
+    // no profile yet on the picker or in Add Profile.
+    val hasProfile by produceState(initialValue = false, currentRoute) {
+        value = tokenManager.getProfileId() != null
+    }
+    val signedInForeground = homeInStack && !signedOut && hasProfile &&
         currentRoute != TvRoute.ProfileSelection.route &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
     LaunchedEffect(signedInForeground, signedOut) {
