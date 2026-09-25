@@ -390,7 +390,7 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get(), siloCastReceiver = get()) }
 
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
