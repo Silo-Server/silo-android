@@ -229,9 +229,10 @@ class SiloCastController(
                 if (_state.value.isReconnecting) {
                     withTimeoutOrNull(LAUNCH_RECONNECT_WAIT_MS) { _state.first { !it.isReconnecting } }
                     // Only a restored link carries the Play on. A retry that
-                    // gave up, was refused (another phone has the TV) or was
-                    // stopped by the person must not reconnect and take the TV.
-                    if (suppressReconnect || !_state.value.hasActiveSession) return@launch
+                    // gave up, was refused (another phone has the TV), was
+                    // stopped by the person or is still running when the wait
+                    // ends must not reconnect and take the TV.
+                    if (suppressReconnect || !_state.value.isConnected) return@launch
                 }
                 launchMutex.withLock {
                     ensureConnected(target, allowCrossServer = true)
