@@ -103,6 +103,7 @@ data class RoomPlaybackTiming(
     val clockWaitMs: Long = 3_000L,
     val commandQuietMs: Long = 250L,
     val attachEchoTimeoutMs: Long = 2_000L,
+    val mountDeferMs: Long = 5_000L,
     val maxLeadMs: Long = 5_000L,
     val guestSeekToleranceSeconds: Double = 1.0,
     val hostSeekToleranceSeconds: Double = 15.0,
@@ -215,7 +216,10 @@ class RoomPlaybackBinding(
         val token: Long,
         val scheduled: ScheduledTransportCommand,
         val executeAtServerMs: Long,
-    )
+    ) {
+        /** When execution was first held for a media mount in flight. */
+        var deferredSinceMs: Long? = null
+    }
 
     private data class Readiness(
         val commandId: String?,
@@ -495,6 +499,20 @@ class RoomPlaybackBinding(
 
     private fun execute(token: Long) {
         val scheduled = pending?.takeIf { it.token == token } ?: return
+        // A command that lands while media is mounting or seeking would act
+        // on media that is being replaced; hold it briefly until it settles.
+        // A late Play still advances by the full elapsed server time.
+        if (player.observations.value.seekPending) {
+            val now = monotonicNowMs()
+            val since = scheduled.deferredSinceMs ?: now.also { scheduled.deferredSinceMs = it }
+            if (now - since < timing.mountDeferMs) {
+                scope.launch {
+                    delay(timing.tickMs)
+                    events.send(Event.Execute(token))
+                }
+                return
+            }
+        }
         pending = null
         val command = scheduled.scheduled.command
         val snapshot = room.roomSnapshot.value ?: return
@@ -543,7 +561,9 @@ class RoomPlaybackBinding(
             }
             RoomCatchup.Decision.None -> if (command.action == TransportAction.Play) reloads.settle()
         }
-        player.setPlaying(playing)
+        // A local suspension holds playback: the viewer resumes on their own and
+        // the binding re-attaches, so the server resends the room position.
+        if (!playing || !obs.suspended) player.setPlaying(playing)
         applied = command
         appliedAtMs = now
         if (command.playbackState == RoomPlaybackState.Waiting) {

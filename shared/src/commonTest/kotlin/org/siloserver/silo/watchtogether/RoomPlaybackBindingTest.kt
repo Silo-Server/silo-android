@@ -534,6 +534,33 @@ class RoomPlaybackBindingTest {
         assertNull(player.rates.last())
     }
 
+    @Test
+    fun `a room play never resumes a locally suspended player`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(suspended = true, playWhenReady = false) }
+        command(room, "play", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        assertTrue(player.playing.none { it })
+    }
+
+    @Test
+    fun `a command during a mount waits for it and still advances a late play`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(seekPending = true, sourcePositionSeconds = 20.0) }
+        command(room, "after-mount", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(1_000)
+        assertTrue(player.seeks.isEmpty())
+
+        player.update { copy(seekPending = false) }
+        advanceTimeBy(300)
+        assertEquals(101.0, player.seeks.single(), 0.4)
+        assertEquals(true, player.playing.last())
+    }
+
     private companion object {
         const val WALL_ORIGIN = 1_790_000_000_000L
     }
