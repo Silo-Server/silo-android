@@ -584,13 +584,14 @@ fun TvAppNavigation(
     val signedOut = currentRoute in SignedOutRoutes
     // Nor does anything before a profile is chosen start it: after adding a
     // server and signing in, Home is still in the stack, but the new server has
-    // no profile yet on the picker or in Add Profile.
-    // Null until first read.
+    // no profile yet on the picker or in Add Profile. Null until first read.
     val hasProfile by produceState<Boolean?>(initialValue = null, currentRoute) {
         value = tokenManager.getProfileId() != null
     }
-    val signedInForeground = homeInStack && !signedOut && hasProfile == true &&
-        currentRoute != TvRoute.ProfileSelection.route &&
+    // Checked by route too: Switch Profile opens the picker before its profile
+    // clear lands, so a read there can still see the old profile.
+    val choosingProfile = currentRoute == TvRoute.ProfileSelection.route
+    val signedInForeground = homeInStack && !signedOut && hasProfile == true && !choosingProfile &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
     // Keyed on the route too, so every navigation re-applies the wanted state:
     // a server switch stops the receiver without changing these flags.
@@ -605,7 +606,7 @@ fun TvAppNavigation(
             }
             // Switch Profile, or switching to a saved server with no profile
             // chosen, lands on the picker with the receiver running.
-            signedOut || hasProfile == false ->
+            signedOut || hasProfile == false || choosingProfile ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
         }
     }
