@@ -30,9 +30,12 @@ import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.builtins.ListSerializer
@@ -118,6 +121,9 @@ internal fun interface WatchTogetherSocketConnector {
 }
 
 internal const val ROOM_SOCKET_PROTOCOL = "silo.room.v2"
+
+/** A frame that cannot be handed to the socket in this long is a failed send. */
+private const val SEND_TIMEOUT_MS = 5_000L
 
 private fun roomPath(roomId: String) = "/api/v2/watch-together/rooms/${roomId.encodeURLPathPart()}"
 
@@ -285,15 +291,25 @@ class DefaultWatchTogetherRealtimeClient private constructor(
 
     private suspend fun sendText(text: String): Boolean {
         val writable = sessionMutex.withLock { session } ?: return false
-        return try {
-            writable.sendText(text)
-            true
-        } catch (cancellation: CancellationException) {
-            throw cancellation
+        return deliver(writable, text)
+    }
+
+    /**
+     * Send one frame, bounded by [SEND_TIMEOUT_MS] so the playback binding's
+     * event loop never waits on a socket that has stopped draining. A socket
+     * that dies under a pending send cancels its outgoing channel, which
+     * surfaces here as a CancellationException even though the caller is
+     * still running. Only the caller's own cancellation may propagate;
+     * anything else is a failed send. Letting the channel's exception through
+     * ended the binding's event loop silently.
+     */
+    private suspend fun deliver(writable: WatchTogetherSocketConnection, text: String): Boolean =
+        try {
+            withTimeoutOrNull(SEND_TIMEOUT_MS) { writable.sendText(text) } != null
         } catch (_: Throwable) {
+            currentCoroutineContext().ensureActive()
             false
         }
-    }
 
     override suspend fun attachSession(sessionId: String) =
         sendText(json.encodeToString(WsAttachSession.serializer(), WsAttachSession(sessionId = sessionId)))
@@ -322,14 +338,7 @@ class DefaultWatchTogetherRealtimeClient private constructor(
             WsTransportRequest.serializer(),
             WsTransportRequest(action = action, positionSeconds = positionSeconds, isPaused = isPaused),
         )
-        return try {
-            writable.sendText(payload)
-            true
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (_: Throwable) {
-            false
-        }
+        return deliver(writable, payload)
     }
 
     override suspend fun stateReport(
