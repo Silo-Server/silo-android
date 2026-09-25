@@ -454,10 +454,11 @@ class TvSiloCastReceiver(
                                 activePlayer?.identityGeneration = null
                                 if (pendingPlayerIdentityGeneration == outgoing) pendingPlayerIdentityGeneration = null
                             }
-                            stopActivePlayer()
                             // Not cancellable: a phone leaving mid-handoff must
-                            // not leave the previous phone's profile installed.
+                            // not leave the previous phone's profile installed,
+                            // and the player no longer ends it on its own.
                             withContext(NonCancellable) {
+                                stopActivePlayer()
                                 awaitPlaybackTeardown()
                                 identityManager.end(expectedGenerationId = outgoing)
                                 refreshAdvertisement()
