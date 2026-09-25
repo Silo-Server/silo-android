@@ -126,6 +126,7 @@ class PlaybackDebugReceiver : BroadcastReceiver() {
         val connection = repository.connectionState.value
         json.put("connectionEpoch", connection.epoch)
         json.put("connected", connection.writable)
+        repository.lastSocketEnd?.let { json.put("lastSocketEnd", it) }
         val clock = repository.clock.value
         clock.offsetMs?.let { json.put("serverOffsetMs", it) }
         clock.rttMs?.let { json.put("clockRttMs", it) }

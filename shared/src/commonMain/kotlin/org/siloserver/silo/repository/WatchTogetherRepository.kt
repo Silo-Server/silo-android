@@ -43,6 +43,7 @@ import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.rankSuggestions
 import org.siloserver.silo.watchtogether.roomProofExpiryMs
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -908,6 +909,7 @@ class WatchTogetherRepository(
             }
             pings?.cancel()
             markNotWritable(lease, owner)
+            lastSocketEnd = describeSocketEnd(end, openedAtMs?.let { monotonicNowMs() - it })
             when (val ended = end) {
                 is AttemptEnd.Closed -> {
                     endIfOwner(lease, owner, ended.reason?.takeIf { it.isNotBlank() } ?: WatchPartyEndReason.HostLeft)
@@ -960,6 +962,26 @@ class WatchTogetherRepository(
             delay(step + random.nextLong(0L, step / 4 + 1))
             backoffIndex = (backoffIndex + 1).coerceAtMost(timing.backoffMs.lastIndex)
         }
+    }
+
+    /**
+     * Why the last room socket ended and how long it had been open, for the
+     * debug harness. Carries exception class names and messages only, never
+     * tickets or tokens.
+     */
+    @Volatile
+    var lastSocketEnd: String? = null
+        private set
+
+    private fun describeSocketEnd(end: AttemptEnd, openMs: Long?): String {
+        val what = when (end) {
+            is AttemptEnd.Closed -> "closed:${end.reason}"
+            AttemptEnd.Replaced -> "replaced"
+            is AttemptEnd.Transport -> end.cause?.let { cause ->
+                "transport:${cause::class.simpleName}:${cause.message?.take(160)}"
+            } ?: "transport:eof"
+        }
+        return "$what after ${openMs ?: -1}ms"
     }
 
     private fun ticketEndReason(status: Int): String = when (status) {
