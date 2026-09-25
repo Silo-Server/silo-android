@@ -106,6 +106,9 @@ class TvServerListViewModel(
     fun onRemove(serverId: String) {
         viewModelScope.launch {
             val wasActive = serverRegistry.activeServerId.value == serverId
+            // Removing the active server promotes the next one at once; stop
+            // first, or the receiver advertises it meanwhile.
+            if (wasActive) stopCastReceiver()
             serverRegistry.remove(serverId)
 
             // Removing a *non-active* server is a passive list edit — the shell
@@ -129,7 +132,6 @@ class TvServerListViewModel(
             // full switch path also moves the token scope and probes the
             // promoted server's identity and v2 contract verdict (it is
             // idempotent when the registry is already there).
-            stopCastReceiver()
             authRepository.switchToServer(promotedId)
 
             // Land on the deepest screen the promoted server's stored
