@@ -513,19 +513,21 @@ fun MainScreen(
                             // audiobook UI + offline resume; everything else uses
                             // the video player's offline-first tryLocalPlayback.
                             onItemClick = { item ->
-                                if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
-                                    navController.navigate(
-                                        Route.AudiobookPlayer(item.contentId, item.fileId).route,
-                                    )
-                                } else {
-                                    // Downloads are explicitly local/offline;
-                                    // bypass playVideo's active-cast redirect.
-                                    navController.navigate(
-                                        Route.Player(
-                                            contentId = item.contentId,
-                                            fileId = item.fileId,
-                                        ).route,
-                                    )
+                                soloGuard.run {
+                                    if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
+                                        navController.navigate(
+                                            Route.AudiobookPlayer(item.contentId, item.fileId).route,
+                                        )
+                                    } else {
+                                        // Downloads are explicitly local/offline;
+                                        // bypass playVideo's active-cast redirect.
+                                        navController.navigate(
+                                            Route.Player(
+                                                contentId = item.contentId,
+                                                fileId = item.fileId,
+                                            ).route,
+                                        )
+                                    }
                                 }
                             },
                             onReadEbook = { contentId, fileId ->

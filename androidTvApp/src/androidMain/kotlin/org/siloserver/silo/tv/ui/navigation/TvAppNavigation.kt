@@ -55,6 +55,8 @@ import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSurfa
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewModel
 import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyHubScreen
 import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyLobbyScreen
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyPlayGuardDialog
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyPlayGuard
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.common.cards.ProvideCardPresentation
@@ -820,6 +822,8 @@ fun TvAppNavigation(
         }
 
         composable(TvRoute.Main.route) { mainEntry ->
+            val watchPartyPlayGuard = rememberTvWatchPartyPlayGuard()
+            TvWatchPartyPlayGuardDialog(watchPartyPlayGuard)
             val returnToManageServers =
                 mainEntry.savedStateHandle.get<Boolean>(RETURN_TO_MANAGE_SERVERS_KEY) == true
             TvMainShell(
@@ -933,16 +937,18 @@ fun TvAppNavigation(
                 onPlayItem = { playContentId, itemType, resumePositionSeconds ->
                     // A fast double Select otherwise stacks a second player,
                     // starting two sessions and leaving Back on a duplicate.
-                    navController.navigateToTvPlayback(
-                        destination = tvPlayDestinationFor(
-                            itemType = itemType,
+                    watchPartyPlayGuard.requestPlay {
+                        navController.navigateToTvPlayback(
+                            destination = tvPlayDestinationFor(
+                                itemType = itemType,
+                                contentId = playContentId,
+                                fileId = null,
+                                resumePositionSeconds = resumePositionSeconds,
+                            ),
                             contentId = playContentId,
-                            fileId = null,
-                            resumePositionSeconds = resumePositionSeconds,
-                        ),
-                        contentId = playContentId,
-                        lastPlaybackNavigation = lastPlaybackNavigation,
-                    )
+                            lastPlaybackNavigation = lastPlaybackNavigation,
+                        )
+                    }
                 },
                 onOpenPersonDetail = { personId ->
                     navController.navigate(TvRoute.PersonDetail(personId).route) {

@@ -91,23 +91,21 @@ class WatchPartyPlayback(
     /**
      * A seek this screen did not issue (notification, headset, Bluetooth,
      * Assistant, any other MediaSession controller). The host's becomes a room
-     * request; anyone else's is undone by [restore] and explained. Returns
-     * the result so the screen can decide whether to undo.
+     * request; anyone else's is denied and explained. Restore the local
+     * position before dispatching: only the accepted room command may apply
+     * the target, and a host report must never re-anchor the room early.
      */
     fun onExternalSeek(fromSeconds: Double, toSeconds: Double, restore: (Double) -> Unit): RoomTransportResult {
         if (abs(toSeconds - fromSeconds) < EXTERNAL_SEEK_NOISE_SECONDS) return RoomTransportResult.Ignored
-        val result = binding.requestSeek(toSeconds)
-        if (result != RoomTransportResult.Sent) {
-            // At most one undo per window: if a room seek is ever mistaken for
-            // an outside one, undoing it again and again would fight the room
-            // seek by seek. The room's next correction settles the position.
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastRestoreAtMs >= RESTORE_WINDOW_MS) {
-                lastRestoreAtMs = now
-                restore(fromSeconds)
-            }
+        val now = SystemClock.elapsedRealtime()
+        // Every authorized host input must restore before it can be reported.
+        // Keep the guest cooldown: repeated callbacks mistaken for outside
+        // seeks must not make the guest fight room corrections in a loop.
+        if (allows(RoomTransportIntent.Seek) || now - lastRestoreAtMs >= RESTORE_WINDOW_MS) {
+            lastRestoreAtMs = now
+            restore(fromSeconds)
         }
-        return result
+        return binding.requestSeek(toSeconds)
     }
 
     private var lastRestoreAtMs = Long.MIN_VALUE / 2
@@ -147,7 +145,7 @@ class WatchPartyPlayback(
         /** Seek adjustments smaller than this are the player settling, not a request. */
         const val EXTERNAL_SEEK_NOISE_SECONDS = 1.0
 
-        /** Minimum time between two undos of outside seeks. */
+        /** Minimum time between two undos of denied outside seeks. */
         const val RESTORE_WINDOW_MS = 2_000L
     }
 }

@@ -413,6 +413,7 @@ internal fun tvWatchPartyNoticeText(notice: RoomPlaybackNotice): String = when (
         RoomTransportIntent.PlayPause -> "Only the host can play or pause."
     }
     RoomPlaybackNotice.Reconnecting -> "Reconnecting to the party…"
+    RoomPlaybackNotice.ClockUnavailable -> "Waiting for party timing. If this continues, leave and rejoin."
     RoomPlaybackNotice.Undelivered -> "Couldn't reach the party. Try again."
 }
 

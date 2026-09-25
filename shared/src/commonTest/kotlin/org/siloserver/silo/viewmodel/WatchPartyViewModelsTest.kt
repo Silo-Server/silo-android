@@ -1,5 +1,6 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
@@ -39,8 +40,12 @@ import org.siloserver.silo.watchtogether.WatchPartyPlaybackFeatures
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -49,6 +54,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -283,5 +289,92 @@ class WatchPartyViewModelsTest {
         val host = lobby.state.value.eligibility
         assertTrue(host.canStart && host.canStage && host.canSwitchMode && host.canEnd)
         assertTrue(!host.canLobbyReady && !host.canStop)
+    }
+
+    @Test
+    fun `new picker input rejects the previous result before debounce expires`() = runTest(dispatcher) {
+        val f = Fixture(this)
+        val oldResult = CompletableDeferred<ApiResult<List<BrowseItem>>>()
+        val newItem = BrowseItem("movie:new", "movie", "New")
+        val calls = mutableListOf<String>()
+        val picker = WatchPartyPickerViewModel(f.repository, f.availability) { query ->
+            calls += query
+            if (query == "old") withContext(NonCancellable) { oldResult.await() }
+            else ApiResult.Success(listOf(newItem))
+        }
+        picker.onQuery("old")
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(listOf("old"), calls)
+
+        picker.onQuery("new")
+        oldResult.complete(ApiResult.Success(listOf(BrowseItem("movie:old", "movie", "Old"))))
+        runCurrent()
+        assertTrue(picker.state.value.results.isEmpty())
+        assertTrue(picker.state.value.searching)
+
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(listOf("old", "new"), calls)
+        assertEquals(listOf(newItem), picker.state.value.results)
+        assertFalse(picker.state.value.searching)
+    }
+
+    @Test
+    fun `new picker input cancels an unfinished search`() = runTest(dispatcher) {
+        val f = Fixture(this)
+        var cancelled = false
+        val calls = mutableListOf<String>()
+        val picker = WatchPartyPickerViewModel(f.repository, f.availability) { query ->
+            calls += query
+            if (query == "old") {
+                try {
+                    awaitCancellation()
+                } finally {
+                    cancelled = true
+                }
+            }
+            ApiResult.Success(emptyList())
+        }
+        picker.onQuery("old")
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(listOf("old"), calls)
+
+        picker.onQuery("new")
+        runCurrent()
+        assertTrue(cancelled)
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(listOf("old", "new"), calls)
+        assertFalse(picker.state.value.searching)
+    }
+
+    @Test
+    fun `clearing picker input removes results and ignores a pending failure`() = runTest(dispatcher) {
+        val f = Fixture(this)
+        val lateResult = CompletableDeferred<ApiResult<List<BrowseItem>>>()
+        val picker = WatchPartyPickerViewModel(f.repository, f.availability) { query ->
+            if (query == "first") ApiResult.Success(listOf(BrowseItem("movie:first", "movie", "First")))
+            else withContext(NonCancellable) { lateResult.await() }
+        }
+        picker.onQuery("first")
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(1, picker.state.value.results.size)
+
+        picker.onQuery("pending")
+        advanceTimeBy(301)
+        runCurrent()
+        assertTrue(picker.state.value.searching)
+
+        picker.onQuery("")
+        assertTrue(picker.state.value.results.isEmpty())
+        assertFalse(picker.state.value.searching)
+        lateResult.complete(ApiResult.NetworkError(RuntimeException("late failure")))
+        runCurrent()
+        assertNull(picker.state.value.error)
+        assertTrue(picker.state.value.results.isEmpty())
+        assertFalse(picker.state.value.searching)
     }
 }

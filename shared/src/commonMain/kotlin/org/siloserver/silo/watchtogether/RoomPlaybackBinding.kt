@@ -116,6 +116,8 @@ sealed interface RoomPlaybackNotice {
     data class Denied(val intent: RoomTransportIntent) : RoomPlaybackNotice
     /** The room socket is reconnecting; the action was not sent. */
     data object Reconnecting : RoomPlaybackNotice
+    /** Playback is paused until a usable server clock sample arrives. */
+    data object ClockUnavailable : RoomPlaybackNotice
     /** The request could not be delivered. */
     data object Undelivered : RoomPlaybackNotice
 }
@@ -196,7 +198,9 @@ class RoomPlaybackBinding(
     private var lastAttachAttemptMs = NEVER_MS
     private var lastReportMs = NEVER_MS
     private var lastSeenCommandId: String? = null
+    private var lastCommandConnection: Pair<Long, Long>? = null
     private var pending: PendingCommand? = null
+    private var executionJob: Job? = null
     private var nextToken = 0L
     private var applied: TransportCommand? = null
     private var appliedAtMs = 0L
@@ -215,7 +219,7 @@ class RoomPlaybackBinding(
     private data class PendingCommand(
         val token: Long,
         val scheduled: ScheduledTransportCommand,
-        val executeAtServerMs: Long,
+        val executeAtServerMs: Long?,
     ) {
         /** When execution was first held for a media mount in flight. */
         var deferredSinceMs: Long? = null
@@ -460,6 +464,7 @@ class RoomPlaybackBinding(
     private fun resetEpoch() {
         attachedKey = null
         pending = null
+        executionJob?.cancel()
         applied = null
         readiness = null
         stallStartedAtMs = null
@@ -475,25 +480,40 @@ class RoomPlaybackBinding(
 
     private fun accept(scheduled: ScheduledTransportCommand) {
         val command = scheduled.command
-        if (command.commandId.isBlank() || command.commandId == lastSeenCommandId) return
-        lastSeenCommandId = command.commandId
         val connection = room.connectionState.value
         if (scheduled.connection.generation != connection.generation || scheduled.connection.epoch != connection.epoch) return
+        val commandConnection = connection.generation to connection.epoch
+        if (command.commandId.isBlank() ||
+            (command.commandId == lastSeenCommandId && commandConnection == lastCommandConnection)
+        ) return
+        lastSeenCommandId = command.commandId
+        lastCommandConnection = commandConnection
         stopCorrections(monotonicNowMs())
         val token = ++nextToken
-        val executeAt = scheduled.executeAtMs ?: serverNowMs() ?: wallNowMs()
-        pending = PendingCommand(token, scheduled, executeAt)
+        val queued = PendingCommand(token, scheduled, scheduled.executeAtMs)
+        pending = queued
         readiness = null
-        scope.launch {
-            // Without a clock sample, wait briefly for one rather than assume
-            // a zero offset.
+        scheduleExecution(queued)
+    }
+
+    private fun scheduleExecution(command: PendingCommand) {
+        executionJob?.cancel()
+        if (room.clock.value.offsetMs == null) player.setPlaying(false)
+        executionJob = scope.launch {
             val waitStarted = monotonicNowMs()
-            while (room.clock.value.offsetMs == null && monotonicNowMs() - waitStarted < timing.clockWaitMs) {
+            var notified = false
+            // Socket pings keep trying. Retain the command until one supplies
+            // the server clock; a device clock is never a usable substitute.
+            while (room.clock.value.offsetMs == null) {
+                if (!notified && monotonicNowMs() - waitStarted >= timing.clockWaitMs) {
+                    _notices.tryEmit(RoomPlaybackNotice.ClockUnavailable)
+                    notified = true
+                }
                 delay(timing.tickMs)
             }
-            val serverNow = serverNowMs() ?: wallNowMs()
-            delay((executeAt - serverNow).coerceIn(0L, timing.maxLeadMs))
-            events.send(Event.Execute(token))
+            val serverNow = serverNowMs() ?: return@launch
+            delay(((command.executeAtServerMs ?: serverNow) - serverNow).coerceIn(0L, timing.maxLeadMs))
+            events.send(Event.Execute(command.token))
         }
     }
 
@@ -513,7 +533,6 @@ class RoomPlaybackBinding(
                 return
             }
         }
-        pending = null
         val command = scheduled.scheduled.command
         val snapshot = room.roomSnapshot.value ?: return
         val connection = room.connectionState.value
@@ -527,11 +546,18 @@ class RoomPlaybackBinding(
             scheduled.scheduled.connection.generation != connection.generation ||
             scheduled.scheduled.connection.epoch != connection.epoch
         ) {
+            pending = null
             return
         }
+        val serverNow = serverNowMs()
+        if (serverNow == null) {
+            scheduleExecution(scheduled)
+            return
+        }
+        pending = null
         val now = monotonicNowMs()
         val advancing = command.action != TransportAction.Pause && command.playbackState == RoomPlaybackState.Playing
-        val lateMs = ((serverNowMs() ?: wallNowMs()) - scheduled.executeAtServerMs).coerceAtLeast(0L)
+        val lateMs = (serverNow - (scheduled.executeAtServerMs ?: serverNow)).coerceAtLeast(0L)
         val target = command.positionSeconds + if (advancing) lateMs / 1000.0 else 0.0
         val playing = when (command.action) {
             TransportAction.Play -> command.playbackState != RoomPlaybackState.Waiting
@@ -633,6 +659,6 @@ class RoomPlaybackBinding(
 
     private fun expectedLocalExecuteMs(pending: PendingCommand): Long {
         val serverNow = serverNowMs() ?: return monotonicNowMs()
-        return monotonicNowMs() + (pending.executeAtServerMs - serverNow)
+        return monotonicNowMs() + ((pending.executeAtServerMs ?: serverNow) - serverNow)
     }
 }

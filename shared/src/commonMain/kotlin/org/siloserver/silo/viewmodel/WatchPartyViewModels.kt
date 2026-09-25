@@ -36,8 +36,8 @@ import org.siloserver.silo.watchtogether.parseWatchPartyInvite
 import org.siloserver.silo.watchtogether.watchPartyDestination
 import org.siloserver.silo.watchtogether.watchPartyEligibility
 import org.siloserver.silo.watchtogether.watchPartyErrorMessage
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,7 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -482,7 +482,6 @@ private fun WatchTogetherConnectionState.status(): WatchPartyConnectionStatus =
  * discards an older response. Rows only list what this profile may browse;
  * they do not prove every member can play an item.
  */
-@OptIn(FlowPreview::class)
 class WatchPartyPickerViewModel(
     private val repository: WatchTogetherRepository,
     private val availability: WatchPartyAvailabilityRepository,
@@ -505,7 +504,13 @@ class WatchPartyPickerViewModel(
 
     init {
         viewModelScope.launch {
-            queries.debounce(SEARCH_DEBOUNCE_MS).distinctUntilChanged().collect { query -> runSearch(query) }
+            queries.collectLatest { query ->
+                val ticket = generation
+                if (query.length >= MIN_QUERY) {
+                    delay(SEARCH_DEBOUNCE_MS)
+                    runSearch(query, ticket)
+                }
+            }
         }
     }
 
@@ -528,17 +533,20 @@ class WatchPartyPickerViewModel(
     }
 
     fun onQuery(query: String) {
+        val normalized = query.trim()
         _state.update { it.copy(query = query) }
-        queries.value = query.trim()
+        if (normalized == queries.value) return
+        // Invalidate before the debounce so an old completion cannot replace
+        // the results or loading state for the text already on screen.
+        generation++
+        _state.update {
+            it.copy(results = emptyList(), searching = normalized.length >= MIN_QUERY, error = null)
+        }
+        queries.value = normalized
     }
 
-    private suspend fun runSearch(query: String) {
-        val ticket = ++generation
-        if (query.length < MIN_QUERY) {
-            _state.update { it.copy(results = emptyList(), searching = false) }
-            return
-        }
-        _state.update { it.copy(searching = true) }
+    private suspend fun runSearch(query: String, ticket: Long) {
+        if (ticket != generation) return
         val result = search(query)
         if (ticket != generation) return
         when (result) {

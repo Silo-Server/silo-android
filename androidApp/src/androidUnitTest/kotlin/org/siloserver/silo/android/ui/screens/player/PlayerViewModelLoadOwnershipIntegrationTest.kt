@@ -617,6 +617,48 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
+    fun outsideRoomSeekStaysUnreportableUntilTheRestoreLands() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.startRoomPlayback(
+                WatchPartyPlaybackContext("room", 3, "movie", 41, null, 20.0, false),
+            )
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-3"))
+            viewModel.awaitState { it.sessionId == "session-3" && !it.isLoading }
+            advanceUntilIdle()
+            viewModel.onMediaMountApplied(viewModel.uiState.value.mediaMountGeneration)
+
+            fun sample(positionMs: Long) {
+                viewModel.onRoomEngineSample(
+                    positionMs, positionMs, playWhenReady = true, isPlaying = true,
+                    playbackState = androidx.media3.common.Player.STATE_READY,
+                )
+                viewModel.onPositionChanged(positionMs, 300_000L)
+            }
+            sample(20_000L)
+            assertFalse(viewModel.roomObservation.value.seekPending)
+
+            // A MediaSession controller has already jumped to 80 seconds.
+            // PlayerScreen arms the undo before publishing that sample.
+            viewModel.applyRoomSeek(20.0)
+            sample(80_000L)
+            assertEquals(80.0, viewModel.roomObservation.value.sourcePositionSeconds)
+            assertTrue(viewModel.roomObservation.value.seekPending)
+            assertEquals(20.0, viewModel.immediateSeeks.first())
+
+            sample(20_000L)
+            assertEquals(20.0, viewModel.roomObservation.value.sourcePositionSeconds)
+            assertFalse(viewModel.roomObservation.value.seekPending)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun roomCommandsHoldALocalSuspensionUntilTheViewerResumes() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)

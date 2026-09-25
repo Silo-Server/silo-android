@@ -341,6 +341,82 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a waiting command replayed after reconnect executes on the new socket`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        room.roomSnapshot.value = playing(state = RoomPlaybackState.Waiting)
+        command(room, "replayed", TransportAction.Seek, 250.0, RoomPlaybackState.Waiting, executeInMs = 400)
+        advanceTimeBy(100)
+        room.connectionState.value = connection.copy(epoch = 2)
+        advanceTimeBy(500)
+        assertTrue(player.seeks.isEmpty())
+
+        command(room, "replayed", TransportAction.Seek, 250.0, RoomPlaybackState.Waiting)
+        advanceTimeBy(100)
+        assertEquals(listOf(250.0), player.seeks)
+        player.update { copy(sourcePositionSeconds = 250.0, playWhenReady = false) }
+        advanceTimeBy(600)
+        assertTrue(room.sent.any { it.kind == "ready" && it.commandId == "replayed" })
+    }
+
+    @Test
+    fun `a command waits for clock synchronization without using device clock skew`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        val notices = mutableListOf<RoomPlaybackNotice>()
+        backgroundScope.launch { binding.notices.toList(notices) }
+        runCurrent()
+        room.clock.value = RoomClockEstimate(offsetMs = null, rttMs = null, generation = 1)
+        command(room, "no-clock", TransportAction.Play, 200.0, RoomPlaybackState.Playing, executeInMs = -60_000)
+        advanceTimeBy(4_000)
+        assertTrue(player.seeks.isEmpty(), "a command without a clock sample must not seek using the device time")
+        assertTrue(player.playing.none { it }, "playback must wait for a clock sample")
+        assertEquals("no-clock", binding.debug.value.pendingCommandId)
+        assertEquals(listOf<RoomPlaybackNotice>(RoomPlaybackNotice.ClockUnavailable), notices)
+
+        room.clock.value = RoomClockEstimate(offsetMs = -60_000, rttMs = 20, generation = 1)
+        advanceTimeBy(300)
+        assertEquals(204.0, player.seeks.single(), 0.4)
+        assertEquals(true, player.playing.last())
+    }
+
+    @Test
+    fun `a stale socket command cannot suppress the current socket replay`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        room.connectionState.value = connection.copy(epoch = 2)
+        command(room, "same-id", TransportAction.Seek, 250.0, RoomPlaybackState.Playing)
+        room.latestTransportCommand.value = room.latestTransportCommand.value!!.copy(connection = connection)
+        advanceTimeBy(100)
+        assertTrue(player.seeks.isEmpty())
+
+        command(room, "same-id", TransportAction.Seek, 250.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        assertEquals(listOf(250.0), player.seeks)
+    }
+
+    @Test
+    fun `clock invalidation during a scheduled delay holds the command until synchronization returns`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        command(room, "clock-reset", TransportAction.Play, 200.0, RoomPlaybackState.Playing, executeInMs = 400)
+        advanceTimeBy(100)
+        room.clock.value = RoomClockEstimate(offsetMs = null, rttMs = null, generation = 1)
+        advanceTimeBy(4_000)
+        assertTrue(player.seeks.isEmpty())
+        assertTrue(player.playing.none { it })
+
+        room.clock.value = RoomClockEstimate(offsetMs = 0, rttMs = 20, generation = 1)
+        advanceTimeBy(300)
+        assertEquals(204.0, player.seeks.single(), 0.4)
+        assertEquals(true, player.playing.last())
+    }
+
+    @Test
     fun `a late play advances its target by the elapsed server time`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()

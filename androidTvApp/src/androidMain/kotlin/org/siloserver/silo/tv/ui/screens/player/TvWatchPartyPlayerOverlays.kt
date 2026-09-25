@@ -88,6 +88,8 @@ internal fun TvWatchPartyPlayerOverlays(
     exit: () -> Unit,
     repository: WatchTogetherRepository = koinInject(),
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val room by watchParty.playback.room.collectAsState()
     val latestPlayerFocused by rememberUpdatedState(playerFocused)
     if (!isInPictureInPictureMode && !panelOpen) {
@@ -98,6 +100,19 @@ internal fun TvWatchPartyPlayerOverlays(
             room = room,
             repository = repository,
             onClose = { onPanelOpenChange(false) },
+            onReturnToLobby = {
+                onPanelOpenChange(false)
+                scope.launch {
+                    val result = repository.stopPlayback()
+                    if (result !is ApiResult.Success) {
+                        Toast.makeText(
+                            context,
+                            watchPartyErrorMessage(result, "Couldn't stop playback."),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            },
             onLeave = {
                 onPanelOpenChange(false)
                 exit()
@@ -200,12 +215,11 @@ private fun TvWatchPartyPanel(
     room: RoomSnapshot?,
     repository: WatchTogetherRepository,
     onClose: () -> Unit,
+    onReturnToLobby: () -> Unit,
     onLeave: () -> Unit,
     onEndForEveryone: () -> Unit,
     availability: WatchPartyAvailabilityRepository = koinInject(),
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val pending by repository.pendingAction.collectAsState()
     val eligibility = watchPartyEligibility(
         room = room,
@@ -262,19 +276,7 @@ private fun TvWatchPartyPanel(
                         title = "Return everyone to lobby",
                         subtitle = "Stops playback so you can pick something else.",
                         state = TvControlState.transient(eligibility.canStop),
-                        onClick = {
-                            onClose()
-                            scope.launch {
-                                val result = repository.stopPlayback()
-                                if (result !is ApiResult.Success) {
-                                    Toast.makeText(
-                                        context,
-                                        watchPartyErrorMessage(result, "Couldn't stop playback."),
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                }
-                            }
-                        },
+                        onClick = onReturnToLobby,
                     )
                 }
                 if (isHost) {

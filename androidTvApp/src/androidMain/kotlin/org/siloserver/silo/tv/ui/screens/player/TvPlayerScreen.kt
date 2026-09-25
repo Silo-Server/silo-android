@@ -1471,7 +1471,6 @@ fun TvPlayerScreen(
                     reason: Int,
                 ) {
                     val party = watchParty ?: return
-                    party.sample(controller)
                     // A seek this screen did not issue (notification, headset,
                     // MediaSession seek back/forward, any other controller).
                     // Mounts replace the item and never arrive as a seek.
@@ -1480,6 +1479,9 @@ fun TvPlayerScreen(
                     ) {
                         party.onSeekDiscontinuity(oldPosition.positionMs, newPosition.positionMs)
                     }
+                    // Restoring an outside seek marks it pending before the
+                    // room can observe the unaccepted target.
+                    party.sample(controller)
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {

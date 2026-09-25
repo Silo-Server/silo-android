@@ -1249,21 +1249,13 @@ fun PlayerScreen(
                     newPosition: Player.PositionInfo,
                     reason: Int,
                 ) {
-                    // Media3 emits this for completed seeks even while paused,
-                    // when onIsPlayingChanged and playback-state callbacks can
-                    // remain silent. Publish the settled engine position now.
-                    viewModel.onPositionChanged(
-                        newPosition.positionMs,
-                        controller.duration,
-                        controller.bufferedPosition.coerceAtLeast(0L),
-                    )
-                    val party = watchParty ?: return
-                    sampleRoomEngine(controller)
-                    // A seek this screen did not send (notification, headset
-                    // or Bluetooth skip, Assistant) goes to the room like any
-                    // other seek: the host's becomes a room request, anyone
-                    // else's is undone.
-                    if (reason == Player.DISCONTINUITY_REASON_SEEK &&
+                    // Undo outside room seeks before publishing the engine
+                    // position. applyRoomSeek marks the restore pending
+                    // synchronously, so a host cannot report the unaccepted
+                    // target while the Media3 seek travels back to the service.
+                    val party = watchParty
+                    if (party != null &&
+                        reason == Player.DISCONTINUITY_REASON_SEEK &&
                         issuedSeeks.isExternal(newPosition.positionMs) &&
                         !viewModel.isRoomMediaMounting()
                     ) {
@@ -1272,6 +1264,17 @@ fun PlayerScreen(
                             toSeconds = viewModel.sourceSecondsForPlayerMs(newPosition.positionMs),
                         ) { restoreSeconds -> viewModel.applyRoomSeek(restoreSeconds) }
                     }
+                    // Publish the actual engine position before the display
+                    // update can clear seekPending for a landed restore.
+                    if (party != null) sampleRoomEngine(controller)
+                    // Media3 emits this for completed seeks even while paused,
+                    // when onIsPlayingChanged and playback-state callbacks can
+                    // remain silent. Publish the settled engine position now.
+                    viewModel.onPositionChanged(
+                        newPosition.positionMs,
+                        controller.duration,
+                        controller.bufferedPosition.coerceAtLeast(0L),
+                    )
                 }
 
                 override fun onVideoSizeChanged(size: VideoSize) {

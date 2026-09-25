@@ -244,6 +244,7 @@ class WatchTogetherRepositoryTest {
             }
             val flapEvent = flappingEvent
             if (flapEvent != null) return flow {
+                emit(RoomRealtimeEvent.Opened)
                 emit(flapEvent)
                 throw IllegalStateException("connection dropped after event")
             }
@@ -1293,7 +1294,8 @@ class WatchTogetherRepositoryTest {
         val r = repo(realtime = realtime)
         r.createRoom(create())
         val job = launch { r.connect("room-1") }
-        advanceUntilIdle()
+        advanceTimeBy(testTiming.reconnectBudgetMs + testTiming.backoffMs.last() + 1)
+        runCurrent()
 
         assertTrue(job.isCompleted)
         assertEquals(WatchPartyEndReason.ConnectionLost, r.roomClosedReason.value)

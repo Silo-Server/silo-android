@@ -956,10 +956,10 @@ class WatchTogetherRepository(
             val now = monotonicNowMs()
             val opened = openedAtMs
             if (opened != null && sawSnapshot) {
-                lastHealthyMs = now
                 proofRenewedForRefusal = false
                 if (now - opened >= timing.stableConnectionMs) {
                     // Routine rotation: reconnect at once.
+                    lastHealthyMs = now
                     failures = 0
                     backoffIndex = 0
                     continue

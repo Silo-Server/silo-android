@@ -47,6 +47,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.android.cast.SiloCastSessionManager
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.watchtogether.MemberRole
@@ -84,28 +86,32 @@ fun WatchPartyHubScreen(
     val roomSession: RoomSession = koinInject()
     val exposure: WatchPartyExposure = koinInject()
     val enabled by exposure.enabled.collectAsState()
+    val castManager: SiloCastSessionManager = koinInject()
+    val castState by castManager.castState.collectAsState()
+    val casting = castState.isConnected
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var code by rememberSaveable { mutableStateOf("") }
     var dismissedEnded by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmHostLeave by rememberSaveable { mutableStateOf(false) }
 
-    // An invitation handed over in memory: taken once and joined. Ignored
-    // while Watch Party is turned off (D1).
-    LaunchedEffect(inviteId, enabled) {
-        if (!enabled) return@LaunchedEffect
+    val available = state.availability is WatchPartyAvailability.Available
+    // Keep the handoff until this server supports room and playback
+    // capabilities, including while a failed probe waits for Retry.
+    LaunchedEffect(inviteId, available, enabled, casting) {
+        if (!available || !enabled || casting) return@LaunchedEffect
         handoff.takeInvite(inviteId)?.let(viewModel::joinInvite)
     }
 
     // A detail page's "Watch Party": host with that item once the server is
     // known to support hosting. Unsupported servers show why instead.
-    val available = state.availability is WatchPartyAvailability.Available
-    LaunchedEffect(hostId, available, enabled) {
-        if (!available || !enabled) return@LaunchedEffect
+    LaunchedEffect(hostId, available, enabled, casting) {
+        if (!available || !enabled || casting) return@LaunchedEffect
         handoff.takeHost(hostId)?.let(viewModel::hostWithItem)
     }
 
-    LaunchedEffect(state.destination) {
+    LaunchedEffect(state.destination, casting) {
+        if (casting) return@LaunchedEffect
         val destination = state.destination ?: return@LaunchedEffect
         viewModel.consumeDestination()
         when (destination) {
@@ -127,6 +133,19 @@ fun WatchPartyHubScreen(
     }
     val join: () -> Unit = {
         if (!busy) viewModel.join(code)
+    }
+
+    // A party uses this device's player. Wait for the receiver to disconnect
+    // before joining, creating, or consuming a detail/invitation handoff.
+    if (enabled && casting) {
+        SiloConfirmDialog(
+            title = "Stop casting to use Watch Party?",
+            body = "Casting will stop. Watch Party plays on this device.",
+            confirmLabel = "Stop casting",
+            onConfirm = castManager::disconnect,
+            onDismiss = onBack,
+        )
+        return
     }
 
     Scaffold(
