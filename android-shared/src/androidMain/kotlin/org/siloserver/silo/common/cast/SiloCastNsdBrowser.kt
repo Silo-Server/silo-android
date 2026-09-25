@@ -7,7 +7,6 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import org.siloserver.silo.cast.SiloCastProtocol
 import java.nio.charset.Charset
 import java.util.ArrayDeque
@@ -43,6 +42,32 @@ class SiloCastNsdBrowser(context: Context) {
     private val pendingResolutions = ArrayDeque<PendingResolution>()
     private var activeResolution: PendingResolution? = null
 
+    /** Targets resolved from mDNS; [targets] merges them with [debugTargets]. */
+    private var discoveredTargets: List<SiloCastTarget> = emptyList()
+
+    /** Targets added by the debug adb hook; see [setDebugTargets]. */
+    private var debugTargets: List<SiloCastTarget> = emptyList()
+
+    /** Publishes discovery plus debug targets; a debug target replaces a discovered one with its id. Hold the lock. */
+    private fun publishTargets() {
+        val injectedIds = debugTargets.map { it.deviceId }.toSet()
+        _targets.value = (discoveredTargets.filterNot { it.deviceId in injectedIds } + debugTargets)
+            .sortedBy { it.name.lowercase() }
+    }
+
+    /**
+     * Debug builds only (PlaybackDebugReceiver): targets supplied over adb.
+     * An emulator sits behind NAT that mDNS can't cross, so a test harness
+     * resolves TVs on the host and hands them in; they merge with (and
+     * survive a restart of) real discovery. An empty list removes them, and
+     * any discovered TV they replaced shows again.
+     */
+    @Synchronized
+    fun setDebugTargets(targets: List<SiloCastTarget>) {
+        debugTargets = targets
+        publishTargets()
+    }
+
     @Synchronized
     fun start() {
         if (discoveryListener != null) return
@@ -66,8 +91,9 @@ class SiloCastNsdBrowser(context: Context) {
                         ?.takeIf { it.serviceInfo.serviceName == lostName }
                         ?.cancelled = true
                     pendingResolutions.removeAll { it.serviceInfo.serviceName == lostName }
+                    discoveredTargets = discoveredTargets.filterNot { it.serviceName == lostName }
+                    publishTargets()
                 }
-                _targets.update { targets -> targets.filterNot { it.serviceName == lostName } }
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
@@ -95,7 +121,8 @@ class SiloCastNsdBrowser(context: Context) {
         discoveryListener = null
         pendingResolutions.clear()
         activeResolution = null
-        _targets.value = emptyList()
+        discoveredTargets = emptyList()
+        publishTargets()
     }
 
     /**
@@ -134,9 +161,9 @@ class SiloCastNsdBrowser(context: Context) {
                     }
                     if (mayPublish) {
                         info.toSiloCastTarget()?.let { target ->
-                            _targets.update { current ->
-                                (current.filterNot { it.deviceId == target.deviceId } + target)
-                                    .sortedBy { it.name.lowercase() }
+                            synchronized(this@SiloCastNsdBrowser) {
+                                discoveredTargets = discoveredTargets.filterNot { it.deviceId == target.deviceId } + target
+                                publishTargets()
                             }
                         }
                     }
@@ -166,34 +193,35 @@ class SiloCastNsdBrowser(context: Context) {
 
     private fun NsdServiceInfo.toSiloCastTarget(): SiloCastTarget? {
         val host = this.host?.hostAddress ?: return null
-        val port = port.takeIf { it > 0 } ?: return null
-        val name = attributes.string("name") ?: serviceName
-        val mdnsName = serviceName
-        val deviceId = attributes.string("deviceId") ?: attributes.string("id") ?: "$host:$port"
-        // Every v2 receiver advertises `v`; one that doesn't predates it (iOS reads it the same way).
-        val version = attributes.string("v")?.toIntOrNull() ?: 1
-        return SiloCastTarget(
-            serviceName = mdnsName,
-            deviceId = deviceId,
-            name = name,
-            host = host,
-            port = port,
-            version = version,
-            serverId = attributes.string("server"),
-            serverName = attributes.string("serverName"),
-            isPlaying = attributes.string("playing") == "1",
-        )
+        val record = attributes.mapValues { (_, value) -> value?.toString(Charset.forName("UTF-8")).orEmpty() }
+        return targetFromRecord(host = host, port = port, serviceName = serviceName, txt = record)
     }
 
-    private fun Map<String, ByteArray>.string(key: String): String? =
-        this[key]?.toString(Charset.forName("UTF-8"))?.takeIf { it.isNotBlank() }
+    companion object {
+        /** A resolved `_silocast._tcp` record, read the way iOS reads it. */
+        fun targetFromRecord(host: String, port: Int, serviceName: String, txt: Map<String, String>): SiloCastTarget? {
+            if (port <= 0) return null
+            fun string(key: String): String? = txt[key]?.takeIf { it.isNotBlank() }
+            val deviceId = string("deviceId") ?: string("id") ?: "$host:$port"
+            return SiloCastTarget(
+                serviceName = serviceName,
+                deviceId = deviceId,
+                name = string("name") ?: serviceName,
+                host = host,
+                port = port,
+                // Every v2 receiver advertises `v`; one that doesn't predates it (iOS reads it the same way).
+                version = string("v")?.toIntOrNull() ?: 1,
+                serverId = string("server"),
+                serverName = string("serverName"),
+                isPlaying = string("playing") == "1",
+            )
+        }
+
+        private const val TAG = "SiloCastNsdBrowser"
+    }
 
     private class PendingResolution(
         val serviceInfo: NsdServiceInfo,
         var cancelled: Boolean = false,
     )
-
-    private companion object {
-        const val TAG = "SiloCastNsdBrowser"
-    }
 }
