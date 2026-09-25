@@ -73,6 +73,7 @@ import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
+import org.siloserver.silo.common.player.video.PlaybackDiagnosticsCode
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
@@ -116,6 +117,7 @@ import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeCatalogSubtitlePreference
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -506,6 +508,134 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             viewModel.awaitState { it.error != null }
             assertFalse(viewModel.uiState.value.isNextUpTransitioning)
             assertFalse(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun roomStartStreamsTheRoomFilePausedAndEveryRestartKeepsTheRoom() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val room = WatchPartyPlaybackContext(
+                roomId = "room",
+                selectionRevision = 3,
+                contentId = "movie",
+                fileId = 41,
+                libraryId = 7,
+                positionSeconds = 120.0,
+                paused = false,
+            )
+            viewModel.startRoomPlayback(room)
+            starter.awaitRequestCount(1)
+            val request = starter.request(0)
+            assertEquals(room, request.room)
+            assertEquals("room", request.roomId)
+            assertEquals("movie", request.contentId)
+            assertEquals(41, request.preferredFileId)
+            assertEquals(7, request.libraryId)
+
+            starter.complete(0, ready(request, "session-3"))
+            viewModel.awaitState { it.sessionId == "session-3" && !it.isLoading }
+            advanceUntilIdle()
+            // Only the room's command may start playback.
+            assertTrue(viewModel.uiState.value.isPaused)
+            assertFalse(viewModel.uiState.value.isPlaying)
+            assertEquals("session-3", viewModel.roomObservation.value.sessionId)
+            assertEquals(3L, viewModel.roomObservation.value.selectionRevision)
+
+            // The screen collecting the same epoch again (recreation) restarts nothing.
+            viewModel.startRoomPlayback(room)
+            advanceUntilIdle()
+            assertEquals(1, starter.startedRequestCount)
+
+            // A new epoch never exposes the outgoing session under its revision.
+            val next = room.copy(selectionRevision = 4, fileId = 42)
+            viewModel.startRoomPlayback(next)
+            starter.awaitRequestCount(2)
+            advanceUntilIdle()
+            assertNull(viewModel.roomObservation.value.sessionId)
+            assertEquals(4L, viewModel.roomObservation.value.selectionRevision)
+            assertTrue(viewModel.roomObservation.value.seekPending)
+
+            // Retry and Try Anyway replay the room start, never a solo one.
+            starter.complete(1, VideoPlaybackStartResult.ServerUnreachable(contentId = "movie"))
+            viewModel.awaitState { it.serverUnreachable }
+            viewModel.playIgnoringServerReachability()
+            starter.awaitRequestCount(3)
+            val retry = starter.request(2)
+            assertEquals(next, retry.room)
+            assertEquals(42, retry.preferredFileId)
+            assertTrue(retry.force)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun roomStartRefusalIsHandedToTheRoomWithoutChoosingAnotherFile() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val room = WatchPartyPlaybackContext(
+                roomId = "room",
+                selectionRevision = 5,
+                contentId = "movie",
+                fileId = 41,
+                libraryId = null,
+                positionSeconds = 0.0,
+                paused = true,
+            )
+            viewModel.startRoomPlayback(room)
+            starter.awaitRequestCount(1)
+            starter.complete(
+                0,
+                VideoPlaybackStartResult.Error(
+                    contentId = "movie",
+                    message = "This title needs HDR tone mapping.",
+                    diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal("hdr_transcode_unsupported"),
+                ),
+            )
+            viewModel.awaitState { it.error != null }
+            advanceUntilIdle()
+            assertEquals(
+                PlayerViewModel.RoomRefusal(room, fileId = 41, reason = "hdr_transcode_unsupported"),
+                viewModel.roomRefusal.value,
+            )
+            assertEquals(1, starter.startedRequestCount)
+            viewModel.roomRefusal.value?.let(viewModel::consumeRoomRefusal)
+            assertNull(viewModel.roomRefusal.value)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun roomCommandsHoldALocalSuspensionUntilTheViewerResumes() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.setInWatchTogetherRoom(true)
+            viewModel.applyRoomPlaying(true)
+            assertFalse(viewModel.uiState.value.isPaused)
+
+            viewModel.beginRoomSuspension(PlayerViewModel.RoomSuspensionReason.SleepTimer)
+            assertTrue(viewModel.uiState.value.isPaused)
+            assertTrue(viewModel.roomSuspended.value)
+            // The room plays on; this device stays held.
+            viewModel.applyRoomPlaying(true)
+            assertTrue(viewModel.uiState.value.isPaused)
+
+            viewModel.endRoomSuspensions(resumeLocally = true)
+            assertFalse(viewModel.uiState.value.isPaused)
+            assertFalse(viewModel.roomSuspended.value)
         } finally {
             store.clear()
         }

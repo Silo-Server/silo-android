@@ -113,6 +113,7 @@ value class PlaybackDiagnosticsCode private constructor(val wireValue: String) {
             "replan_loop_detected",
             "source_metadata_incomplete",
             "source_unavailable",
+            "subtitle_conversion_unsupported",
             "transcoding_disabled",
             "transcode_start_failed",
             "transcode_node_unavailable",

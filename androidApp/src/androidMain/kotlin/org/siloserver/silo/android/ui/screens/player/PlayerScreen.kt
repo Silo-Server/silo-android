@@ -56,6 +56,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.Player
@@ -104,7 +105,15 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.activeOriginalHttpClaims
-import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.model.watchtogether.MemberRole
+import org.siloserver.silo.model.watchtogether.RoomPhase
+import org.siloserver.silo.model.watchtogether.RoomPlaybackState
+import org.siloserver.silo.android.cast.SiloCastState
+import org.siloserver.silo.android.ui.navigation.Route
+import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
+import org.siloserver.silo.repository.WatchTogetherRepository
+import org.siloserver.silo.watchtogether.RoomSession
+import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -112,6 +121,10 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.android.cast.SiloCastButton
 import org.siloserver.silo.android.cast.SiloCastOverlay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
@@ -120,6 +133,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.unit.sp
 
 private const val TAG = "PlayerScreen"
@@ -130,6 +145,15 @@ private const val TrackSelectionSettleMs = 1_500L
 
 internal fun shouldClearPlaybackOnControllerDispose(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
+
+/** A Watch Party player never casts: it sees no Cast session at all. */
+private val NoCastInWatchParty = SiloCastState()
+
+/** How long a Watch Party player waits for its room before giving up. */
+private const val ROOM_PRESENCE_TIMEOUT_MS = 5_000L
+
+/** Room position samples: fresh enough that drift decisions (0.35 s deadband) are not skewed. */
+private const val ROOM_ENGINE_SAMPLE_MS = 100L
 
 @Composable
 private fun PlayerClockScope(
@@ -202,9 +226,9 @@ fun PlayerScreen(
     initialAudioTrackIndex: Int? = null,
     initialSubtitleTrackIndex: Int? = null,
     resumePositionOverride: Double? = null,
-    // Watch Together room id, present when this player was launched into a
-    // synchronized room. When set, a RoomSyncController binds this player to the
-    // room (clock sync, transport mirroring, gating, room_closed exit).
+    // Watch Party room id, present when this player was launched into a
+    // party. When set, a WatchPartyPlayback binds this player to the room and
+    // the room's playback context, not the route, decides what plays.
     roomId: String? = null,
     navController: NavHostController,
     viewModel: PlayerViewModel = koinViewModel(),
@@ -295,7 +319,11 @@ fun PlayerScreen(
     // "casting to <device>" overlay takes over; on disconnect, local playback
     // resumes at the remote position (Fix 6).
     val castManager: org.siloserver.silo.android.cast.SiloCastSessionManager = koinInject()
-    val castState by castManager.castState.collectAsState()
+    val inRoom = !roomId.isNullOrBlank()
+    val liveCastState by castManager.castState.collectAsState()
+    // Cast stays out of a Watch Party (D7): no button, no pause or resume on
+    // connect, no takeover overlay.
+    val castState = if (inRoom) NoCastInWatchParty else liveCastState
     val castScope = rememberCoroutineScope()
     var wasCasting by remember { mutableStateOf(false) }
     val tabletopPaneLayout = remember(tabletopPosture, playerRootBounds, density.density) {
@@ -312,19 +340,21 @@ fun PlayerScreen(
     val useTabletopPlayerLayout =
         tabletopPaneLayout != null && !isInPictureInPictureMode && !castState.isConnected
 
-    // Watch Together binding. Built once per roomId; null for solo playback.
-    // The process RoomSession owns the WS; this controller owns only the
-    // screen's RoomSyncEngine and requests durable teardown on explicit leave.
-    val watchTogetherRepository: org.siloserver.silo.repository.WatchTogetherRepository = koinInject()
-    val roomSession: org.siloserver.silo.watchtogether.RoomSession = koinInject()
+    // Watch Party binding. Built once per roomId; null for solo playback. The
+    // process-wide RoomSession owns the room socket; this screen owns only the
+    // playback binding, and disposing it never leaves the party.
+    val watchTogetherRepository: WatchTogetherRepository = koinInject()
+    val roomSession: RoomSession = koinInject()
+    val watchPartyAvailability: WatchPartyAvailabilityRepository = koinInject()
     val roomScope = rememberCoroutineScope()
-    val roomController = remember(roomId) {
+    val watchParty = remember(roomId) {
         roomId?.takeIf { it.isNotBlank() }?.let { id ->
-            RoomSyncController(
+            WatchPartyPlayback(
                 roomId = id,
                 repository = watchTogetherRepository,
                 roomSession = roomSession,
-                viewModel = viewModel,
+                availability = watchPartyAvailability,
+                player = MobileRoomPlayerPort(viewModel),
                 scope = roomScope,
             )
         }
@@ -340,16 +370,127 @@ fun PlayerScreen(
             subtitle = subtitle,
         )
     }
-    DisposableEffect(roomController) {
-        roomController?.start()
+    DisposableEffect(watchParty) {
+        watchParty?.start()
         onDispose {
-            // Cancel only this replaceable controller's collectors. The
-            // application RoomSession persists until explicit leave.
-            roomController?.dispose()
+            // Stops only this screen's binding. The application RoomSession
+            // keeps the party until an explicit leave.
+            watchParty?.dispose()
         }
     }
-    val roomSnapshot by produceRoomSnapshotState(roomController)
-    val roomClosedReason by produceRoomClosedState(roomController)
+    val roomSnapshot by watchParty?.room.collectOrDefault(null)
+    val roomCatchingUp by watchParty?.catchingUp.collectOrDefault(false)
+    val roomOfferLowerQuality by watchParty?.offerLowerQuality.collectOrDefault(false)
+    val roomSuspended by viewModel.roomSuspended.collectAsState()
+
+    // Leaves the player the way Back does. With nothing behind the player
+    // (launcher, deep link, or notification open) popBackStack can't land
+    // anywhere and leaves a blank NavHost, so finish cleanly instead. Runs once.
+    fun exitPlayer() {
+        if (exitRequested) return
+        exitRequested = true
+        viewModel.onExit()
+        if (!navController.popBackStack()) activity?.finish()
+    }
+
+    // Back from a party player: the host has confirmed ending the party for
+    // everyone (see PlayerOverlay); anyone else leaves it.
+    fun leaveRoomFromPlayer() {
+        val party = watchParty ?: return
+        if (party.room.value?.selfRole == MemberRole.Host) party.endForEveryone() else party.leave()
+    }
+
+    // Every play/pause input in a party. While playback is held locally
+    // (audio focus, sleep timer, background) and the room plays, Play resumes
+    // this device alone and the binding re-syncs it; no room request is sent.
+    fun requestRoomPlayPause(party: WatchPartyPlayback, pause: Boolean) {
+        if (!pause && viewModel.roomSuspended.value) {
+            val snapshot = party.room.value
+            val roomPlaying = snapshot != null &&
+                !snapshot.isPaused &&
+                snapshot.playbackState == RoomPlaybackState.Playing
+            viewModel.endRoomSuspensions(resumeLocally = roomPlaying)
+            if (snapshot == null || !snapshot.isPaused) return
+        }
+        party.requestPlayPause(pause)
+    }
+
+    // The room, not the route, decides what plays: each new playback epoch
+    // (Start, Select, Promote, source fallback) loads the room's exact file,
+    // paused at the room position.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        party.playbackContext.collect { playback ->
+            if (playback != null && !exitRequested) viewModel.startRoomPlayback(playback)
+        }
+    }
+
+    // Host Stop returns everyone to the retained lobby. An engagement that
+    // ends or moves elsewhere (another room, sign-out) closes the player.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        val id = roomId ?: return@LaunchedEffect
+        val present = withTimeoutOrNull(ROOM_PRESENCE_TIMEOUT_MS) {
+            party.room.first { it?.roomId == id }
+        }
+        if (present == null) {
+            if (!exitRequested && party.ended.value == null) {
+                Toast.makeText(context, "This Watch Party isn't available anymore.", Toast.LENGTH_SHORT).show()
+                exitPlayer()
+            }
+            return@LaunchedEffect
+        }
+        party.room.collect { snapshot ->
+            if (exitRequested) return@collect
+            when {
+                // An ended party is explained by the effect below.
+                snapshot == null || snapshot.roomId != id -> if (party.ended.value == null) exitPlayer()
+                snapshot.phase == RoomPhase.Lobby -> {
+                    exitRequested = true
+                    viewModel.onExit()
+                    navController.navigate(Route.WatchTogetherLobby(id).route) {
+                        popUpTo(Route.Player.ROUTE) { inclusive = true }
+                    }
+                }
+            }
+        }
+    }
+
+    // The party ended (the host ended it or left, or this profile joined on
+    // another device): say so and leave the player. The engagement is already
+    // over, so nothing is left; its reason stays for the Watch Party hub.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        val ended = party.ended.filterNotNull().first()
+        if (exitRequested) return@LaunchedEffect
+        Toast.makeText(context, watchPartyEndedText(ended), Toast.LENGTH_SHORT).show()
+        exitPlayer()
+    }
+
+    // Denied, reconnecting, and undelivered inputs each show, repeats included.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        party.notices.collect { notice ->
+            Toast.makeText(context, watchPartyNoticeText(notice), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // A server refusal of the room's file goes to the room, which may move
+    // everyone to another source; the context then changes and playback
+    // reloads. Otherwise the error stays: this device never picks a file.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        viewModel.roomRefusal.filterNotNull().collect { refusal ->
+            viewModel.consumeRoomRefusal(refusal)
+            party.reportRefusal(refusal.context, refusal.fileId, refusal.reason)
+        }
+    }
+
+    // A quality change restarts the binding's reload pacing and its offer.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        viewModel.roomQualityChanges.collect { party.binding.onQualityChanged() }
+    }
 
     // Per-session playback control socket (admin remote control). Bound for the
     // lifetime of a sessionId; the loop reconnects on its own and never
@@ -362,45 +503,32 @@ fun PlayerScreen(
             client = playbackRealtimeClient,
             viewModel = viewModel,
             scope = this, // cancelled when sessionId changes / screen leaves
+            // In a party, remote transport asks the room like any other input.
+            roomTransport = watchParty?.let { party ->
+                { action -> routeRemoteTransportToRoom(action, party, viewModel.uiState.value.isPaused) }
+            },
         ).start()
     }
-    // Tell the VM about WT membership so the control socket gates transport
-    // (the room is authoritative); the VM's start request always has roomId=null.
+    // Mark party membership for the ViewModel's gates before the room's
+    // playback context arrives.
     LaunchedEffect(roomId) {
-        viewModel.setInWatchTogetherRoom(!roomId.isNullOrBlank())
+        viewModel.setInWatchTogetherRoom(inRoom)
     }
-    // A remote "stop"/"terminate" command tears the screen down like a back press.
+    // A remote "stop"/"terminate" command tears the screen down like a back
+    // press. In a party it ends only this device's engagement; the room goes
+    // on (a host's leave starts the two-minute grace).
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect {
-            exitRequested = true
-            roomController?.leave(closeRoom = false)
-            viewModel.onExit()
-            // Nothing behind the player (launcher/deep-link/notification open) →
-            // popBackStack can't land anywhere and leaves a blank NavHost, then
-            // system back exits from a grey screen. Finish cleanly instead.
-            if (!navController.popBackStack()) activity?.finish()
+            watchParty?.leave()
+            exitPlayer()
         }
     }
 
-    // room_closed (or server error) → leave the player back to detail.
-    LaunchedEffect(roomClosedReason) {
-        if (roomClosedReason != null && roomController != null) {
-            exitRequested = true
-            roomController.leave(closeRoom = false)
-            viewModel.onExit()
-            // Nothing behind the player (launcher/deep-link/notification open) →
-            // popBackStack can't land anywhere and leaves a blank NavHost, then
-            // system back exits from a grey screen. Finish cleanly instead.
-            if (!navController.popBackStack()) activity?.finish()
-        }
-    }
-
-    // Surface transient Watch Together server rejections (e.g. a guest seek the
-    // server refuses) as a brief Toast. These flow on the repo errors stream and
-    // do NOT eject the user (room_closed is the only terminal signal). Only
+    // Surface transient Watch Party server rejections as a brief Toast. These
+    // flow on the repository's errors stream and never eject the user. Only
     // collected while bound to a room.
-    LaunchedEffect(roomController) {
-        if (roomController != null) {
+    LaunchedEffect(watchParty) {
+        if (watchParty != null) {
             watchTogetherRepository.errors.collect { message ->
                 if (message.isNotBlank()) {
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
@@ -415,6 +543,18 @@ fun PlayerScreen(
     var mediaController by remember { mutableStateOf<MediaController?>(null) }
     val playWhenReadyReconciliationGate = remember(mediaController, roomId) {
         PlayWhenReadyReconciliationGate()
+    }
+    // Seeks this screen sends to Media3, so a party can tell a notification,
+    // headset, or Assistant seek from its own.
+    val issuedSeeks = remember { IssuedSeekTracker() }
+    val sampleRoomEngine: (Player) -> Unit = { player ->
+        viewModel.onRoomEngineSample(
+            positionMs = player.currentPosition,
+            bufferedPositionMs = player.bufferedPosition,
+            playWhenReady = player.playWhenReady,
+            isPlaying = player.isPlaying,
+            playbackState = player.playbackState,
+        )
     }
     // service. The video PlayerView binds its SurfaceView directly to this (NOT the
     // MediaController) so the engine receives proper surface-lifecycle callbacks
@@ -586,9 +726,14 @@ fun PlayerScreen(
     // with hold-to-2x as a transient override that never writes the setting.
     // Re-runs whenever the controller binds, the setting changes, or the user
     // presses/releases the phone player's fast-forward hold gesture.
-    LaunchedEffect(mediaController, preferredPlaybackSpeed, fastForwardHoldActive) {
+    // A party plays at 1x apart from the binding's temporary catch-up rate: the
+    // saved speed and hold-to-2x do not apply, and nothing is saved.
+    val roomCorrectionRate by viewModel.roomCorrectionRate.collectAsState()
+    LaunchedEffect(mediaController, preferredPlaybackSpeed, fastForwardHoldActive, inRoom, roomCorrectionRate) {
         val controller = mediaController ?: return@LaunchedEffect
-        if (fastForwardHoldActive) {
+        if (inRoom) {
+            controller.setPlaybackSpeed((roomCorrectionRate ?: 1.0).toFloat())
+        } else if (fastForwardHoldActive) {
             controller.setPlaybackSpeed(2.0f)
         } else {
             controller.setPlaybackSpeed(preferredPlaybackSpeed.toFloat())
@@ -597,6 +742,9 @@ fun PlayerScreen(
 
     // Load content on first composition
     LaunchedEffect(contentId, initialFileId, initialQuality, initialAudioTrackIndex, initialSubtitleTrackIndex, resumePositionOverride) {
+        // A party starts from the room's playback context (above), never from
+        // the route, so nothing plays solo first.
+        if (inRoom) return@LaunchedEffect
         if (!viewModel.claimInitialRouteLoad()) return@LaunchedEffect
         viewModel.loadContent(
             libraryId = libraryId,
@@ -607,8 +755,6 @@ fun PlayerScreen(
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
             resumePositionOverride = resumePositionOverride,
             routeResumePositionSeconds = resumePositionOverride,
-            // Watch Together's synced anchor must land exactly — don't nudge it back.
-            suppressResumeRewind = !roomId.isNullOrBlank(),
         )
     }
 
@@ -938,23 +1084,45 @@ fun PlayerScreen(
                     val provenance = playWhenReadyReconciliationGate
                         .onPlayWhenReadyChanged(playWhenReady, reason)
                     provenance.followUpProgrammaticValue?.let { controller.playWhenReady = it }
+                    val party = watchParty ?: return
+                    sampleRoomEngine(controller)
+                    // Audio focus loss and a noisy route pause this device
+                    // only. The room hears nothing until the viewer resumes.
+                    if (!playWhenReady &&
+                        (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS ||
+                            reason == Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY)
+                    ) {
+                        viewModel.beginRoomSuspension(PlayerViewModel.RoomSuspensionReason.AudioFocus)
+                        return
+                    }
                     if (!provenance.shouldReconcile) return
-                    roomController
-                        ?.onExternalPlayWhenReadyChanged(playWhenReady)
-                        ?.let { authoritative ->
-                            if (controller.playWhenReady != authoritative) {
-                                if (
-                                    playWhenReadyReconciliationGate
-                                        .requestProgrammaticChange(authoritative)
-                                ) {
-                                    controller.playWhenReady = authoritative
-                                }
-                            }
-                        }
+                    // A notification, headset, or Assistant play/pause: ask
+                    // the room, then restore the room's state locally until
+                    // its command arrives.
+                    requestRoomPlayPause(party, pause = !playWhenReady)
+                    val authoritative = !viewModel.uiState.value.isPaused
+                    if (controller.playWhenReady != authoritative &&
+                        playWhenReadyReconciliationGate.requestProgrammaticChange(authoritative)
+                    ) {
+                        controller.playWhenReady = authoritative
+                    }
+                }
+
+                override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+                    if (watchParty == null) return
+                    val reason = PlayerViewModel.RoomSuspensionReason.TransientAudioFocus
+                    if (playbackSuppressionReason ==
+                        Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
+                    ) {
+                        viewModel.beginRoomSuspension(reason)
+                    } else {
+                        viewModel.endRoomSuspension(reason)
+                    }
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     viewModel.onPlayingChanged(isPlaying)
+                    if (watchParty != null) sampleRoomEngine(controller)
                     val live = viewModel.uiState.value
                     val key = live.sessionId?.let { sessionId ->
                         "$sessionId:${live.streamUrl}:${live.playbackPlan?.planId.orEmpty()}:" +
@@ -975,6 +1143,7 @@ fun PlayerScreen(
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     viewModel.onBufferingChanged(playbackState == Player.STATE_BUFFERING)
+                    if (watchParty != null) sampleRoomEngine(controller)
                     if (playbackState == Player.STATE_ENDED) {
                         viewModel.onPlayingChanged(false)
                         // F2 fallback: surface (or upgrade) the Up Next card if
@@ -996,6 +1165,21 @@ fun PlayerScreen(
                         controller.duration,
                         controller.bufferedPosition.coerceAtLeast(0L),
                     )
+                    val party = watchParty ?: return
+                    sampleRoomEngine(controller)
+                    // A seek this screen did not send (notification, headset
+                    // or Bluetooth skip, Assistant) goes to the room like any
+                    // other seek: the host's becomes a room request, anyone
+                    // else's is undone.
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK &&
+                        issuedSeeks.isExternal(newPosition.positionMs) &&
+                        !viewModel.isRoomMediaMounting()
+                    ) {
+                        party.onExternalSeek(
+                            fromSeconds = viewModel.sourceSecondsForPlayerMs(oldPosition.positionMs),
+                            toSeconds = viewModel.sourceSecondsForPlayerMs(newPosition.positionMs),
+                        ) { restoreSeconds -> viewModel.applyRoomSeek(restoreSeconds) }
+                    }
                 }
 
                 override fun onVideoSizeChanged(size: VideoSize) {
@@ -1136,10 +1320,10 @@ fun PlayerScreen(
                     renderedOutputBufferCount = decoderCounters?.renderedOutputBufferCount,
                 )) {
                     PostResumeVideoStallDetector.Signal.SeekBack -> {
-                        controller.seekTo(
-                            (controller.currentPosition - PostResumeVideoStallDetector.SEEK_BACK_MS)
-                                .coerceAtLeast(0L),
-                        )
+                        val target = (controller.currentPosition - PostResumeVideoStallDetector.SEEK_BACK_MS)
+                            .coerceAtLeast(0L)
+                        issuedSeeks.note(target)
+                        controller.seekTo(target)
                         viewModel.onRuntimeCorrection(
                             "runtime_correction_applied",
                             "client_post_resume_video_recovery_v1",
@@ -1151,6 +1335,7 @@ fun PlayerScreen(
                         val resume = controller.playWhenReady
                         controller.stop()
                         controller.prepare()
+                        issuedSeeks.note(position)
                         controller.seekTo(position)
                         if (resume) controller.play()
                         viewModel.onRuntimeCorrection(
@@ -1202,16 +1387,62 @@ fun PlayerScreen(
     LaunchedEffect(mediaController) {
         val controller = mediaController ?: return@LaunchedEffect
         viewModel.seekRequests.collect { posSec ->
-            controller.seekTo((posSec * 1000).toLong())
+            val targetMs = (posSec * 1000).toLong()
+            issuedSeeks.note(targetMs)
+            controller.seekTo(targetMs)
         }
     }
 
-    // Room-driven corrective seeks remain on a separate channel so sync
-    // corrections can stay unconditional and easy to reason about.
+    // Room and remote seeks remain on a separate channel so they stay
+    // unconditional and easy to reason about.
     LaunchedEffect(mediaController) {
         val controller = mediaController ?: return@LaunchedEffect
         viewModel.immediateSeeks.collect { posSec ->
-            controller.seekTo((posSec * 1000).toLong())
+            val targetMs = (posSec * 1000).toLong()
+            issuedSeeks.note(targetMs)
+            controller.seekTo(targetMs)
+        }
+    }
+
+    // Party only: sample the engine often enough that the room sees where
+    // the player really is. The display ticker above is too coarse for the
+    // binding's 0.35 s drift decisions and stays as it is.
+    LaunchedEffect(mediaController, lifecycleOwner, watchParty) {
+        val controller = mediaController ?: return@LaunchedEffect
+        if (watchParty == null) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (isActive) {
+                if (controller.mediaItemCount > 0) sampleRoomEngine(controller)
+                delay(ROOM_ENGINE_SAMPLE_MS)
+            }
+        }
+    }
+
+    // Party only: leaving the app is a local suspension. Playback stops, the
+    // room hears nothing, and returning re-syncs to the room.
+    DisposableEffect(lifecycleOwner, watchParty, mediaController, playWhenReadyReconciliationGate) {
+        if (watchParty == null) {
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_STOP -> if (activity?.isChangingConfigurations != true) {
+                        viewModel.beginRoomSuspension(PlayerViewModel.RoomSuspensionReason.Background)
+                        mediaController?.let { controller ->
+                            if (controller.playWhenReady &&
+                                playWhenReadyReconciliationGate.requestProgrammaticChange(false)
+                            ) {
+                                controller.playWhenReady = false
+                            }
+                        }
+                    }
+                    Lifecycle.Event.ON_START ->
+                        viewModel.endRoomSuspension(PlayerViewModel.RoomSuspensionReason.Background)
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
     }
 
@@ -1274,7 +1505,8 @@ fun PlayerScreen(
             activity = activity,
             surface = SiloPictureInPictureSurface.Mobile,
             state = SiloPictureInPicturePlaybackState(
-                enabled = pictureInPictureEnabled,
+                // A party never enters picture-in-picture (D7).
+                enabled = pictureInPictureEnabled && !inRoom,
                 videoActive = uiState.streamUrl != null && uiState.error == null,
                 isPlaying = uiState.isPlaying && !uiState.isPaused,
                 videoWidth = pictureInPictureVideoWidth,
@@ -1536,12 +1768,7 @@ fun PlayerScreen(
                     onSelectSubtitle = { castManager.selectSubtitleTrack(it) },
                     onStopCasting = { castManager.disconnect() },
                     onSeek = { castManager.seekTo(it) },
-                    onBack = {
-                        exitRequested = true
-                        roomController?.leave(closeRoom = roomSnapshot?.isHost == true)
-                        viewModel.onExit()
-                        if (!navController.popBackStack()) activity?.finish()
-                    },
+                    onBack = { exitPlayer() },
                 )
             }
 
@@ -1559,6 +1786,9 @@ fun PlayerScreen(
                         state = uiState.withPlaybackClock(clock),
                         viewModel = viewModel,
                         roomSnapshot = roomSnapshot,
+                        inRoom = inRoom,
+                        roomSuspended = roomSuspended,
+                        roomCatchingUp = roomCatchingUp,
                         orientationLockSupported =
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,
@@ -1579,44 +1809,41 @@ fun PlayerScreen(
                         },
                         showBufferingIndicator = activeTabletopPaneLayout == null,
                         castSlot = {
-                            SiloCastButton(
-                                castManager = castManager,
-                                onStartCast = {
-                                    castScope.launch {
-                                        val spec = viewModel.prepareGoogleCastMedia()
-                                        if (spec != null) castManager.prepareMedia(spec)
-                                    }
-                                },
-                            )
+                            // No Cast in a party (D7).
+                            if (!inRoom) {
+                                SiloCastButton(
+                                    castManager = castManager,
+                                    onStartCast = {
+                                        castScope.launch {
+                                            val spec = viewModel.prepareGoogleCastMedia()
+                                            if (spec != null) castManager.prepareMedia(spec)
+                                        }
+                                    },
+                                )
+                            }
                         },
                         isFastForwardHoldActive = fastForwardHoldActive,
                         onBack = {
-                            // In-room exit: leave the room (host close confirm is handled
-                            // by the overlay before this fires). The controller resets the
-                            // repo + engine; solo playback just pops.
-                            exitRequested = true
-                            roomController?.leave(closeRoom = roomSnapshot?.isHost == true)
-                            viewModel.onExit()
-                            // Nothing behind the player (launcher/deep-link/notification
-                            // open) → popBackStack can't land anywhere and leaves a blank
-                            // NavHost, then system back exits from a grey screen. Finish
-                            // cleanly instead.
-                            if (!navController.popBackStack()) activity?.finish()
+                            // In a party the host has already confirmed ending it
+                            // for everyone (PlayerOverlay); anyone else leaves it.
+                            leaveRoomFromPlayer()
+                            exitPlayer()
                         },
                         onPlayPause = {
-                            // In a room, route through transport_request (gated to
-                            // controllers); solo playback toggles locally.
-                            if (roomController != null) roomController.onUserPlayPause()
-                            else viewModel.onPlayPause()
+                            // In a party every play/pause asks the room; the player
+                            // changes when the room's command arrives.
+                            val party = watchParty
+                            if (party != null) {
+                                requestRoomPlayPause(party, pause = !viewModel.uiState.value.isPaused)
+                            } else {
+                                viewModel.onPlayPause()
+                            }
                         },
                         onSeek = { position ->
-                            if (roomController != null) {
-                                // Guest seeks are no-ops in the controller; host seeks
-                                // round-trip through the room and re-apply via a command.
-                                roomController.onUserSeek(position)
-                            } else {
-                                viewModel.onSeek(position)
-                            }
+                            // Host seeks round-trip through the room and land with
+                            // its command; guests' seek controls are disabled.
+                            val party = watchParty
+                            if (party != null) party.requestSeek(position) else viewModel.onSeek(position)
                         },
                         onToggleControls = { viewModel.onToggleControls() },
                         onFastForwardHold = { active -> fastForwardHoldActive = active },
@@ -1625,6 +1852,45 @@ fun PlayerScreen(
                         onSelectVersion = { viewModel.onSelectVersion(it) },
                         modifier = playerOverlayModifier,
                     )
+                }
+            }
+        }
+
+        // Party only: after repeated stalls, offer one step down the same
+        // file's quality ladder. Hidden when no lower rung exists.
+        var lowerQualityDeclined by remember { mutableStateOf(false) }
+        LaunchedEffect(roomOfferLowerQuality) {
+            if (!roomOfferLowerQuality) lowerQualityDeclined = false
+        }
+        if (roomOfferLowerQuality &&
+            !lowerQualityDeclined &&
+            uiState.versionSwitchMessage == null &&
+            viewModel.lowerRoomQualityLabel() != null
+        ) {
+            Surface(
+                color = Color.Black.copy(alpha = 0.85f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 16.dp)
+                    .widthIn(max = 420.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 14.dp, end = 4.dp),
+                ) {
+                    Text(
+                        text = "Playback keeps stopping. Lower the quality?",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    TextButton(onClick = {
+                        lowerQualityDeclined = true
+                        viewModel.lowerRoomQuality()
+                    }) { Text("Lower") }
+                    TextButton(onClick = { lowerQualityDeclined = true }) { Text("Not now") }
                 }
             }
         }
@@ -1655,24 +1921,14 @@ fun PlayerScreen(
 }
 
 /**
- * Collects the room snapshot from [controller] when present, else holds null.
- * A nullable StateFlow can't be `collectAsState`d directly, so this bridges to
- * a stable [State] for both the in-room and solo cases.
+ * Collects a party-only flow, or holds [default] for solo playback. A nullable
+ * StateFlow can't be `collectAsState`d directly, so this bridges both cases to
+ * a stable [State].
  */
 @Composable
-private fun produceRoomSnapshotState(
-    controller: RoomSyncController?,
-): State<RoomSnapshot?> {
-    val soloRoom = remember { MutableStateFlow<RoomSnapshot?>(null) }
-    return (controller?.room ?: soloRoom).collectAsState()
-}
-
-@Composable
-private fun produceRoomClosedState(
-    controller: RoomSyncController?,
-): State<String?> {
-    val soloClosedReason = remember { MutableStateFlow<String?>(null) }
-    return (controller?.closedReason ?: soloClosedReason).collectAsState()
+private fun <T> StateFlow<T>?.collectOrDefault(default: T): State<T> {
+    val solo = remember { MutableStateFlow(default) }
+    return (this ?: solo).collectAsState()
 }
 
 private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {

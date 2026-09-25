@@ -57,6 +57,7 @@ class VideoPlaybackSessionCoordinator(
                 VideoPlayerUiState.Error(
                     contentId = result.contentId,
                     message = result.message,
+                    diagnosticsCode = result.diagnosticsCode,
                 )
             }
             is VideoPlaybackStartResult.ServerUnreachable -> {

@@ -64,6 +64,13 @@ fun PlayerOverlay(
     state: PlayerViewModel.PlayerUiState,
     viewModel: PlayerViewModel,
     roomSnapshot: RoomSnapshot? = null,
+    // True for the whole life of a Watch Party player, even while the room
+    // snapshot is briefly unavailable, so its gates never fall back to solo.
+    inRoom: Boolean = roomSnapshot != null,
+    // Playback is held locally (audio focus, sleep timer, background): Play
+    // stays available so the viewer can resume this device.
+    roomSuspended: Boolean = false,
+    roomCatchingUp: Boolean = false,
     isFastForwardHoldActive: Boolean = false,
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
@@ -102,14 +109,18 @@ fun PlayerOverlay(
     // the player tears the room down for everyone, so confirm first.
     var showCloseConfirm by remember { mutableStateOf(false) }
 
-    // Watch Together transport gating. Seek is host-only (the server rejects
-    // guest seeks regardless of policy), so the scrubber / skip affordance is
-    // disabled for ALL guests — even one under guest_play_pause, who keeps the
-    // play/pause affordance. Solo playback (no room) enables both.
-    val inRoom = roomSnapshot != null
+    // Watch Party transport gating. Seek is host-only (the server rejects
+    // guest seeks regardless of policy), so the scrubber, skips, chapters, and
+    // the intro pill are disabled for ALL guests — even one under
+    // guest_play_pause, who keeps play/pause. Solo playback enables both.
     val seekEnabled = !inRoom || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.Seek)
-    val playPauseEnabled = !inRoom || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
+    val playPauseEnabled = !inRoom ||
+        roomSuspended ||
+        roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
     val isRoomHost = roomSnapshot?.selfRole == MemberRole.Host
+    // In a party an intro never skips on its own; members who may seek get
+    // the Skip pill as a room seek, and nobody else sees it (D8).
+    val introPillAllowed = !inRoom || seekEnabled
 
     // Back intercept: a host in a room confirms the room close; everyone else
     // (guest, or solo playback) backs out immediately.
@@ -156,7 +167,7 @@ fun PlayerOverlay(
     // behaves normally, because by then no pill is showing and this handler is
     // disabled. The player has no other BackHandler of its own — sheets live in
     // their own dialog windows, so an open sheet's Back never reaches here.
-    BackHandler(enabled = introSkipState.isVisible) { viewModel.onDismissIntroPrompt() }
+    BackHandler(enabled = introSkipState.isVisible && introPillAllowed) { viewModel.onDismissIntroPrompt() }
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val sleepTimerDefault by viewModel.sleepTimerDefaultMinutes.collectAsState()
     val videoGravity by viewModel.videoGravity.collectAsState()
@@ -322,6 +333,7 @@ fun PlayerOverlay(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     val label = when {
+                        roomCatchingUp -> "Catching up to the party"
                         roomSnapshot.playbackState == RoomPlaybackState.Waiting -> "Waiting for members…"
                         !roomSnapshot.hostConnected -> "${roomSnapshot.memberCount} · host offline"
                         else -> "${roomSnapshot.memberCount} watching"
@@ -363,11 +375,14 @@ fun PlayerOverlay(
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
-                hasMultipleVersions = state.versions.size > 1,
+                // A party plays exactly the room's file: no version picker.
+                hasMultipleVersions = state.versions.size > 1 && !inRoom,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
                 playbackSpeed = playbackSpeed,
+                // A party plays at 1x; the saved speed is never changed from it.
+                playbackSpeedEnabled = !inRoom,
                 nextEpisode = state.nextEpisode.takeUnless { inRoom },
                 brightnessFraction = brightnessFraction,
                 seekEnabled = seekEnabled,
@@ -404,14 +419,21 @@ fun PlayerOverlay(
         // Intro skip pill (Hidden / Asking / Skipped).
         // Shares the bottom-end slot with the Up Next card; intro and credits
         // never overlap in practice, but the card wins the slot if both could show.
-        if (!state.showUpNext) {
+        if (!state.showUpNext && introPillAllowed) {
             Box(
                 modifier = bottomEndSlotModifier,
                 contentAlignment = Alignment.BottomEnd,
             ) {
                 IntroAutoSkipBanner(
                     state = introSkipState,
-                    onSelect = viewModel::onSelectIntroPrompt,
+                    onSelect = if (inRoom) {
+                        {
+                            val target = viewModel.selectIntroPromptTarget()
+                            if (target != null) gatedSeek(target)
+                        }
+                    } else {
+                        viewModel::onSelectIntroPrompt
+                    },
                     totalSeconds = viewModel.introSkipTotalSeconds,
                     countdownRun = introSkipCountdownRun,
                     timerRunning = introSkipTimerRunning,
@@ -492,19 +514,19 @@ fun PlayerOverlay(
         }
     }
 
-    // Host close-room confirmation (Watch Together). Closing tears the room
-    // down for everyone; the actual close + teardown happens in onBack (the
-    // RoomSyncController.leave(closeRoom = true) path in PlayerScreen).
+    // Host end-party confirmation (Watch Party). Ending it stops the party for
+    // everyone; the end itself happens in onBack (WatchPartyPlayback's
+    // endForEveryone, called from PlayerScreen).
     if (showCloseConfirm) {
         AlertDialog(
             onDismissRequest = { showCloseConfirm = false },
-            title = { Text("Close room for everyone?") },
-            text = { Text("Leaving as host ends the Watch Together room for all members.") },
+            title = { Text("End the Watch Party for everyone?") },
+            text = { Text("Leaving as host ends the Watch Party for all members.") },
             confirmButton = {
                 TextButton(onClick = {
                     showCloseConfirm = false
                     onBack()
-                }) { Text("Close room") }
+                }) { Text("End party") }
             },
             dismissButton = {
                 TextButton(onClick = { showCloseConfirm = false }) { Text("Cancel") }
@@ -580,7 +602,7 @@ fun PlayerOverlay(
         )
     }
 
-    if (showQualitySelector) {
+    if (showQualitySelector && !inRoom) {
         QualitySelector(
             versions = state.versions,
             selectedIndex = state.selectedVersionIndex,
@@ -608,6 +630,9 @@ fun PlayerOverlay(
         onSetHdrEnabled = viewModel::onSetHdrEnabled,
         dolbyVisionEnabled = viewModel.dolbyVisionEnabled.collectAsState().value,
         onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
+        // A party hides speed (session-only 1x) and the version picker.
+        showPlaybackSpeed = !inRoom,
+        showQuality = !inRoom,
         qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
         onOpenQuality = {
             settingsSheetVisible = false
@@ -661,8 +686,9 @@ fun PlayerOverlay(
         isVisible = chaptersSheetVisible,
         chapters = state.chapters,
         position = state.position,
+        // A room seek in a party (a guest is told only the host can seek).
         onSelect = { idx ->
-            viewModel.onSeekToChapter(idx)?.let { sec -> viewModel.onSeek(sec) }
+            viewModel.onSeekToChapter(idx)?.let(onSeek)
         },
         onDismiss = { chaptersSheetVisible = false },
         tabletopPaneHeight = tabletopPaneHeight,

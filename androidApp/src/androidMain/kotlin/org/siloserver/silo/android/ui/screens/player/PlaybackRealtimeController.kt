@@ -27,6 +27,12 @@ class PlaybackRealtimeController(
     private val client: PlaybackRealtimeClient,
     private val viewModel: PlayerViewModel,
     private val scope: CoroutineScope,
+    /**
+     * Watch Party only: routes a transport command through the room's
+     * permission decision and says whether the room took it. Stop is not
+     * transport here; it ends only this device's engagement.
+     */
+    private val roomTransport: ((PlaybackAction) -> Boolean)? = null,
 ) {
     private companion object {
         const val BACKOFF_START_MS = 2_000L
@@ -64,14 +70,20 @@ class PlaybackRealtimeController(
     private suspend fun handleCommand(cmd: PlaybackRealtimeEvent.Command) {
         client.sendAck(sessionId, cmd.commandId)
         val action = decidePlaybackAction(cmd)
-        // Watch Together is authoritative for transport — reject (don't apply)
-        // transport commands while in a room so an admin can't desync members.
-        val gated = action.isTransport && viewModel.remoteTransportSuppressed
-        val status = if (action is PlaybackAction.Reject || gated) STATUS_REJECTED else STATUS_COMPLETED
+        // A Watch Party is authoritative for transport: play, pause, and seek
+        // ask the room like any other input and never move this player alone.
+        // Stop still leaves (see PlayerScreen), ending only this engagement.
+        val roomRouted = roomTransport != null && action.isTransport && action !is PlaybackAction.Stop
+        val gated = roomTransport == null && action.isTransport && viewModel.remoteTransportSuppressed
+        val status = when {
+            action is PlaybackAction.Reject || gated -> STATUS_REJECTED
+            roomRouted -> if (requireNotNull(roomTransport)(action)) STATUS_COMPLETED else STATUS_REJECTED
+            else -> STATUS_COMPLETED
+        }
         // Send the result BEFORE applying: a Stop tears the screen down (which
         // cancels this coroutine), so applying first could drop the result.
         client.sendResult(sessionId, cmd.commandId, status)
-        if (!gated) applyAction(action)
+        if (!gated && !roomRouted) applyAction(action)
     }
 
     private fun applyAction(action: PlaybackAction) {
