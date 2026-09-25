@@ -2,6 +2,7 @@ package org.siloserver.silo.network
 
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
+import org.siloserver.silo.model.watchtogether.TransportAction
 import org.siloserver.silo.model.watchtogether.TransportCommand
 import org.siloserver.silo.model.watchtogether.WsAttachSession
 import org.siloserver.silo.model.watchtogether.WsBuffering
@@ -433,9 +434,11 @@ fun decodeRoomFrame(json: Json, raw: String, receivedAtMs: Long? = null): RoomRe
             } catch (_: Exception) {
                 return RoomRealtimeEvent.Malformed(type)
             }
-            // A command must say when to run. Without that it can't be
-            // scheduled, so the room is reconciled instead of running it now.
-            if (parseRfc3339ToEpochMillis(parsed.executeAt) == null) return RoomRealtimeEvent.Malformed(type)
+            // A command must say what to do and when. Without either it can't
+            // be applied safely, so the room is reconciled instead.
+            if (parsed.action == TransportAction.Unknown || parseRfc3339ToEpochMillis(parsed.executeAt) == null) {
+                return RoomRealtimeEvent.Malformed(type)
+            }
             RoomRealtimeEvent.TransportCommandEvent(parsed)
         }
         WatchTogetherRealtime.TypeSuggestionsUpdate -> {
