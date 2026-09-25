@@ -599,6 +599,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     contentId = "movie",
                     message = "This title needs HDR tone mapping.",
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal("hdr_transcode_unsupported"),
+                    terminalReason = "hdr_transcode_unsupported",
                 ),
             )
             viewModel.awaitState { it.error != null }

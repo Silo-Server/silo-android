@@ -1190,7 +1190,7 @@ class PlayerViewModel(
                             // The room decides whether another file is tried;
                             // this device never picks one itself.
                             if (room != null) {
-                                publishRoomRefusal(room, room.fileId, playbackState.diagnosticsCode?.wireValue)
+                                publishRoomRefusal(room, room.fileId, playbackState.terminalReason)
                             }
                         }
                     }

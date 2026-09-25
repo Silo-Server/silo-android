@@ -345,6 +345,7 @@ internal class MobileVideoPlaybackStarter(
                     request.contentId,
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
+                    terminalReason = v3Start.reason,
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
@@ -533,6 +534,7 @@ internal class MobileVideoPlaybackStarter(
         message: String,
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        terminalReason: String? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -541,6 +543,7 @@ internal class MobileVideoPlaybackStarter(
             contentId = contentId,
             message = message,
             diagnosticsCode = diagnosticsCode,
+            terminalReason = terminalReason,
         )
     }
 
