@@ -104,6 +104,9 @@ class TvSiloCastReceiver(
     private val launchRequestChannel = Channel<SiloCastLaunchRequest>(capacity = 1)
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
+    /** A launched title whose player hasn't registered yet; reported as loading (tvOS does the same). */
+    @Volatile
+    private var pendingLaunchContentId: String? = null
     private var identityEndJob: Job? = null
     /** Rejected generations already handled, so a repeat emission can't act twice. */
     private val expiredGenerations = mutableSetOf<String>()
@@ -163,6 +166,7 @@ class TvSiloCastReceiver(
         advertiser.stop()
         val identityGeneration = identityManager.activeIdentity?.generationId
         pendingPlayerIdentityGeneration = null
+        pendingLaunchContentId = null
         identityEndJob = null
         // Close the session directly (not via closePreviousController, which
         // launches the goodbye on `scope` — the scope we cancel a line later,
@@ -197,6 +201,14 @@ class TvSiloCastReceiver(
         DiagnosticsCastLogger.event("TV cast player registered")
         identityEndJob?.cancel()
         identityEndJob = null
+        // The launched title arrived: the ready-without-launch timeout and
+        // the loading placeholder have done their job.
+        activeSession?.let { session ->
+            session.remoteLaunchReady = false
+            session.readyTimeoutJob?.cancel()
+            session.readyTimeoutJob = null
+        }
+        pendingLaunchContentId = null
         val identityGeneration = pendingPlayerIdentityGeneration
             ?: identityManager.activeIdentity?.generationId
         pendingPlayerIdentityGeneration = null
@@ -489,6 +501,9 @@ class TvSiloCastReceiver(
                         session.send(SiloCastMessage.HandoffReady(ready))
                         session.send(SiloCastMessage.State(currentState()))
                         session.readyTimeoutJob?.cancel()
+                        // Stays armed through launch until a player registers,
+                        // so a launch whose player never opens can't leave the
+                        // phone's profile installed.
                         session.readyTimeoutJob = launch {
                             delay(READY_TIMEOUT_MS)
                             // Ready-without-launch only abandons an UNUSED
@@ -498,13 +513,15 @@ class TvSiloCastReceiver(
                             if (activeSession === session && session.remoteLaunchReady) {
                                 session.remoteLaunchReady = false
                                 if (activePlayer == null) {
+                                    pendingLaunchContentId = null
+                                    pendingPlayerIdentityGeneration = null
                                     identityManager.end(expectedGenerationId = readyGeneration)
                                     refreshAdvertisement()
                                     session.send(
                                         SiloCastMessage.Error(
                                             SiloCastError(
                                                 code = "launch_timeout",
-                                                message = "No content was launched, so the temporary profile was restored.",
+                                                message = "Playback didn't start, so the TV restored its own profile.",
                                             ),
                                         ),
                                     )
@@ -580,8 +597,12 @@ class TvSiloCastReceiver(
                 }
                 val generation = identityManager.activeIdentity?.generationId
                 pendingPlayerIdentityGeneration = generation
+                // Set before handing the launch over: its player may register
+                // (and clear this) before trySend even returns.
+                pendingLaunchContentId = message.launch.playback.contentId
                 if (generation == null || !launchRequestChannel.trySend(message.launch).isSuccess) {
                     pendingPlayerIdentityGeneration = null
+                    pendingLaunchContentId = null
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -592,10 +613,10 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                session.remoteLaunchReady = false
+                // The ready state and its timeout stay armed until the player
+                // registers. Until then the title reports as loading, not idle.
                 _standbyState.value = null
-                session.readyTimeoutJob?.cancel()
-                session.readyTimeoutJob = null
+                session.send(SiloCastMessage.State(currentState()))
             }
             is SiloCastMessage.Control -> {
                 if (!requireAuthorized(session)) return true
@@ -660,6 +681,8 @@ class TvSiloCastReceiver(
             if (activePlayer != null || pendingPlayerIdentityGeneration == generationId) return@launch
             identityManager.end(expectedGenerationId = generationId)
             pendingPlayerIdentityGeneration = null
+            // A launch whose player never opened is over too.
+            if (activePlayer == null) pendingLaunchContentId = null
             refreshAdvertisement()
             reconcileAuthorizationAfterRestore()
         }
@@ -706,6 +729,7 @@ class TvSiloCastReceiver(
         identityEndJob = null
         activeSession?.readyTimeoutJob?.cancel()
         stopActivePlayer()
+        pendingLaunchContentId = null
         pendingPlayerIdentityGeneration = null
         identityManager.end(expectedGenerationId = generation, notifyServer = false)
         refreshAdvertisement()
@@ -758,7 +782,9 @@ class TvSiloCastReceiver(
 
     private fun refreshStandbyState() {
         val session = activeSession
-        _standbyState.value = if (session != null && session.isAuthorized && activePlayer == null) {
+        _standbyState.value = if (
+            session != null && session.isAuthorized && activePlayer == null && pendingLaunchContentId == null
+        ) {
             StandbyState(
                 controllerName = session.controllerDeviceName,
                 serverName = identityManager.activeIdentity?.serverName
@@ -815,7 +841,9 @@ class TvSiloCastReceiver(
 
     private suspend fun currentState(): SiloCastPlaybackState =
         withContext(Dispatchers.Main.immediate) {
-            activePlayer?.stateProvider?.invoke() ?: idleState()
+            activePlayer?.stateProvider?.invoke()
+                ?: pendingLaunchContentId?.let { idleState().copy(contentId = it, title = "Loading", isLoading = true) }
+                ?: idleState()
         }
 
     private fun idleState(): SiloCastPlaybackState = SiloCastPlaybackState(

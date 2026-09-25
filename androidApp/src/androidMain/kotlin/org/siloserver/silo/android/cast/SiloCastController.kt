@@ -245,16 +245,8 @@ class SiloCastController(
                 }
                 throw error
             } catch (error: Throwable) {
-                if (isCurrentLaunch(self)) {
-                    _state.update {
-                        it.copy(
-                            isConnecting = false,
-                            connectingDeviceId = null,
-                            isLaunching = false,
-                            error = error.message ?: "Unable to cast.",
-                        )
-                    }
-                }
+                Log.w(TAG, "SiloCast launch failed", error)
+                if (isCurrentLaunch(self)) failLaunch(error.message ?: "Unable to cast.")
             } finally {
                 synchronized(launchJobLock) {
                     if (launchJob === self) launchJob = null
@@ -271,6 +263,18 @@ class SiloCastController(
     }
 
     private fun isCurrentLaunch(job: Job): Boolean = synchronized(launchJobLock) { launchJob === job }
+
+    /**
+     * A failed launch ends the session, as on iOS: the remote then shows the
+     * reason with "Choose a TV", rather than an idle screen whose next state
+     * frame would clear the error before anyone could read it.
+     */
+    private suspend fun failLaunch(message: String) {
+        suppressReconnect = true
+        runCatching { send(SiloCastMessage.Close()) }
+        closeConnection()
+        _state.update { it.copy(error = message) }
+    }
 
     /**
      * Makes an active Remote Control session the destination for an ordinary
@@ -954,7 +958,11 @@ class SiloCastController(
                     closeConnection()
                     _state.update { it.copy(error = message.error.message) }
                 }
-                else -> _state.update { it.copy(error = message.error.message, isLaunching = false) }
+                // The TV refused or couldn't open the title just sent. A
+                // control pressed mid-launch (player_not_ready) isn't that.
+                _state.value.isLaunching && message.error.code !in CONTROL_ERROR_CODES ->
+                    failLaunch(message.error.message)
+                else -> _state.update { it.copy(error = message.error.message) }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
             is SiloCastMessage.Pong -> missedHeartbeats = 0
@@ -1101,6 +1109,9 @@ class SiloCastController(
         const val AUTO_RESUME_CONFIRM_TIMEOUT_MS = 6_000L
         const val VOLUME_STEPS = 16.0
         const val SILENT_VOLUME = 0.001
+
+        /** Errors both TVs send in reply to a control command, never to a launch. */
+        val CONTROL_ERROR_CODES = setOf("player_not_ready", "command_failed")
 
         /** The TV refused a reconnect or resume because another phone holds it. */
         const val CONTROLLER_ACTIVE = "controller_active"

@@ -202,7 +202,8 @@ fun SiloCastRemoteScreen(
                         targetName = state.connectedTarget?.name,
                         posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
                         posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
-                        error = state.error,
+                        // The TV's own playback error, as on iOS.
+                        error = playback.error,
                         controller = controller,
                     )
                 }
