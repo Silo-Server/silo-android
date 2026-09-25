@@ -30,6 +30,7 @@ class SiloCastNsdAdvertiser(
 
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var lastRegistration: Registration? = null
+    private var lastRecord: Map<String, String>? = null
 
     @Synchronized
     fun start(port: Int, serverId: String?, serverName: String?, playing: Boolean = false) {
@@ -51,24 +52,32 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = null
         lastRegistration = null
+        lastRecord = null
     }
 
     private fun register(registration: Registration) {
+        val name = nameProvider()
+        val record = buildMap {
+            put("v", SiloCastProtocol.version.toString())
+            put("name", name)
+            put("id", deviceIdProvider())
+            registration.serverId?.let { put("server", it) }
+            registration.serverName?.let { put("serverName", it) }
+            put("playing", if (registration.playing) "1" else "0")
+        }
+        // Re-registering an identical record only churns: NsdManager cancels
+        // the old record's goodbye, so a stop() right after (sign-out) leaves
+        // phones listing a TV that is gone.
+        if (registrationListener != null && registration == lastRegistration && record == lastRecord) return
         registrationListener?.let { listener ->
             runCatching { nsdManager.unregisterService(listener) }
         }
         registrationListener = null
-        val name = nameProvider()
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = SiloCastDeviceName.instanceName(name)
             serviceType = SiloCastProtocol.serviceType
             port = registration.port
-            setAttribute("v", SiloCastProtocol.version.toString())
-            setAttribute("name", name)
-            setAttribute("id", deviceIdProvider())
-            registration.serverId?.let { setAttribute("server", it) }
-            registration.serverName?.let { setAttribute("serverName", it) }
-            setAttribute("playing", if (registration.playing) "1" else "0")
+            record.forEach { (key, value) -> setAttribute(key, value) }
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {
@@ -77,6 +86,15 @@ class SiloCastNsdAdvertiser(
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
                 Log.w(TAG, "SiloCast registration failed: $errorCode")
+                // Nothing is live: forget it, so the next refresh registers
+                // again instead of skipping an "identical" record.
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) {
+                        registrationListener = null
+                        lastRegistration = null
+                        lastRecord = null
+                    }
+                }
             }
 
             override fun onServiceUnregistered(info: NsdServiceInfo) {
@@ -89,6 +107,7 @@ class SiloCastNsdAdvertiser(
         }
         registrationListener = listener
         lastRegistration = registration
+        lastRecord = record
         nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
     }
 

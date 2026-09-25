@@ -143,7 +143,11 @@ class TvPairingAdvertiser(
     private fun registerService(port: Int, identity: PairingDeviceIdentity) {
         val sid = UUID.randomUUID().toString()
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = SiloCastDeviceName.instanceName(identity.name)
+            // Phones show the TXT `name`. The instance name must differ from the
+            // SiloCast receiver's: Android's advertiser matches instance names
+            // across service types, so registering this one as the receiver
+            // stops (sign-out) would cancel the receiver's goodbye.
+            serviceName = SiloCastDeviceName.instanceName(identity.name, suffix = " Setup")
             serviceType = PairingProtocol.SERVICE_TYPE
             this.port = port
             setAttribute("v", PairingProtocol.VERSION.toString())

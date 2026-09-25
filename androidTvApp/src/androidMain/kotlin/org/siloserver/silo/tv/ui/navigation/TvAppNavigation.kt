@@ -327,6 +327,16 @@ private val preMainAuthRoutes: Set<String> = setOf(
     TvRoute.EditProfile.ROUTE,
 )
 
+// Routes where this TV holds no credentials: every sign-out lands here, so the
+// SiloCast receiver stops. Server and profile pickers are left out; they are
+// also reached while signed in.
+private val SignedOutRoutes: Set<String> = setOf(
+    TvRoute.ServerSetup.route,
+    TvRoute.Setup.route,
+    TvRoute.Signup.route,
+    TvRoute.Login.ROUTE,
+)
+
 /**
  * Page-to-page cross-fade duration (ms). A middle ground between Compose Nav's
  * sluggish 700ms default and a phone-snappy 200ms — a touch more deliberate for
@@ -555,6 +565,51 @@ fun TvAppNavigation(
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
     }
+    // The cast receiver runs while a signed-in Home is in the foreground, as on
+    // tvOS: started here (a first sign-in reaches Home inside the running
+    // activity, so onStart can't), stopped by onStop and when a signed-out
+    // screen appears, so a signed-out TV doesn't keep advertising its server.
+    // Coming back to the foreground on a signed-out screen starts nothing.
+    // start() is a no-op when already running.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifecycleState by lifecycle.currentStateFlow.collectAsState()
+    val currentRoute = currentEntry?.destination?.route
+    // Home anywhere in the stack, not only on top: a sign-in that lands on a
+    // deep-linked title pushes it over Home before Home is ever shown.
+    val homeInStack = remember(currentEntry) {
+        runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
+    }
+    // Signed-out routes win: adding a server pushes its setup and sign-in
+    // over Home, and the TV isn't signed in to that server yet.
+    val signedOut = currentRoute in SignedOutRoutes
+    // Nor does anything before a profile is chosen start it: after adding a
+    // server and signing in, Home is still in the stack, but the new server has
+    // no profile yet on the picker or in Add Profile. Null until first read.
+    val hasProfile by produceState<Boolean?>(initialValue = null, currentRoute) {
+        value = tokenManager.getProfileId() != null
+    }
+    // Checked by route too: Switch Profile opens the picker before its profile
+    // clear lands, so a read there can still see the old profile.
+    val choosingProfile = currentRoute == TvRoute.ProfileSelection.route
+    val signedInForeground = homeInStack && !signedOut && hasProfile == true && !choosingProfile &&
+        lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+    // Keyed on the route too, so every navigation re-applies the wanted state:
+    // a server switch stops the receiver without changing these flags.
+    LaunchedEffect(signedInForeground, signedOut, hasProfile, currentRoute) {
+        when {
+            signedInForeground -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                siloCastReceiver.start()
+                // onStop may have run its stop() while this start was queued.
+                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    siloCastReceiver.stop()
+                }
+            }
+            // Switch Profile, or switching to a saved server with no profile
+            // chosen, lands on the picker with the receiver running.
+            signedOut || hasProfile == false || choosingProfile ->
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
+        }
+    }
     val overlaySessionKey by produceState<String?>(
         initialValue = null,
         currentEntry?.destination?.route,
@@ -732,6 +787,9 @@ fun TvAppNavigation(
                 },
                 onSignOut = {
                     scope.launch {
+                        // Off before the server logout, which can be slow: a
+                        // signing-out TV mustn't take phones meanwhile.
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
                         authRepository.logout()
                         watchNextSeeder.clear()
                         navController.navigate(TvRoute.ServerSetup.route) {
@@ -809,6 +867,9 @@ fun TvAppNavigation(
                 },
                 onSignedOut = {
                     scope.launch {
+                        // Off before the server logout, which can be slow: a
+                        // signing-out TV mustn't take phones meanwhile.
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
                         // Full sign-out teardown — parity with the Settings and
                         // ProfileSelection sign-out paths. Clearing Watch Next
                         // alone left the tokens, profileId, and server session
