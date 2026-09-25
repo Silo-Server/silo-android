@@ -79,9 +79,11 @@ internal fun rememberTvWatchPartyDetailOption(
     item: WatchPartyItem?,
     exposure: WatchPartyExposure = koinInject(),
     repository: WatchTogetherRepository = koinInject(),
+    availability: WatchPartyAvailabilityRepository = koinInject(),
 ): TvWatchPartyDetailOption? {
     val enabled by exposure.enabled.collectAsState()
     val room by repository.roomSnapshot.collectAsState()
+    val available by availability.availability.collectAsState()
     if (!enabled || item == null) return null
     val current = room
     if (current == null) {
@@ -92,9 +94,12 @@ internal fun rememberTvWatchPartyDetailOption(
         )
     }
     val host = current.selfRole == MemberRole.Host && current.selfCanManageRoom
+    // As on phone: never offer an operation the server does not advertise.
+    val stagingSupported = (available as? WatchPartyAvailability.Available)?.features?.stagedSelection == true
     val knownMode = current.selectionMode == RoomSelectionMode.HostPick || current.selectionMode == RoomSelectionMode.Vote
     return when {
-        host && current.phase == RoomPhase.Lobby && current.selectionMode == RoomSelectionMode.HostPick ->
+        host && current.phase == RoomPhase.Lobby && current.selectionMode == RoomSelectionMode.HostPick &&
+            stagingSupported ->
             TvWatchPartyDetailOption(
                 title = "Add to party",
                 subtitle = "Make this the party's next title",
