@@ -60,7 +60,7 @@ fun SiloCastMiniBar(
     // Keep the bar up through a reconnect (with a spinner) instead of having
     // it vanish and pop back; hide it while an auto-resume probe is still
     // unconfirmed so idle TVs never surface a phantom session.
-    val visible = (state.hasActiveSession && !state.isAutoResuming) || state.isReconnecting
+    val visible = state.isEngaged
 
     AnimatedVisibility(
         visible = visible,

@@ -48,8 +48,10 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
+import org.siloserver.silo.android.cast.SiloCastPlayRouter
 import org.siloserver.silo.android.cast.SiloCastSessionManager
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
+import org.siloserver.silo.android.ui.screens.cast.SiloCastPlayDialogs
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
 import org.siloserver.silo.android.ui.screens.MainScreen
 import org.siloserver.silo.android.ui.screens.auth.LoginScreen
@@ -152,6 +154,10 @@ fun AppNavigation(
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
+    val siloCastPlayRouter: SiloCastPlayRouter = koinInject()
+    val openSiloCastRemote = {
+        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
+    }
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
     // cancelled with that destination's own scope.
@@ -198,7 +204,11 @@ fun AppNavigation(
                     ),
                 )
             },
-            navigate = { route ->
+            navigate = navigate@{ route ->
+                // A silo://play link goes to an engaged TV, as iOS routes it.
+                playerRouteCastRequestOrNull(route)?.let { request ->
+                    if (siloCastPlayRouter.playStreaming(request, onLaunched = openSiloCastRemote)) return@navigate
+                }
                 // An external link to a TAB (silo://downloads) must switch tabs,
                 // not push a second copy of that tab. A duplicate tab entry also
                 // makes the tab anchor ambiguous: popUpTo(route) resolves to the
@@ -982,7 +992,7 @@ fun AppNavigation(
                 openingArtworkThumbhash = openingArtworkThumbhash,
                 onBackClick = { navController.popBackStack() },
                 onPlayClick = { contentId, fileId, audioTrackIndex, subtitleTrackIndex, resumePositionSeconds ->
-                    val launchedRemotely = siloCastController.launchOnConnectedTarget(
+                    val sentToTv = siloCastPlayRouter.playStreaming(
                         SiloCastPlaybackRequest(
                             contentId = contentId,
                             libraryId = libraryId,
@@ -992,10 +1002,9 @@ fun AppNavigation(
                             startFromBeginning = resumePositionSeconds == null,
                             resumePosition = resumePositionSeconds,
                         ),
+                        onLaunched = openSiloCastRemote,
                     )
-                    if (launchedRemotely) {
-                        navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                    } else {
+                    if (!sentToTv) {
                         navController.navigate(
                             Route.Player(
                                 libraryId = libraryId,
@@ -1036,9 +1045,8 @@ fun AppNavigation(
                     navController.navigate(Route.BookReader(contentId, fileId, libraryId).route)
                 },
                 onWatchTogether = { contentId, fileId -> wtTarget = contentId to fileId },
-                onOpenCastRemote = {
-                    navController.navigate(Route.SiloCastRemote.route) { launchSingleTop = true }
-                },
+                onOpenCastRemote = openSiloCastRemote,
+                libraryId = libraryId,
                 viewModel = detailViewModel,
             )
             }
@@ -1327,6 +1335,7 @@ fun AppNavigation(
                     .navigationBarsPadding(),
             )
         }
+        SiloCastPlayDialogs(router = siloCastPlayRouter)
 
         // Google Cast (Chromecast) mini controller — app-wide except the player,
         // which shows the full cast takeover overlay instead. On tab routes it

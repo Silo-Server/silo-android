@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.navigation
 
+import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import java.net.URI
 import java.net.URLDecoder
@@ -52,6 +53,40 @@ internal fun contentDeepLinkRouteOrNull(rawUri: String?): String? {
         else -> null
     }
 }
+
+/**
+ * The Remote Control request a video player route stands for, so an engaged
+ * TV can take a `silo://play` link the way iOS routes one, instead of the
+ * player opening on the phone. Null for any other route, and for a Watch
+ * Together room's player, which always stays on the phone.
+ */
+internal fun playerRouteCastRequestOrNull(route: String): SiloCastPlaybackRequest? {
+    if (!route.startsWith(PLAYER_ROUTE_PREFIX)) return null
+    val contentId = route.removePrefix(PLAYER_ROUTE_PREFIX)
+        .substringBefore('?')
+        .let(::decodePathSegment)
+        ?.takeIf { it.isNotBlank() }
+        ?: return null
+    val query = route.substringAfter('?', "")
+        .split('&')
+        .filter { it.isNotEmpty() }
+        .associate { part -> part.substringBefore('=') to decodeQueryComponent(part.substringAfter('=', "")) }
+    if (!query["roomId"].isNullOrBlank()) return null
+    // As on the phone: no position resumes where the profile left off, and an
+    // explicit 0 is "start over".
+    val resume = VideoPlayerRouteArgs.parseResumePosition(query[VideoPlayerRouteArgs.RESUME_POSITION])
+    return SiloCastPlaybackRequest(
+        contentId = contentId,
+        fileId = query["fileId"]?.toIntOrNull(),
+        audioTrackIndex = query["audioTrackIndex"]?.toIntOrNull(),
+        subtitleTrackIndex = query["subtitleTrackIndex"]?.toIntOrNull(),
+        startFromBeginning = resume == 0.0,
+        resumePosition = resume?.takeIf { it > 0.0 },
+        libraryId = query["libraryId"]?.toIntOrNull(),
+    )
+}
+
+private const val PLAYER_ROUTE_PREFIX = "player/"
 
 private fun URI.queryParameter(name: String): String? = rawQuery
     ?.split('&')
