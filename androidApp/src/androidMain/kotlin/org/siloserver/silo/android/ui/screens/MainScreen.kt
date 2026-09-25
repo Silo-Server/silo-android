@@ -65,9 +65,10 @@ import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
-import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
+import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
@@ -102,9 +103,12 @@ fun MainScreen(
     val siloCastController: SiloCastController = koinInject()
     val siloCastState by siloCastController.state.collectAsState()
     var showSiloCastTargetPicker by rememberSaveable { mutableStateOf(false) }
-    var showWatchTogetherEntry by rememberSaveable { mutableStateOf(false) }
+    val watchPartyExposure: WatchPartyExposure = koinInject()
+    val watchPartyEnabled by watchPartyExposure.enabled.collectAsState()
+    // D5: quick play from these tabs asks to leave a Watch Party first.
+    val soloGuard = rememberWatchPartySoloGuard()
 
-    fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) {
+    fun startVideo(contentId: String, fileId: Int?, resumePositionSeconds: Double?) {
         val launchedRemotely = siloCastController.launchOnConnectedTarget(
             SiloCastPlaybackRequest(
                 contentId = contentId,
@@ -125,6 +129,10 @@ fun MainScreen(
             )
         }
     }
+
+    fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) =
+        soloGuard.run { startVideo(contentId, fileId, resumePositionSeconds) }
+
     val librariesViewModel = if (currentTab == Tab.Libraries) {
         koinViewModel<LibrariesViewModel>()
     } else {
@@ -317,9 +325,9 @@ fun MainScreen(
     } else {
         null
     }
-    val watchTogetherMenuAction: (() -> Unit)? =
-        if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
-            { showWatchTogetherEntry = true }
+    val watchPartyMenuAction: (() -> Unit)? =
+        if (watchPartyEnabled) {
+            { navController.navigate(Route.WatchPartyHub().route) { launchSingleTop = true } }
         } else {
             null
         }
@@ -428,7 +436,7 @@ fun MainScreen(
                             onRemoteDisconnectClick = { siloCastController.disconnect() },
                             isRemoteControlActive = siloCastState.hasActiveSession,
                             onRequestsClick = requestsMenuAction,
-                            onWatchTogetherClick = watchTogetherMenuAction,
+                            onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
@@ -452,7 +460,7 @@ fun MainScreen(
                             onLibrarySelectorClick = { showLibrarySelector = true },
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onRequestsClick = requestsMenuAction,
-                            onWatchTogetherClick = watchTogetherMenuAction,
+                            onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
@@ -485,7 +493,7 @@ fun MainScreen(
                                     activeProfile = headerState.activeProfile,
                                     onSearchClick = { navController.navigate(Route.Search().route) },
                                     onRequestsClick = requestsMenuAction,
-                                    onWatchTogetherClick = watchTogetherMenuAction,
+                                    onWatchPartyClick = watchPartyMenuAction,
                                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                                     onSwitchProfileClick = ::switchProfileFromMenu,
                                     onSwitchServerClick = {
@@ -505,19 +513,21 @@ fun MainScreen(
                             // audiobook UI + offline resume; everything else uses
                             // the video player's offline-first tryLocalPlayback.
                             onItemClick = { item ->
-                                if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
-                                    navController.navigate(
-                                        Route.AudiobookPlayer(item.contentId, item.fileId).route,
-                                    )
-                                } else {
-                                    // Downloads are explicitly local/offline;
-                                    // bypass playVideo's active-cast redirect.
-                                    navController.navigate(
-                                        Route.Player(
-                                            contentId = item.contentId,
-                                            fileId = item.fileId,
-                                        ).route,
-                                    )
+                                soloGuard.run {
+                                    if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
+                                        navController.navigate(
+                                            Route.AudiobookPlayer(item.contentId, item.fileId).route,
+                                        )
+                                    } else {
+                                        // Downloads are explicitly local/offline;
+                                        // bypass playVideo's active-cast redirect.
+                                        navController.navigate(
+                                            Route.Player(
+                                                contentId = item.contentId,
+                                                fileId = item.fileId,
+                                            ).route,
+                                        )
+                                    }
                                 }
                             },
                             onReadEbook = { contentId, fileId ->
@@ -544,7 +554,7 @@ fun MainScreen(
                     hazeState = hazeState,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
-                    onWatchTogetherClick = watchTogetherMenuAction,
+                    onWatchPartyClick = watchPartyMenuAction,
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = ::switchProfileFromMenu,
                     onSwitchServerClick = {
@@ -598,16 +608,7 @@ fun MainScreen(
                 )
             }
 
-            if (showWatchTogetherEntry) {
-                WatchTogetherMenuEntrySheet(
-                    onNavigate = { route ->
-                        navController.navigate(route) {
-                            launchSingleTop = true
-                        }
-                    },
-                    onDismiss = { showWatchTogetherEntry = false },
-                )
-            }
+            WatchPartySoloGuardDialog(soloGuard)
         }
     }
     }

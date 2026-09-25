@@ -91,7 +91,7 @@ class TvControlWiringCallSiteTest {
         listOf(
             Triple("ui/components/TvPinEntryDialog.kt", "PinKeypad", "PinKey"),
             Triple(
-                "ui/screens/watchtogether/TvJoinCodeDialog.kt",
+                "ui/screens/watchparty/TvJoinCodeDialog.kt",
                 "TvJoinCodeDialog",
                 "JoinCodeKey",
             ),
@@ -171,7 +171,7 @@ class TvControlWiringCallSiteTest {
             "ui/components/TvOptionDialog.kt",
             "ui/components/TvAuroraChrome.kt",
             "ui/components/TvPinEntryDialog.kt",
-            "ui/screens/watchtogether/TvJoinCodeDialog.kt",
+            "ui/screens/watchparty/TvJoinCodeDialog.kt",
         ).forEach { path ->
             assertFalse(
                 source(path).containsLoosely("onClick = { if ("),

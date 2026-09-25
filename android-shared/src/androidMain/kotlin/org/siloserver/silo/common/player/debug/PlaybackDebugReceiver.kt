@@ -3,6 +3,7 @@ package org.siloserver.silo.common.player.debug
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.Player
@@ -11,6 +12,8 @@ import org.json.JSONObject
 import org.koin.java.KoinJavaComponent
 import org.siloserver.silo.common.BuildConfig
 import org.siloserver.silo.common.player.ActivePlayerHolder
+import org.siloserver.silo.common.player.watchparty.WatchPartyDebugRegistry
+import org.siloserver.silo.repository.WatchTogetherRepository
 
 /**
  * Debug-only adb hook for scripted playback testing (see
@@ -50,6 +53,11 @@ class PlaybackDebugReceiver : BroadcastReceiver() {
 
     private fun statusJson(player: Player?): JSONObject {
         val json = JSONObject()
+        // Correlate samples across devices: monotonic and wall time at the
+        // moment of sampling, plus the room's server-clock estimate.
+        json.put("sampledElapsedMs", SystemClock.elapsedRealtime())
+        json.put("sampledWallMs", System.currentTimeMillis())
+        partyJson()?.let { json.put("party", it) }
         PlaybackDebugState.screenError?.let { json.put("screenError", it) }
         PlaybackDebugState.screenPositionSec?.let { json.put("screenPositionSec", it) }
         PlaybackDebugState.screenDurationSec?.let { json.put("screenDurationSec", it) }
@@ -87,6 +95,56 @@ class PlaybackDebugReceiver : BroadcastReceiver() {
                 json.put("droppedFrames", counters.droppedBufferCount)
                 json.put("renderedFrames", counters.renderedOutputBufferCount)
             }
+        }
+        return json
+    }
+
+    /** Room and binding state while a Watch Party is active; never tokens or tickets. */
+    private fun partyJson(): JSONObject? {
+        val repository = runCatching {
+            KoinJavaComponent.get<WatchTogetherRepository>(WatchTogetherRepository::class.java)
+        }.getOrNull() ?: return null
+        val room = repository.roomSnapshot.value
+        val ended = repository.ended.value
+        if (room == null && ended == null) return null
+        val json = JSONObject()
+        room?.let {
+            json.put("roomId", it.roomId)
+            json.put("phase", it.phase.wire)
+            json.put("playbackState", it.playbackState.wire)
+            json.put("selectionRevision", it.selectionRevision)
+            json.put("generation", it.generation)
+            json.put("selfRole", it.selfRole.wire)
+            json.put("anchorSec", it.anchorPositionSeconds)
+            json.put("roomPaused", it.isPaused)
+            json.put("attachedSessionId", it.attachedSessionId ?: JSONObject.NULL)
+            json.put("selfReady", it.selfMember?.isReady == true)
+            json.put("selfIgnoreWait", it.selfIgnoreWait)
+            json.put("memberCount", it.memberCount)
+        }
+        ended?.let { json.put("endedReason", it.reason) }
+        val connection = repository.connectionState.value
+        json.put("connectionEpoch", connection.epoch)
+        json.put("connected", connection.writable)
+        repository.lastSocketEnd?.let { json.put("lastSocketEnd", it) }
+        val clock = repository.clock.value
+        clock.offsetMs?.let { json.put("serverOffsetMs", it) }
+        clock.rttMs?.let { json.put("clockRttMs", it) }
+        repository.latestTransportCommand.value?.command?.let { command ->
+            json.put("latestCommandId", command.commandId)
+            json.put("latestCommandAction", command.action.wire)
+        }
+        WatchPartyDebugRegistry.binding?.debug?.value?.let { debug ->
+            json.put("bindingAttachedSessionId", debug.attachedSessionId ?: JSONObject.NULL)
+            json.put("serverAttached", debug.serverAttached)
+            json.put("pendingCommandId", debug.pendingCommandId ?: JSONObject.NULL)
+            json.put("appliedCommandId", debug.appliedCommandId ?: JSONObject.NULL)
+            json.put("readinessCommandId", debug.readinessCommandId ?: JSONObject.NULL)
+            json.put("catchingUp", debug.catchingUp)
+            json.put("correctionRate", debug.correctionRate ?: JSONObject.NULL)
+            json.put("reloadInFlight", debug.reloadInFlight)
+            json.put("stallReported", debug.stallReported)
+            json.put("suspended", debug.suspended)
         }
         return json
     }

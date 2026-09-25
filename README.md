@@ -6,7 +6,7 @@ Built as a Kotlin Multiplatform project: one shared business-logic core, two Jet
 
 > **Status:** WIP (`v0.3.x`). Silo Android is pre-1.0 and some areas remain under active development (see [Roadmap](#roadmap)).
 >
-> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. Admin surfaces, session management, and Watch Together are not exposed in the Android clients.
+> **Current exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. Admin surfaces and session management are not exposed in the Android clients. Watch Party is experimental, behind Settings → Experimental → Watch Party (on in debug builds, off in release builds).
 
 ---
 
@@ -71,8 +71,8 @@ A condensed tour. For the exhaustive, per-feature checklist (with phone/TV cover
 - **Tracks & subtitles** — audio-track switching (incl. mid-stream), subtitle selection with **styling, position, and sync offset**, plus a subtitle suite: provider **search & download** and **AI transcription/translation** with quota tracking.
 - **System integration** — single Media3 `MediaSession` powers lock-screen / notification / headset / Assistant controls; TV adds D-pad transport, an info HUD, a chapter scrubber, and HDMI EDID-driven display-mode selection.
 
-### Watch Together
-Not currently exposed on Android phone or Android TV. Shared sync infrastructure and design notes may exist in the repository, but users cannot create or join Watch Together sessions from the apps on this branch.
+### Watch Party
+Experimental on Android phone and Android TV. Turn on Settings → Experimental → Watch Party (on by default in debug builds, off in release builds); the server must also advertise Watch Party. Host from a title's page or the profile menu, pick what everyone watches in the lobby (Host Picks or voting), and invite others with the party code (phone: share or copy the invitation link; TV: code and QR). Playback stays in sync across devices, and Back during a party opens the party panel instead of leaving. See [`docs/watch-party-implementation-plan.md`](docs/watch-party-implementation-plan.md).
 
 ### ⬇️ Offline & Downloads (phone)
 WorkManager-backed downloads of video, audiobooks, and books to public device storage (scoped `MediaStore` on API 30+), preserving original filenames/formats so other apps can discover and open them. Metadata lives in Room, local playback/read paths work without a server session, and the app can boot straight to Downloads when launched offline. Download monitoring supports subscription-style queues and **Reclaim Watched** cleanup for completed items that have been watched/read/listened.
@@ -84,7 +84,7 @@ WorkManager-backed downloads of video, audiobooks, and books to public device st
 - **Browse** with genre/rating filters, sorting, and infinite-scroll grids; **collections** are browse-only in the Android clients, while collection authoring/management remains web-only.
 - **Item detail** for movies and series includes seasons → episodes, multi-version files, cast/crew, local download controls, and phone-to-TV playback handoff.
 - **Search** scoped by media type, debounced and paginated.
-- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (profile menu + search). **Not exposed** — admin surfaces, session management, and Watch Together are not reachable app surfaces today.
+- **Requests** — live on phone and TV behind the server's `requests_enabled` flag (profile menu + search). **Experimental** — Watch Party, behind Settings → Experimental. **Not exposed** — admin surfaces and session management are not reachable app surfaces today.
 
 ### 📖 Reading & 🎧 Audio
 - **Ebook reader (phone only)** — EPUB, PDF, CBZ (comics), TXT/Markdown, FB2/FBZ, plus MOBI/AZW/AZW3 when the server can convert to EPUB; CBR and unsupported originals can be downloaded/opened externally. Themes, text size, margins, table of contents, bookmarks, and progress are supported.
@@ -238,9 +238,9 @@ Active design work lives in `docs/superpowers/specs/` with phased plans in `docs
 
 - **Audiobook polish** — the phone and TV players have chapter-aware UI, speed, bookmarks, and sleep timers. Remaining work includes skip-silence, volume normalization, rich notification polish, Android Auto, and a phone widget.
 - **Ebook reader enhancements** — in-text search, highlights, and notes, with coordinated server work where the shared contract changes.
-- **Admin management (users/sessions/logs/scans), Watch Together** — code/design work exists, but these are not currently exposed to users in the Android apps and need product/navigation decisions before being treated as live features.
+- **Admin management (users/sessions/logs/scans)** — code/design work exists, but these are not currently exposed to users in the Android apps and need product/navigation decisions before being treated as live features.
 
-Known gaps the docs track: TV has no reader/ebooks and no downloads management by design; admin surfaces, session management, and Watch Together are not accessible on either Android surface today.
+Known gaps the docs track: TV has no reader/ebooks and no downloads management by design; admin surfaces and session management are not accessible on either Android surface today, and Watch Party is experimental.
 
 ---
 

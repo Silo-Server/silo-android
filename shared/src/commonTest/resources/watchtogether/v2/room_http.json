@@ -1,0 +1,49 @@
+{
+  "room": {
+    "room_id": "9f3c1a52-3c4e-4f7b-9a0e-6b2d8c1e7a10",
+    "phase": "playing",
+    "playback_state": "playing",
+    "selection_mode": "host_pick",
+    "selection_revision": 3,
+    "selected_content_id": "movie:heat-1995",
+    "selected_file_id": "42",
+    "selected_library_id": "7",
+    "code": "K7PQ2M4X",
+    "guest_control_policy": "guest_play_pause",
+    "is_paused": false,
+    "anchor_position_seconds": 812.25,
+    "anchor_updated_at": "2026-09-24T18:02:11.482Z",
+    "generation": 11,
+    "member_count": 2,
+    "host_connected": true,
+    "self_role": "host",
+    "self_can_control_transport": true,
+    "self_can_manage_room": true,
+    "self_ignore_wait": false,
+    "attached_session_id": "ps_7d1f0c",
+    "invite_path": "/rooms/join?token=Zq8vN3kR5tW1yB6cD9fG2hJ4",
+    "members": [
+      {
+        "user_id": "12",
+        "profile_id": "p-host",
+        "display_name": "Alex",
+        "is_host": true,
+        "is_self": true,
+        "connected": true,
+        "is_ready": true,
+        "lobby_ready": false
+      },
+      {
+        "user_id": "31",
+        "profile_id": "p-guest",
+        "display_name": "Sam",
+        "is_host": false,
+        "is_self": false,
+        "connected": true,
+        "is_syncing": true,
+        "lobby_ready": false
+      }
+    ]
+  },
+  "room_access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb29tX2lkIjoiOWYzYzFhNTItM2M0ZS00ZjdiLTlhMGUtNmIyZDhjMWU3YTEwIiwidXNlcl9pZCI6MTIsInByb2ZpbGVfaWQiOiJwLWhvc3QiLCJleHAiOjE3OTA0NjEzMzF9.c2lnbmF0dXJl"
+}

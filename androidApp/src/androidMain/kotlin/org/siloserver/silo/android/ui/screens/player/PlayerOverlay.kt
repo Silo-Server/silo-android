@@ -17,18 +17,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.outlined.Bedtime
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -48,7 +47,6 @@ import org.siloserver.silo.android.ui.util.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.watchtogether.MemberRole
-import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
@@ -64,6 +62,15 @@ fun PlayerOverlay(
     state: PlayerViewModel.PlayerUiState,
     viewModel: PlayerViewModel,
     roomSnapshot: RoomSnapshot? = null,
+    // True for the whole life of a Watch Party player, even while the room
+    // snapshot is briefly unavailable, so its gates never fall back to solo.
+    inRoom: Boolean = roomSnapshot != null,
+    // Playback is held locally (audio focus, sleep timer, background): Play
+    // stays available so the viewer can resume this device.
+    roomSuspended: Boolean = false,
+    // The party's current status line (waiting, catching up, host away,
+    // reconnecting); null shows the member count.
+    roomStatus: String? = null,
     isFastForwardHoldActive: Boolean = false,
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
@@ -98,24 +105,22 @@ fun PlayerOverlay(
     var statsSheetVisible by remember { mutableStateOf(false) }
     var subtitleSearchVisible by remember { mutableStateOf(false) }
     var aiTranslateVisible by remember { mutableStateOf(false) }
-    // Host close-room confirm dialog (Watch Together): the host backing out of
-    // the player tears the room down for everyone, so confirm first.
-    var showCloseConfirm by remember { mutableStateOf(false) }
 
-    // Watch Together transport gating. Seek is host-only (the server rejects
-    // guest seeks regardless of policy), so the scrubber / skip affordance is
-    // disabled for ALL guests — even one under guest_play_pause, who keeps the
-    // play/pause affordance. Solo playback (no room) enables both.
-    val inRoom = roomSnapshot != null
+    // Watch Party transport gating. Seek is host-only (the server rejects
+    // guest seeks regardless of policy), so the scrubber, skips, chapters, and
+    // the intro pill are disabled for ALL guests — even one under
+    // guest_play_pause, who keeps play/pause. Solo playback enables both.
     val seekEnabled = !inRoom || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.Seek)
-    val playPauseEnabled = !inRoom || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
+    val playPauseEnabled = !inRoom ||
+        roomSuspended ||
+        roomTransportAuthorized(roomSnapshot, RoomTransportIntent.PlayPause)
     val isRoomHost = roomSnapshot?.selfRole == MemberRole.Host
+    // In a party an intro never skips on its own; members who may seek get
+    // the Skip pill as a room seek, and nobody else sees it (D8).
+    val introPillAllowed = !inRoom || seekEnabled
 
-    // Back intercept: a host in a room confirms the room close; everyone else
-    // (guest, or solo playback) backs out immediately.
-    val handleBack: () -> Unit = {
-        if (inRoom && isRoomHost) showCloseConfirm = true else onBack()
-    }
+    // In a party, Back opens the party panel (PlayerScreen); solo backs out.
+    val handleBack: () -> Unit = onBack
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
     // Resolved profile-wide video intervals; read at press time so a change
     // made in settings applies to the next skip without restarting playback.
@@ -156,7 +161,7 @@ fun PlayerOverlay(
     // behaves normally, because by then no pill is showing and this handler is
     // disabled. The player has no other BackHandler of its own — sheets live in
     // their own dialog windows, so an open sheet's Back never reaches here.
-    BackHandler(enabled = introSkipState.isVisible) { viewModel.onDismissIntroPrompt() }
+    BackHandler(enabled = introSkipState.isVisible && introPillAllowed) { viewModel.onDismissIntroPrompt() }
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val sleepTimerDefault by viewModel.sleepTimerDefaultMinutes.collectAsState()
     val videoGravity by viewModel.videoGravity.collectAsState()
@@ -296,10 +301,9 @@ fun PlayerOverlay(
             }
         }
 
-        // Watch Together room indicator (top-center). Member count + host-offline
-        // / waiting-barrier state, and the invite code for the host. Stays
-        // visible regardless of controls visibility so members always know the
-        // room status.
+        // Watch Party status (top-center): the room's status line, or the
+        // member count, and the code for the host. Stays visible regardless of
+        // controls visibility so members always know the room status.
         if (roomSnapshot != null) {
             Box(
                 modifier = Modifier
@@ -321,12 +325,14 @@ fun PlayerOverlay(
                         modifier = Modifier.size(14.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    val label = when {
-                        roomSnapshot.playbackState == RoomPlaybackState.Waiting -> "Waiting for members…"
-                        !roomSnapshot.hostConnected -> "${roomSnapshot.memberCount} · host offline"
-                        else -> "${roomSnapshot.memberCount} watching"
-                    }
-                    Text(text = label, color = Color.White, fontSize = 13.sp)
+                    val label = roomStatus ?: "${roomSnapshot.memberCount} watching"
+                    Text(
+                        text = label,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        modifier = Modifier.widthIn(max = 360.dp),
+                    )
                     if (isRoomHost && roomSnapshot.code.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
@@ -363,11 +369,14 @@ fun PlayerOverlay(
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
-                hasMultipleVersions = state.versions.size > 1,
+                // A party plays exactly the room's file: no version picker.
+                hasMultipleVersions = state.versions.size > 1 && !inRoom,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
                 playbackSpeed = playbackSpeed,
+                // A party plays at 1x; the saved speed is never changed from it.
+                playbackSpeedEnabled = !inRoom,
                 nextEpisode = state.nextEpisode.takeUnless { inRoom },
                 brightnessFraction = brightnessFraction,
                 seekEnabled = seekEnabled,
@@ -404,14 +413,21 @@ fun PlayerOverlay(
         // Intro skip pill (Hidden / Asking / Skipped).
         // Shares the bottom-end slot with the Up Next card; intro and credits
         // never overlap in practice, but the card wins the slot if both could show.
-        if (!state.showUpNext) {
+        if (!state.showUpNext && introPillAllowed) {
             Box(
                 modifier = bottomEndSlotModifier,
                 contentAlignment = Alignment.BottomEnd,
             ) {
                 IntroAutoSkipBanner(
                     state = introSkipState,
-                    onSelect = viewModel::onSelectIntroPrompt,
+                    onSelect = if (inRoom) {
+                        {
+                            val target = viewModel.selectIntroPromptTarget()
+                            if (target != null) gatedSeek(target)
+                        }
+                    } else {
+                        viewModel::onSelectIntroPrompt
+                    },
                     totalSeconds = viewModel.introSkipTotalSeconds,
                     countdownRun = introSkipCountdownRun,
                     timerRunning = introSkipTimerRunning,
@@ -492,26 +508,6 @@ fun PlayerOverlay(
         }
     }
 
-    // Host close-room confirmation (Watch Together). Closing tears the room
-    // down for everyone; the actual close + teardown happens in onBack (the
-    // RoomSyncController.leave(closeRoom = true) path in PlayerScreen).
-    if (showCloseConfirm) {
-        AlertDialog(
-            onDismissRequest = { showCloseConfirm = false },
-            title = { Text("Close room for everyone?") },
-            text = { Text("Leaving as host ends the Watch Together room for all members.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showCloseConfirm = false
-                    onBack()
-                }) { Text("Close room") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCloseConfirm = false }) { Text("Cancel") }
-            },
-        )
-    }
-
     // Combined audio + subtitle picker — opened from the top-bar
     // captions.bubble icon (iOS parity). Replaces the previous side-popup
     // "SettingsPanel" + individual SubtitleSelector / AudioTrackSelector
@@ -580,7 +576,7 @@ fun PlayerOverlay(
         )
     }
 
-    if (showQualitySelector) {
+    if (showQualitySelector && !inRoom) {
         QualitySelector(
             versions = state.versions,
             selectedIndex = state.selectedVersionIndex,
@@ -608,6 +604,9 @@ fun PlayerOverlay(
         onSetHdrEnabled = viewModel::onSetHdrEnabled,
         dolbyVisionEnabled = viewModel.dolbyVisionEnabled.collectAsState().value,
         onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
+        // A party hides speed (session-only 1x) and the version picker.
+        showPlaybackSpeed = !inRoom,
+        showQuality = !inRoom,
         qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
         onOpenQuality = {
             settingsSheetVisible = false
@@ -661,8 +660,9 @@ fun PlayerOverlay(
         isVisible = chaptersSheetVisible,
         chapters = state.chapters,
         position = state.position,
+        // A room seek in a party (a guest is told only the host can seek).
         onSelect = { idx ->
-            viewModel.onSeekToChapter(idx)?.let { sec -> viewModel.onSeek(sec) }
+            viewModel.onSeekToChapter(idx)?.let(onSeek)
         },
         onDismiss = { chaptersSheetVisible = false },
         tabletopPaneHeight = tabletopPaneHeight,

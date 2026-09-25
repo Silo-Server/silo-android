@@ -56,6 +56,7 @@ internal data class MobileVideoSessionAllocation(
     /** `playback.max_bitrate_kbps`; null is uncapped. */
     val maxBitrateKbps: Int? = null,
     val expectedMetadataOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    val allowAlternateVersions: Boolean? = null,
 )
 
 internal fun interface MobileVideoSessionAllocator {
@@ -202,13 +203,31 @@ internal class MobileVideoPlaybackStarter(
             val maxBitrateKbps = playerSettingsStore.maxBitrateKbpsFlow.first()
             val configuredAudioLanguage = playerSettingsStore.audioLanguageFlow
                 .first().ifBlank { null }
-            val version = request.preferredFileId
-                ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
-                ?: selectPlaybackVersion(
-                    watchDetail.versions,
-                    watchDetail.userData?.lastFileId,
-                    preferredQuality,
-                )
+            val room = request.room
+            // A room plays exactly its file; never a preferred or remembered one.
+            val version = if (room != null) {
+                watchDetail.versions.firstOrNull { it.fileId == room.fileId }
+                    ?: return failure(
+                        request.contentId,
+                        "The Watch Party's version of this title isn't available to this profile.",
+                        diagnosticsCode = PlaybackDiagnosticsCode.NO_VERSIONS,
+                    )
+            } else {
+                request.preferredFileId
+                    ?.let { id -> watchDetail.versions.firstOrNull { it.fileId == id } }
+                    ?: selectPlaybackVersion(
+                        watchDetail.versions,
+                        watchDetail.userData?.lastFileId,
+                        preferredQuality,
+                    )
+            }
+            // Room starts keep the file through every replan; renewals keep
+            // whatever the original start chose.
+            val allowAlternateVersions = if (room != null) {
+                false
+            } else {
+                request.recoveryStartParams?.allowAlternateVersions
+            }
             val persistedTrackSelection = if (
                 userItemStatePort != null &&
                 (request.audioTrackIndex == null || request.subtitleTrackIndex == null)
@@ -252,11 +271,11 @@ internal class MobileVideoPlaybackStarter(
                 capabilities = capabilities,
             )
             // Skip-back-on-resume: nudge a genuine resume back a few seconds.
-            // Suppressed for Start Over / retry (request flag) and Watch Together
+            // Suppressed for Start Over / retry (request flag) and Watch Party
             // (roomId — all participants must land on the synced anchor). The same
             // rewound value drives BOTH the server seek and the player start, so
             // a transcode cut and the player position never disagree.
-            val suppressRewind = request.suppressResumeRewind || request.roomId != null ||
+            val suppressRewind = request.suppressResumeRewind || request.roomId != null || room != null ||
                 org.siloserver.silo.model.playback.isExplicitStartOver(request.resumePositionOverride)
             // Per-profile setting (default 7; 0 = off). Read once per start.
             val rewindSeconds = playerSettingsStore.resumeRewindSecondsFlow.first().toDouble()
@@ -267,7 +286,9 @@ internal class MobileVideoPlaybackStarter(
                     rewindSeconds = rewindSeconds,
                 )
             }
-            val startRequestPosition = rewound(
+            // A room starts at the room position, including an explicit zero;
+            // personal resume never applies.
+            val startRequestPosition = room?.positionSeconds ?: rewound(
                 resolvePlaybackStartRequestPosition(
                     overridePosition = request.resumePositionOverride,
                     detailPosition = watchDetail.userData?.positionSeconds,
@@ -289,6 +310,7 @@ internal class MobileVideoPlaybackStarter(
                         startPosition = startRequestPosition,
                         maxBitrateKbps = maxBitrateKbps,
                         expectedMetadataOwner = expectedMetadataOwner,
+                        allowAlternateVersions = allowAlternateVersions,
                     ),
                 ) ?: playbackSessionManager.startVideoSessionV3(
                     fileId = version.fileId,
@@ -301,6 +323,7 @@ internal class MobileVideoPlaybackStarter(
                     startPosition = startRequestPosition,
                     maxBitrateKbps = maxBitrateKbps,
                     expectedMetadataOwner = expectedMetadataOwner,
+                    allowAlternateVersions = allowAlternateVersions,
                 )
             ) {
                 is ApiResult.Success -> r.data
@@ -322,6 +345,7 @@ internal class MobileVideoPlaybackStarter(
                     request.contentId,
                     serverTerminalUserMessage(v3Start.message),
                     diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal(v3Start.reason),
+                    terminalReason = v3Start.reason,
                 )
                 VideoSessionStartV3.ServerUpgradeRequired -> return failure(
                     request.contentId,
@@ -340,6 +364,15 @@ internal class MobileVideoPlaybackStarter(
             val effectiveFileId = resolved.mediaFileId.takeIf { it > 0 }
                 ?: readyV3.plan.effectiveMediaFileId
                 ?: version.fileId
+            if (room != null && effectiveFileId != room.fileId) {
+                stopAllocatedButUnpublishedSession(allocatedButUnpublishedSessionId)
+                allocatedButUnpublishedSessionId = null
+                return failure(
+                    request.contentId,
+                    "The server offered a different version than the Watch Party's.",
+                    diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST,
+                )
+            }
             val effectiveVersion = watchDetail.versions.firstOrNull { it.fileId == effectiveFileId }
             val resolvedDelivery = resolved.resolvedPlaybackDelivery()
             val resolvedStreamUrl = resolved.playbackPlan?.stream?.url
@@ -368,6 +401,7 @@ internal class MobileVideoPlaybackStarter(
                 qualityPreference = playbackQualityIntent,
                 startPosition = sourceStartPos,
                 clientPlaybackContext = readyV3.clientPlaybackContext,
+                allowAlternateVersions = allowAlternateVersions,
             )
             val adopted = if (sessionAdopter != null) {
                 sessionAdopter.adopt(startParams, resolved)
@@ -500,6 +534,7 @@ internal class MobileVideoPlaybackStarter(
         message: String,
         cause: Throwable? = null,
         diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        terminalReason: String? = null,
     ): VideoPlaybackStartResult.Error {
         // Log the throwable here instead of stashing it on the (unread) result —
         // the message already carries the human-facing detail.
@@ -508,6 +543,7 @@ internal class MobileVideoPlaybackStarter(
             contentId = contentId,
             message = message,
             diagnosticsCode = diagnosticsCode,
+            terminalReason = terminalReason,
         )
     }
 

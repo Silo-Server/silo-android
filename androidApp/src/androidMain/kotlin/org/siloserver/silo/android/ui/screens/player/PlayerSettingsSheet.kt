@@ -111,6 +111,10 @@ fun PlayerSettingsSheet(
     onSetHdrEnabled: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onSetDolbyVisionEnabled: (Boolean) -> Unit,
+    // False in a Watch Party: speed is a session-only 1x and the version
+    // picker is off, since the room plays exactly its own file.
+    showPlaybackSpeed: Boolean = true,
+    showQuality: Boolean = true,
     // Root-list values. The gear now reports the same three things the
     // toolbar buttons open, so the menu answers "what am I watching with?"
     // without opening anything.
@@ -172,11 +176,13 @@ fun PlayerSettingsSheet(
             ) {
                 when (route) {
                     SettingsRoute.Root -> {
-                        ValueRow(
-                            label = "Quality",
-                            value = qualityLabel,
-                            onClick = { leaveFor(onOpenQuality) },
-                        )
+                        if (showQuality) {
+                            ValueRow(
+                                label = "Quality",
+                                value = qualityLabel,
+                                onClick = { leaveFor(onOpenQuality) },
+                            )
+                        }
                         ValueRow(
                             label = "Subtitles",
                             value = subtitleLabel,
@@ -195,11 +201,13 @@ fun PlayerSettingsSheet(
                     }
 
                     SettingsRoute.PlaybackOptions -> {
-                        ValueRow(
-                            label = "Speed",
-                            value = "${formatPlaybackSpeed(playbackSpeed)}×",
-                            onClick = { routeOrdinal = SettingsRoute.Speed.ordinal },
-                        )
+                        if (showPlaybackSpeed) {
+                            ValueRow(
+                                label = "Speed",
+                                value = "${formatPlaybackSpeed(playbackSpeed)}×",
+                                onClick = { routeOrdinal = SettingsRoute.Speed.ordinal },
+                            )
+                        }
                         ValueRow(
                             label = "Picture size",
                             value = pictureSizeLabel(videoGravity),
@@ -252,7 +260,7 @@ fun PlayerSettingsSheet(
                         )
                     }
 
-                    SettingsRoute.Speed -> {
+                    SettingsRoute.Speed -> if (showPlaybackSpeed) {
                         listOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0).forEach { value ->
                             CheckRow(
                                 label = "${formatPlaybackSpeed(value)}×",

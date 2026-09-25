@@ -78,6 +78,8 @@
                 <data android:host="item" />
                 <data android:host="play" />
                 <data android:host="downloads" />
+                <!-- Watch Party invitation: silo://watch-party?server=…&token=… -->
+                <data android:host="watch-party" />
             </intent-filter>
         </activity>
 

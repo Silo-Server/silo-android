@@ -5,11 +5,12 @@ A detailed inventory of what the Android **phone** and **TV** clients do today. 
 - ✅ implemented
 - 🟡 partial / basic ("bones-level") — works but slated for improvement
 - 🚧 planned (design/plan exists, not built)
+- 🧪 experimental — built, behind Settings → Experimental
 - ➖ not present on this platform (by design or not yet built)
 
 File pointers are repository-relative.
 
-> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. The admin stats dashboard is live for acting admins via Settings. The richer admin screens (users/sessions/logs/scans) and Watch Together remain inaccessible.
+> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. The admin stats dashboard is live for acting admins via Settings. The richer admin screens (users/sessions/logs/scans) remain inaccessible. Watch Party is experimental, behind Settings → Experimental → Watch Party.
 
 ---
 
@@ -46,15 +47,18 @@ File pointers are repository-relative.
 | Landscape-on-play (auto-rotate aware) | 🚧 | ➖ | Implemented then reverted; pending re-apply |
 | Picture-in-Picture | ✅ | ✅ | `SiloPictureInPictureCoordinator`; enters on home-press during playback |
 
-## Watch Together (not exposed)
+## Watch Party (experimental)
+
+Shown only while Settings → Experimental → Watch Party is on (default on in debug builds, off in release builds) and the server advertises Watch Party.
 
 | Feature | Phone | TV | Notes |
 |---|:---:|:---:|---|
-| Create / join / leave room | 🚧 | 🚧 | Code/design artifacts exist, but users cannot access this flow |
-| Clock sync (NTP-style) + drift correction | 🚧 | 🚧 | Shared infrastructure exists but is not a live feature |
-| Host vs guest transport gating | 🚧 | 🚧 | Not reachable from production navigation |
-| Room snapshots / member list / suggestions / voting | 🚧 | 🚧 | Not reachable from production navigation |
-| Graceful reconnect + host-closed auto-exit | 🚧 | 🚧 | Not reachable from production navigation |
+| Hub: host, join by code, Return to Party, Rejoin | 🧪 | 🧪 | Profile menu; detail page party action |
+| Lobby: staged title, Host Picks or voting, lobby Ready, suggestions | 🧪 | 🧪 | Only the room's phase opens the player |
+| Invitations | 🧪 | 🧪 | Phone: share/copy link, `silo://watch-party`; TV: code and QR |
+| Synced playback (server clock, rate convergence, catch-up) | 🧪 | 🧪 | Shared `RoomPlaybackBinding` |
+| Party panel on Back: Leave, Return everyone to lobby, End | 🧪 | 🧪 | Host-only actions per role |
+| Reconnect, socket rotation, same-profile replacement | 🧪 | 🧪 | Room socket owned by `RoomSession` |
 
 ## Offline & Downloads
 
@@ -153,6 +157,6 @@ File pointers are repository-relative.
 
 **TV** is a 10-foot, D-pad client focused on browsing and playback, including audiobooks, calendar, the subtitle suite, person detail, and system Watch Next integration. It intentionally omits ebooks/reading and downloads management.
 
-**Not currently exposed on either Android surface:** full admin management (users/sessions/logs/scans) and Watch Together. The admin **stats dashboard** is exposed (Settings → Admin, acting admins only).
+**Not currently exposed on either Android surface:** full admin management (users/sessions/logs/scans). **Experimental:** Watch Party, behind Settings → Experimental. The admin **stats dashboard** is exposed (Settings → Admin, acting admins only).
 
 Both apps share the same networking, auth, repositories, most ViewModels, and the entire Media3 playback/capability stack.

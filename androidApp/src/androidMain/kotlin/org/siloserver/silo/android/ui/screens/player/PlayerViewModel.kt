@@ -108,6 +108,9 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
+import org.siloserver.silo.watchtogether.RoomPlayerObservation
+import org.siloserver.silo.watchtogether.RoomPlayerState
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -129,6 +132,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -303,6 +307,7 @@ class PlayerViewModel(
         val initialSubtitleTrackIndex: Int?,
         val resumePositionOverride: Double?,
         val suppressResumeRewind: Boolean,
+        val room: WatchPartyPlaybackContext? = null,
     )
 
     internal fun currentExternalRouteTarget(): MobilePlayerRouteTarget? =
@@ -544,7 +549,7 @@ class PlayerViewModel(
     /**
      * Unconditional seek channel for room-driven corrective seeks. The normal
      * position mirror in PlayerScreen applies a 2.0s deadband (to avoid feedback
-     * loops between playback-progress updates and user scrubs), but Watch Together
+     * loops between playback-progress updates and user scrubs), but Watch Party
      * corrective seeks can be as small as the engine's 0.35s drift threshold and
      * MUST always reach the player. PlayerScreen collects this and calls
      * `mediaController.seekTo` with no deadband. See [seekImmediate].
@@ -631,7 +636,7 @@ class PlayerViewModel(
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
-     * double-tap, Watch Together skips): the profile-wide values on a
+     * double-tap, Watch Party skips): the profile-wide values on a
      * revision-9 server, otherwise the phone's pre-revision-9 10s/10s. Read at
      * press time, so a settings change applies to the next skip mid-playback.
      */
@@ -908,6 +913,7 @@ class PlayerViewModel(
                         suppressResumeRewind = true,
                         preserveRouteIntent = true,
                         recoveryStartParams = params,
+                        room = roomRestartContext(renewal.positionSeconds),
                     )
                 }
             }
@@ -931,6 +937,9 @@ class PlayerViewModel(
         // (which is a *toggle* and would inadvertently resume a paused player).
         sleepTimer.configure {
             _uiState.update { it.copy(isPaused = true) }
+            // In a Watch Party the timer pauses only this device; the room
+            // keeps playing and hears nothing until the viewer resumes.
+            if (inRoom) beginRoomSuspension(RoomSuspensionReason.SleepTimer)
         }
 
         viewModelScope.launch {
@@ -991,7 +1000,7 @@ class PlayerViewModel(
         // internal auto-advance and recovery positions must not become route
         // intent.
         routeResumePositionSeconds: Double? = null,
-        // True for Watch Together (the synced anchor must land exactly — no
+        // True for Watch Party (the synced anchor must land exactly — no
         // skip-back nudge). The request's roomId is always null on mobile, so WT
         // can't be inferred from it the way the TV starter does.
         suppressResumeRewind: Boolean = false,
@@ -1004,7 +1013,32 @@ class PlayerViewModel(
         libraryId: Int? = browseLibraryId,
         // Exact capability/context snapshot used only for a 404 renewal.
         recoveryStartParams: StartParams? = null,
+        // Watch Party: the room's exact file and position. Defaults to the
+        // current room context so every in-place restart keeps the room's
+        // file, never plays a download, and starts paused.
+        room: WatchPartyPlaybackContext? = currentRoomContext,
     ) {
+        if (room != null &&
+            (contentId != room.contentId || preferredFileId != room.fileId || libraryId != room.libraryId)
+        ) {
+            // A room plays exactly its own content and file; no caller can override that.
+            loadContent(
+                contentId = room.contentId,
+                preferredFileId = room.fileId,
+                preferredQuality = preferredQuality,
+                initialAudioTrackIndex = initialAudioTrackIndex,
+                initialSubtitleTrackIndex = initialSubtitleTrackIndex,
+                resumePositionOverride = resumePositionOverride,
+                routeResumePositionSeconds = routeResumePositionSeconds,
+                suppressResumeRewind = suppressResumeRewind,
+                force = force,
+                preserveRouteIntent = preserveRouteIntent,
+                libraryId = room.libraryId,
+                recoveryStartParams = recoveryStartParams,
+                room = room,
+            )
+            return
+        }
         browseLibraryId = libraryId
         aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
@@ -1040,7 +1074,9 @@ class PlayerViewModel(
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
             resumePositionOverride = resumePositionOverride,
             suppressResumeRewind = suppressResumeRewind,
+            room = room,
         )
+        if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
         // New item: re-arm the once-per-episode auto-advance trigger. (The
@@ -1074,8 +1110,9 @@ class PlayerViewModel(
                 // this contentId AND its bytes are still on disk, hand the
                 // player a file:// URI without touching the server at all.
                 // Title + duration are best-effort — we attempt the watch
-                // detail fetch but tolerate failure.
-                val localPlaybackStarted = tryLocalPlayback(
+                // detail fetch but tolerate failure. A Watch Party always
+                // streams the room's file, so it never plays a download.
+                val localPlaybackStarted = room == null && tryLocalPlayback(
                     contentId = contentId,
                     preferredFileId = preferredFileId,
                     resumePositionOverride = resumePositionOverride,
@@ -1102,13 +1139,14 @@ class PlayerViewModel(
                         contentId = contentId,
                         preferredFileId = preferredFileId,
                         preferredQualityOverride = effectivePreferredQuality,
-                        roomId = null,
+                        roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
                         subtitleTrackIndex = initialSubtitleTrackIndex,
                         suppressResumeRewind = suppressResumeRewind,
                         force = force,
                         recoveryStartParams = recoveryStartParams,
+                        room = room,
                     ),
                 )) {
                     is VideoPlayerUiState.Ready -> {
@@ -1134,6 +1172,7 @@ class PlayerViewModel(
                             isSessionRenewal = recoveryStartParams != null,
                             loadOwner = loadOwner,
                             watchOwner = readyWatchOwner,
+                            room = room,
                         )
                         unpublishedReadySessionId = null
                     }
@@ -1147,6 +1186,11 @@ class PlayerViewModel(
                                     showUpNext = false,
                                     isNextUpTransitioning = false,
                                 )
+                            }
+                            // The room decides whether another file is tried;
+                            // this device never picks one itself.
+                            if (room != null) {
+                                publishRoomRefusal(room, room.fileId, playbackState.terminalReason)
                             }
                         }
                     }
@@ -1189,6 +1233,7 @@ class PlayerViewModel(
         loadJob = newLoadJob
         newLoadJob.invokeOnCompletion {
             if (loadJob === newLoadJob) loadJob = null
+            refreshRoomObservation()
         }
     }
 
@@ -1223,6 +1268,7 @@ class PlayerViewModel(
             suppressResumeRewind = args.suppressResumeRewind,
             force = force,
             preserveRouteIntent = true,
+            room = args.room,
         )
     }
 
@@ -1247,6 +1293,7 @@ class PlayerViewModel(
         isSessionRenewal: Boolean,
         loadOwner: MobilePlayerLoadOwner,
         watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
+        room: WatchPartyPlaybackContext? = null,
     ) {
         val watchMetadata = ReadyWatchMetadata(
             catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
@@ -1415,8 +1462,9 @@ class PlayerViewModel(
                 // not declare one; neither catalog nor Media3 may substitute it.
                 duration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
                 serverDuration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
-                isPlaying = true,
-                isPaused = false,
+                // A Watch Party prepares paused; only an accepted room command plays.
+                isPlaying = room == null,
+                isPaused = room != null,
                 subtitleTracks = mountedSubtitles,
                 audioTracks = version?.audioTracks ?: emptyList(),
                 selectedAudioIndex = selectedAudioOrdinal,
@@ -1501,6 +1549,10 @@ class PlayerViewModel(
     }
 
     private fun startIntroAutoSkipObserver() {
+        // In a Watch Party an intro never skips on its own: the mode is pinned
+        // to Ask, so the controller only offers the pill and the screen sends
+        // its Skip as a room seek (or hides it from members who cannot seek).
+        val introMode = if (inRoom) flowOf(IntroSkipMode.ASK) else playerSettingsStore.introSkipModeFlow
         introObserverJob?.cancel()
         introObserverJob = introAutoSkipController.observe(
             position = _uiState
@@ -1509,7 +1561,7 @@ class PlayerViewModel(
             introRange = _uiState
                 .map { it.intro }
                 .distinctUntilChanged(),
-            mode = playerSettingsStore.introSkipModeFlow,
+            mode = introMode,
             introKey = _uiState
                 .map { state ->
                     state.intro?.let { intro ->
@@ -1880,6 +1932,21 @@ class PlayerViewModel(
                         val effectiveFileId = decision.session.mediaFileId.takeIf { it > 0 }
                             ?: decision.plan.effectiveMediaFileId
                             ?: fileId
+                        val roomFileId = currentRoomContext?.fileId
+                        if (roomFileId != null && effectiveFileId != roomFileId) {
+                            // The room pins its file through every replan; a plan
+                            // for another file is refused, never played.
+                            playbackSessionManager.abandonActiveVideoSessionAsync(decision.session.sessionId)
+                            nextUpTransitionGate.cancel()
+                            _uiState.update {
+                                it.copy(
+                                    error = "The server offered a different version than the Watch Party's.",
+                                    isLoading = false,
+                                    isBuffering = false,
+                                )
+                            }
+                            return@launch
+                        }
                         val catalogVersionIndex = state.versions
                             .indexOfFirst { it.fileId == effectiveFileId }
                         val effectiveVersions = if (catalogVersionIndex >= 0) {
@@ -2055,6 +2122,7 @@ class PlayerViewModel(
                                 streamUrl = null,
                             )
                         }
+                        currentRoomContext?.let { room -> publishRoomRefusal(room, fileId, decision.reason) }
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         nextUpTransitionGate.cancel()
@@ -2078,6 +2146,7 @@ class PlayerViewModel(
             // queue; only a completed flight re-drives a queued user selection.
             job.invokeOnCompletion { cause ->
                 if (cause == null) redriveQueuedInvalidationReplan()
+                refreshRoomObservation()
             }
         }
     }
@@ -2211,6 +2280,7 @@ class PlayerViewModel(
             awaitingMediaMountGeneration = null
             subtitleRefreshGate.reset()
             positionReportsBlockedForPendingLoad = false
+            if (inRoom) resetRoomEngineToMount()
             pendingNativeSeekAfterMount?.let { (targetSeconds, immediate) ->
                 pendingNativeSeekAfterMount = null
                 // The load may have resolved to an online V3 plan after the
@@ -2336,6 +2406,7 @@ class PlayerViewModel(
         // reporter does nothing on the offline-download path (no session). Throttled
         // by content-time delta so it fires ~every 10s of playback, not per tick.
         maybeRecordPosition(positionSec, _uiState.value.duration)
+        refreshRoomObservation()
     }
 
     private var lastRecordedKey: String? = null
@@ -2374,6 +2445,7 @@ class PlayerViewModel(
      * otherwise a buffering glitch flips the pause icon and defeats scheduleControlsHide.
      */
     fun onPlayingChanged(isPlaying: Boolean) {
+        if (inRoom) roomEngineIsPlaying = isPlaying
         _uiState.update { it.copy(isPlaying = isPlaying) }
         if (isPlaying && !_uiState.value.isPaused && _uiState.value.showControls) {
             scheduleControlsHide()
@@ -2491,11 +2563,10 @@ class PlayerViewModel(
     }
 
     /**
-     * Immediate, deadband-free seek for room-driven corrective seeks
-     * (RoomSyncController.applyDecision). Updates `uiState.position` like
-     * [onSeek] AND emits on [immediateSeeks] so PlayerScreen drives the
-     * MediaController unconditionally — bypassing the 2.0s position-mirror
-     * deadband that would otherwise swallow sub-2s sync corrections.
+     * Immediate, deadband-free seek for remote and Watch Party seeks
+     * ([applyRoomSeek]). Updates `uiState.position` like [onSeek] AND emits on
+     * [immediateSeeks] so PlayerScreen drives the MediaController
+     * unconditionally, without counting as the viewer's own interaction.
      */
     fun seekImmediate(position: Double) {
         cancelPendingQuickSkip()
@@ -2826,11 +2897,16 @@ class PlayerViewModel(
                             request = request,
                             recoveryGeneration = recoveryGeneration,
                         )
-                        is VideoSessionStartV3.Terminal -> publishSeekFailure(
-                            request,
-                            recoveryGeneration,
-                            "Unable to seek (${decision.reason}): ${decision.message}",
-                        )
+                        is VideoSessionStartV3.Terminal -> {
+                            publishSeekFailure(
+                                request,
+                                recoveryGeneration,
+                                "Unable to seek (${decision.reason}): ${decision.message}",
+                            )
+                            currentRoomContext?.let { room ->
+                                publishRoomRefusal(room, room.fileId, decision.reason)
+                            }
+                        }
                         VideoSessionStartV3.ServerUpgradeRequired -> publishSeekFailure(
                             request,
                             recoveryGeneration,
@@ -2870,6 +2946,7 @@ class PlayerViewModel(
                 // can run now that the in-flight guard is released.
                 redriveQueuedInvalidationReplan()
             }
+            refreshRoomObservation()
         }
     }
 
@@ -3023,12 +3100,301 @@ class PlayerViewModel(
 
     // ---- Remote-control adapters (PlaybackRealtimeController calls these) ----
     // Thin wrappers over existing transport; no new playback logic.
-    // The VM's start request always carries roomId=null, so WT membership is
-    // set by the screen (which owns roomId) for remote-transport gating.
+    // The screen marks Watch Party membership from its route, so the room
+    // gates hold before the room's playback context has arrived.
     private var inWatchTogetherRoom = false
     fun setInWatchTogetherRoom(value: Boolean) { inWatchTogetherRoom = value }
-    /** True while in a Watch Together room — remote transport is gated (the room is authoritative). */
-    val remoteTransportSuppressed: Boolean get() = inWatchTogetherRoom
+    /** True in a Watch Party: the room, not this device, decides transport. */
+    val remoteTransportSuppressed: Boolean get() = inRoom
+
+    // ---- Watch Party ------------------------------------------------------------
+    //
+    // The room binding (WatchPartyPlayback / RoomPlaybackBinding) decides
+    // attach, reports, readiness, corrections and pacing. This ViewModel only
+    // observes the player truthfully and applies what the binding asks,
+    // through paths that never count as the viewer's own intent.
+
+    /** A server refusal of the room's file, for the room to decide on a fallback. */
+    data class RoomRefusal(
+        val context: WatchPartyPlaybackContext,
+        val fileId: Int,
+        val reason: String,
+    )
+
+    /** A local reason playback is held. Nothing is reported to the room while any lasts. */
+    enum class RoomSuspensionReason { AudioFocus, TransientAudioFocus, SleepTimer, Background }
+
+    private var currentRoomContext: WatchPartyPlaybackContext? = null
+    private val inRoom: Boolean get() = inWatchTogetherRoom || currentRoomContext != null
+    private val roomSuspensions = mutableSetOf<RoomSuspensionReason>()
+    private val _roomSuspended = MutableStateFlow(false)
+
+    /** Playback is held for a local reason; tapping play resumes this device only. */
+    val roomSuspended: StateFlow<Boolean> = _roomSuspended.asStateFlow()
+    private val _roomCorrectionRate = MutableStateFlow<Double?>(null)
+
+    /** The binding's temporary catch-up rate; null is exactly 1x. Never a user speed. */
+    val roomCorrectionRate: StateFlow<Double?> = _roomCorrectionRate.asStateFlow()
+    private val _roomRefusal = MutableStateFlow<RoomRefusal?>(null)
+
+    /** The latest server refusal of the room's file, until the screen takes it to the room. */
+    val roomRefusal: StateFlow<RoomRefusal?> = _roomRefusal.asStateFlow()
+    private val _roomQualityChanges = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Emits when this viewer's quality changed, so the binding restarts its reload pacing. */
+    val roomQualityChanges: SharedFlow<Unit> = _roomQualityChanges.asSharedFlow()
+    private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
+
+    /** What the player is actually doing, for the room binding. */
+    val roomObservation: StateFlow<RoomPlayerObservation> = _roomObservation.asStateFlow()
+    private var roomObservationJob: Job? = null
+
+    // Media3 facts. Player-timeline seconds unless the name says source.
+    private var roomEnginePlayerSec = 0.0
+    private var roomEngineBufferedPlayerSec = 0.0
+    private var roomEngineSourceSec = 0.0
+    private var roomEnginePlayWhenReady = false
+    private var roomEngineIsPlaying = false
+    private var roomEngineState = RoomPlayerState.Idle
+
+    // The session the current room epoch committed. Cleared at every room
+    // load so the binding never attaches the outgoing session under the new
+    // selection revision; set again when a session is published.
+    private var roomObservedSessionId: String? = null
+    private var roomLastUiSessionId: String? = null
+
+    // Quality chosen during this room epoch (the lower-quality offer).
+    private var sessionQualityOverride: String? = null
+
+    /**
+     * Prepares the room's playback epoch. A context for the epoch already
+     * loading or playing (the screen collecting again after recreation) is a
+     * no-op; a new selection revision or file restarts playback.
+     */
+    fun startRoomPlayback(context: WatchPartyPlaybackContext) {
+        val current = currentRoomContext
+        if (current != null &&
+            current.roomId == context.roomId &&
+            current.selectionRevision == context.selectionRevision &&
+            current.fileId == context.fileId
+        ) {
+            return
+        }
+        loadContent(
+            contentId = context.contentId,
+            preferredFileId = context.fileId,
+            libraryId = context.libraryId,
+            room = context,
+        )
+    }
+
+    private fun beginRoomLoad(room: WatchPartyPlaybackContext) {
+        val previous = currentRoomContext
+        if (previous == null ||
+            previous.roomId != room.roomId ||
+            previous.selectionRevision != room.selectionRevision
+        ) {
+            sessionQualityOverride = null
+        }
+        currentRoomContext = room
+        _roomRefusal.value = null
+        roomObservedSessionId = null
+        roomLastUiSessionId = _uiState.value.sessionId
+        // Room playback always prepares paused, and the outgoing media stops
+        // now rather than playing on while the new file loads.
+        _uiState.update { it.copy(isPaused = true) }
+        if (roomObservationJob == null) {
+            roomObservationJob = viewModelScope.launch {
+                _uiState.collect { refreshRoomObservation() }
+            }
+        }
+        refreshRoomObservation()
+    }
+
+    /** The room context for an in-place restart at [sourcePositionSeconds]: same epoch and file, paused. */
+    private fun roomRestartContext(sourcePositionSeconds: Double?): WatchPartyPlaybackContext? {
+        val room = currentRoomContext ?: return null
+        val position = sourcePositionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return room
+        return room.copy(positionSeconds = position, paused = true)
+    }
+
+    private fun publishRoomRefusal(room: WatchPartyPlaybackContext, fileId: Int, reason: String?) {
+        val normalized = reason?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        _roomRefusal.value = RoomRefusal(room, fileId, normalized)
+    }
+
+    /** The screen has taken [refusal] to the room. */
+    fun consumeRoomRefusal(refusal: RoomRefusal) {
+        _roomRefusal.compareAndSet(refusal, null)
+    }
+
+    /** Applies a room seek. Never user intent: no pass-out reset, no Up Next dismissal. */
+    fun applyRoomSeek(sourceSeconds: Double) {
+        if (!inRoom || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return
+        // A restart in flight starts at the room position and re-attaches,
+        // which brings a fresh command. Seeking the outgoing session now would
+        // only re-anchor media that is being replaced.
+        if (loadJob?.isActive == true) {
+            Log.i(TAG, "room_seek action=ignore_during_load target_source_seconds=$sourceSeconds")
+            return
+        }
+        seekImmediate(sourceSeconds)
+    }
+
+    /** Applies the room's play or pause. A local suspension holds a Play until the viewer resumes. */
+    fun applyRoomPlaying(playing: Boolean) {
+        if (!inRoom) return
+        if (playing && roomSuspensions.any { it != RoomSuspensionReason.TransientAudioFocus }) return
+        _uiState.update { it.copy(isPaused = !playing) }
+        if (playing && _uiState.value.showControls) scheduleControlsHide()
+    }
+
+    fun setRoomCorrectionRate(rate: Double?) {
+        _roomCorrectionRate.value = rate?.takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    /** Whether reaching [sourceSeconds] needs no new media. False whenever that is uncertain. */
+    fun isRoomPositionBuffered(sourceSeconds: Double): Boolean {
+        if (!inRoom) return false
+        val state = _uiState.value
+        if (roomMediaTransitioning(state) || roomEngineState == RoomPlayerState.Idle) return false
+        return roomTargetBufferedLocally(
+            timeline = state.playbackPlan?.timeline,
+            targetSourceSeconds = sourceSeconds,
+            playerPositionSeconds = roomEnginePlayerSec,
+            bufferedPlayerSeconds = roomEngineBufferedPlayerSec,
+        )
+    }
+
+    /** A Media3 sample while in a room: position, buffer, and play state as the engine reports them. */
+    fun onRoomEngineSample(
+        positionMs: Long,
+        bufferedPositionMs: Long,
+        playWhenReady: Boolean,
+        isPlaying: Boolean,
+        playbackState: Int,
+    ) {
+        if (!inRoom) return
+        roomEnginePlayWhenReady = playWhenReady
+        roomEngineIsPlaying = isPlaying
+        roomEngineState = roomPlayerState(playbackState)
+        // Samples from media that is being replaced say nothing about the
+        // stream the room will see.
+        if (positionMs >= 0L && !positionReportsBlockedForPendingLoad && awaitingMediaMountGeneration == null) {
+            val state = _uiState.value
+            val playerSec = positionMs / 1000.0
+            val serverDuration = state.serverDuration.takeIf { it > 0.0 }
+            roomEnginePlayerSec = playerSec
+            roomEngineBufferedPlayerSec = bufferedPositionMs.coerceAtLeast(0L) / 1000.0
+            // onPositionChanged's source mapping, without the presentation
+            // guard that holds the scrubber on a pending seek target.
+            roomEngineSourceSec = (state.playbackPlan?.timeline?.sourcePositionForPlayer(playerSec) ?: playerSec)
+                .let { position -> serverDuration?.let { position.coerceAtMost(it) } ?: position }
+        }
+        refreshRoomObservation()
+    }
+
+    private fun resetRoomEngineToMount() {
+        val state = _uiState.value
+        roomEnginePlayerSec = state.startPosition
+        roomEngineBufferedPlayerSec = state.startPosition
+        roomEngineSourceSec = state.position
+        refreshRoomObservation()
+    }
+
+    /** Source seconds for a position on the mounted player's timeline. */
+    fun sourceSecondsForPlayerMs(positionMs: Long): Double {
+        val playerSec = positionMs.coerceAtLeast(0L) / 1000.0
+        return _uiState.value.playbackPlan?.timeline?.sourcePositionForPlayer(playerSec) ?: playerSec
+    }
+
+    /** True while media is loading or mounting, when Media3 callbacks describe outgoing media. */
+    fun isRoomMediaMounting(): Boolean =
+        loadJob?.isActive == true || awaitingMediaMountGeneration != null || positionReportsBlockedForPendingLoad
+
+    fun beginRoomSuspension(reason: RoomSuspensionReason) {
+        if (!inRoom) return
+        roomSuspensions += reason
+        // Media3 lifts a transient focus loss by itself, so only the other
+        // reasons hold the local play state.
+        if (reason != RoomSuspensionReason.TransientAudioFocus) {
+            _uiState.update { it.copy(isPaused = true) }
+        }
+        refreshRoomObservation()
+    }
+
+    fun endRoomSuspension(reason: RoomSuspensionReason) {
+        if (!roomSuspensions.remove(reason)) return
+        refreshRoomObservation()
+    }
+
+    /**
+     * The viewer asked to play while playback was held locally. The held
+     * reasons clear. With [resumeLocally] this device plays again at once and
+     * the binding re-syncs it to the room; no room request is sent.
+     */
+    fun endRoomSuspensions(resumeLocally: Boolean) {
+        roomSuspensions.removeAll { it != RoomSuspensionReason.TransientAudioFocus }
+        if (resumeLocally) _uiState.update { it.copy(isPaused = false) }
+        refreshRoomObservation()
+    }
+
+    /** One rung down the current file's quality ladder, or null when there is none. */
+    fun lowerRoomQualityLabel(): String? {
+        if (!inRoom) return null
+        return lowerQualityRung(
+            available = _uiState.value.playbackPlan?.availableQualities.orEmpty(),
+            selectedLabel = currentMobileQualityPreference(),
+        )?.label
+    }
+
+    /** Accepts the lower-quality offer: replans the same file one rung down. */
+    fun lowerRoomQuality(): Boolean {
+        val label = lowerRoomQualityLabel() ?: return false
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+        mobileSubtitleTransactions.selectQuality(label)
+        return true
+    }
+
+    private fun noteRoomQualityCommitted(committed: String?) {
+        if (committed == null || committed == currentMobileQualityPreference()) return
+        sessionQualityOverride = committed
+        _roomQualityChanges.tryEmit(Unit)
+    }
+
+    private fun roomMediaTransitioning(state: PlayerUiState): Boolean =
+        state.isLoading ||
+            loadJob?.isActive == true ||
+            recoveryJob?.isActive == true ||
+            serverSeekRecoveryInFlight ||
+            activeSeekTargetSec != null ||
+            awaitingMediaMountGeneration != null ||
+            positionReportsBlockedForPendingLoad
+
+    private fun refreshRoomObservation() {
+        if (!inRoom) return
+        _roomSuspended.value = roomSuspensions.isNotEmpty()
+        val room = currentRoomContext ?: return
+        val state = _uiState.value
+        if (state.sessionId != roomLastUiSessionId) {
+            roomLastUiSessionId = state.sessionId
+            roomObservedSessionId = state.sessionId
+        }
+        _roomObservation.value = RoomPlayerObservation(
+            sessionId = roomObservedSessionId,
+            selectionRevision = room.selectionRevision,
+            sourcePositionSeconds = roomEngineSourceSec,
+            durationSeconds = state.duration,
+            playWhenReady = roomEnginePlayWhenReady,
+            isPlaying = roomEngineIsPlaying,
+            state = roomEngineState,
+            seekPending = roomMediaTransitioning(state),
+            suspended = roomSuspensions.isNotEmpty(),
+        )
+    }
 
     fun remotePause() { _uiState.update { it.copy(isPaused = true) } }
     fun remoteUnpause() { _uiState.update { it.copy(isPaused = false) } }
@@ -3145,7 +3511,7 @@ class PlayerViewModel(
         )
 
     private fun currentMobileQualityPreference(): String? =
-        routeIntentState.current?.quality ?: lastLoadArgs?.preferredQuality
+        sessionQualityOverride ?: routeIntentState.current?.quality ?: lastLoadArgs?.preferredQuality
 
     private fun applyMobileSubtitleSnapshot(snapshot: MobileSubtitleTransactionSnapshot) {
         _uiState.update { state ->
@@ -3174,6 +3540,7 @@ class PlayerViewModel(
         snapshot.failureMessage?.let {
             showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
         }
+        if (inRoom) noteRoomQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -3191,6 +3558,10 @@ class PlayerViewModel(
         val effectiveFileId = ready.session.mediaFileId.takeIf { it > 0 }
             ?: ready.plan.effectiveMediaFileId
             ?: predecessorFileId
+        // A Watch Party pins its file; a replan onto another one is abandoned.
+        if (currentRoomContext?.fileId?.let { it != effectiveFileId } == true) {
+            return MobileSubtitleAdoptionResult.Superseded
+        }
         val catalogVersionIndex = before.versions.indexOfFirst { it.fileId == effectiveFileId }
         val effectiveVersions = if (catalogVersionIndex >= 0) {
             before.versions
@@ -3312,6 +3683,7 @@ class PlayerViewModel(
             resumePositionOverride = state.position,
             suppressResumeRewind = true,
             preserveRouteIntent = true,
+            room = roomRestartContext(state.position),
         )
         Log.w(TAG, "Subtitle committed-playback adoption failed: $detail")
     }
@@ -3937,6 +4309,13 @@ class PlayerViewModel(
     }
 
     /**
+     * The intro pill's Select in a Watch Party: resolves the pill and returns
+     * where to go, so the screen can send it as a room seek instead of moving
+     * this player alone.
+     */
+    fun selectIntroPromptTarget(): Double? = introAutoSkipController.select()
+
+    /**
      * System back while the intro pill is showing: take it down and resolve the
      * intro without moving playback. True when a pill was actually dismissed,
      * so the caller consumes the press only then.
@@ -3981,6 +4360,8 @@ class PlayerViewModel(
     /** On Deck tap — an explicit choice: reset the pass-out streak and load
      *  the picked item in place (resuming its saved position, iOS parity). */
     fun playOnDeckItemNow(contentId: String) {
+        // Only the room chooses what a Watch Party plays.
+        if (inRoom) return
         autoPlayGuard.recordUserAction()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
@@ -4057,7 +4438,7 @@ class PlayerViewModel(
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
         if (nextUpTransitionGate.isActive) return
-        // Watch Together is authoritative — never auto-advance a room member.
+        // Watch Party is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
         if (autoAdvanceHandled) {
             if (videoEnded) {
@@ -4329,6 +4710,8 @@ class PlayerViewModel(
      * flag, not by a sentinel.
      */
     private fun startVersionPlayback(index: Int, isRecovery: Boolean = false) {
+        // A Watch Party plays exactly the room's file; switching versions is refused.
+        if (inRoom) return
         val state = _uiState.value
         val version = state.versions.getOrNull(index) ?: return
         if (!isRecovery && index == state.selectedVersionIndex) return

@@ -12,9 +12,12 @@ Start with the root [README](../README.md) for architecture/build instructions a
 - Android TV navigation is Home, media-type tabs from server libraries, For You,
   and Calendar, plus search and profile actions.
 - Requests is live on phone and TV, server-gated by `requests_enabled`.
-- Admin surfaces, session management, and Watch Together are not exposed in
-  either Android app. Device pairing stays. Treat their old routes, repositories,
-  tests, and design plans as inactive until a product decision exposes them.
+- Admin surfaces and session management are not exposed in either Android app.
+  Device pairing stays. Treat their old routes, repositories, tests, and design
+  plans as inactive until a product decision exposes them.
+- Watch Party is experimental on phone and TV, behind Settings → Experimental →
+  Watch Party (on in debug builds, off in release builds) and the server's room
+  capabilities. See [`watch-party-implementation-plan.md`](watch-party-implementation-plan.md).
 - All server calls use API v2. See [`api-v2/android-migration-status.md`](api-v2/android-migration-status.md).
 - Phone downloads preserve original filenames/formats in public storage so other
   apps can open downloaded videos, audiobooks, and ebooks.

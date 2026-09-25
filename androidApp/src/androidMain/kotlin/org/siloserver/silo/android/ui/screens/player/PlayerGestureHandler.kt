@@ -67,7 +67,7 @@ fun PlayerGestureHandler(
     onToggleControls: () -> Unit,
     onSkipForward: () -> Unit,
     onSkipBackward: () -> Unit,
-    // When false (a Watch Together guest without seek authority), the outer
+    // When false (a Watch Party guest without seek authority), the outer
     // double-tap skip bands fall through to a controls toggle rather than
     // firing a gated no-op skip and flashing a "+10s" badge that lies about a
     // position that never moves. Mirrors PlayerControls' seekEnabled gating.
