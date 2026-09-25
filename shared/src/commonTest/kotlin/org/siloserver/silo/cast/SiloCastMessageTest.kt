@@ -269,4 +269,25 @@ class SiloCastMessageTest {
             SiloCastMessage.knownTypes,
         )
     }
+
+    @Test
+    fun resumeHelloIsOptionalOnTheWire() {
+        val hello = SiloCastHello(
+            role = SiloCastPeerRole.Phone,
+            deviceName = "Pixel 9",
+            deviceId = "android-abc",
+            serverId = "srv-1",
+            supportedVersions = listOf(2),
+        )
+        assertWireEquals(
+            """{"type":"hello","v":2,"hello":{"role":"phone","deviceName":"Pixel 9","deviceId":"android-abc","serverId":"srv-1","supportedVersions":[2],"resume":true}}""",
+            SiloCastMessage.Hello(hello.copy(resume = true)),
+        )
+        // Older peers omit it; it must read as an ordinary, user-chosen connection.
+        val decoded = json.decodeFromString(
+            SiloCastMessage.serializer(),
+            """{"type":"hello","v":2,"hello":{"role":"phone","deviceName":"iPhone","deviceId":"ios-1","serverId":"srv-1","supportedVersions":[1,2]}}""",
+        )
+        assertNull(assertIs<SiloCastMessage.Hello>(decoded).hello.resume)
+    }
 }
