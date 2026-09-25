@@ -579,9 +579,11 @@ fun TvAppNavigation(
     val homeInStack = remember(currentEntry) {
         runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
     }
-    val signedInForeground = homeInStack &&
-        lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+    // Signed-out routes win: adding a server pushes its setup and sign-in
+    // over Home, and the TV isn't signed in to that server yet.
     val signedOut = currentRoute in SignedOutRoutes
+    val signedInForeground = homeInStack && !signedOut &&
+        lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
     LaunchedEffect(signedInForeground, signedOut) {
         when {
             signedInForeground -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
