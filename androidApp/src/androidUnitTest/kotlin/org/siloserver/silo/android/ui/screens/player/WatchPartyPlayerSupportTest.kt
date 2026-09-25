@@ -37,13 +37,13 @@ class WatchPartyPlayerSupportTest {
     }
 
     @Test
-    fun seeksThisScreenIssuedAreNotExternalAndAreConsumedOnce() {
+    fun seeksThisScreenIssuedStayOursUntilTheyExpire() {
         var now = 0L
         val tracker = IssuedSeekTracker { now }
         tracker.note(30_000L)
         assertFalse(tracker.isExternal(30_200L))
-        // The same landing again is someone else's seek.
-        assertTrue(tracker.isExternal(30_200L))
+        // The session reports the controller's seek a second time; still ours.
+        assertFalse(tracker.isExternal(30_200L))
         // A headset skip that lands nowhere near an issued target.
         tracker.note(30_000L)
         assertTrue(tracker.isExternal(40_000L))

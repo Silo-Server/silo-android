@@ -55,13 +55,16 @@ internal class IssuedSeekTracker(
         while (issued.size > MAX_TRACKED) issued.removeFirst()
     }
 
-    /** True when a seek landing at [positionMs] was not one this screen issued. A match is consumed. */
+    /**
+     * True when a seek landing at [positionMs] was not one this screen issued.
+     * A match is not consumed: a MediaController reports its own seek at once
+     * and the session reports the same seek again, and a guest that took the
+     * second report for someone else's seek undid it, which the room then
+     * redid, in a loop. Issued targets simply expire.
+     */
     fun isExternal(positionMs: Long): Boolean {
         prune()
-        val match = issued.indexOfFirst { abs(it.targetMs - positionMs) <= TOLERANCE_MS }
-        if (match < 0) return true
-        issued.removeAt(match)
-        return false
+        return issued.none { abs(it.targetMs - positionMs) <= TOLERANCE_MS }
     }
 
     private fun prune() {

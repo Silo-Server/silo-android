@@ -97,9 +97,20 @@ class WatchPartyPlayback(
     fun onExternalSeek(fromSeconds: Double, toSeconds: Double, restore: (Double) -> Unit): RoomTransportResult {
         if (abs(toSeconds - fromSeconds) < EXTERNAL_SEEK_NOISE_SECONDS) return RoomTransportResult.Ignored
         val result = binding.requestSeek(toSeconds)
-        if (result != RoomTransportResult.Sent) restore(fromSeconds)
+        if (result != RoomTransportResult.Sent) {
+            // At most one undo per window: if a room seek is ever mistaken for
+            // an outside one, undoing it again and again would fight the room
+            // seek by seek. The room's next correction settles the position.
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRestoreAtMs >= RESTORE_WINDOW_MS) {
+                lastRestoreAtMs = now
+                restore(fromSeconds)
+            }
+        }
         return result
     }
+
+    private var lastRestoreAtMs = Long.MIN_VALUE / 2
 
     /** Leave this device's membership. For a host, the room ends two minutes later unless they rejoin. */
     fun leave() {
@@ -135,5 +146,8 @@ class WatchPartyPlayback(
     private companion object {
         /** Seek adjustments smaller than this are the player settling, not a request. */
         const val EXTERNAL_SEEK_NOISE_SECONDS = 1.0
+
+        /** Minimum time between two undos of outside seeks. */
+        const val RESTORE_WINDOW_MS = 2_000L
     }
 }
