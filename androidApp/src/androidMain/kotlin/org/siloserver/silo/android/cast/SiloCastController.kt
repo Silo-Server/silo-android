@@ -945,15 +945,21 @@ class SiloCastController(
                 clock.ingest(reconciled, now)
             }
             is SiloCastMessage.Error -> when {
-                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
-                // Another phone took the TV while ours was away; a reconnect
-                // must not take it back. The TV closes the session next.
+                // Another phone took the TV while ours was away; neither a
+                // reconnect nor a later auto-resume may take it back. The TV
+                // closes the session next.
                 message.error.code == CONTROLLER_ACTIVE -> {
-                    suppressReconnect = true
                     lastTargetStore.clear()
-                    closeConnection()
-                    _state.update { it.copy(error = message.error.message) }
+                    if (sessionIsAutoResumed && !remoteScreenVisible) {
+                        // Nothing on screen to explain it to; let go quietly.
+                        quietDisconnect()
+                    } else {
+                        suppressReconnect = true
+                        closeConnection()
+                        _state.update { it.copy(error = message.error.message) }
+                    }
                 }
+                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
                 else -> _state.update { it.copy(error = message.error.message, isLaunching = false) }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
