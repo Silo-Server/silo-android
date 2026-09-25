@@ -784,6 +784,9 @@ fun TvAppNavigation(
                 },
                 onSignOut = {
                     scope.launch {
+                        // Off before the server logout, which can be slow: a
+                        // signing-out TV mustn't take phones meanwhile.
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
                         authRepository.logout()
                         watchNextSeeder.clear()
                         navController.navigate(TvRoute.ServerSetup.route) {
@@ -861,6 +864,9 @@ fun TvAppNavigation(
                 },
                 onSignedOut = {
                     scope.launch {
+                        // Off before the server logout, which can be slow: a
+                        // signing-out TV mustn't take phones meanwhile.
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
                         // Full sign-out teardown — parity with the Settings and
                         // ProfileSelection sign-out paths. Clearing Watch Next
                         // alone left the tokens, profileId, and server session

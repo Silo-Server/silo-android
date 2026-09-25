@@ -64,6 +64,7 @@ class TvSettingsViewModel(
     private val profileSettings: ProfileSettingsController,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
     private val seekIntervalStore: SeekIntervalStore? = null,
+    private val siloCastReceiver: org.siloserver.silo.tv.cast.TvSiloCastReceiver? = null,
     audiobookSettingsStore: AudiobookSettingsStore? = null,
 ) : ViewModel() {
 
@@ -685,6 +686,9 @@ class TvSettingsViewModel(
 
     fun onSignOut(context: Context) {
         viewModelScope.launch {
+            // Off before the server logout, which can be slow: a signing-out TV
+            // mustn't take phones meanwhile.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver?.stop() }
             playerSettingsStore.flushPendingDeviceSettings()
             authRepository.logout()
             profileRepository.clearProfile()

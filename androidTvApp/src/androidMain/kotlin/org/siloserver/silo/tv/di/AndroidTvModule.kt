@@ -546,6 +546,7 @@ val androidTvModule = module {
             tvLibraryScopeStore = getOrNull(),
             seekIntervalStore = get(),
             audiobookSettingsStore = get(),
+            siloCastReceiver = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }
