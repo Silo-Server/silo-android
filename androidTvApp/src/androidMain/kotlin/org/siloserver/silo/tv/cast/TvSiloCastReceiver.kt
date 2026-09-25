@@ -48,7 +48,9 @@ import org.siloserver.silo.network.ServerRegistry
  * silo-apple's TVControlReceiver:
  *
  * - Transport is TLS-PSK ([SiloCastTls]) over the advertised `_silocast._tcp`
- *   port; newest controller wins the single session slot.
+ *   port. A connection only takes the single session slot once its hello
+ *   arrives (newest wins), so a bare socket or a stalled handshake can't evict
+ *   the phone in use, and a `resume` hello never displaces a different phone.
  * - The TV sends `hello` immediately after the TLS handshake. The controller
  *   must reply within [AUTH_GRACE_MS]. A same-server controller is authorized
  *   directly; a different-server launch must first complete the temporary
@@ -89,9 +91,9 @@ class TvSiloCastReceiver(
     private val _standbyState = MutableStateFlow<StandbyState?>(null)
     val standbyState: StateFlow<StandbyState?> = _standbyState.asStateFlow()
 
-    /** Bumped whenever the active-controller slot is force-cleared (new accept,
-     *  server switch, stop). Handshakes started before the bump must not
-     *  register — they belong to the previous epoch. */
+    /** Bumped whenever the active-controller slot is force-cleared (server
+     *  switch, disconnect, stop). Connections accepted before the bump must not
+     *  be promoted — they belong to the previous epoch. */
     private var sessionEpoch: Long = 0
     private var activePlayer: ActivePlayer? = null
     private val volumeTracker = SiloCastVolumeTracker()
@@ -254,17 +256,13 @@ class TvSiloCastReceiver(
                 Log.i(TAG, "SiloCast listener stopped")
                 return
             }
-            closePreviousController()
             val ownerScope = scope ?: run {
                 runCatching { client.close() }
                 return
             }
-            val sessionJob = ownerScope.launch {
-                runControllerSession(client)
-            }
-            // runControllerSession registers the ControllerSession itself once
-            // the TLS handshake succeeds; a handshake failure just ends the job.
-            sessionJob.invokeOnCompletion { }
+            // The phone in use keeps the session until this connection's hello
+            // arrives; runControllerSession promotes it then.
+            ownerScope.launch { runControllerSession(client) }
         }
     }
 
@@ -278,31 +276,15 @@ class TvSiloCastReceiver(
             runCatching { client.close() }
             return
         }
-        val session = ControllerSession(socket = client, tls = tls, json = json)
-        val registered = synchronized(this) {
-            if (sessionEpoch != epochAtAccept) {
-                // A server switch / newer controller / stop() happened while
-                // this handshake was in flight — this session lost.
-                false
-            } else {
-                // Newest wins: a session that finished handshaking after us in
-                // the same epoch would have replaced us here; close any loser.
-                activeSession?.close()
-                activeSession = session
-                true
-            }
-        }
-        if (!registered) {
-            session.close()
-            return
-        }
+        val session = ControllerSession(socket = client, tls = tls, json = json, epoch = epochAtAccept)
         DiagnosticsCastLogger.event("TV cast controller connected")
         try {
             coroutineScope {
                 session.job = coroutineContext[Job]
 
                 // TV speaks first with identity only. Playback state is private
-                // until the controller's hello has been authorized.
+                // until the controller's hello has been authorized, and the
+                // connection stays pending (not the active session) until then.
                 session.send(SiloCastMessage.Hello(makeHello()))
 
                 val stateJob = launch {
@@ -367,8 +349,19 @@ class TvSiloCastReceiver(
 
     /** @return false to end the session's read loop. */
     private suspend fun handleMessage(session: ControllerSession, message: SiloCastMessage): Boolean {
+        // Until its hello promotes it, a connection may only introduce itself
+        // and keep the link alive; a replaced one is already on its way out.
+        if (activeSession !== session &&
+            message !is SiloCastMessage.Hello &&
+            message !is SiloCastMessage.Ping &&
+            message !is SiloCastMessage.Pong &&
+            message !is SiloCastMessage.Close
+        ) {
+            return true
+        }
         when (message) {
             is SiloCastMessage.Hello -> {
+                if (session.didReceiveHello) return true
                 val negotiated = SiloCastProtocol.negotiatedVersion(message.hello.supportedVersions)
                 if (message.hello.role != SiloCastPeerRole.Phone || negotiated != SiloCastProtocol.version) {
                     session.send(
@@ -387,6 +380,26 @@ class TvSiloCastReceiver(
                 session.controllerDeviceId = message.hello.deviceId
                 session.controllerDeviceName = message.hello.deviceName
                 session.controllerServerId = message.hello.serverId
+                when (val promotion = promote(session, message.hello)) {
+                    Promotion.Promoted -> Unit
+                    Promotion.Stale -> {
+                        session.goodbyeAndClose()
+                        return false
+                    }
+                    is Promotion.Busy -> {
+                        DiagnosticsCastLogger.event("TV cast resume refused: another controller is active")
+                        session.send(
+                            SiloCastMessage.Error(
+                                SiloCastError(
+                                    code = CONTROLLER_ACTIVE,
+                                    message = "${promotion.controllerName ?: "Another phone"} is using this TV.",
+                                ),
+                            ),
+                        )
+                        session.goodbyeAndClose()
+                        return false
+                    }
+                }
                 val activeServerId = identityManager.activeIdentity?.serverId
                     ?: serverRegistry.activeServerId.value
                 val offered = message.hello.serverId
@@ -622,6 +635,39 @@ class TvSiloCastReceiver(
         }
     }
 
+    private sealed interface Promotion {
+        data object Promoted : Promotion
+        data object Stale : Promotion
+        data class Busy(val controllerName: String?) : Promotion
+    }
+
+    /**
+     * Makes [session] the active controller now that its hello names it. A
+     * `resume` hello (a phone reconnecting or silently resuming, not a person
+     * picking this TV) is refused while a different phone holds the session.
+     */
+    private fun promote(session: ControllerSession, hello: SiloCastHello): Promotion {
+        val displaced = synchronized(this) {
+            // A server switch, disconnect, or stop() since this connection
+            // arrived: it belongs to the previous epoch.
+            if (sessionEpoch != session.epoch) return Promotion.Stale
+            val current = activeSession
+            if (current === session) return Promotion.Promoted
+            if (hello.resume == true && current != null && current.controllerDeviceId != hello.deviceId) {
+                return Promotion.Busy(current.controllerDeviceName)
+            }
+            activeSession = session
+            if (current != null) _standbyState.value = null
+            current
+        }
+        if (displaced != null) {
+            DiagnosticsCastLogger.event("TV cast controller replaced")
+            // Goodbye off the monitor, so the phone doesn't reconnect.
+            scope?.launch { displaced.goodbyeAndClose() } ?: displaced.close()
+        }
+        return Promotion.Promoted
+    }
+
     private fun refreshStandbyState() {
         val session = activeSession
         _standbyState.value = if (session != null && session.isAuthorized && activePlayer == null) {
@@ -717,6 +763,8 @@ class TvSiloCastReceiver(
         val socket: Socket,
         val tls: SiloCastTlsSession,
         private val json: Json,
+        /** [sessionEpoch] when accepted; promotion requires it to be current. */
+        val epoch: Long,
     ) {
         val writeMutex = Mutex()
 
@@ -802,5 +850,8 @@ class TvSiloCastReceiver(
         const val GOODBYE_TIMEOUT_MS = 1_000L
         const val READY_TIMEOUT_MS = 60_000L
         const val IDENTITY_END_GRACE_MS = 2_000L
+
+        /** Refusal of a `resume` hello while another phone holds the TV. */
+        const val CONTROLLER_ACTIVE = "controller_active"
     }
 }

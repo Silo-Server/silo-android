@@ -171,6 +171,11 @@ class SiloCastController(
     @Volatile
     private var sessionIsAutoResumed = false
 
+    // We let go of an auto-resumed session on our own (quietDisconnect); a
+    // `close` the TV sends meanwhile is not the TV ending it on us.
+    @Volatile
+    private var quietlyDisconnecting = false
+
     @Volatile
     private var remoteScreenVisible = false
 
@@ -517,15 +522,10 @@ class SiloCastController(
                 }
                 val found = match ?: return@launch
                 Log.i(TAG, "SiloCast auto-resume probe found playing TV ${found.name}")
-                runCatching { ensureConnected(found) }.onFailure {
+                runCatching { ensureConnected(found, origin = ConnectOrigin.AutoResume) }.onFailure {
                     _state.update { state -> state.copy(isAutoResuming = false, isConnecting = false) }
                     return@launch
                 }
-                // Flag AFTER connecting: ensureConnected's teardown of the
-                // previous session resets both auto-resume markers, so setting
-                // them earlier would be silently undone mid-connect.
-                sessionIsAutoResumed = true
-                _state.update { it.copy(isAutoResuming = true) }
                 // Safety net: the TV sends state right after hello; if nothing
                 // confirms playback shortly, let go quietly.
                 delay(AUTO_RESUME_CONFIRM_TIMEOUT_MS)
@@ -561,6 +561,7 @@ class SiloCastController(
     private suspend fun ensureConnected(
         target: SiloCastTarget,
         allowCrossServer: Boolean = false,
+        origin: ConnectOrigin = ConnectOrigin.User,
     ) = connectionMutex.withLock {
         val activeServerId = serverRegistry.activeEntry.value?.id
             ?: error("Choose a server before controlling a TV.")
@@ -584,7 +585,7 @@ class SiloCastController(
                 error = null,
             )
         }
-        openSessionLocked(target)
+        openSessionLocked(target, origin)
         if (targetsActiveServer) {
             lastTargetStore.save(
                 SiloCastPersistedTarget(deviceId = target.deviceId, name = target.name, serverId = target.serverId),
@@ -597,7 +598,7 @@ class SiloCastController(
      *  hold [connectionMutex] and have torn the previous transport down.
      *  State only flips to connected after the hello is on the wire, so a
      *  half-open failure never leaves a zombie session behind. */
-    private suspend fun openSessionLocked(target: SiloCastTarget) {
+    private suspend fun openSessionLocked(target: SiloCastTarget, origin: ConnectOrigin) {
         // Captured from inside the withContext block: if this coroutine is
         // cancelled while the blocking connect is in flight, withContext
         // discards the block's result and throws — the catch below is then
@@ -612,7 +613,15 @@ class SiloCastController(
             output = newSession.output
             negotiatedVersion = CompletableDeferred()
             missedHeartbeats = 0
-            send(SiloCastMessage.Hello(makeHello()))
+            quietlyDisconnecting = false
+            if (origin == ConnectOrigin.AutoResume) {
+                // Before the hello: the TV's first reply may already be a
+                // refusal or an idle state, and both are read against this.
+                sessionIsAutoResumed = true
+                _state.update { it.copy(isAutoResuming = true) }
+            }
+            // Only a person picking the TV may take it from another phone.
+            send(SiloCastMessage.Hello(makeHello(resume = origin != ConnectOrigin.User)))
             // Publish the queue token only after Hello is fully written, so a
             // control can never overtake the session handshake.
             controlTransport = ControlTransport(newSession.output)
@@ -637,7 +646,7 @@ class SiloCastController(
         }
     }
 
-    private fun makeHello(): SiloCastHello {
+    private fun makeHello(resume: Boolean): SiloCastHello {
         val server = serverRegistry.activeEntry.value
         return SiloCastHello(
             role = SiloCastPeerRole.Phone,
@@ -646,6 +655,7 @@ class SiloCastController(
             serverId = server?.id,
             serverName = server?.displayName,
             supportedVersions = SiloCastProtocol.supportedVersions,
+            resume = resume.takeIf { it },
         )
     }
 
@@ -828,7 +838,7 @@ class SiloCastController(
                             val reconnected = connectionMutex.withLock {
                                 if (session != null) return@launch
                                 try {
-                                    openSessionLocked(target)
+                                    openSessionLocked(target, ConnectOrigin.Reconnect)
                                     true
                                 } catch (e: CancellationException) {
                                     throw e
@@ -868,6 +878,7 @@ class SiloCastController(
      *  target, so a later foreground probe may still resume. */
     private fun quietDisconnect() {
         suppressReconnect = true
+        quietlyDisconnecting = true
         sessionIsAutoResumed = false
         scope.launch {
             runCatching { send(SiloCastMessage.Close()) }
@@ -933,12 +944,17 @@ class SiloCastController(
                 }
                 clock.ingest(reconciled, now)
             }
-            is SiloCastMessage.Error -> {
-                if (sessionIsAutoResumed && !remoteScreenVisible) {
-                    quietDisconnect()
-                } else {
-                    _state.update { it.copy(error = message.error.message, isLaunching = false) }
+            is SiloCastMessage.Error -> when {
+                sessionIsAutoResumed && !remoteScreenVisible -> quietDisconnect()
+                // Another phone took the TV while ours was away; a reconnect
+                // must not take it back. The TV closes the session next.
+                message.error.code == CONTROLLER_ACTIVE -> {
+                    suppressReconnect = true
+                    lastTargetStore.clear()
+                    closeConnection()
+                    _state.update { it.copy(error = message.error.message) }
                 }
+                else -> _state.update { it.copy(error = message.error.message, isLaunching = false) }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
             is SiloCastMessage.Pong -> missedHeartbeats = 0
@@ -946,9 +962,10 @@ class SiloCastController(
                 // The TV ended the session deliberately (Disconnect Remote, or
                 // another controller took over). Respect that intent: no
                 // reconnect, and forget the persisted target so no later
-                // foreground probe silently reattaches.
+                // foreground probe silently reattaches. (A resume the TV
+                // refused was let go quietly already, and keeps it, as on iOS.)
                 suppressReconnect = true
-                lastTargetStore.clear()
+                if (!quietlyDisconnecting) lastTargetStore.clear()
                 closeConnection()
             }
             else -> Unit
@@ -1084,5 +1101,11 @@ class SiloCastController(
         const val AUTO_RESUME_CONFIRM_TIMEOUT_MS = 6_000L
         const val VOLUME_STEPS = 16.0
         const val SILENT_VOLUME = 0.001
+
+        /** The TV refused a reconnect or resume because another phone holds it. */
+        const val CONTROLLER_ACTIVE = "controller_active"
     }
+
+    /** Who opened a connection; only [User] may take a TV from another phone. */
+    private enum class ConnectOrigin { User, Reconnect, AutoResume }
 }

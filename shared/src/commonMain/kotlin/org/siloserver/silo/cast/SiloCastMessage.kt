@@ -156,6 +156,13 @@ data class SiloCastHello(
     val serverId: String? = null,
     val serverName: String? = null,
     val supportedVersions: List<Int>,
+    /**
+     * Set by a phone reconnecting or silently resuming, as opposed to a person
+     * picking this TV. A receiver refuses such a connection while another
+     * phone holds the session, so a background retry never takes the TV from
+     * whoever is using it. Optional on the wire: older peers omit and ignore it.
+     */
+    val resume: Boolean? = null,
 )
 
 @Serializable
