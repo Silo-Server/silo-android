@@ -52,11 +52,10 @@ import kotlinx.serialization.json.put
  *
  * Retry classes follow each operation's server `RetrySafety`. The three
  * non-retryable operations (start, select, promote) are sent with
- * [singleAttempt] so no authentication refresh replays them. OkHttp's own
- * connection-level retry can still resend a request whose connection dropped
- * mid-exchange; the server treats an immediate identical start, select, or
- * promote as a no-op, and the repository reconciles uncertain outcomes by
- * reading the room instead of retrying.
+ * [singleAttempt] so no authentication refresh replays them, and on
+ * [nonReplayingClient], whose engine never resends a request after its
+ * connection fails (OkHttp otherwise does on a reused connection). The
+ * repository reconciles such uncertain outcomes by reading the room.
  *
  * Suggestion mutations return only a receipt. Reading the list afterwards is
  * the caller's reconciliation, so a failed read cannot turn a successful vote
@@ -158,6 +157,7 @@ class DefaultWatchTogetherApi(
     private val client: HttpClient,
     private val gate: ApiV2Gate,
     private val tokens: TokenManager? = null,
+    private val nonReplayingClient: HttpClient = client,
 ) : WatchTogetherApi {
 
     override suspend fun capabilities(scope: AuthScopeSnapshot): ApiResult<WatchTogetherCapabilitiesV2> =
@@ -212,7 +212,7 @@ class DefaultWatchTogetherApi(
 
     override suspend fun startPlayback(roomId: String, scope: AuthScopeSnapshot): ApiResult<RoomResponse> =
         roomCall(roomId, scope) {
-            client.post("${room(roomId)}/playback/start") { pin(scope); singleAttempt() }
+            nonReplayingClient.post("${room(roomId)}/playback/start") { pin(scope); singleAttempt() }
         }
 
     override suspend fun stopPlayback(roomId: String, scope: AuthScopeSnapshot): ApiResult<RoomResponse> =
@@ -235,7 +235,7 @@ class DefaultWatchTogetherApi(
         request: SetSelectionRequest,
         scope: AuthScopeSnapshot,
     ): ApiResult<RoomResponse> = roomCall(roomId, scope) {
-        client.put("${room(roomId)}/selection") {
+        nonReplayingClient.put("${room(roomId)}/selection") {
             pin(scope)
             singleAttempt()
             contentType(ContentType.Application.Json)
@@ -332,7 +332,7 @@ class DefaultWatchTogetherApi(
         request: PromoteSuggestionRequest,
         scope: AuthScopeSnapshot,
     ): ApiResult<RoomResponse> = roomCall(roomId, scope) {
-        client.post("${room(roomId)}/suggestions/promote") {
+        nonReplayingClient.post("${room(roomId)}/suggestions/promote") {
             pin(scope, roomToken)
             singleAttempt()
             contentType(ContentType.Application.Json)
