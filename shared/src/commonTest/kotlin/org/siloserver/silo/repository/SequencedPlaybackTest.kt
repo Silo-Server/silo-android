@@ -503,6 +503,36 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun uncertainRemotePlaybackStartIsSettledBeforeTheNextOne() = runTest {
+        val identity = remotePlaybackIdentity()
+        val starts = mutableListOf<String>(); val deletes = mutableListOf<String>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> {
+                val attempt = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString())
+                    .jsonObject["playback_attempt_id"]!!.jsonPrimitive.content
+                starts += attempt
+                // The first start's reply is lost; its replay and the next start succeed.
+                if (starts.size == 1) throw IllegalStateException("lost reply")
+                reply(adoptedDecision.replace("session-1", "session-$attempt"), HttpStatusCode.Created)
+            }
+            "/api/v2/playback/session-attempt-1" -> {
+                deletes += "attempt-1"
+                reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.NetworkError>(runtime.start(request()))
+            // The phone sends another title: the lost start is replayed and stopped first.
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(listOf("attempt-1", "attempt-1", "attempt-2"), starts)
+            assertEquals(listOf("attempt-1"), deletes)
+        } finally { c.close() }
+    }
+
     @Test fun endedRemotePlaybackIdentityCannotActForItsAttempt() = runTest {
         val identity = remotePlaybackIdentity()
         val store = Store()

@@ -191,13 +191,16 @@ class SequencedPlayback(
             if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
             val live = authorities.snapshotDurableLoginAuthority()
             guard()
-            suspend fun unresolved() = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
+            // A temporary identity fences (and settles) only the attempts it admitted itself.
+            val temporaryLoginId = current.credentialGenerationId?.let { TEMPORARY_LOGIN_PREFIX + it }
+            val fenceLoginId = temporaryLoginId ?: live?.loginId
+            suspend fun unresolved() = load().any { it.needsRecovery() && it.loginId == fenceLoginId &&
                 it.serverId == current.serverId && it.profileId == current.profileId }
             guard()
             if (unresolved()) {
                 // Settle the earlier attempt first (replay an uncertain start, then stop it) so a
                 // crashed or rejected session never needs a manual recovery step before playing again.
-                val settled = try { recoverLocked() }
+                val settled = try { if (temporaryLoginId != null) recoverTemporaryLocked(current, temporaryLoginId) else recoverLocked() }
                     catch (e: CancellationException) { throw e }
                     catch (e: IdentityChanged) { throw e }
                     catch (_: Exception) { failure("playback_storage", "Playback recovery storage is unavailable.") }
@@ -469,6 +472,28 @@ class SequencedPlayback(
 
     /** Explicit recovery revalidates installation, canonical account, saved login and profile. Never autoplay. */
     suspend fun recover(): ApiResult<Unit> = mutex.withLock { recoverLocked() }
+
+    /**
+     * [recoverLocked] for a temporary remote-playback identity, which has no saved login to
+     * recover under: settles the attempts this identity admitted (replay an uncertain start,
+     * then stop), using its own scope.
+     */
+    private suspend fun recoverTemporaryLocked(current: AuthScopeSnapshot, loginId: String): ApiResult<Unit> {
+        for (entry in load().filter { it.needsRecovery() && it.loginId == loginId &&
+            it.serverId == current.serverId && it.profileId == current.profileId }) {
+            if (scope(entry) == null) continue
+            if (entry.sessionId == null) {
+                when (val startResult = sendStart(entry, current, adoptForPlayer = false)) {
+                    is ApiResult.Success -> Unit
+                    is ApiResult.Error -> return startResult
+                    is ApiResult.NetworkError -> return startResult
+                }
+            }
+            val result = stopEntry(load().first { it.attemptId == entry.attemptId })
+            if (result !is ApiResult.Success) return result
+        }
+        return ApiResult.Success(Unit)
+    }
 
     private suspend fun recoverLocked(): ApiResult<Unit> {
         val live = authorities.snapshotDurableLoginAuthority()
