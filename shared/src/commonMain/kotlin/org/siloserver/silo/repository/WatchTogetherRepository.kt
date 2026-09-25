@@ -35,6 +35,7 @@ import org.siloserver.silo.watchtogether.RoomClockEstimate
 import org.siloserver.silo.watchtogether.RoomClockEstimator
 import org.siloserver.silo.watchtogether.RoomDeliveryEcho
 import org.siloserver.silo.watchtogether.RoomDeliveryLatch
+import org.siloserver.silo.watchtogether.RoomPlaybackRoom
 import org.siloserver.silo.watchtogether.RoomProof
 import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.siloserver.silo.watchtogether.RoomSessionRepository
@@ -166,7 +167,7 @@ class WatchTogetherRepository(
     private val wallClockMs: () -> Long = ::wallClockMillis,
     private val timing: WatchPartyTiming = WatchPartyTiming(),
     private val random: Random = Random.Default,
-) : RoomSessionRepository, WatchTogetherEntryGateway {
+) : RoomSessionRepository, WatchTogetherEntryGateway, RoomPlaybackRoom {
     /** Successful delivery state follows the process connection, not a UI controller. */
     val roomDeliveryLatch = RoomDeliveryLatch()
 
@@ -218,17 +219,17 @@ class WatchTogetherRepository(
      * suggestions it voted for. Socket broadcasts never carry personal votes.
      */
     val personalVotesKnown: StateFlow<Boolean> = _personalVotesKnown.asStateFlow()
-    val roomDeliveryEcho: StateFlow<RoomDeliveryEcho?> = _roomDeliveryEcho.asStateFlow()
-    val connectionState: StateFlow<WatchTogetherConnectionState> = _connectionState.asStateFlow()
+    override val roomDeliveryEcho: StateFlow<RoomDeliveryEcho?> = _roomDeliveryEcho.asStateFlow()
+    override val connectionState: StateFlow<WatchTogetherConnectionState> = _connectionState.asStateFlow()
 
     /**
      * The newest accepted transport command. Commands supersede each other, so
      * the binding needs only the latest; a slow collector can never lose it.
      */
-    val latestTransportCommand: StateFlow<ScheduledTransportCommand?> = _latestCommand.asStateFlow()
+    override val latestTransportCommand: StateFlow<ScheduledTransportCommand?> = _latestCommand.asStateFlow()
 
     /** Server clock estimate, sampled on the room socket from the moment it opens. */
-    val clock: StateFlow<RoomClockEstimate> = _clock.asStateFlow()
+    override val clock: StateFlow<RoomClockEstimate> = _clock.asStateFlow()
 
     /** The action in flight, if any. */
     val pendingAction: StateFlow<WatchPartyPendingAction?> = _pendingAction.asStateFlow()
@@ -240,7 +241,7 @@ class WatchTogetherRepository(
     private var transportAuthorization: RoomTransportAuthorization? = null
 
     /** One atomic read; never pair independently-read snapshot/generation values. */
-    fun currentTransportAuthorization(): RoomTransportAuthorization? = transportAuthorization
+    override fun currentTransportAuthorization(): RoomTransportAuthorization? = transportAuthorization
 
     /**
      * Why the engagement ended — terminal only (see [WatchPartyEndReason]).
@@ -721,7 +722,7 @@ class WatchTogetherRepository(
             }
         }
 
-    suspend fun attachSession(sessionId: String): Boolean =
+    override suspend fun attachSession(sessionId: String): Boolean =
         currentWritableRealtime()?.attachSession(sessionId) ?: false
 
     suspend fun transportRequest(
@@ -736,7 +737,7 @@ class WatchTogetherRepository(
      * lock that guards room replacement, so a delayed UI coroutine cannot send
      * an old room's command through a replacement room or changed policy.
      */
-    suspend fun transportRequestForAuthorization(
+    override suspend fun transportRequestForAuthorization(
         authorization: RoomTransportAuthorization,
         intent: RoomTransportIntent,
         action: String,
@@ -773,22 +774,22 @@ class WatchTogetherRepository(
         )
     }
 
-    suspend fun stateReport(
+    override suspend fun stateReport(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
-        commandId: String? = null,
-        isReady: Boolean = false,
+        commandId: String?,
+        isReady: Boolean,
     ): Boolean = currentWritableRealtime()?.stateReport(sessionId, positionSeconds, isPaused, commandId, isReady) ?: false
 
-    suspend fun ready(
+    override suspend fun ready(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
-        commandId: String? = null,
+        commandId: String?,
     ): Boolean = currentWritableRealtime()?.ready(sessionId, positionSeconds, isPaused, commandId) ?: false
 
-    suspend fun buffering(
+    override suspend fun buffering(
         sessionId: String,
         positionSeconds: Double,
         isPaused: Boolean,
@@ -1129,7 +1130,7 @@ class WatchTogetherRepository(
      * Check the local wall clock against the monotonic clock. A jump resets
      * the server-time estimate so no timing work uses a stale offset.
      */
-    suspend fun checkClockContinuity(): RoomClockEstimate = stateMutex.withLock {
+    override suspend fun checkClockContinuity(): RoomClockEstimate = stateMutex.withLock {
         if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) _clock.value = clockEstimator.estimate
         _clock.value
     }
