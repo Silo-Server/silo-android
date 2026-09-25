@@ -181,7 +181,13 @@ fun SiloCastRemoteScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
+                    state.isReconnecting -> RemoteReconnecting(
+                        targetName = state.connectedTarget?.name,
+                        onStop = {
+                            controller.disconnect()
+                            onBack()
+                        },
+                    )
                     playback == null -> RemoteConnecting(
                         targetName = state.connectedTarget?.name,
                         // A fully torn-down session (TV disconnected, reconnect
@@ -416,6 +422,33 @@ private fun RemoteStatus(title: String, showSpinner: Boolean) {
     ) {
         if (showSpinner) CircularProgressIndicator(color = RemoteOnSurface)
         Text(title, style = MaterialTheme.typography.titleMedium, color = RemoteSecondary)
+    }
+}
+
+/** Mirrors Apple's reconnecting view, including its way out. */
+@Composable
+private fun RemoteReconnecting(targetName: String?, onStop: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        modifier = Modifier.padding(32.dp),
+    ) {
+        CircularProgressIndicator(color = RemoteOnSurface)
+        Text(
+            "Reconnecting to ${targetName ?: "Silo TV"}…",
+            style = MaterialTheme.typography.titleMedium,
+            color = RemoteSecondary,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            "Make sure the TV is on and on the same network.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = RemoteSecondary,
+            textAlign = TextAlign.Center,
+        )
+        OutlinedButton(onClick = onStop) {
+            Text("Stop Reconnecting")
+        }
     }
 }
 
