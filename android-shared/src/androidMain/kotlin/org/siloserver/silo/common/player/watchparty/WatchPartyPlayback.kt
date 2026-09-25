@@ -98,17 +98,22 @@ class WatchPartyPlayback(
     fun onExternalSeek(fromSeconds: Double, toSeconds: Double, restore: (Double) -> Unit): RoomTransportResult {
         if (abs(toSeconds - fromSeconds) < EXTERNAL_SEEK_NOISE_SECONDS) return RoomTransportResult.Ignored
         val now = SystemClock.elapsedRealtime()
-        // Every authorized host input must restore before it can be reported.
-        // Keep the guest cooldown: repeated callbacks mistaken for outside
-        // seeks must not make the guest fight room corrections in a loop.
-        if (allows(RoomTransportIntent.Seek) || now - lastRestoreAtMs >= RESTORE_WINDOW_MS) {
-            lastRestoreAtMs = now
+        // Every outside seek is undone: a host's until the room's command
+        // applies it (a host report must never re-anchor the room early), and
+        // anyone else's because they may not seek. Both players recognize
+        // their own restore seeks, so a restore cannot be taken for an outside
+        // seek. For a guest, a runaway burst (a loop no genuine controller
+        // produces) stops restoring and leaves the position to the room's next
+        // correction.
+        restoreTimesMs.removeAll { now - it >= RESTORE_WINDOW_MS }
+        if (allows(RoomTransportIntent.Seek) || restoreTimesMs.size < MAX_RESTORES_PER_WINDOW) {
+            restoreTimesMs.addLast(now)
             restore(fromSeconds)
         }
         return binding.requestSeek(toSeconds)
     }
 
-    private var lastRestoreAtMs = Long.MIN_VALUE / 2
+    private val restoreTimesMs = ArrayDeque<Long>()
 
     /** Leave this device's membership. For a host, the room ends two minutes later unless they rejoin. */
     fun leave() {
@@ -145,7 +150,10 @@ class WatchPartyPlayback(
         /** Seek adjustments smaller than this are the player settling, not a request. */
         const val EXTERNAL_SEEK_NOISE_SECONDS = 1.0
 
-        /** Minimum time between two undos of denied outside seeks. */
+        /** Window for counting undos of outside seeks. */
         const val RESTORE_WINDOW_MS = 2_000L
+
+        /** More undos than this within the window is a loop, not a person. */
+        const val MAX_RESTORES_PER_WINDOW = 4
     }
 }
