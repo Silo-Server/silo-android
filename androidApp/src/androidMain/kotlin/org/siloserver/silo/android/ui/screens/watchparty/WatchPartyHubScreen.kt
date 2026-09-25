@@ -142,10 +142,11 @@ fun WatchPartyHubScreen(
     val busy = state.busy != null
     val current = state.current
 
-    // Reload the recent party whenever the hub is shown again after a party
-    // ended or was left, so Rejoin reflects what just happened.
+    // Probe again whenever the hub is shown outside a party, as Apple does:
+    // the server can turn Watch Party off at any time, and Rejoin should
+    // reflect a party that just ended. A failed probe keeps the last answer.
     LaunchedEffect(current?.roomId, state.ended) {
-        if (current == null) viewModel.refresh()
+        if (current == null) viewModel.refresh(force = true)
     }
     val join: () -> Unit = {
         if (!busy) viewModel.join(code.trim())

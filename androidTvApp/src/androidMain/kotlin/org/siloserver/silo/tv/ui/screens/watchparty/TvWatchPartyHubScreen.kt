@@ -83,14 +83,13 @@ fun TvWatchPartyHubScreen(
     }
 
     // The recent party can change while this screen is in the back stack
-    // (a party ended, another identity signed in); reload it on return.
+    // (a party ended, another identity signed in), and the server can turn
+    // Watch Party off at any time. Probe again whenever the hub is shown, as
+    // Apple does; a failed probe keeps the last known answer.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
-        var first = true
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                if (first) first = false else viewModel.refresh()
-            }
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refresh(force = true)
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
