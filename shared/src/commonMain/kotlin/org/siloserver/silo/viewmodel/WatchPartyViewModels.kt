@@ -524,7 +524,12 @@ class WatchPartyPickerViewModel(
             }
             _state.update { it.copy(rowsLoading = true) }
             when (val result = repository.picker()) {
-                is ApiResult.Success -> _state.update { it.copy(rows = result.data, rowsLoading = false, error = null) }
+                // The picker reads profile catalog access, which can include
+                // ebooks and other non-video items; a party plays video only,
+                // and TV never shows reading items.
+                is ApiResult.Success -> _state.update {
+                    it.copy(rows = result.data.playableOnly(), rowsLoading = false, error = null)
+                }
                 else -> _state.update {
                     it.copy(rowsLoading = false, error = watchPartyErrorMessage(result, "Couldn't load suggestions."))
                 }
@@ -556,6 +561,11 @@ class WatchPartyPickerViewModel(
             else -> _state.update { it.copy(searching = false, error = watchPartyErrorMessage(result, "Search failed.")) }
         }
     }
+
+    private fun PickerResponse.playableOnly(): PickerResponse = copy(
+        continueTogether = continueTogether.filter { it.item.type in PLAYABLE_TYPES },
+        watchlistUnion = watchlistUnion.filter { it.item.type in PLAYABLE_TYPES },
+    )
 
     private companion object {
         const val SEARCH_DEBOUNCE_MS = 300L
