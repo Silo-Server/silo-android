@@ -68,6 +68,8 @@ class TvSiloCastReceiver(
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
+    /** True while this TV is in a Watch Party, whose membership an identity swap would end. */
+    private val inWatchParty: () -> Boolean = { false },
 ) {
     data class StandbyState(
         val controllerName: String?,
@@ -400,6 +402,20 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.HandoffOffer -> {
                 val offer = message.handoffOffer
+                // A handoff swaps in the phone's profile, and any identity
+                // change leaves the Watch Party this TV is in.
+                if (inWatchParty()) {
+                    session.send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = offer.requestId,
+                                reason = "watch_party_active",
+                                message = "Leave the Watch Party on the TV first.",
+                            ),
+                        ),
+                    )
+                    return true
+                }
                 val controllerId = session.controllerDeviceId
                 if (session.negotiatedVersion != SiloCastProtocol.version || controllerId == null) {
                     session.send(

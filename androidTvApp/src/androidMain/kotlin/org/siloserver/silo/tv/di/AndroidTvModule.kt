@@ -384,6 +384,9 @@ val androidTvModule = module {
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
             },
+            inWatchParty = {
+                get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
+            },
         )
     }
 
