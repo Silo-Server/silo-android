@@ -50,8 +50,8 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
      * Sends a streaming [request] to the engaged TV. Returns false when no TV
      * is engaged or the send fails, so the caller plays on the phone. A TV
      * playing a different title asks first; the same title (Resume of what is
-     * on) goes straight through. [onLaunched] runs when the request goes out right away.
-     * [localRoute] is where the title plays on the phone should the TV be
+     * on) goes straight through. [onLaunched] runs when the request goes out
+     * right away. [localRoute] is where the title plays on the phone should the TV be
      * gone when the person answers; null keeps it off the phone.
      */
     fun playStreaming(request: SiloCastPlaybackRequest, localRoute: String?, onLaunched: () -> Unit): Boolean {
@@ -59,6 +59,8 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
         if (!state.isEngaged) return false
         val current = state.playbackState?.takeIf { !it.contentId.isNullOrEmpty() }
         if (current != null && current.contentId != request.contentId) {
+            // One question at a time: the newest Play replaces an unanswered one.
+            _pendingOffline.value = null
             _pendingReplace.value = ReplaceChoice(
                 request = request,
                 currentTitle = current.title,
@@ -81,6 +83,7 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
             playHere()
             return
         }
+        _pendingReplace.value = null
         _pendingOffline.value = OfflineChoice(
             request = request,
             targetName = state.targetName,
@@ -106,6 +109,11 @@ class SiloCastPlayRouter(private val controller: SiloCastController) {
         _pendingOffline.getAndUpdate { null }?.let { Destination.Here(it.localRoute) }
 
     fun dismissOffline() {
+        _pendingOffline.value = null
+    }
+
+    fun dismissAll() {
+        _pendingReplace.value = null
         _pendingOffline.value = null
     }
 
