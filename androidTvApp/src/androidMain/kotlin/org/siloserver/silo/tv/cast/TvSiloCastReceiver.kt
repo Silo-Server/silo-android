@@ -121,15 +121,26 @@ class TvSiloCastReceiver(
         val newScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = newScope
         newScope.launch {
-            val socket = ServerSocket(0).also { serverSocket = it }
-            val server = serverRegistry.activeEntry.value
-            val remote = identityManager.activeIdentity
-            advertiser.start(
-                port = socket.localPort,
-                serverId = remote?.serverId ?: server?.id,
-                serverName = remote?.serverName ?: server?.displayName,
-                playing = activePlayer != null,
-            )
+            val socket = ServerSocket(0)
+            // start() returns before this runs, so a stop() can land first: publish only
+            // while this start is still the current one, under the lock stop() holds.
+            val current = synchronized(this@TvSiloCastReceiver) {
+                if (scope !== newScope) return@synchronized false
+                serverSocket = socket
+                val server = serverRegistry.activeEntry.value
+                val remote = identityManager.activeIdentity
+                advertiser.start(
+                    port = socket.localPort,
+                    serverId = remote?.serverId ?: server?.id,
+                    serverName = remote?.serverName ?: server?.displayName,
+                    playing = activePlayer != null,
+                )
+                true
+            }
+            if (!current) {
+                runCatching { socket.close() }
+                return@launch
+            }
             Log.i(TAG, "SiloCast listening on ${socket.localPort} for ${SiloCastProtocol.serviceType}")
             acceptLoop(socket)
         }

@@ -565,12 +565,12 @@ fun TvAppNavigation(
     LaunchedEffect(currentEntry?.destination?.route) {
         DiagnosticsLifecycleLogger.route(currentEntry?.destination?.route)
     }
-    // A first sign-in reaches Home inside the running activity, so onStart
-    // (which starts the cast receiver) never runs for it: without this the TV
-    // stays invisible to phones until the app is restarted. start() is a
-    // no-op when already running; onStop still stops it. Signing out also
-    // happens inside the activity: stop there, as tvOS does when its signed-in
-    // view goes away, so a signed-out TV doesn't keep advertising its server.
+    // The cast receiver runs while a signed-in Home is in the foreground, as on
+    // tvOS: started here (a first sign-in reaches Home inside the running
+    // activity, so onStart can't), stopped by onStop and when a signed-out
+    // screen appears, so a signed-out TV doesn't keep advertising its server.
+    // Coming back to the foreground on a signed-out screen starts nothing.
+    // start() is a no-op when already running.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val lifecycleState by lifecycle.currentStateFlow.collectAsState()
     val currentRoute = currentEntry?.destination?.route

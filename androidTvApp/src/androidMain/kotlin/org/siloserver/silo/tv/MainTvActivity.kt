@@ -197,27 +197,8 @@ class MainTvActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
-        lifecycleScope.launch(Dispatchers.IO) {
-            // The auth check suspends; a quick background could run onStop's
-            // stop() first (a no-op — nothing started) and THEN this start(),
-            // leaving the receiver advertising while backgrounded. Re-check
-            // the lifecycle after the suspension.
-            if (isAuthenticatedForCast() &&
-                lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-            ) {
-                val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
-                receiver.start()
-                // The lifecycle check above is a TOCTOU: the activity can stop
-                // between the check and start(), so onStop()'s stop() lands
-                // BEFORE this start() and the receiver keeps advertising while
-                // backgrounded. Compensate after the fact — start()/stop() are
-                // @Synchronized and stop() is idempotent, so every interleaving
-                // terminates with the receiver stopped when backgrounded.
-                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    receiver.stop()
-                }
-            }
-        }
+        // TvAppNavigation starts the cast receiver once a signed-in Home is
+        // showing; onStop stops it.
     }
 
     /**
@@ -351,21 +332,6 @@ class MainTvActivity : ComponentActivity() {
         }
         if (startRoute != TvRoute.Main.route) return
         lifecycleScope.launch(Dispatchers.IO) {
-            // Re-check the lifecycle before starting the cast receiver: a
-            // cold-start followed by an immediate Home can dispatch this after
-            // onStop()'s stop() already ran, leaving NSD advertising + the cast
-            // socket up while backgrounded. Mirrors the onStart() guard.
-            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
-                receiver.start()
-                // Same TOCTOU compensation as onStart(): if the activity
-                // stopped between the check and start(), undo the start —
-                // start()/stop() are @Synchronized and stop() is idempotent,
-                // so every interleaving ends stopped when backgrounded.
-                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    receiver.stop()
-                }
-            }
             warmAuthenticatedStartup(
                 context = applicationContext,
                 authRepository = get(AuthRepository::class.java),
@@ -380,13 +346,5 @@ class MainTvActivity : ComponentActivity() {
                 artworkPlan = StartupArtworkPlan.tv(),
             )
         }
-    }
-
-    private suspend fun isAuthenticatedForCast(): Boolean {
-        val registry = get<ServerRegistry>(ServerRegistry::class.java)
-        val tokenManager = get<TokenManager>(TokenManager::class.java)
-        return registry.activeEntry.value != null &&
-            !tokenManager.getAccessToken().isNullOrBlank() &&
-            !tokenManager.getProfileId().isNullOrBlank()
     }
 }
