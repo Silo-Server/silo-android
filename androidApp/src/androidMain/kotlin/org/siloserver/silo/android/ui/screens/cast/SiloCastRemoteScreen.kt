@@ -190,7 +190,8 @@ fun SiloCastRemoteScreen(
                             ?: "Not connected to a TV.".takeIf { state.connectedTarget == null && !state.isConnecting },
                         onChooseTv = { showTargetPicker = true },
                     )
-                    playback.contentId == null && state.isLaunching -> RemoteStatus(
+                    // Also while replacing a title: the outgoing one's controls are moot.
+                    state.isLaunching -> RemoteStatus(
                         title = "Starting playback on ${state.connectedTarget?.name ?: "Silo TV"}…",
                         showSpinner = true,
                     )
