@@ -86,6 +86,15 @@ class SiloCastNsdAdvertiser(
 
             override fun onRegistrationFailed(info: NsdServiceInfo, errorCode: Int) {
                 Log.w(TAG, "SiloCast registration failed: $errorCode")
+                // Nothing is live: forget it, so the next refresh registers
+                // again instead of skipping an "identical" record.
+                synchronized(this@SiloCastNsdAdvertiser) {
+                    if (registrationListener === this) {
+                        registrationListener = null
+                        lastRegistration = null
+                        lastRecord = null
+                    }
+                }
             }
 
             override fun onServiceUnregistered(info: NsdServiceInfo) {

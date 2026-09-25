@@ -571,16 +571,26 @@ fun TvAppNavigation(
     // no-op when already running; onStop still stops it. Signing out also
     // happens inside the activity: stop there, as tvOS does when its signed-in
     // view goes away, so a signed-out TV doesn't keep advertising its server.
-    val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-        .currentStateFlow.collectAsState()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val lifecycleState by lifecycle.currentStateFlow.collectAsState()
     val currentRoute = currentEntry?.destination?.route
-    val homeInForeground = currentRoute == TvRoute.Main.route &&
+    // Home anywhere in the stack, not only on top: a sign-in that lands on a
+    // deep-linked title pushes it over Home before Home is ever shown.
+    val homeInStack = remember(currentEntry) {
+        runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
+    }
+    val signedInForeground = homeInStack &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
     val signedOut = currentRoute in SignedOutRoutes
-    LaunchedEffect(homeInForeground, signedOut) {
+    LaunchedEffect(signedInForeground, signedOut) {
         when {
-            homeInForeground ->
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.start() }
+            signedInForeground -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                siloCastReceiver.start()
+                // onStop may have run its stop() while this start was queued.
+                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                    siloCastReceiver.stop()
+                }
+            }
             signedOut ->
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { siloCastReceiver.stop() }
         }
