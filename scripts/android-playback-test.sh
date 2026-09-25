@@ -170,9 +170,14 @@ def project(raw):
     d = json.loads(raw)
     party = d.get("party") or {}
     offset = party.get("serverOffsetMs")
+    # The screen position is the source timeline but only ticks every
+    # 500 ms on TV; the player position is fresh. Use the player position
+    # when both are on the same timeline, the screen position otherwise
+    # (a remux or transcode that starts mid-title).
     pos = d.get("screenPositionSec")
-    if pos is None and d.get("positionMs") is not None:
-        pos = d["positionMs"] / 1000.0
+    player = d["positionMs"] / 1000.0 if d.get("positionMs") is not None else None
+    if player is not None and (pos is None or abs(player - pos) < 1.0):
+        pos = player
     if offset is None or pos is None:
         return None, d
     server_ms = d["sampledWallMs"] + offset
