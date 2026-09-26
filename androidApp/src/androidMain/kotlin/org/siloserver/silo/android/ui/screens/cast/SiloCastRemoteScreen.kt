@@ -166,7 +166,6 @@ fun SiloCastRemoteScreen(
                 onChooseTv = { showTargetPicker = true },
                 onStopPlayback = { controller.stopPlayback() },
                 onSetVideoGravity = controller::setVideoGravity,
-                onSetHdrEnabled = controller::setHdrEnabled,
                 onDisconnect = {
                     controller.disconnect()
                     onBack()
@@ -280,7 +279,6 @@ private fun RemoteTopBar(
     onChooseTv: () -> Unit,
     onStopPlayback: () -> Unit,
     onSetVideoGravity: (String) -> Unit,
-    onSetHdrEnabled: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
     showBatterySettings: Boolean,
     onBatterySettings: () -> Unit,
@@ -339,23 +337,6 @@ private fun RemoteTopBar(
                         onClick = {
                             menuExpanded = false
                             aspectMenuExpanded = true
-                        },
-                    )
-                }
-                if (playback?.supportsHDRToggle == true) {
-                    DropdownMenuItem(
-                        text = { Text("HDR") },
-                        leadingIcon = {
-                            Icon(Icons.Outlined.AspectRatio, contentDescription = null)
-                        },
-                        trailingIcon = {
-                            if (playback.hdrEnabled) {
-                                Icon(Icons.Filled.Check, contentDescription = "Enabled")
-                            }
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onSetHdrEnabled(!playback.hdrEnabled)
                         },
                     )
                 }
@@ -980,12 +961,12 @@ private fun subtitleMenuEntries(
     }
     if (playback.supportsSubtitlePosition == true) {
         add(MenuEntry(label = "Position", selected = false, isSectionHeader = true))
-        listOf("standard" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
+        // tvOS SubtitlePositionPreset raw values; it rejects anything else.
+        listOf("bottom" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
             add(
                 MenuEntry(
                     label = label,
-                    selected = playback.subtitlePosition == id ||
-                        (id == "standard" && playback.subtitlePosition == "bottom"),
+                    selected = playback.subtitlePosition == id,
                     onClick = { controller.setSubtitlePosition(id) },
                 ),
             )

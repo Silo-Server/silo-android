@@ -13,7 +13,6 @@ class TvSiloCastPlayerAdapter(
     private val setPlaybackSpeed: (Double) -> Unit,
     private val setQuality: (String) -> Unit,
     private val setVideoGravity: (String) -> Unit,
-    private val setHdrEnabled: (Boolean) -> Unit,
     private val setSubtitleSyncMs: (Int) -> Unit,
     private val setSubtitlePosition: (String) -> Unit,
     private val setVolume: (Double) -> Unit,
@@ -35,7 +34,6 @@ class TvSiloCastPlayerAdapter(
             SiloCastControlCommand.SetQuality -> command.value?.let(setQuality)
             SiloCastControlCommand.SetPlaybackSpeed -> command.speed?.let(setPlaybackSpeed)
             SiloCastControlCommand.SetVideoGravity -> command.value?.let(setVideoGravity)
-            SiloCastControlCommand.SetHdrEnabled -> command.enabled?.let(setHdrEnabled)
             SiloCastControlCommand.SetSubtitleSyncMs -> command.milliseconds?.let(setSubtitleSyncMs)
             SiloCastControlCommand.SetSubtitlePosition -> command.value?.let(setSubtitlePosition)
             SiloCastControlCommand.SetVolume -> command.volume?.let(setVolume)

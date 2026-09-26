@@ -555,7 +555,6 @@ fun TvPlayerScreen(
             setVideoGravity = { value ->
                 viewModel.onVideoFillModeChanged(value.toSiloCastVideoFillMode())
             },
-            setHdrEnabled = viewModel::onSetHdrEnabled,
             setSubtitleSyncMs = viewModel::onSubtitleDelayChanged,
             setSubtitlePosition = { value ->
                 viewModel.onSetSubtitleAppearance(
@@ -3412,10 +3411,12 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         contentId = contentId,
         sessionId = sessionId,
         title = title,
+        // tvOS shape: "Series · S1 · E2", so remotes read the same for either TV.
         subtitle = listOfNotNull(
+            seriesTitle?.takeIf { it.isNotBlank() },
             seasonNumber?.let { "S$it" },
             episodeNumber?.let { "E$it" },
-        ).joinToString(" ").ifBlank { null },
+        ).joinToString(" · ").ifBlank { null },
         isPlaying = isPlaying && !isPaused,
         isLoading = isLoading,
         isBuffering = isBuffering,
@@ -3429,10 +3430,17 @@ private fun TvPlayerViewModel.UiState.toSiloCastPlaybackState(
         activeQualityId = activeQualityId,
         isQualitySwitching = false,
         playbackSpeed = playbackSpeed,
-        videoGravity = videoFillMode.name.lowercase(),
+        // Wire values are tvOS VideoGravity raw values: fit, fill, stretch.
+        videoGravity = when (videoFillMode) {
+            VideoFillMode.Fit -> "fit"
+            VideoFillMode.Zoom -> "fill"
+            VideoFillMode.Stretch -> "stretch"
+        },
         hdrEnabled = hdrEnabled,
         supportsVideoGravity = true,
-        supportsHDRToggle = true,
+        // Remotes no longer offer the toggle (Apple dropped it too); the key
+        // stays on the wire because older remotes require it.
+        supportsHDRToggle = false,
         subtitleSyncMs = subtitleDelayMs,
         subtitlePosition = subtitleAppearance.position.toSiloCastPositionValue(),
         supportsSubtitleDelay = true,
