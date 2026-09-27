@@ -199,7 +199,9 @@ fun SearchScreen(
             when {
                 // Titles can answer before people do. Hold off on "No results"
                 // until both have, so a person-only match does not flash it.
-                (state.isSearching || state.isLoadingPeople) && state.results.isEmpty() && state.people.isEmpty() -> {
+                // A title error is final and shows at once with its Retry.
+                (state.isSearching || (state.isLoadingPeople && state.error == null)) &&
+                    state.results.isEmpty() && state.people.isEmpty() -> {
                     // Sits in the top part of the content area, matching the
                     // empty state's offset, so it stays visible above the IME
                     // instead of being centred in the space the keyboard covers.
