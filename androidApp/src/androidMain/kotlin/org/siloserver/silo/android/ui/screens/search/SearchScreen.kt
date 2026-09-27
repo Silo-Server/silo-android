@@ -197,7 +197,9 @@ fun SearchScreen(
             }
 
             when {
-                state.isSearching && state.results.isEmpty() -> {
+                // Titles can answer before people do. Hold off on "No results"
+                // until both have, so a person-only match does not flash it.
+                (state.isSearching || state.isLoadingPeople) && state.results.isEmpty() && state.people.isEmpty() -> {
                     // Sits in the top part of the content area, matching the
                     // empty state's offset, so it stays visible above the IME
                     // instead of being centred in the space the keyboard covers.

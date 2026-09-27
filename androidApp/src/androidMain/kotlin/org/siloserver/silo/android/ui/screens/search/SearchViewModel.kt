@@ -107,6 +107,8 @@ data class SearchUiState(
     val results: List<BrowseItem> = emptyList(),
     /** Cast and crew matching the query, shown above the title results. */
     val people: List<Person> = emptyList(),
+    /** True until the current query's people lookup answers. */
+    val isLoadingPeople: Boolean = false,
     val hasMore: Boolean = false,
     val total: Int = 0,
     val totalExact: Boolean = false,
@@ -161,6 +163,7 @@ class SearchViewModel(
                                 query = query,
                                 results = emptyList(),
                                 people = emptyList(),
+                                isLoadingPeople = false,
                                 hasMore = false,
                                 total = 0,
                                 isSearching = false,
@@ -222,6 +225,7 @@ class SearchViewModel(
                 isSearching = false,
                 results = emptyList(),
                 people = emptyList(),
+                isLoadingPeople = false,
                 hasMore = false,
                 total = 0,
                 error = null,
@@ -288,14 +292,14 @@ class SearchViewModel(
      */
     private fun searchPeople(query: String, mediaType: MobileSearchMediaType) {
         peopleJob?.cancel()
-        _uiState.update { it.copy(people = emptyList()) }
+        _uiState.update { it.copy(people = emptyList(), isLoadingPeople = true) }
         peopleJob = viewModelScope.launch {
             val people = catalogRepository.searchPeopleForQuery(query, mediaType.peopleMediaScopes)
             // Cancellation surfaces as an empty answer, not an exception.
             if (!isActive) return@launch
             val latest = _uiState.value
             if (latest.query != query || latest.mediaType != mediaType) return@launch
-            _uiState.update { it.copy(people = people) }
+            _uiState.update { it.copy(people = people, isLoadingPeople = false) }
         }
     }
 
