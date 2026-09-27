@@ -1200,6 +1200,7 @@ fun TvMainShell(
                             navigateToSecondary(TvMainRoute.RequestDetail(mediaType, tmdbId).route)
                         },
                         onOpenLibraryItem = onOpenItemDetail,
+                        onOpenPersonDetail = onOpenPersonDetail,
                         searchFieldFocusRequester = searchInputFocusRequester,
                         backToSearchFieldRequest = searchBackToInputRequest,
                         onSearchFieldFocusChanged = {

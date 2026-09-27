@@ -50,11 +50,13 @@ import org.koin.compose.koinInject
  * (debounced 300ms), and appropriate empty/loading/error states.
  *
  * @param onItemClick Callback with content ID when a result is tapped.
+ * @param onPersonClick Callback with person ID when a people result is tapped.
  * @param viewModel The search ViewModel (provided by Koin).
  */
 @Composable
 fun SearchScreen(
     onItemClick: (String) -> Unit,
+    onPersonClick: (Long) -> Unit,
     onRequestMediaClick: (RequestMediaResult) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
     onBackClick: (() -> Unit)? = null,
@@ -254,7 +256,7 @@ fun SearchScreen(
                         }
                     }
                 }
-                state.hasSearched && state.results.isEmpty() && !state.isSearching -> {
+                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() && !state.isSearching -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.weight(1f)) {
                             SearchEmptyState(
@@ -268,11 +270,13 @@ fun SearchScreen(
                 else -> {
                     SearchResults(
                         results = state.results,
+                        people = state.people,
                         total = state.total,
                         totalExact = state.totalExact,
                         isSearching = state.isSearching,
                         hasMore = state.hasMore,
                         onItemClick = onItemClick,
+                        onPersonClick = onPersonClick,
                         onLoadMore = { viewModel.loadMore() },
                         modifier = Modifier.fillMaxSize(),
                         footer = { RequestSearchFooter() },

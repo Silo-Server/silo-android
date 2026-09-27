@@ -795,6 +795,9 @@ fun AppNavigation(
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
+                onPersonClick = { personId ->
+                    navController.navigate(Route.PersonDetail(personId).route)
+                },
                 onRequestMediaClick = { item ->
                     navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
                 },

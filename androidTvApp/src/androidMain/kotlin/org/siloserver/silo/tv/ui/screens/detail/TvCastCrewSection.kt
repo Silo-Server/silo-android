@@ -203,7 +203,7 @@ fun TvCastCrewSection(
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvCastCard(
+internal fun TvCastCard(
     member: CastMember,
     photoSize: Dp,
     focusRequester: FocusRequester?,

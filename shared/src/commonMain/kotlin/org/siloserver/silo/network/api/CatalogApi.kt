@@ -86,7 +86,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         return watchDetail.detail(id, owner, libraryId)
     }
 
-    suspend fun searchPeople(query: String? = null): ApiResult<List<Person>> = v2.people(query)
+    suspend fun searchPeople(query: String? = null, mediaScope: String? = null): ApiResult<List<Person>> =
+        v2.people(query, mediaScope = mediaScope)
 
     suspend fun getPerson(id: Long): ApiResult<Person> = v2.person(id)
 
