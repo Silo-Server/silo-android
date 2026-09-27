@@ -49,6 +49,11 @@ class RoomSyncEngine {
 
     private var lastCommandId: String? = null
 
+    /** Adopt the room owner's server clock estimate (see `WatchTogetherRepository.clock`). */
+    fun setServerTimeOffset(offsetMs: Long?) {
+        serverTimeOffsetMs = offsetMs
+    }
+
     /** Record a pong round-trip sample; updates [serverTimeOffsetMs]. */
     fun recordPongSample(
         clientSentMs: Long,

@@ -1064,4 +1064,6 @@ data class StartParams(
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
     val clientPlaybackContext: ClientPlaybackContext,
+    /** Watch Party starts pin the file (false); renewals must keep that. */
+    val allowAlternateVersions: Boolean? = null,
 )

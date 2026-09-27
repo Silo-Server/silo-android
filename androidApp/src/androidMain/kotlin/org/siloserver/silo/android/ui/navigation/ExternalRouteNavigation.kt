@@ -145,11 +145,11 @@ internal fun shouldPopPlayerBeforeExternalTab(currentDestinationRoute: String?):
  * Whether AndroidX may reuse the current destination node for [targetRoute].
  *
  * External requests currently produce only Inbox, item detail, player,
- * pairing, invitation, and the Downloads tab (handled before this function).
- * Inbox has no arguments. Item detail is reusable only for the same decoded
- * content id. A player target is replaced explicitly when a player is on top.
- * Pairing and invitation routes carry one-shot arguments, so each delivery
- * must retain its own entry.
+ * pairing, invitation, the Watch Party hub, and the Downloads tab (handled
+ * before this function). Inbox has no arguments. Item detail is reusable only
+ * for the same decoded content id. A player target is replaced explicitly when
+ * a player is on top. Pairing, invitation, and Watch Party hub routes carry
+ * one-shot arguments, so each delivery must retain its own entry.
  */
 internal fun shouldLaunchExternalRouteSingleTop(
     currentDestinationRoute: String?,
@@ -180,7 +180,7 @@ internal fun playerRouteIntentOrNull(route: String): MobilePlayerRouteIntent? {
         .filter(String::isNotBlank)
         .associate { part -> part.substringBefore('=') to part.substringAfter('=', "") }
     // This provider describes solo playback only. A room-scoped target must be
-    // handled by Watch Together even if every media choice happens to match.
+    // handled by Watch Party even if every media choice happens to match.
     if ("roomId" in query) return null
 
     val fileId = query["fileId"]?.toIntOrNull()

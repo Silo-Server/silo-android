@@ -19,6 +19,12 @@ class TvSiloCastPlayerAdapter(
     private val setVolume: (Double) -> Unit,
     private val setMuted: (Boolean) -> Unit,
     private val playNext: () -> Unit,
+    /**
+     * Non-null when a phone's launch must not replace this player (a Watch
+     * Party is playing): the reason, sent back to the phone as an error.
+     * Called off the main thread.
+     */
+    val launchRefusal: () -> String? = { null },
 ) {
     fun handle(command: SiloCastControlCommand) {
         // Field mapping follows Apple's SiloControlCommand exactly: seek uses

@@ -118,6 +118,8 @@ import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailTrackSelectionSession
+import org.siloserver.silo.watchtogether.RoomPlayerObservation
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import org.siloserver.silo.watchtogether.shouldNavigateToLocalNext
 import kotlin.math.ceil
 import kotlinx.coroutines.CancellationException
@@ -773,6 +775,11 @@ class TvPlayerViewModel(
         // Auto-play countdown shown on the Up-Next overlay before the next
         // episode starts (mirrors tvOS CountdownRing default).
         const val NEXT_UP_COUNTDOWN_SECONDS = 10
+        // A room player sample older than this cannot vouch for buffered media.
+        private const val ROOM_SAMPLE_MAX_AGE_MS = 1_000L
+        // How long a coordinated source fallback may take before the original
+        // refusal is shown after all.
+        private const val ROOM_FALLBACK_WAIT_MS = 15_000L
     }
 
     // Up-Next auto-play countdown ticker. Cancelled on dismiss / Play Now /
@@ -823,7 +830,8 @@ class TvPlayerViewModel(
     // Wire values match
     // [PlaybackQuality]: "auto"/"original"/"2160p"/"1080p"/"720p"/"480p".
     private var qualityOverride: String? = null
-    private val roomId: String? = launchArgs.roomId
+    // Blank means solo, exactly as the screen treats it.
+    private val roomId: String? = launchArgs.roomId?.takeIf { it.isNotBlank() }
     private val resumePositionOverride: Double? = launchArgs.resumePositionOverride
     // The handoff belongs to one cross-screen transition. A recoverable start
     // leases it until Ready publication; replacement/exit invalidates it.
@@ -946,6 +954,47 @@ class TvPlayerViewModel(
     // for quick skips instead of re-anchoring through the server.
     private var playerWindowIsSeekable = false
     private var playerWindowEndPlayerMs = -1L
+
+    // ---- Watch Party ----------------------------------------------------------
+    // Declared ahead of init: the room observation collector and the sleep
+    // timer callback installed there touch these.
+
+    /** The room playback epoch this player is prepared for; every room restart reuses it. */
+    private var roomContext: WatchPartyPlaybackContext? = null
+
+    /** The selection revision of the published session, or -1 before one. */
+    private var roomPreparedRevision = -1L
+
+    /** The room's last applied play state (commands only; never user intent). */
+    private var roomPlaying = false
+
+    /** Local reasons playback is held without asking the room. Main thread only. */
+    private val roomHolds = mutableSetOf<TvRoomHold>()
+    private var roomLoadJob: Job? = null
+
+    private data class TvRoomPlayerSample(
+        val positionMs: Long,
+        val bufferedPositionMs: Long,
+        val playWhenReady: Boolean,
+        val isPlaying: Boolean,
+        val playbackState: Int,
+        val suppressed: Boolean,
+        val sampledAtMs: Long,
+    )
+
+    private var roomPlayerSample: TvRoomPlayerSample? = null
+    private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
+
+    /** What the player is actually doing, for the room binding. */
+    val roomObservation: StateFlow<RoomPlayerObservation> = _roomObservation.asStateFlow()
+    private val _roomCorrectionRate = MutableStateFlow<Double?>(null)
+
+    /** The room's temporary drift-correction rate; null is exactly 1x. Never saved or shown. */
+    val roomCorrectionRate: StateFlow<Double?> = _roomCorrectionRate.asStateFlow()
+    private val _roomRefusal = MutableStateFlow<TvRoomRefusal?>(null)
+
+    /** A server refusal the room must decide on before this player shows an error. */
+    val roomRefusal: StateFlow<TvRoomRefusal?> = _roomRefusal.asStateFlow()
 
     data class UiState(
         val isLoading: Boolean = true,
@@ -1520,9 +1569,14 @@ class TvPlayerViewModel(
         }
 
         // When the sleep timer fires, flip user intent to paused. The screen
-        // mirrors `isPaused` to `mediaController.playWhenReady`.
+        // mirrors `isPaused` to `mediaController.playWhenReady`. In a Watch
+        // Party it is a local hold: the room keeps playing.
         sleepTimer.configure {
-            _uiState.update { it.copy(isPaused = true) }
+            if (roomId != null) {
+                holdRoomPlayback(TvRoomHold.SleepTimer)
+            } else {
+                _uiState.update { it.copy(isPaused = true) }
+            }
         }
 
         // Reduce the analytics listener's event stream into the HUD's Stats
@@ -1534,7 +1588,16 @@ class TvPlayerViewModel(
             }
         }
 
-        if (contentId.isNotBlank()) loadContent(startPositionOverride = resumePositionOverride)
+        if (roomId != null) {
+            // Loading, session, error and duration changes all move the room
+            // observation; player samples arrive through onRoomPlayerSample.
+            viewModelScope.launch { _uiState.collect { publishRoomObservation() } }
+        } else if (contentId.isNotBlank()) {
+            // A Watch Party waits for the room's playback context
+            // (loadRoomPlayback): the route's own content and file must never
+            // start solo playback first.
+            loadContent(startPositionOverride = resumePositionOverride)
+        }
     }
 
     fun onBackendCapabilities(capabilities: VideoBackendCapabilities) {
@@ -1669,6 +1732,8 @@ class TvPlayerViewModel(
             ?: before.selectedFileId
             ?: before.mediaFileId
             ?: return TvSubtitleAdoptionResult.Superseded
+        // A Watch Party plays exactly the room's file; never adopt another.
+        if (roomContext?.fileId?.let { it != fileId } == true) return TvSubtitleAdoptionResult.Superseded
         val version = before.fileVersions.firstOrNull { it.fileId == fileId }
         val adopted = sessionLifecycle.adoptActiveSessionIfCurrent(
             params = StartParams(
@@ -1826,6 +1891,7 @@ class TvPlayerViewModel(
                 // source/player time may no longer be identical.
                 executeSeekTarget(targetSeconds)
             }
+            publishRoomObservation()
         }
     }
 
@@ -1870,6 +1936,17 @@ class TvPlayerViewModel(
         // visible until the replacement has won ownership and is ready.
         preserveCurrentPlaybackOnFailure: Boolean = false,
     ) {
+        // A Watch Party only ever starts the room's exact file and position.
+        // Retry, the reachability retries and the 404 renewal all come through
+        // here and reuse the room context; before the room has supplied one
+        // there is nothing to start.
+        val requestRoom = tvRoomStartContext(
+            context = roomContext,
+            startPositionOverride = startPositionOverride,
+            currentSourcePositionSeconds = _uiState.value.position,
+            preparedRevision = roomPreparedRevision,
+        )
+        if (roomId != null && requestRoom == null) return
         // Capture this pipeline's generation; a later loadContent bump makes
         // this one inert before it can touch _uiState.
         val generation = ++contentLoadGeneration
@@ -1933,11 +2010,11 @@ class TvPlayerViewModel(
                 )
                 val episodeSelectionHandoff = episodeSelectionHandoffLease?.handoff
                 val request = VideoPlaybackStartRequest(
-                        libraryId = launchArgs.libraryId,
+                        libraryId = requestRoom?.libraryId ?: launchArgs.libraryId,
                         contentId = contentId,
-                        preferredFileId = preferredFileIdOverride ?: preferredFileId,
-                        roomId = roomId,
-                        resumePositionOverride = startPositionOverride,
+                        preferredFileId = requestRoom?.fileId ?: preferredFileIdOverride ?: preferredFileId,
+                        roomId = requestRoom?.roomId ?: roomId,
+                        resumePositionOverride = requestRoom?.positionSeconds ?: startPositionOverride,
                         audioTrackIndex = if (recoveryStartParams != null) {
                             recoveryStartParams.audioTrackIndex
                         } else if (audioTrackIndexOverrideSpecified) {
@@ -1957,6 +2034,7 @@ class TvPlayerViewModel(
                         force = force,
                         episodeSelectionHandoff = episodeSelectionHandoff,
                         recoveryStartParams = recoveryStartParams,
+                        room = requestRoom,
                     )
                 val result = loadOwners.withOwner(loadOwner) {
                     videoPlaybackCoordinator.start(request)
@@ -2132,6 +2210,12 @@ class TvPlayerViewModel(
                                 // invariant that lets exitSessionId read it
                                 // first.
                                 result.sessionId?.let { lastAdoptedSessionId = it }
+                                if (requestRoom != null) {
+                                    // A room session starts paused; only the
+                                    // room's command after attach plays it.
+                                    roomPreparedRevision = requestRoom.selectionRevision
+                                    roomPlaying = false
+                                }
                                 _uiState.update {
                                     it.copy(
                                 isLoading = false,
@@ -2169,7 +2253,7 @@ class TvPlayerViewModel(
                                 position = result.sourceStartPositionSeconds,
                                 duration = result.durationSeconds ?: 0.0,
                                 serverDuration = result.durationSeconds ?: 0.0,
-                                isPaused = false,
+                                isPaused = tvPausedWhenReady(inWatchParty = requestRoom != null),
                                 subtitleUrls = hydratedSubtitleUrls,
                                 preferredAudioLanguage = result.preferredAudioLanguage,
                                 preferredTextLanguage = result.preferredTextLanguage,
@@ -2272,7 +2356,18 @@ class TvPlayerViewModel(
                         episodeSelectionHandoffSlot.retainForRetry(
                             episodeSelectionHandoffLease,
                         )
-                        if (preserveCurrentPlaybackOnFailure) {
+                        val refusalReason = result.terminalReason?.takeIf { it.isNotBlank() }
+                        if (requestRoom != null && refusalReason != null) {
+                            // The room decides whether everyone moves to
+                            // another source; the error shows only if not.
+                            _uiState.update { it.copy(isLoading = true, error = null) }
+                            _roomRefusal.value = TvRoomRefusal(
+                                context = requestRoom,
+                                fileId = requestRoom.fileId,
+                                reason = refusalReason,
+                                message = result.message,
+                            )
+                        } else if (preserveCurrentPlaybackOnFailure) {
                             _uiState.update { failTvReplacementLoad(it, result.message) }
                         } else {
                             fail(result.message)
@@ -2571,6 +2666,23 @@ class TvPlayerViewModel(
                             ?: effectiveVersion?.container
                             ?: state.container.takeIf { effectiveFileId == fileId }
                         val effectiveDuration = decision.session.durationSeconds ?: 0.0
+                        val roomFileId = roomContext?.fileId
+                        if (roomFileId != null && effectiveFileId != roomFileId) {
+                            // A Watch Party plays exactly the room's file.
+                            // The server keeps that pin through every replan,
+                            // so this is a guard, not a fallback path.
+                            withContext(NonCancellable) {
+                                runCatching {
+                                    playbackSessionManager.stopSession(decision.session.sessionId)
+                                }
+                            }
+                            onReplanRequestFailed(
+                                classification,
+                                notice,
+                                "The server offered a different version than the Watch Party's.",
+                            )
+                            return@launch
+                        }
                         var adopted = false
                         try {
                             adopted = sessionLifecycle.adoptActiveSessionIfCurrent(
@@ -2681,10 +2793,13 @@ class TvPlayerViewModel(
                             return@launch
                         }
                         lastAdoptedSessionId = null
+                        val refusalContext = roomContext
                         _uiState.update {
                             it.copy(
-                                error = terminalMessage,
-                                isLoading = false,
+                                // In a Watch Party the room decides first
+                                // whether everyone moves to another source.
+                                error = terminalMessage.takeIf { refusalContext == null },
+                                isLoading = refusalContext != null,
                                 isBuffering = false,
                                 isPlaying = false,
                                 isPaused = true,
@@ -2693,6 +2808,14 @@ class TvPlayerViewModel(
                                 playbackPlan = null,
                                 delivery = null,
                                 streamUrl = null,
+                            )
+                        }
+                        if (refusalContext != null) {
+                            _roomRefusal.value = TvRoomRefusal(
+                                context = refusalContext,
+                                fileId = fileId,
+                                reason = decision.reason,
+                                message = terminalMessage,
                             )
                         }
                     }
@@ -3274,27 +3397,29 @@ class TvPlayerViewModel(
 
     /** Toggle user-intent pause state. Screen mirrors this to player.play/pause. */
     fun onPlayPause() {
+        // In a Watch Party every toggle goes through the room; a local flip
+        // here would fork this viewer from everyone else.
+        if (roomId != null) return
         _uiState.update { it.copy(isPaused = !it.isPaused) }
     }
 
     /**
-     * Idempotent pause setter for Watch Together sync-applied commands. Unlike
-     * [onPlayPause] (a toggle), this sets the absolute desired state, so a
-     * duplicate room command can't flip the player the wrong way. The screen's
-     * `state.isPaused` mirror drives `mediaController.playWhenReady`.
+     * Idempotent pause setter. Unlike [onPlayPause] (a toggle), this sets the
+     * absolute desired state, so a duplicate command can't flip the player the
+     * wrong way. The screen's `state.isPaused` mirror drives
+     * `mediaController.playWhenReady`.
      */
     fun setPaused(paused: Boolean) {
         _uiState.update { if (it.isPaused == paused) it else it.copy(isPaused = paused) }
     }
 
     /**
-     * Deadband-free seek for Watch Together corrective seeks
-     * ([TvRoomSyncController.applyDecision]). Updates `uiState.position` AND
-     * emits on [seekRequests], which the screen collects and applies to the
-     * MediaController unconditionally (TV has no position-mirror deadband, so
-     * `seekRequests` already reaches the player on every emission — sub-second
-     * sync corrections are never swallowed). Named to mirror the mobile
-     * `PlayerViewModel.seekImmediate` contract.
+     * Deadband-free seek, also used for Watch Party room seeks
+     * ([applyRoomSeek]). Updates `uiState.position` AND emits on
+     * [seekRequests] (or re-anchors), which the screen applies to the
+     * MediaController unconditionally, so sub-second corrections are never
+     * swallowed. Named to mirror the mobile `PlayerViewModel.seekImmediate`
+     * contract.
      */
     fun seekImmediate(positionSec: Double) {
         cancelPendingQuickSkip()
@@ -3810,9 +3935,251 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(isBuffering = false, error = message) }
     }
 
+    // ---- Watch Party --------------------------------------------------------------
+
+    /**
+     * Prepare the room's playback epoch: its exact content, file and position,
+     * paused. A new selection revision or file cancels the old epoch; the same
+     * epoch again is a no-op. Only the room's commands play it.
+     */
+    fun loadRoomPlayback(context: WatchPartyPlaybackContext) {
+        if (roomId == null || context.roomId != roomId) return
+        val previous = roomContext
+        if (previous != null &&
+            previous.selectionRevision == context.selectionRevision &&
+            previous.fileId == context.fileId
+        ) {
+            return
+        }
+        roomContext = context
+        _roomRefusal.value = null
+        // The old epoch is over: hold its picture still until the new one is ready.
+        roomPlaying = false
+        setPaused(true)
+        val contentChanged = context.contentId != contentId
+        val outgoingSessionId = exitSessionId.takeIf { previous != null && contentChanged }
+        roomLoadJob?.cancel()
+        roomLoadJob = viewModelScope.launch {
+            if (outgoingSessionId != null) {
+                // Another title: finish the outgoing one (final position,
+                // committed tracks, server stop) the way an episode change does.
+                finishCurrentEpisodeForNextUp(outgoingSessionId)
+                lastAdoptedSessionId = null
+            }
+            if (roomContext !== context) return@launch
+            if (contentChanged) resetForRoomContent(context.contentId)
+            preferredFileId = context.fileId
+            loadContent(
+                startPositionOverride = context.positionSeconds,
+                preferredFileIdOverride = context.fileId,
+                suppressResumeRewind = true,
+            )
+        }
+        publishRoomObservation()
+    }
+
+    private fun resetForRoomContent(newContentId: String) {
+        contentId = newContentId
+        preferredQuality = null
+        qualityOverride = null
+        initialAudioTrackIndex = null
+        pendingInitialSubtitleIndex = null
+        pendingInitialSubtitleAutoResolved = false
+        pendingInitialSubtitleAttempts = 0
+        autoTextSubtitleSelectionAttempted = false
+        autoAdvanceHandled = false
+        pendingApproachingEndVideoEnded = null
+        episodeSelectionHandoffSlot.invalidate()
+        _uiState.update { it.copy(contentId = newContentId, nextEpisode = null) }
+    }
+
+    /** A room seek. Maps onto the mounted stream or re-anchors; never user intent. */
+    fun applyRoomSeek(sourceSeconds: Double) {
+        if (roomId == null || !sourceSeconds.isFinite()) return
+        seekImmediate(sourceSeconds.coerceAtLeast(0.0))
+        publishRoomObservation()
+    }
+
+    /** The room's play state. A local hold keeps this viewer paused until it clears. */
+    fun applyRoomPlaying(playing: Boolean) {
+        if (roomId == null) return
+        roomPlaying = playing
+        setPaused(!playing || roomHolds.isNotEmpty())
+    }
+
+    /** The room's temporary correction rate, or null for exactly 1x. */
+    fun setRoomCorrectionRate(rate: Double?) {
+        if (roomId == null) return
+        _roomCorrectionRate.value = rate?.takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    /**
+     * Whether [sourceSeconds] is reachable without new media: a plain native
+     * seek of the mounted item, between a second behind the playhead and the
+     * buffered position. Anything uncertain answers false.
+     */
+    fun isRoomPositionBuffered(sourceSeconds: Double): Boolean {
+        if (roomId == null || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return false
+        val sample = roomPlayerSample ?: return false
+        if (SystemClock.elapsedRealtime() - sample.sampledAtMs > ROOM_SAMPLE_MAX_AGE_MS) return false
+        if (sample.playbackState != androidx.media3.common.Player.STATE_READY &&
+            sample.playbackState != androidx.media3.common.Player.STATE_BUFFERING
+        ) {
+            return false
+        }
+        val state = _uiState.value
+        if (state.error != null || roomSeekPending(state)) return false
+        val timeline = state.playbackPlan?.timeline
+        val targetPlayerSeconds = if (timeline != null) {
+            val decision = timeline.decideSeek(sourceSeconds, mountedSeekableSourceRange(state))
+            (decision as? PlaybackSeekDecision.NativeSeek)?.targetPlayerPositionSeconds ?: return false
+        } else {
+            sourceSeconds
+        }
+        return tvRoomPositionBuffered(
+            targetPlayerSeconds = targetPlayerSeconds,
+            currentPlayerSeconds = sample.positionMs.coerceAtLeast(0L) / 1000.0,
+            bufferedPlayerSeconds = sample.bufferedPositionMs.coerceAtLeast(0L) / 1000.0,
+        )
+    }
+
+    /** What Media3 reports right now. Drives [roomObservation]. */
+    fun onRoomPlayerSample(
+        positionMs: Long,
+        bufferedPositionMs: Long,
+        playWhenReady: Boolean,
+        isPlaying: Boolean,
+        playbackState: Int,
+        suppressed: Boolean,
+    ) {
+        if (roomId == null) return
+        roomPlayerSample = TvRoomPlayerSample(
+            positionMs = positionMs,
+            bufferedPositionMs = bufferedPositionMs,
+            playWhenReady = playWhenReady,
+            isPlaying = isPlaying,
+            playbackState = playbackState,
+            suppressed = suppressed,
+            sampledAtMs = SystemClock.elapsedRealtime(),
+        )
+        publishRoomObservation()
+    }
+
+    /** A mounted player position in source time, or null while a new mount takes over. */
+    fun roomSourcePositionForPlayer(playerPositionMs: Long): Double? {
+        if (transportMountGate.suppressPositionReports) return null
+        val seconds = playerPositionMs.coerceAtLeast(0L) / 1000.0
+        return _uiState.value.playbackPlan?.timeline?.sourcePositionForPlayer(seconds) ?: seconds
+    }
+
+    /** Playback is held locally for at least one reason. */
+    val isRoomHeld: Boolean get() = roomHolds.isNotEmpty()
+
+    /** Hold playback locally (background, audio focus, sleep timer). The room is not asked. */
+    fun holdRoomPlayback(hold: TvRoomHold) {
+        if (roomId == null) return
+        roomHolds.add(hold)
+        setPaused(true)
+        publishRoomObservation()
+    }
+
+    /** Clear one hold; with none left, follow the room again. */
+    fun releaseRoomPlayback(hold: TvRoomHold) {
+        if (roomId == null || !roomHolds.remove(hold)) return
+        if (roomHolds.isEmpty()) setPaused(!roomPlaying)
+        publishRoomObservation()
+    }
+
+    /** The viewer pressed play: the holds they can clear themselves go away. */
+    fun releaseUserRoomHolds() {
+        if (roomId == null) return
+        val focus = roomHolds.remove(TvRoomHold.AudioFocus)
+        val sleep = roomHolds.remove(TvRoomHold.SleepTimer)
+        if (!focus && !sleep) return
+        if (roomHolds.isEmpty()) setPaused(!roomPlaying)
+        publishRoomObservation()
+    }
+
+    /** Play pressed while held and the room is playing: resume here, ask nothing. */
+    fun resumeRoomPlaybackLocally() {
+        if (roomId == null) return
+        roomHolds.remove(TvRoomHold.AudioFocus)
+        roomHolds.remove(TvRoomHold.SleepTimer)
+        roomPlaying = true
+        if (roomHolds.isEmpty()) setPaused(false)
+        publishRoomObservation()
+    }
+
+    /**
+     * The room answered a refusal. When it moved everyone to another source a
+     * new context follows; otherwise the refusal becomes this player's error.
+     * No other file is ever chosen locally.
+     */
+    fun onRoomRefusalHandled(refusal: TvRoomRefusal, tookOver: Boolean) {
+        if (_roomRefusal.value != refusal) return
+        _roomRefusal.value = null
+        if (tookOver) {
+            viewModelScope.launch {
+                delay(ROOM_FALLBACK_WAIT_MS)
+                if (roomContext?.selectionRevision == refusal.context.selectionRevision &&
+                    _uiState.value.streamUrl == null && _uiState.value.error == null
+                ) {
+                    fail(refusal.message)
+                }
+            }
+            return
+        }
+        if (roomContext?.selectionRevision != refusal.context.selectionRevision) return
+        fail(refusal.message)
+    }
+
+    /** A short in-player message (Watch Party notices share the remote-message toast). */
+    fun showPlayerMessage(text: String) {
+        if (text.isBlank()) return
+        _remoteMessage.value = RemoteMessage(++remoteMessageCounter, text)
+    }
+
+    private fun roomSeekPending(state: UiState): Boolean =
+        transportMountGate.suppressPositionReports ||
+            state.isLoading ||
+            state.streamUrl == null ||
+            activeSeekTargetSec != null ||
+            quickSkipAccumulator.pending != null ||
+            pendingNativeSeekAfterMount != null ||
+            seekRecoveryQueue.hasInFlight ||
+            recoveryJob?.isActive == true
+
+    private fun publishRoomObservation() {
+        if (roomId == null) return
+        val state = _uiState.value
+        val sample = roomPlayerSample
+        val hasMedia = state.streamUrl != null && state.error == null
+        // Engine truth mapped to source time. While a new mount takes over, the
+        // old item's position cannot be mapped through the new timeline, so
+        // the last known value stands (and seekPending says it is not a decision).
+        val position = if (sample != null && hasMedia && !transportMountGate.suppressPositionReports) {
+            val raw = sample.positionMs.coerceAtLeast(0L) / 1000.0
+            val mapped = state.playbackPlan?.timeline?.sourcePositionForPlayer(raw) ?: raw
+            state.serverDuration.takeIf { it > 0.0 }?.let(mapped::coerceAtMost) ?: mapped
+        } else {
+            _roomObservation.value.sourcePositionSeconds
+        }
+        _roomObservation.value = RoomPlayerObservation(
+            sessionId = state.sessionId?.takeIf { hasMedia },
+            selectionRevision = roomPreparedRevision,
+            sourcePositionSeconds = position,
+            durationSeconds = state.duration,
+            playWhenReady = sample?.playWhenReady ?: false,
+            isPlaying = sample?.isPlaying ?: false,
+            state = tvRoomPlayerState(sample?.playbackState, hasMedia),
+            seekPending = roomSeekPending(state),
+            suspended = roomHolds.isNotEmpty() || sample?.suppressed == true,
+        )
+    }
+
     // ---- Remote-control adapters (TvPlaybackRealtimeController calls these) ----
-    /** True while in a Watch Together room — remote transport is gated (the room is authoritative). */
-    val remoteTransportSuppressed: Boolean get() = roomId != null
+    /** True while this player belongs to a Watch Party: the room owns transport. */
+    val inWatchParty: Boolean get() = roomId != null
 
     fun remotePause() = setPaused(true)
     fun remoteUnpause() = setPaused(false)
@@ -3900,6 +4267,8 @@ class TvPlayerViewModel(
      * immediate next via [nextEpisodeAfter].
      */
     private fun resolveNextEpisode() {
+        // The room owns what plays next; nothing here may offer it.
+        if (roomId != null) return
         val state = _uiState.value
         val seriesId = state.seriesId ?: return
         val curSeason = state.seasonNumber ?: return
@@ -4022,6 +4391,8 @@ class TvPlayerViewModel(
      * does nothing when pressed.
      */
     fun canShowNextUpNow(): Boolean {
+        // The room owns what plays next; Play Now could never advance.
+        if (roomId != null) return false
         val state = _uiState.value
         return state.nextEpisode != null && !state.showNextUp
     }
@@ -4039,6 +4410,7 @@ class TvPlayerViewModel(
      * mid-decision is the opposite of what the press asked for.
      */
     fun onUserRequestedNextUp() {
+        if (roomId != null) return
         val next = _uiState.value.nextEpisode ?: return
         if (_uiState.value.showNextUp) return
         nextUpCountdownJob?.cancel()
@@ -4773,14 +5145,15 @@ class TvPlayerViewModel(
      * current position so the server transcodes to the chosen rung (or returns to
      * Auto/Original). [wireValue] is a [PlaybackQuality] wire value.
      */
-    fun switchQuality(wireValue: String) {
+    fun switchQuality(wireValue: String): Boolean {
         val current = qualityOverride ?: preferredQuality ?: PlaybackQuality.Auto.wireValue
-        if (wireValue == current) return
+        if (wireValue == current) return false
         val state = _uiState.value
         playbackMutationFence.beginReplan()
         launchSubtitleTransaction(state) {
             subtitleTransactions.selectQuality(wireValue)
         }
+        return true
     }
 
     /**
@@ -5204,6 +5577,9 @@ class TvPlayerViewModel(
 
     // ---- Settings setters (forward to per-profile DataStore) -------------------
     fun onSetPlaybackSpeed(value: Double) {
+        // A Watch Party plays at 1x; its correction rate is never a user
+        // speed, and the saved preference stays untouched for solo playback.
+        if (roomId != null) return
         viewModelScope.launch { playerSettingsStore.setPlaybackSpeed(value) }
     }
 
@@ -5231,6 +5607,9 @@ class TvPlayerViewModel(
     fun onSetDolbyVisionEnabled(value: Boolean) {
         viewModelScope.launch {
             playerSettingsStore.setDolbyVisionEnabled(value)
+            // A Watch Party never restarts its session for a local setting;
+            // the choice applies from the next start.
+            if (roomId != null) return@launch
             val state = _uiState.value
             if (state.streamUrl == null) return@launch
             val fileId = state.selectedFileId ?: state.mediaFileId
@@ -5636,6 +6015,8 @@ class TvPlayerViewModel(
      * session on the chosen server file version at the current position.
      */
     fun onSelectFileVersion(fileId: Int) {
+        // A Watch Party plays exactly the room's file.
+        if (roomId != null) return
         val state = _uiState.value
         // Validate BEFORE mutating. A no-op or unknown id used to fall through
         // after the audio intent had already been dropped, silently losing the
@@ -5657,6 +6038,8 @@ class TvPlayerViewModel(
      * chain. Raw ordinals never cross a file boundary.
      */
     private fun restartSessionInPlace(fileId: Int?) {
+        // Version and Dolby Vision restarts would choose playback locally.
+        if (roomId != null) return
         val state = _uiState.value
         val currentFileId = state.selectedFileId ?: state.mediaFileId
         val sourceVersion = state.fileVersions.firstOrNull { it.fileId == currentFileId }

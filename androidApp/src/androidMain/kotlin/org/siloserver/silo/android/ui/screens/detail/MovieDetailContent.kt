@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.outlined.AudioFile
@@ -98,8 +97,8 @@ fun MovieDetailContent(
     isDownloaded: Boolean = false,
     downloadProgress: Float? = null,
     onDownloadTapped: (() -> Unit)? = null,
-    onWatchTogether: (() -> Unit)? = null,
-    onSuggestToRoom: (() -> Unit)? = null,
+    /** The Watch Party overflow action (host, add, or suggest), when one applies. */
+    partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -116,8 +115,7 @@ fun MovieDetailContent(
     val audioTracks = selectedVersion?.audioTracks.orEmpty()
     val subtitleTracks = selectedVersion?.subtitleTracks.orEmpty()
     val hasTrackSelectors = detail.versions.isNotEmpty()
-    val hasOverflow = onSeriesClick != null || onWatchTogether != null ||
-        onSuggestToRoom != null
+    val hasOverflow = onSeriesClick != null || partyAction != null
 
     val eyebrow = if (detail.type == "episode") {
         HeroMetadata.episodeEyebrow(detail)
@@ -230,27 +228,15 @@ fun MovieDetailContent(
                                     },
                                 )
                             }
-                            if (onSuggestToRoom != null) {
+                            if (partyAction != null) {
                                 DropdownMenuItem(
-                                    text = { Text("Suggest to Watch Together") },
-                                    leadingIcon = {
-                                        Icon(Icons.Filled.Add, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onSuggestToRoom()
-                                    },
-                                )
-                            }
-                            if (onWatchTogether != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Watch Together") },
+                                    text = { Text(partyAction.label) },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.Groups, contentDescription = null)
                                     },
                                     onClick = {
                                         dismiss()
-                                        onWatchTogether()
+                                        partyAction.onClick()
                                     },
                                 )
                             }

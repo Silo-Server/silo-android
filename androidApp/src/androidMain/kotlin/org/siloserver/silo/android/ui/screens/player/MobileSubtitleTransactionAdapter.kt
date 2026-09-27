@@ -31,6 +31,7 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
+import org.siloserver.silo.model.playback.UpdateQualityPreference
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
@@ -370,6 +371,11 @@ internal class MobileSubtitleTransactionAdapter(
 
     fun selectAudio(audioTrackIndex: Int?) {
         mutate(UpdateAudioPreference(audioTrackIndex), explicit = true)
+    }
+
+    /** Replans the same file at [qualityPreference] (a protocol-v3 quality label). */
+    fun selectQuality(qualityPreference: String?) {
+        mutate(UpdateQualityPreference(qualityPreference), explicit = true)
     }
 
     /**

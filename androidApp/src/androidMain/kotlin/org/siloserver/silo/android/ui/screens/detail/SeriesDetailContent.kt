@@ -84,8 +84,8 @@ fun SeriesDetailContent(
     /** Series-level roll-up across ALL seasons: isDownloaded when every episode
      *  is downloaded, progress = downloaded/total fraction while partial. */
     seriesDownloadState: DetailDownloadState = DetailDownloadState(),
-    onWatchTogether: (() -> Unit)? = null,
-    onSuggestToRoom: (() -> Unit)? = null,
+    /** The Watch Party overflow action (host, add, or suggest), when one applies. */
+    partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -280,34 +280,18 @@ fun SeriesDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
-                    overflow = if (
-                        onWatchTogether != null || onSuggestToRoom != null
-                    ) {
+                    overflow = if (partyAction != null) {
                         { dismiss ->
-                            if (onSuggestToRoom != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Suggest to Watch Together") },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Groups, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onSuggestToRoom()
-                                    },
-                                )
-                            }
-                            if (onWatchTogether != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Watch Together") },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Groups, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onWatchTogether()
-                                    },
-                                )
-                            }
+                            DropdownMenuItem(
+                                text = { Text(partyAction.label) },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Groups, contentDescription = null)
+                                },
+                                onClick = {
+                                    dismiss()
+                                    partyAction.onClick()
+                                },
+                            )
                         }
                     } else {
                         null

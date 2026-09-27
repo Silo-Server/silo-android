@@ -18,8 +18,8 @@ import org.siloserver.silo.android.ui.theme.SiloDestructive
  * this.
  *
  * Item order and gating are unchanged. A null [onRequestsClick] is a server
- * with `requests_enabled` off, and a null [onWatchTogetherClick] is the
- * client-side Watch Together gate; neither is ever shown unconditionally, and
+ * with `requests_enabled` off, and a null [onWatchPartyClick] is the
+ * Settings → Experimental → Watch Party gate; neither is ever shown unconditionally, and
  * nothing new was added. Reading/ebooks are phone-only and reached from
  * Libraries, and Requests keeps its two entry points (this menu and search).
  *
@@ -35,7 +35,7 @@ fun ProfileMenu(
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
     onRequestsClick: (() -> Unit)? = null,
-    onWatchTogetherClick: (() -> Unit)? = null,
+    onWatchPartyClick: (() -> Unit)? = null,
 ) {
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
 
@@ -48,7 +48,7 @@ fun ProfileMenu(
     // jobs and the feature/account split would stop reading as a split. The
     // old menu drew its divider unconditionally, so a server with requests
     // disabled opened onto a stray rule above its first item.
-    val hasFeatureGroup = onRequestsClick != null || onWatchTogetherClick != null
+    val hasFeatureGroup = onRequestsClick != null || onWatchPartyClick != null
 
     SiloDropdownMenu(
         expanded = expanded,
@@ -63,12 +63,12 @@ fun ProfileMenu(
                 },
             )
         }
-        if (onWatchTogetherClick != null) {
+        if (onWatchPartyClick != null) {
             SiloMenuItem(
-                label = "Watch together",
+                label = "Watch Party",
                 onClick = {
                     onDismissRequest()
-                    onWatchTogetherClick()
+                    onWatchPartyClick()
                 },
             )
         }

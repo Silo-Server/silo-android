@@ -14,6 +14,7 @@ import org.siloserver.silo.android.downloads.AppWorkerFactory
 import org.siloserver.silo.android.notifications.NotificationsForegroundStarter
 import org.siloserver.silo.android.push.AndroidPushRegistrationStarter
 import org.siloserver.silo.common.di.playerInfraModule
+import org.siloserver.silo.common.di.watchPartyModule
 import org.siloserver.silo.common.di.playerModule
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsStartup
@@ -40,7 +41,7 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         DiagnosticsStartup.installCrashCapture(this)
         val koinApp = startKoin {
             androidContext(this@SiloApplication)
-            modules(sharedModules() + playerModule + playerInfraModule + androidModule + diagnosticsModule)
+            modules(sharedModules() + playerModule + playerInfraModule + watchPartyModule + androidModule + diagnosticsModule)
         }
         DiagnosticsStartup.startCoordinator { koinApp.koin.get<DiagnosticsCoordinator>() }
         koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(

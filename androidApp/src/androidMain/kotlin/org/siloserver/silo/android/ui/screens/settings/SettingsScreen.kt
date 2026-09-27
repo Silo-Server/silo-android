@@ -116,6 +116,9 @@ fun SettingsScreen(
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     var showRemoveAllDownloadsConfirm by remember { mutableStateOf(false) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
+    val watchPartyExperiment: org.siloserver.silo.common.watchparty.WatchPartyExperiment =
+        org.koin.compose.koinInject()
+    val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
 
     LaunchedEffect(state.loggedOut) {
         if (state.loggedOut) {
@@ -398,6 +401,18 @@ fun SettingsScreen(
                             onClick = { showRemoveAllDownloadsConfirm = true },
                         )
                     }
+                }
+            }
+
+            item {
+                // Device-local; never synced with the server's settings.
+                SettingsSection(title = "Experimental") {
+                    SettingsSwitchRow(
+                        label = "Watch Party",
+                        description = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
+                        checked = watchPartyEnabled,
+                        onCheckedChange = watchPartyExperiment::setEnabled,
+                    )
                 }
             }
 

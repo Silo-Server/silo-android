@@ -120,7 +120,9 @@ import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsViewM
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 
@@ -979,6 +981,11 @@ private fun TvGeneralSettingsPane(
                     text = "Adds an Audiobooks tab to the top menu when your server has an audiobook library. Hidden by default.",
                 )
             }
+        }
+        item {
+            // Settings → Experimental (D1): device-local, never synced. Turning
+            // Watch Party off hides every entry point and leaves any party.
+            TvExperimentalSettingsGroup()
         }
         // No Library group — tvOS parity: Apple's TVSettingsView has no such
         // section (it is iOS-only). On TV these destinations live in the
@@ -2195,6 +2202,24 @@ private fun DialogButton(
             style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
             color = if (isFocused) FocusedContent else if (destructive) MaterialTheme.colorScheme.error else Color.White,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
+}
+
+/** The Experimental group: features that are not finished yet. */
+@Composable
+private fun TvExperimentalSettingsGroup(
+    watchPartyExperiment: WatchPartyExperiment = koinInject(),
+) {
+    val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
+    SettingsGroup(title = "Experimental") {
+        SettingsToggleRow(
+            label = "Watch Party",
+            checked = watchPartyEnabled,
+            onCheckedChange = watchPartyExperiment::setEnabled,
+        )
+        SettingsFooterText(
+            text = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
         )
     }
 }
