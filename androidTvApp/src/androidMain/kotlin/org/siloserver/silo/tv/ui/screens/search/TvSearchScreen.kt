@@ -484,10 +484,11 @@ fun TvSearchScreen(
         visibleRequestResults.size,
     ) {
         if (!pendingSearchFocus || state.isLoading) return@LaunchedEffect
-        // People sit above the results and are the first target when present.
-        // Their lookup is a local query that answers alongside the titles, so
-        // waiting for it does not hold the handoff back noticeably.
-        if (state.isLoadingPeople) return@LaunchedEffect
+        // People sit above the results and are the first target when present,
+        // so give their lookup a short window to answer. Bounded: a slow or
+        // hung lookup must not park the viewer on the field. If it answers in
+        // time, this effect relaunches on the key change and picks it up.
+        if (state.isLoadingPeople) delay(TvSearchPeopleHandoffWaitMillis)
         // Only wait on the request lookup when it is the thing focus would
         // land on. Library results are the primary target and arrive first;
         // holding them hostage to a slow TMDB round-trip left the user parked
@@ -616,6 +617,7 @@ fun TvSearchScreen(
                         error = state.error,
                         isPartialCount = state.mediaType == TvSearchMediaType.All && state.hasMore,
                         isEstimatedCount = !state.totalExact,
+                        hasPeople = state.people.isNotEmpty(),
                     ),
                     hasContentFocusTarget = hasContentFocusTarget,
                     searchFieldFocusRequester = activeSearchFieldFocusRequester,
@@ -768,6 +770,9 @@ fun TvSearchScreen(
                         },
                         onAction = viewModel::submitSearch,
                     )
+                    // The people row above is the answer; the status line
+                    // already says no titles matched.
+                    state.people.isNotEmpty() -> Unit
                     else -> SearchFeedbackMessage(
                         title = "No matches for “${state.query}”",
                         body = "Try a shorter title or a different filter.",
@@ -1218,10 +1223,12 @@ private fun searchStatusText(
     error: String?,
     isPartialCount: Boolean,
     isEstimatedCount: Boolean = false,
+    hasPeople: Boolean = false,
 ): String? = when {
     query.isBlank() -> null
     isSearching -> "Searching…"
     error != null -> "Couldn't update results"
+    total == 0 && hasPeople -> "No matching titles"
     total == 0 -> "No results"
     isEstimatedCount && !isPartialCount -> "About $total results"
     total == 1 -> "1 result"
@@ -1280,6 +1287,9 @@ private const val TvSearchReturnPendingBudgetMillis: Long = 1_200L
  * thing it guards against is a request that never returns at all.
  */
 private const val TvSearchReturnInFlightBudgetMillis: Long = 10_000L
+
+/** How long the post-search handoff waits for people before it moves on. */
+private const val TvSearchPeopleHandoffWaitMillis: Long = 600L
 
 /** How many times a return may stand down before it gives up for good. */
 private const val TvSearchReturnMaxStandDowns: Int = 4

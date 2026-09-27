@@ -35,11 +35,13 @@ class SearchPeopleTest {
     }
 
     @Test
-    fun serverWithoutScopedPeopleSearchOffersNoPeople() = runTest {
+    fun serverWithoutScopedPeopleSearchIsNeverAskedForPeople() = runTest {
         for (advertised in listOf(null, false)) {
-            val (client, repository) = repository(advertised, mutableListOf())
+            val scopes = mutableListOf<String?>()
+            val (client, repository) = repository(advertised, scopes)
             try {
                 assertEquals(emptyList(), repository.searchPeopleForQuery("Nolan", listOf("video")))
+                assertEquals(emptyList(), scopes)
             } finally { client.close() }
         }
     }

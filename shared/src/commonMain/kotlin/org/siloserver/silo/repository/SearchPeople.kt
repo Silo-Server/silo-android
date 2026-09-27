@@ -11,9 +11,9 @@ import org.siloserver.silo.network.ApiResult
  *
  * Only a server that advertises `people_media_scope` scopes people search and
  * filters it by the viewer's library access. An older server would answer an
- * unscoped, unfiltered list, so it gets no people results at all. The
- * capability is checked alongside the searches rather than cached, because it
- * belongs to whichever server and profile is current.
+ * unscoped, unfiltered list, so it is never asked. The capability is read
+ * before every lookup rather than cached, because it belongs to whichever
+ * server and profile is current.
  *
  * A null entry in [mediaScopes] searches every media scope. Several scopes are
  * searched separately and merged into one list, exact name matches first. A
@@ -27,14 +27,10 @@ suspend fun CatalogRepository.searchPeopleForQuery(
 ): List<Person> {
     val trimmed = query.trim()
     if (trimmed.isEmpty() || mediaScopes.isEmpty()) return emptyList()
+    val supported = (searchCapabilities() as? ApiResult.Success)?.data?.peopleMediaScope == true
+    if (!supported) return emptyList()
     return coroutineScope {
-        val capabilities = async { searchCapabilities() }
         val searches = mediaScopes.distinct().map { scope -> async { searchPeople(trimmed, scope) } }
-        val supported = (capabilities.await() as? ApiResult.Success)?.data?.peopleMediaScope == true
-        if (!supported) {
-            searches.forEach { it.cancel() }
-            return@coroutineScope emptyList()
-        }
         val lists = searches.awaitAll().mapNotNull { (it as? ApiResult.Success)?.data }
         mergePeopleSearchResults(trimmed, lists, limit)
     }
