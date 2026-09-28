@@ -976,7 +976,8 @@ fun TvMainShell(
         }
     }
 
-    // Android 16 no longer dispatches KEYCODE_BACK to apps targeting API 36.
+    // Android 16 routes KEYCODE_BACK for apps targeting API 36 to back
+    // callbacks first (the key reaches views only as a canceled KeyUp).
     // Register the shell's stateful routing through the supported callback and
     // enable it only when this layer can consume the press, so child callbacks
     // and the activity fallback retain their existing priority.
@@ -1036,7 +1037,14 @@ fun TvMainShell(
                 if (ev.type == KeyEventType.KeyUp &&
                     (ev.key == Key.Back || ev.key == Key.Escape)
                 ) {
-                    handleShellBack()
+                    // Android 16 still delivers the key: after invoking the
+                    // top back callback it forwards the same KeyUp marked
+                    // canceled. Acting on it ran the shell's Back a second
+                    // time for one press, so Back from a pushed screen
+                    // (a request detail, My Requests) skipped its parent.
+                    // A canceled up must not perform the key's action, so
+                    // swallow it rather than let it reach anything below.
+                    if (ev.nativeKeyEvent.isCanceled) true else handleShellBack()
                 } else {
                     false
                 }
@@ -1339,6 +1347,7 @@ fun TvMainShell(
                         mediaType = entry.arguments?.getString(TvMainRoute.RequestDetail.ARG_MEDIA_TYPE).orEmpty(),
                         tmdbId = entry.arguments?.getInt(TvMainRoute.RequestDetail.ARG_TMDB_ID) ?: 0,
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
+                        onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
                 shellComposable(TvMainRoute.Collections.route) {

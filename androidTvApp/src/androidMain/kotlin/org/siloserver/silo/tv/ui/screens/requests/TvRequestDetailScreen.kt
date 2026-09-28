@@ -18,9 +18,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -35,10 +38,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.RequestMediaDetail
+import org.siloserver.silo.model.request.RequestState
 import org.siloserver.silo.model.request.requestBackdropUrl
+import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.cardScaled
@@ -50,8 +56,8 @@ import org.koin.core.parameter.parametersOf
 /**
  * TV request detail — the 10-foot counterpart to the phone RequestDetailScreen.
  * Reuses the shared [RequestDetailViewModel] (load + submitRequest) keyed by
- * (mediaType, tmdbId). Shows title/metadata/genres/overview and a Request
- * action when the title is requestable, plus the current request status.
+ * (mediaType, tmdbId). Shows title/metadata/genres/overview and one primary
+ * action: Request when the title is requestable, otherwise the request status.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -59,15 +65,30 @@ fun TvRequestDetailScreen(
     mediaType: String,
     tmdbId: Int,
     onBack: () -> Unit,
+    onInitialContentFocus: () -> Unit = {},
     viewModel: RequestDetailViewModel = koinViewModel { parametersOf(mediaType, tmdbId) },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val primaryActionFocusRequester = remember { FocusRequester() }
+
+    // The primary action is the only focusable thing on this page. Without a
+    // claim, the row that opened the detail is disposed and Compose recovers
+    // focus onto the top bar's Search button, so the page opened with the
+    // D-pad parked outside it. Keyed on the title rather than the loaded
+    // detail, so the refresh after a submit does not re-anchor a viewer who
+    // has already moved on.
+    val contentInitialFocus = rememberTvContentInitialFocus(
+        target = primaryActionFocusRequester,
+        contentKey = state.detail?.let { "${it.mediaType}:${it.tmdbId}" },
+        onAcquired = onInitialContentFocus,
+    )
 
     BackHandler(enabled = true) { onBack() }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .then(contentInitialFocus)
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
@@ -82,6 +103,7 @@ fun TvRequestDetailScreen(
                 notice = state.notice,
                 error = state.error,
                 onRequest = viewModel::submitRequest,
+                primaryActionFocusRequester = primaryActionFocusRequester,
             )
         }
     }
@@ -114,6 +136,7 @@ private fun RequestDetailContent(
     notice: String?,
     error: String?,
     onRequest: () -> Unit,
+    primaryActionFocusRequester: FocusRequester,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
         // Backdrop, scrimmed hard enough that body copy stays legible over the
@@ -232,34 +255,23 @@ private fun RequestDetailContent(
                     )
                 }
 
+                // One pill in every state, never swapped for another node. The
+                // status used to be plain text, which left the page with nothing
+                // to focus, and replacing Request with it after a submit dropped
+                // the focused node the same way. With nothing to do the pill
+                // stays focusable but inert, like tvOS RequestDetailView's
+                // single primary action. A disabled TV Surface stays focusable,
+                // so the submitting state keeps focus too.
                 val request = detail.request
-                when {
-                    request.requestable -> {
-                        TvRequestActionPill(
-                            label = if (isSubmitting) "Requesting…" else "Request",
-                            icon = Icons.Filled.Add,
-                            onClick = onRequest,
-                            enabled = !isSubmitting,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
-                    !request.status.isNullOrBlank() -> {
-                        Text(
-                            text = "Request status: ${request.status}",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
-                    request.reason.isNotBlank() -> {
-                        Text(
-                            text = request.reason,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 12.dp),
-                        )
-                    }
-                }
+                TvRequestActionPill(
+                    label = request.primaryActionLabel(isSubmitting),
+                    icon = Icons.Filled.Add.takeIf { request.requestable },
+                    onClick = { if (request.requestable) onRequest() },
+                    enabled = !isSubmitting,
+                    modifier = Modifier
+                        .padding(top = 12.dp)
+                        .focusRequester(primaryActionFocusRequester),
+                )
 
                 notice?.let {
                     Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
@@ -269,5 +281,21 @@ private fun RequestDetailContent(
                 }
             }
         }
+    }
+}
+
+/**
+ * Label for the detail's primary action: Request while the title is
+ * requestable, otherwise the existing request's status, otherwise the reason
+ * it cannot be requested. Status and reason arrive as tokens (`pending`,
+ * `quota_exceeded`), so they go through [requestDisplayLabel].
+ */
+private fun RequestState.primaryActionLabel(isSubmitting: Boolean): String {
+    if (requestable) return if (isSubmitting) "Requesting…" else "Request"
+    val status = status?.takeIf { it.isNotBlank() }
+    return when {
+        status != null -> "Request status: ${status.requestDisplayLabel()}"
+        reason.isNotBlank() -> reason.requestDisplayLabel()
+        else -> "Unavailable"
     }
 }
