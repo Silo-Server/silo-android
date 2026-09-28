@@ -35,6 +35,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.RequestMediaDetail
+import org.siloserver.silo.model.request.reasonMessage
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
@@ -233,6 +234,7 @@ private fun RequestDetailContent(
                 }
 
                 val request = detail.request
+                val reasonMessage = request.reasonMessage()
                 when {
                     request.requestable -> {
                         TvRequestActionPill(
@@ -251,9 +253,9 @@ private fun RequestDetailContent(
                             modifier = Modifier.padding(top = 12.dp),
                         )
                     }
-                    request.reason.isNotBlank() -> {
+                    reasonMessage != null -> {
                         Text(
-                            text = request.reason,
+                            text = reasonMessage,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 12.dp),

@@ -57,6 +57,7 @@ import org.siloserver.silo.model.request.RequestAvailability
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.reasonMessage
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
@@ -620,8 +621,7 @@ private fun RequestMediaResult.requestKey(): String = "$mediaType-$tmdbId"
 private fun RequestMediaResult.nonActionableMessage(): String = when {
     availability == RequestAvailability.Available -> "This title is already in your library."
     request.status?.isNotBlank() == true -> "$title is already ${request.status}."
-    request.reason.isNotBlank() -> request.reason
-    else -> "This title cannot be requested right now."
+    else -> request.reasonMessage() ?: "This title cannot be requested right now."
 }
 
 private fun searchEmptyMessage(

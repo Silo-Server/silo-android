@@ -48,6 +48,20 @@ fun String.requestDisplayLabel(): String = when (lowercase()) {
         .ifBlank { this }
 }
 
+/**
+ * A sentence saying why this title cannot be requested, or null when there is
+ * nothing worth showing. A title that already has a request gets null: its
+ * request status already says where it stands. A code this client does not
+ * know also gets null, so a raw code never reaches the screen.
+ */
+fun RequestState.reasonMessage(): String? = when (reason) {
+    RequestReason.AlreadyAvailable -> "This title is already in your library."
+    RequestReason.RequestsDisabled -> "Requests are disabled on this server."
+    RequestReason.Blocked -> "Your account is blocked from making requests."
+    RequestReason.QuotaExceeded -> "You've reached your request limit."
+    else -> null
+}
+
 fun MediaRequest.canCancel(): Boolean =
     outcome == RequestOutcome.Active && status == RequestStatus.Pending
 
