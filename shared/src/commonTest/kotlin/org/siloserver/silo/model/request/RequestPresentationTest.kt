@@ -78,6 +78,11 @@ class RequestPresentationTest {
     }
 
     @Test
+    fun `reason message keeps readable reason text from the server`() {
+        assertEquals("Already requested", RequestState(reason = "Already requested").reasonMessage())
+    }
+
+    @Test
     fun `can cancel only while active and pending`() {
         assertTrue(request(status = RequestStatus.Pending, outcome = RequestOutcome.Active).canCancel())
         assertFalse(request(status = RequestStatus.Downloading, outcome = RequestOutcome.Active).canCancel())
