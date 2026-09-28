@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.requests
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,13 +18,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -44,7 +51,9 @@ import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
-import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
+import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
+import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
+import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.theme.RowDimens
 import org.siloserver.silo.tv.ui.theme.SiloBlue
 import org.siloserver.silo.tv.ui.theme.cardScaled
@@ -65,34 +74,71 @@ fun TvRequestDetailScreen(
     mediaType: String,
     tmdbId: Int,
     onBack: () -> Unit,
+    /**
+     * False while the shell has an overlay (a cascade panel or the profile
+     * menu) that Back should close first. This handler registers after the
+     * shell's, so on Android 16 it would otherwise take that press and pop
+     * the page from under the open overlay.
+     */
+    backEnabled: Boolean = true,
     onInitialContentFocus: () -> Unit = {},
     viewModel: RequestDetailViewModel = koinViewModel { parametersOf(mediaType, tmdbId) },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val loadingFocusRequester = remember { FocusRequester() }
     val primaryActionFocusRequester = remember { FocusRequester() }
+    var pageHasFocus by remember { mutableStateOf(false) }
+    var pageHadFocus by remember { mutableStateOf(false) }
+    val showsLoading = state.isLoading && state.detail == null
+    // The title, not the loaded detail: the refresh after a submit replaces the
+    // detail and must not re-run the claim below.
+    val detailKey = state.detail?.let { "${it.mediaType}:${it.tmdbId}" }
+    val detailArrived by rememberUpdatedState(detailKey != null)
 
-    // The primary action is the only focusable thing on this page. Without a
-    // claim, the row that opened the detail is disposed and Compose recovers
-    // focus onto the top bar's Search button, so the page opened with the
-    // D-pad parked outside it. Keyed on the title rather than the loaded
-    // detail, so the refresh after a submit does not re-anchor a viewer who
-    // has already moved on.
-    val contentInitialFocus = rememberTvContentInitialFocus(
-        target = primaryActionFocusRequester,
-        contentKey = state.detail?.let { "${it.mediaType}:${it.tmdbId}" },
-        onAcquired = onInitialContentFocus,
-    )
+    // Nothing here is focusable until the detail loads, and the row that opened
+    // the page is about to be disposed, so Compose would re-home focus onto the
+    // top bar's Search button. Hold it on the loading indicator instead: focus
+    // stays in the page, and a move to the bar while this loads is the viewer's.
+    LaunchedEffect(showsLoading) {
+        if (!showsLoading) return@LaunchedEffect
+        requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = loadingFocusRequester::requestFocus,
+            isFocused = { pageHasFocus || detailArrived },
+        )
+    }
 
-    BackHandler(enabled = true) { onBack() }
+    // Hand focus to the primary action when the detail arrives, but only if it
+    // is still in the page (or never got here). A viewer who went up to the bar
+    // or into the profile menu while this loaded keeps their place. Read in the
+    // composition that swaps the indicator for the content, so it is the focus
+    // from before the swap.
+    val claimOnArrival = remember(detailKey) { pageHasFocus || !pageHadFocus }
+    LaunchedEffect(detailKey) {
+        if (detailKey == null || !claimOnArrival) return@LaunchedEffect
+        val result = requestFocusUntilObserved(
+            maxAttempts = TvContentInitialFocusMaxAttempts,
+            awaitAttempt = { withFrameNanos { } },
+            requestFocus = primaryActionFocusRequester::requestFocus,
+            isFocused = { pageHasFocus },
+        )
+        if (result == TvObservedFocusResult.Focused) onInitialContentFocus()
+    }
+
+    BackHandler(enabled = backEnabled) { onBack() }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .then(contentInitialFocus)
+            .onFocusChanged {
+                pageHasFocus = it.hasFocus
+                if (it.hasFocus) pageHadFocus = true
+            }
             .background(MaterialTheme.colorScheme.background),
     ) {
         when {
-            state.isLoading && state.detail == null -> TvLoadingScreen()
+            showsLoading -> RequestDetailLoading(focusRequester = loadingFocusRequester)
             state.error != null && state.detail == null -> TvErrorScreen(
                 message = state.error ?: "Failed to load this title.",
                 onRetry = viewModel::load,
@@ -106,6 +152,24 @@ fun TvRequestDetailScreen(
                 primaryActionFocusRequester = primaryActionFocusRequester,
             )
         }
+    }
+}
+
+/**
+ * The loading indicator plus a spinner-sized focus target over it, so focus
+ * can wait inside the page. Kept small and centred: D-pad Up from it has to
+ * find the top bar by geometry, which a full-screen target would not.
+ */
+@Composable
+private fun RequestDetailLoading(focusRequester: FocusRequester) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        TvLoadingScreen()
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .focusRequester(focusRequester)
+                .focusable(),
+        )
     }
 }
 

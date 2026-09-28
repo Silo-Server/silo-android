@@ -1347,6 +1347,9 @@ fun TvMainShell(
                         mediaType = entry.arguments?.getString(TvMainRoute.RequestDetail.ARG_MEDIA_TYPE).orEmpty(),
                         tmdbId = entry.arguments?.getInt(TvMainRoute.RequestDetail.ARG_TMDB_ID) ?: 0,
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
+                        // Back closes an open panel or profile menu first, as
+                        // on every other screen; the shell's handler does that.
+                        backEnabled = focusState.openPanel == null && !focusState.profileMenuOpen,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
                 }
