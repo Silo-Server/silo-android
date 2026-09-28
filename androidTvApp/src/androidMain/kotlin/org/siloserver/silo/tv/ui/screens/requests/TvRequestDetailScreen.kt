@@ -258,16 +258,18 @@ private fun RequestDetailContent(
                 // One pill in every state, never swapped for another node. The
                 // status used to be plain text, which left the page with nothing
                 // to focus, and replacing Request with it after a submit dropped
-                // the focused node the same way. With nothing to do the pill
-                // stays focusable but inert, like tvOS RequestDetailView's
-                // single primary action. A disabled TV Surface stays focusable,
-                // so the submitting state keeps focus too.
+                // the focused node the same way. Only Request is enabled; the
+                // status or reason renders disabled so it reads as not
+                // actionable. A disabled TV Surface still takes focus (its
+                // clickable is focusable regardless of enabled), so the page
+                // keeps a focus target in every state, like tvOS
+                // RequestDetailView's single primary action.
                 val request = detail.request
                 TvRequestActionPill(
                     label = request.primaryActionLabel(isSubmitting),
                     icon = Icons.Filled.Add.takeIf { request.requestable },
-                    onClick = { if (request.requestable) onRequest() },
-                    enabled = !isSubmitting,
+                    onClick = onRequest,
+                    enabled = request.requestable && !isSubmitting,
                     modifier = Modifier
                         .padding(top = 12.dp)
                         .focusRequester(primaryActionFocusRequester),
