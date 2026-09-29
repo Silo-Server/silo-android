@@ -81,6 +81,9 @@ class DownloadCapabilityTest {
         assertEquals(DownloadQuality.Mbps10, transcodeOn.effectiveDefault(DownloadQuality.Mbps10))
         // Before the capability loads, the saved value stands.
         assertEquals(DownloadQuality.Mbps10, (null as DownloadCapability?).effectiveDefault(DownloadQuality.Mbps10))
+        // Without Original on offer, the first offered preset is used.
+        val bitrateOnly = transcodeOn.copy(qualityPresets = listOf("5mbps", "2mbps"))
+        assertEquals(DownloadQuality.Mbps5, bitrateOnly.effectiveDefault(DownloadQuality.Mbps10))
     }
 
     @Test

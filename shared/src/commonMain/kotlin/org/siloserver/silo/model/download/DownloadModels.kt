@@ -239,12 +239,20 @@ fun DownloadCapability?.labelFor(quality: DownloadQuality): String = this?.label
 
 /**
  * The preset new downloads use for a saved default: the saved one when this
- * capability offers it, else Original, since the server refuses a preset the
- * account can no longer request (transcoding turned off, say). An unloaded
- * capability keeps the saved value.
+ * capability offers it, since the server refuses a preset the account can no
+ * longer request (transcoding turned off, say); else Original, or the first
+ * offered preset if the server does not list Original. An unloaded capability
+ * keeps the saved value.
  */
-fun DownloadCapability?.effectiveDefault(saved: DownloadQuality): DownloadQuality =
-    if (this == null || saved in allowedQualities()) saved else DownloadQuality.Original
+fun DownloadCapability?.effectiveDefault(saved: DownloadQuality): DownloadQuality {
+    if (this == null) return saved
+    val offered = allowedQualities()
+    return when {
+        saved in offered -> saved
+        DownloadQuality.Original in offered -> DownloadQuality.Original
+        else -> offered.first()
+    }
+}
 
 /** Convenience: type-safe accessor. */
 fun DownloadRecord.statusEnum(): DownloadStatus = DownloadStatus.fromWire(status)
