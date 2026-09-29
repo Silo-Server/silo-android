@@ -61,6 +61,7 @@ import org.siloserver.silo.model.catalog.hasEditionChoices
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.player.DolbyVisionDetection
+import org.siloserver.silo.playback.selectPlaybackVersion
 
 /**
  * One iOS-style row inside [PlaybackSelectorCard]. Icon + group label lead,
@@ -518,6 +519,38 @@ private fun BadgePill(text: String) {
             )
             .padding(horizontal = 5.dp, vertical = 2.dp),
     )
+}
+
+// ── Display version ───────────────────────────────────────────
+
+/**
+ * Index of the version a video detail page shows for [versions], which is
+ * also the version its Download button saves. An explicit pick wins. Auto
+ * resolves through the same shared selector as playback (lastFileId →
+ * preferred-quality rank → bestAvailable), so what Auto previews is the file
+ * playback and downloads use. While the quality pref is still loading, only
+ * the pref-independent lastFileId is shown, otherwise -1 (the bare "Auto"
+ * placeholder), so the page never names a version the arriving pref
+ * contradicts. [fallbackIndex] covers an empty list or an unmatched version.
+ */
+internal fun detailDisplayVersionIndex(
+    versions: List<FileVersion>,
+    explicitIndex: Int?,
+    lastFileId: Int?,
+    preferredQuality: String?,
+    fallbackIndex: Int,
+): Int {
+    if (versions.isEmpty()) return fallbackIndex
+    // A stale pick (the list shrank after a refresh) names no version rather
+    // than a different one, since playback would not use a clamped file.
+    if (explicitIndex != null) return explicitIndex.takeIf { it in versions.indices } ?: -1
+    if (preferredQuality == null) {
+        return lastFileId
+            ?.let { id -> versions.indexOfFirst { it.fileId == id }.takeIf { it >= 0 } }
+            ?: -1
+    }
+    val resolvedFileId = selectPlaybackVersion(versions, lastFileId, preferredQuality).fileId
+    return versions.indexOfFirst { it.fileId == resolvedFileId }.takeIf { it >= 0 } ?: fallbackIndex
 }
 
 // ── Label formatting ──────────────────────────────────────────

@@ -39,6 +39,9 @@ fun DownloadQualityPickerSheet(
     // Presets to offer, already gated by server capability + media type (issue
     // #20 GAP 4). Empty falls back to Original so the sheet is never blank.
     allowedQualities: List<DownloadQuality> = DownloadQuality.entries,
+    // Row title per preset; the caller passes the server capability's label,
+    // which adds the preset's resolution ceiling ("10 Mbps · up to 1080p").
+    qualityLabel: (DownloadQuality) -> String = { it.label },
 ) {
     val qualities = allowedQualities.ifEmpty { listOf(DownloadQuality.Original) }
     ModalBottomSheet(
@@ -89,7 +92,7 @@ fun DownloadQualityPickerSheet(
                 ListItem(
                     headlineContent = {
                         Text(
-                            text = quality.label,
+                            text = qualityLabel(quality),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                     },
@@ -165,6 +168,6 @@ internal fun downloadEstimateWarning(
 
 private fun downloadQualityDescription(quality: DownloadQuality): String =
     when (quality) {
-        DownloadQuality.Original -> "Original file, best quality, largest download."
-        else -> "Smaller copy capped around ${quality.label}."
+        DownloadQuality.Original -> "Source quality, with compatibility fallback if needed."
+        else -> "Prepared on the server when the original is larger."
     }

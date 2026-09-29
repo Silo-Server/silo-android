@@ -49,6 +49,40 @@ class RequestPresentationTest {
     }
 
     @Test
+    fun `reason message reads each server reason as a sentence`() {
+        assertEquals(
+            "This title is already in your library.",
+            RequestState(reason = RequestReason.AlreadyAvailable).reasonMessage(),
+        )
+        assertEquals(
+            "Requests are disabled on this server.",
+            RequestState(reason = RequestReason.RequestsDisabled).reasonMessage(),
+        )
+        assertEquals(
+            "Your account is blocked from making requests.",
+            RequestState(reason = RequestReason.Blocked).reasonMessage(),
+        )
+        assertEquals(
+            "You've reached your request limit.",
+            RequestState(reason = RequestReason.QuotaExceeded).reasonMessage(),
+        )
+    }
+
+    @Test
+    fun `reason message is empty for an existing request, an unknown code, or no reason`() {
+        assertNull(
+            RequestState(status = RequestStatus.Downloading, reason = RequestReason.AlreadyRequested).reasonMessage(),
+        )
+        assertNull(RequestState(reason = "some_future_reason").reasonMessage())
+        assertNull(RequestState(requestable = true).reasonMessage())
+    }
+
+    @Test
+    fun `reason message keeps readable reason text from the server`() {
+        assertEquals("Already requested", RequestState(reason = "Already requested").reasonMessage())
+    }
+
+    @Test
     fun `can cancel only while active and pending`() {
         assertTrue(request(status = RequestStatus.Pending, outcome = RequestOutcome.Active).canCancel())
         assertFalse(request(status = RequestStatus.Downloading, outcome = RequestOutcome.Active).canCancel())

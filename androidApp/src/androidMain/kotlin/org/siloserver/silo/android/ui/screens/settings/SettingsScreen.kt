@@ -370,7 +370,7 @@ fun SettingsScreen(
                         label = "Download quality",
                         description = "Quality preset used for new downloads.",
                         value = state.defaultDownloadQuality,
-                        options = DownloadQuality.entries.map { it.label },
+                        options = state.downloadQualityOptions,
                         onOptionSelected = viewModel::setDefaultDownloadQuality,
                     )
                     SettingsSwitchRow(

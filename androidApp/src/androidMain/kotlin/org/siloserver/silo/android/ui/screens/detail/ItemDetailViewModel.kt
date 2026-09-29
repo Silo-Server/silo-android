@@ -62,6 +62,8 @@ data class ItemDetailUiState(
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
     val episodeSeriesPosterUrl: String? = null,
+    /** Parent series title on a standalone episode page, for download grouping. */
+    val episodeSeriesTitle: String? = null,
     val episodeSeriesPosterThumbhash: String? = null,
     /**
      * Route-scoped episode lists keyed by season. Unlike the repository's
@@ -235,7 +237,7 @@ class ItemDetailViewModel(
         displayTitle: String,
         forceRedownloadMissingLocal: Boolean = false,
         downloadQuality: DownloadQuality? = null,
-        downloadContentId: String = contentId,
+        episode: ItemDetail? = null,
     ) {
         val existing = downloadRecordFor(version)
         when (
@@ -257,11 +259,11 @@ class ItemDetailViewModel(
             DetailDownloadTapAction.ReplaceAndStart -> viewModelScope.launch {
                 val staleRecord = existing
                 if (staleRecord == null || downloadsRepository.delete(staleRecord.id) is ApiResult.Success) {
-                    startDownload(version, displayTitle, downloadQuality, downloadContentId)
+                    startDownload(version, displayTitle, downloadQuality, episode)
                 }
             }
             DetailDownloadTapAction.Start -> viewModelScope.launch {
-                startDownload(version, displayTitle, downloadQuality, downloadContentId)
+                startDownload(version, displayTitle, downloadQuality, episode)
             }
         }
     }
@@ -275,16 +277,58 @@ class ItemDetailViewModel(
         version: FileVersion,
         displayTitle: String,
         downloadQuality: DownloadQuality?,
-        downloadContentId: String,
+        episode: ItemDetail?,
     ) {
+        // The series page names its selected episode; an episode page is
+        // itself the episode. Episodes register under their series, which the
+        // server requires, so they go through startEpisode.
+        val pageDetail = _uiState.value.detail
+        val item = episode ?: pageDetail
+        val seriesPage = pageDetail?.takeIf { it.type == "series" }
+        // On the series page the page itself is the parent when the episode
+        // row omits its series id.
+        val seriesId = item?.seriesId?.takeIf { it.isNotBlank() }
+            ?: seriesPage?.takeIf { episode != null }?.contentId
         // wifiOnly read from per-profile PlayerSettingsStore inside
-        // DownloadEnqueuer.start; default true.
-        val result = downloadEnqueuer.start(
-            contentId = downloadContentId,
-            fileId = version.fileId,
-            displayTitle = displayTitle,
-            downloadQualityOverride = downloadQuality,
-        )
+        // DownloadEnqueuer; default true.
+        val result = when {
+            item?.type == "episode" && seriesId != null -> {
+                // Never the episode's own title or art: the Downloads tab
+                // groups episodes under the series' name and poster.
+                val knownTitle = item.seriesTitle?.takeIf { it.isNotBlank() }
+                    ?: seriesPage?.title
+                    ?: _uiState.value.episodeSeriesTitle?.takeIf { it.isNotBlank() }
+                val knownPoster = seriesPage?.posterUrl ?: _uiState.value.episodeSeriesPosterUrl
+                // On an episode page the parent load may not have finished (or
+                // may not run at all); the title and poster are stored with the
+                // download, so fetch the parent now when either is missing. A
+                // series page already is the parent, so it never refetches.
+                val parent = if (seriesPage == null && (knownTitle == null || knownPoster == null)) {
+                    (catalogRepository.getItemDetailForPrefetch(seriesId, libraryId = libraryId) as? ApiResult.Success)?.data
+                } else {
+                    null
+                }
+                downloadEnqueuer.startEpisode(
+                    seriesContentId = seriesId,
+                    episodeContentId = item.contentId,
+                    fileId = version.fileId,
+                    seriesTitle = knownTitle ?: parent?.title?.takeIf { it.isNotBlank() } ?: "Series",
+                    seasonNumber = item.seasonNumber,
+                    episodeNumber = item.episodeNumber,
+                    episodeTitle = item.title,
+                    posterUrl = knownPoster ?: parent?.posterUrl ?: pageDetail?.posterUrl,
+                    downloadQualityOverride = downloadQuality,
+                )
+            }
+            // The server rejects an episode sent without its series.
+            item?.type == "episode" -> ApiResult.Error(0, "missing_series", "This episode isn't linked to a series.")
+            else -> downloadEnqueuer.start(
+                contentId = item?.contentId ?: contentId,
+                fileId = version.fileId,
+                displayTitle = displayTitle,
+                downloadQualityOverride = downloadQuality,
+            )
+        }
         _downloadStartEvents.emit(result is ApiResult.Success)
     }
 
@@ -625,6 +669,7 @@ class ItemDetailViewModel(
                         it.copy(
                             episodeSeriesPosterUrl = result.data.posterUrl,
                             episodeSeriesPosterThumbhash = result.data.posterThumbhash,
+                            episodeSeriesTitle = result.data.title,
                         )
                     }
                 }

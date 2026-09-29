@@ -42,6 +42,7 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaResult
+import org.siloserver.silo.model.request.reasonMessage
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
@@ -321,9 +322,11 @@ private fun RequestActions(
 
 @Composable
 private fun RequestDetailStatus(detail: RequestMediaDetail) {
-    val status = detail.request.reason
-        .takeIf { it.isNotBlank() }
-        ?: detail.availability.requestDisplayLabel()
+    val status = if (detail.request.reason.isBlank()) {
+        detail.availability.requestDisplayLabel()
+    } else {
+        detail.request.reasonMessage()
+    } ?: return
     Text(
         text = status,
         style = MaterialTheme.typography.bodySmall,

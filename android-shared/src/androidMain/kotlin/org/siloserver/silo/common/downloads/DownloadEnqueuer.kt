@@ -3,8 +3,11 @@ package org.siloserver.silo.common.downloads
 import android.content.Context
 import android.util.Log
 import androidx.work.WorkManager
+import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.model.download.DownloadSidecar
@@ -46,6 +49,8 @@ class DownloadEnqueuer(
     private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
     private val transitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
     private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
+    /** Supplies the decode caps sent with each create; null sends none. */
+    private val capabilityDetector: PlaybackCapabilityDetector? = null,
 ) {
 
     /**
@@ -86,8 +91,9 @@ class DownloadEnqueuer(
 
     /**
      * Single-episode download. Resolves the episode's catalog row for rich
-     * sidecar metadata (series title, S/E numbers, still image). The
-     * `seriesContentId` is what gets associated on the server side; the
+     * sidecar metadata (series title, S/E numbers, still image). The server
+     * registers the entry under `seriesContentId` with `episodeContentId` as
+     * its episode, and rejects an episode sent as the content id; the
      * `fileId` chosen here is the user-preferred quality.
      */
     suspend fun startEpisode(
@@ -95,8 +101,8 @@ class DownloadEnqueuer(
         episodeContentId: String,
         fileId: Int,
         seriesTitle: String,
-        seasonNumber: Int,
-        episodeNumber: Int,
+        seasonNumber: Int?,
+        episodeNumber: Int?,
         episodeTitle: String?,
         posterUrl: String? = null,
         downloadQualityOverride: DownloadQuality? = null,
@@ -108,11 +114,15 @@ class DownloadEnqueuer(
             Log.i(TAG, "startEpisode: fileId=$fileId already queued/downloading — skipping duplicate")
             return alreadyActive()
         }
-        val displayTitle = "$seriesTitle S${seasonNumber}E${episodeNumber}" +
-            (episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "")
+        // Unknown numbers leave the S/E label out rather than print "S0E0".
+        val episodeCode = if (seasonNumber != null && episodeNumber != null) "S${seasonNumber}E${episodeNumber}" else null
+        val shownEpisodeTitle = episodeTitle?.takeIf { it.isNotBlank() }
+        val displayTitle = listOfNotNull(seriesTitle, episodeCode).joinToString(" ") +
+            (shownEpisodeTitle?.let { " · $it" } ?: "")
         val record = when (val r = repository.create(
             downloadRequest(
-                contentId = episodeContentId,
+                contentId = seriesContentId,
+                episodeId = episodeContentId,
                 fileId = fileId,
                 downloadQualityOverride = downloadQualityOverride,
             ),
@@ -127,7 +137,7 @@ class DownloadEnqueuer(
         val sidecar = DownloadSidecar(
             record = record,
             title = seriesTitle,
-            subtitle = "S${seasonNumber}E${episodeNumber}" + (episodeTitle?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+            subtitle = listOfNotNull(episodeCode, shownEpisodeTitle).joinToString(" · ").ifEmpty { null },
             posterUrl = posterUrl,
             seriesTitle = seriesTitle,
             seriesContentId = seriesContentId,
@@ -373,7 +383,10 @@ class DownloadEnqueuer(
         series: Boolean = false,
         downloadQualityOverride: DownloadQuality? = null,
     ): DownloadRequest {
-        val quality = downloadQualityOverride ?: DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first())
+        val quality = downloadQualityOverride
+            ?: repository.capability.value.effectiveDefault(
+                DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first()),
+            )
         return DownloadRequest(
             contentId = contentId,
             episodeId = episodeId,
@@ -381,6 +394,15 @@ class DownloadEnqueuer(
             series = series,
             quality = quality.wire,
             targetBitrateKbps = quality.targetBitrateKbps,
+            // A failed probe must not block the download; the server then
+            // treats the device as able to play the original.
+            caps = capabilityDetector?.let { detector ->
+                withContext(Dispatchers.Default) {
+                    runCatching { detector.downloadCaps(dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()) }
+                        .onFailure { Log.w(TAG, "download caps probe failed", it) }
+                        .getOrNull()
+                }
+            },
         )
     }
 

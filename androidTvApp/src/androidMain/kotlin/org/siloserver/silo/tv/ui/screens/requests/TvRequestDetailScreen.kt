@@ -46,6 +46,7 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestState
+import org.siloserver.silo.model.request.reasonMessage
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
@@ -353,15 +354,14 @@ private fun RequestDetailContent(
 /**
  * Label for the detail's primary action: Request while the title is
  * requestable, otherwise the existing request's status, otherwise the reason
- * it cannot be requested. Status and reason arrive as tokens (`pending`,
- * `quota_exceeded`), so they go through [requestDisplayLabel].
+ * it cannot be requested. Status tokens use [requestDisplayLabel]; reasons use
+ * the shared [reasonMessage] policy for readable sentences and unknown codes.
  */
 private fun RequestState.primaryActionLabel(isSubmitting: Boolean): String {
     if (requestable) return if (isSubmitting) "Requesting…" else "Request"
     val status = status?.takeIf { it.isNotBlank() }
     return when {
         status != null -> "Request status: ${status.requestDisplayLabel()}"
-        reason.isNotBlank() -> reason.requestDisplayLabel()
-        else -> "Unavailable"
+        else -> reasonMessage() ?: "Unavailable"
     }
 }

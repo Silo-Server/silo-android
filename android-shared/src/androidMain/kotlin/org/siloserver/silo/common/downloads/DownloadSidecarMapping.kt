@@ -10,9 +10,15 @@ import kotlinx.serialization.json.Json
 /**
  * Maps between the on-the-wire-ish [DownloadSidecar] (the download's full local
  * picture) and the Room [DownloadEntity] projection. Chapters serialize to a JSON
- * column (no TypeConverter). `episodeId`/`batchId`/`deliveryFormat`/
- * `targetBitrateKbps` on [DownloadRecord] have no entity column and aren't read
- * anywhere in the download/playback paths, so they round-trip as null.
+ * column (no TypeConverter). `batchId`/`deliveryFormat`/`targetBitrateKbps` on
+ * [DownloadRecord] have no entity column and aren't read anywhere in the
+ * download/playback paths, so they round-trip as null.
+ *
+ * The server keys an episode's entry by its series (`contentId`) plus
+ * `episodeId`, while every local reader (offline playback, the Downloads list,
+ * watched state) looks a download up by the item it plays. The entity's
+ * `contentId` is therefore the episode for episodes; the series stays in
+ * `seriesContentId`.
  */
 private val mappingJson = Json { ignoreUnknownKeys = true }
 
@@ -22,7 +28,7 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         profileId = profileId,
         mediaFileId = record.mediaFileId,
         recordId = record.id,
-        contentId = record.contentId,
+        contentId = record.episodeId?.takeIf { it.isNotBlank() } ?: record.contentId,
         title = title,
         subtitle = subtitle,
         posterUrl = posterUrl,

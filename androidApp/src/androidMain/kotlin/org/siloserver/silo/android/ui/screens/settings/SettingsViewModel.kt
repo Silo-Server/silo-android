@@ -16,6 +16,9 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
+import org.siloserver.silo.model.download.labelFor
+import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
@@ -94,6 +97,9 @@ data class SettingsUiState(
     val downloadsWifiOnly: Boolean = true,
     val keepWatchedDownloads: Boolean = false,
     val defaultDownloadQuality: String = DownloadQuality.Original.label,
+    // The presets this account may request, labelled with the server's
+    // resolution ceiling once the download capability has loaded.
+    val downloadQualityOptions: List<String> = DownloadQuality.entries.map { it.label },
 
     // Subtitles
     // BCP 47 tag, "" = off. The picker converts to and from labels.
@@ -131,6 +137,7 @@ class SettingsViewModel(
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
     audiobookSettingsStore: AudiobookSettingsStore,
+    private val downloadsRepository: DownloadsRepository? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -233,9 +240,20 @@ class SettingsViewModel(
         playerSettingsStore.keepWatchedDownloadsFlow.onEach { keepWatched ->
             _uiState.update { it.copy(keepWatchedDownloads = keepWatched) }
         }.launchIn(viewModelScope)
-        playerSettingsStore.defaultDownloadQualityFlow.onEach { quality ->
-            _uiState.update { it.copy(defaultDownloadQuality = downloadQualityLabel(quality)) }
+        val downloadCapability = downloadsRepository?.capability ?: MutableStateFlow(null)
+        combine(playerSettingsStore.defaultDownloadQualityFlow, downloadCapability) { quality, capability ->
+            val offered = capability?.allowedQualities() ?: DownloadQuality.entries
+            _uiState.update {
+                it.copy(
+                    // The preset new downloads will actually use.
+                    defaultDownloadQuality = capability.labelFor(capability.effectiveDefault(DownloadQuality.fromWire(quality))),
+                    downloadQualityOptions = offered.map { preset -> capability.labelFor(preset) },
+                )
+            }
         }.launchIn(viewModelScope)
+        // Opening Settings refreshes the capability, as the detail screen does,
+        // so the labels reflect the server's current download settings.
+        downloadsRepository?.let { repository -> viewModelScope.launch { repository.refreshCapability() } }
         playerSettingsStore.pictureInPictureEnabledFlow.onEach { enabled ->
             _uiState.update { it.copy(pictureInPictureEnabled = enabled) }
         }.launchIn(viewModelScope)
@@ -627,9 +645,10 @@ class SettingsViewModel(
         }
     }
 
-    private fun downloadQualityLabel(value: String): String =
-        DownloadQuality.fromWire(value).label
-
+    // A shown label is the preset's bitrate label plus an optional
+    // " · up to …" suffix, so the bitrate part alone identifies the preset
+    // even if the capability refreshed after the list was drawn.
     private fun downloadQualityWireValue(value: String): String =
-        DownloadQuality.entries.firstOrNull { it.label == value }?.wire ?: DownloadQuality.Original.wire
+        DownloadQuality.entries.firstOrNull { it.label == value.substringBefore(" · ") }?.wire
+            ?: DownloadQuality.Original.wire
 }

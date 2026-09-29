@@ -27,6 +27,18 @@ object RequestOutcome {
     const val Failed = "failed"
 }
 
+/**
+ * Values of [RequestState.reason]: why a title cannot be requested. They are
+ * codes for deciding what to offer, not text; show [reasonMessage] instead.
+ */
+object RequestReason {
+    const val AlreadyRequested = "already_requested"
+    const val AlreadyAvailable = "already_available"
+    const val RequestsDisabled = "requests_disabled"
+    const val Blocked = "blocked"
+    const val QuotaExceeded = "quota_exceeded"
+}
+
 object RequestAvailability {
     const val Missing = "missing"
     const val Available = "available"

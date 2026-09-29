@@ -32,6 +32,30 @@ class DownloadCapabilityTest {
     }
 
     @Test
+    fun `labels presets with the server resolution ceiling`() {
+        val source = """
+            {
+              "enabled": true,
+              "download_allowed": true,
+              "quality_presets": ["original", "20mbps", "1mbps"],
+              "quality_options": [
+                {"preset": "original"},
+                {"preset": "20mbps", "bitrate_kbps": 20000, "max_height": 2160},
+                {"preset": "1mbps", "bitrate_kbps": 1000, "max_height": 480}
+              ]
+            }
+        """.trimIndent()
+
+        val cap = json.decodeFromString<DownloadCapability>(source)
+        assertEquals("Original", cap.labelFor(DownloadQuality.Original))
+        assertEquals("20 Mbps · up to 4K", cap.labelFor(DownloadQuality.Mbps20))
+        assertEquals("1 Mbps · up to 480p", cap.labelFor(DownloadQuality.Mbps1))
+        // A preset the server does not describe, or no capability yet, keeps the bitrate label.
+        assertEquals("10 Mbps", cap.labelFor(DownloadQuality.Mbps10))
+        assertEquals("5 Mbps", (null as DownloadCapability?).labelFor(DownloadQuality.Mbps5))
+    }
+
+    @Test
     fun `allowedQualities offers every preset when transcode is enabled and allowed`() {
         val cap = DownloadCapability(
             enabled = true,
@@ -41,6 +65,25 @@ class DownloadCapabilityTest {
             transcodeUserAllowed = true,
         )
         assertEquals(DownloadQuality.entries.toList(), cap.allowedQualities())
+    }
+
+    @Test
+    fun `a saved default the account can no longer request falls back to Original`() {
+        val transcodeOff = DownloadCapability(
+            enabled = true,
+            downloadAllowed = true,
+            qualityPresets = listOf("original"),
+            transcodeEnabled = false,
+            transcodeUserAllowed = true,
+        )
+        assertEquals(DownloadQuality.Original, transcodeOff.effectiveDefault(DownloadQuality.Mbps10))
+        val transcodeOn = transcodeOff.copy(qualityPresets = listOf("original", "10mbps"), transcodeEnabled = true)
+        assertEquals(DownloadQuality.Mbps10, transcodeOn.effectiveDefault(DownloadQuality.Mbps10))
+        // Before the capability loads, the saved value stands.
+        assertEquals(DownloadQuality.Mbps10, (null as DownloadCapability?).effectiveDefault(DownloadQuality.Mbps10))
+        // Without Original on offer, the first offered preset is used.
+        val bitrateOnly = transcodeOn.copy(qualityPresets = listOf("5mbps", "2mbps"))
+        assertEquals(DownloadQuality.Mbps5, bitrateOnly.effectiveDefault(DownloadQuality.Mbps10))
     }
 
     @Test
