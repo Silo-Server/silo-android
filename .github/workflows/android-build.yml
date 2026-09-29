@@ -1,7 +1,7 @@
 name: Android Builds
 
-# CI gate: unit tests on main pushes and pull requests. Release artifacts
-# (Play Store bundles, sideload APKs, GitHub releases) are owned by
+# CI gate: tests, lint, and release readiness on main pushes and pull requests.
+# Release artifacts (Play Store bundles, sideload APKs, GitHub releases) are owned by
 # release.yml — triggered by v* tags or its workflow_dispatch.
 
 on:
@@ -92,6 +92,53 @@ jobs:
           name: media3-decoder-ffmpeg-1.11.0
           path: android-shared/libs/media3-decoder-ffmpeg-1.11.0.aar
           if-no-files-found: error
+
+  release-readiness:
+    name: Release readiness
+    if: github.event_name != 'workflow_dispatch' || !inputs.build_ffmpeg_aar
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # Match release.yml: the pinned Ruby and frozen lockfile must work
+      # before a release reaches the Google Play job.
+      - name: Set up Ruby and install release dependencies
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1
+        with:
+          bundler-cache: true
+
+      - name: Load the release lane and Play client
+        run: |
+          bundle exec fastlane lanes
+          bundle exec ruby -e "require 'supply'"
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "true"
+          FASTLANE_OPT_OUT_USAGE: "true"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+
+      # Exercise both Play artifacts, including R8 and bundle packaging.
+      # Signing and publishing remain in release.yml.
+      - name: Build phone and TV release bundles
+        run: |
+          ./gradlew \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            :androidApp:bundleRelease :androidTvApp:bundleRelease \
+            --max-workers=2
+          test -s androidApp/build/outputs/bundle/release/androidApp-release.aab
+          test -s androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
 
   unit-tests:
     name: Unit tests
