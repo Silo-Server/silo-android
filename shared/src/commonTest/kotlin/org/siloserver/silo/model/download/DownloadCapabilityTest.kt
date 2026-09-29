@@ -68,6 +68,22 @@ class DownloadCapabilityTest {
     }
 
     @Test
+    fun `a saved default the account can no longer request falls back to Original`() {
+        val transcodeOff = DownloadCapability(
+            enabled = true,
+            downloadAllowed = true,
+            qualityPresets = listOf("original"),
+            transcodeEnabled = false,
+            transcodeUserAllowed = true,
+        )
+        assertEquals(DownloadQuality.Original, transcodeOff.effectiveDefault(DownloadQuality.Mbps10))
+        val transcodeOn = transcodeOff.copy(qualityPresets = listOf("original", "10mbps"), transcodeEnabled = true)
+        assertEquals(DownloadQuality.Mbps10, transcodeOn.effectiveDefault(DownloadQuality.Mbps10))
+        // Before the capability loads, the saved value stands.
+        assertEquals(DownloadQuality.Mbps10, (null as DownloadCapability?).effectiveDefault(DownloadQuality.Mbps10))
+    }
+
+    @Test
     fun `allowedQualities collapses to Original when transcode is disabled`() {
         val cap = DownloadCapability(
             enabled = true,

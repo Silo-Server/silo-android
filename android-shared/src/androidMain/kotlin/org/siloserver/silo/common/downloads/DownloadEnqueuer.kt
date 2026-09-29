@@ -7,6 +7,7 @@ import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.model.download.DownloadSidecar
@@ -377,14 +378,10 @@ class DownloadEnqueuer(
         series: Boolean = false,
         downloadQualityOverride: DownloadQuality? = null,
     ): DownloadRequest {
-        // A saved default this account can no longer request (transcoding
-        // turned off, say) falls back to Original rather than a request the
-        // server refuses; an unloaded capability leaves the saved value.
-        val allowed = repository.capability.value?.allowedQualities()
         val quality = downloadQualityOverride
-            ?: DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first())
-                .takeIf { allowed == null || it in allowed }
-            ?: DownloadQuality.Original
+            ?: repository.capability.value.effectiveDefault(
+                DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first()),
+            )
         return DownloadRequest(
             contentId = contentId,
             episodeId = episodeId,

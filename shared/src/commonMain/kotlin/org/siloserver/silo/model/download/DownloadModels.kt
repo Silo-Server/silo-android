@@ -237,6 +237,15 @@ data class DownloadCapability(
 /** [DownloadCapability.label], or the bitrate-only label before a capability has loaded. */
 fun DownloadCapability?.labelFor(quality: DownloadQuality): String = this?.label(quality) ?: quality.label
 
+/**
+ * The preset new downloads use for a saved default: the saved one when this
+ * capability offers it, else Original, since the server refuses a preset the
+ * account can no longer request (transcoding turned off, say). An unloaded
+ * capability keeps the saved value.
+ */
+fun DownloadCapability?.effectiveDefault(saved: DownloadQuality): DownloadQuality =
+    if (this == null || saved in allowedQualities()) saved else DownloadQuality.Original
+
 /** Convenience: type-safe accessor. */
 fun DownloadRecord.statusEnum(): DownloadStatus = DownloadStatus.fromWire(status)
 

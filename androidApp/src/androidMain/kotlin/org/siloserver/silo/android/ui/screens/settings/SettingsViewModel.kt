@@ -16,6 +16,7 @@ import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
@@ -244,7 +245,8 @@ class SettingsViewModel(
             val offered = capability?.allowedQualities() ?: DownloadQuality.entries
             _uiState.update {
                 it.copy(
-                    defaultDownloadQuality = capability.labelFor(DownloadQuality.fromWire(quality)),
+                    // The preset new downloads will actually use.
+                    defaultDownloadQuality = capability.labelFor(capability.effectiveDefault(DownloadQuality.fromWire(quality))),
                     downloadQualityOptions = offered.map { preset -> capability.labelFor(preset) },
                 )
             }
