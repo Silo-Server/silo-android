@@ -107,6 +107,36 @@ class DownloadCreationV2Test {
         } finally { c.close() }
     }
 
+    @Test fun reusableEntryIsPostedWithCapsUntilBytesReachTheDevice() = runTest {
+        var listed = row
+        var posts = 0
+        val c = client {
+            if (it.method == HttpMethod.Get) json("""{"items":[$listed],"page":{"has_more":false}}""") else {
+                posts++
+                val body = SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject
+                assertNotNull(body["caps"])
+                assertEquals(JsonPrimitive(7), body["expected_revision"]); assertEquals(JsonPrimitive("entry"), body["expected_download_id"])
+                json("""{"items":[$listed],"skipped":[],"page":{"has_more":false}}""",HttpStatusCode.Accepted)
+            }
+        }
+        try {
+            val api = api(c)
+            val caps = DownloadCaps("exact", listOf("h264"), listOf("aac"), listOf("mp4"), "1080p", false, emptyList())
+            // A ready entry no bytes have reached is re-decided with the caps.
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
+            assertEquals(1,posts)
+            // Without caps there is nothing new to send.
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42),scope))
+            assertEquals(1,posts)
+            // Bytes already sent, or a completed entry, are never re-decided.
+            listed = row.replace("\"bytes_sent\":0", "\"bytes_sent\":50")
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
+            listed = row.replace("\"status\":\"ready\"", "\"status\":\"completed\"")
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
+            assertEquals(1,posts)
+        } finally { c.close() }
+    }
+
     @Test fun batchContinuesEmptyPageAndPreservesSkippedAndOldBatch() = runTest {
         var firstBody: JsonObject? = null
         var calls = 0

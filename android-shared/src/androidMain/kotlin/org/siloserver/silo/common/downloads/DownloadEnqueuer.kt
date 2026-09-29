@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.work.WorkManager
 import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadRequest
@@ -395,7 +396,7 @@ class DownloadEnqueuer(
             // treats the device as able to play the original.
             caps = capabilityDetector?.let { detector ->
                 withContext(Dispatchers.Default) {
-                    runCatching { detector.downloadCaps() }
+                    runCatching { detector.downloadCaps(dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()) }
                         .onFailure { Log.w(TAG, "download caps probe failed", it) }
                         .getOrNull()
                 }

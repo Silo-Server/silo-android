@@ -410,11 +410,14 @@ class PlaybackCapabilityDetector(
      * later on whatever output is attached then, so this omits the display
      * and audio-route facts [detect] intersects in: the codec, container and
      * resolution facts come from the same probes, and HDR is the decoder's own
-     * support.
+     * support after the same Dolby Vision setting [detect] applies.
      */
-    fun downloadCaps(ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable()): DownloadCaps {
+    fun downloadCaps(
+        ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
+        dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
+    ): DownloadCaps {
         val codecProbe = MediaCodecCapabilitiesProbe.probe()
-        val decoderHdr = codecProbe.hdr
+        val decoderHdr = codecProbe.hdr.withDolbyVisionPolicy(dolbyVision)
         return DownloadCaps(
             videoEvidence = CAPABILITY_EVIDENCE_EXACT,
             codecsVideo = codecProbe.videoCodecs.toList(),
