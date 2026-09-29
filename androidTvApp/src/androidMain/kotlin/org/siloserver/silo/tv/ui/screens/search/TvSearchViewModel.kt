@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.screens.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType
 import org.siloserver.silo.model.navigation.tvMediaModeCapabilities
@@ -11,11 +12,13 @@ import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
+import org.siloserver.silo.repository.searchPeopleForQuery
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +32,18 @@ enum class TvSearchMediaType(val label: String, val wire: String?) {
     Movies("Movies", "movie"),
     Series("Series", "series"),
     Audiobooks("Audiobooks", "audiobook"),
+}
+
+/**
+ * People-search scopes for each filter. All stays within what TV shows: video,
+ * plus audiobooks only when that tab is enabled. Book and manga credits are
+ * never searched, because TV does not show those media types.
+ */
+internal fun TvSearchMediaType.peopleMediaScopes(showAudiobooks: Boolean): List<String?> = when (this) {
+    TvSearchMediaType.All -> if (showAudiobooks) listOf("video", "audiobook") else listOf("video")
+    TvSearchMediaType.Movies -> listOf("movie")
+    TvSearchMediaType.Series -> listOf("series")
+    TvSearchMediaType.Audiobooks -> listOf("audiobook")
 }
 
 @OptIn(FlowPreview::class)
@@ -45,6 +60,10 @@ class TvSearchViewModel(
         val availableMediaTypes: List<TvSearchMediaType> =
             TvSearchMediaType.entries.filterNot { it == TvSearchMediaType.Audiobooks },
         val items: List<BrowseItem> = emptyList(),
+        /** Cast and crew matching the query, shown above the title grid. */
+        val people: List<Person> = emptyList(),
+        /** True until the current query's people lookup answers. */
+        val isLoadingPeople: Boolean = false,
         val total: Int = 0,
         val totalExact: Boolean = false,
         val searchDiagnostics: org.siloserver.silo.network.apiv2.CatalogSearchDiagnosticsV2? = null,
@@ -112,6 +131,7 @@ class TvSearchViewModel(
 
     private var searchJob: Job? = null
     private var loadMoreJob: Job? = null
+    private var peopleJob: Job? = null
     private var continuation: CatalogContinuationV2? = null
     private val pageSize = 40
     private val debounceMs = 300L
@@ -131,9 +151,12 @@ class TvSearchViewModel(
         searchJob?.cancel()
         loadMoreJob?.cancel()
         if (query.isBlank()) {
+            peopleJob?.cancel()
             _uiState.update {
                 it.copy(
                     items = emptyList(),
+                    people = emptyList(),
+                    isLoadingPeople = false,
                     total = 0,
                     hasMore = false,
                     isLoading = false,
@@ -170,9 +193,12 @@ class TvSearchViewModel(
         loadMoreJob?.cancel()
         val query = _uiState.value.query
         if (query.isBlank()) {
+            peopleJob?.cancel()
             _uiState.update {
                 it.copy(
                     items = emptyList(),
+                    people = emptyList(),
+                    isLoadingPeople = false,
                     total = 0,
                     hasMore = false,
                     isLoading = false,
@@ -205,6 +231,22 @@ class TvSearchViewModel(
         }
     }
 
+    /**
+     * Looks up people beside the title search, on its own job so a slow or
+     * failed people lookup never holds back or fails the titles. The previous
+     * query's people are cleared first so they never sit beside new titles.
+     */
+    private fun searchPeople(generation: Int, query: String, mediaType: TvSearchMediaType, showAudiobooks: Boolean) {
+        peopleJob?.cancel()
+        _uiState.update { it.copy(people = emptyList(), isLoadingPeople = true) }
+        peopleJob = viewModelScope.launch {
+            val people = catalogRepository.searchPeopleForQuery(query, mediaType.peopleMediaScopes(showAudiobooks))
+            // Cancellation surfaces as an empty answer, not an exception.
+            if (!isActive || generation != searchGeneration) return@launch
+            _uiState.update { it.copy(people = people, isLoadingPeople = false) }
+        }
+    }
+
     private suspend fun runSearchInternal(reset: Boolean) {
         val generation = searchGeneration
         val state = _uiState.value
@@ -225,6 +267,7 @@ class TvSearchViewModel(
             if (reset) it.copy(isLoading = true, isLoadingMore = false, error = null)
             else it.copy(isLoadingMore = true)
         }
+        if (reset) searchPeople(generation, requestedQuery, requestedMediaType, state.showAudiobooks)
 
         while (true) {
             val result = catalogRepository.browse(

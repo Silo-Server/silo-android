@@ -3,8 +3,11 @@ package org.siloserver.silo.common.downloads
 import android.content.Context
 import android.util.Log
 import androidx.work.WorkManager
+import org.siloserver.silo.common.player.PlaybackCapabilityDetector
 import org.siloserver.silo.common.settings.PlayerSettingsStore
+import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadRequest
 import org.siloserver.silo.model.download.DownloadSidecar
@@ -46,6 +49,8 @@ class DownloadEnqueuer(
     private val authorities: org.siloserver.silo.network.DurableLoginAuthorityProvider? = null,
     private val transitions: org.siloserver.silo.network.IdentityTransitionBarrier? = null,
     private val devices: org.siloserver.silo.network.DeviceMetadataProvider? = null,
+    /** Supplies the decode caps sent with each create; null sends none. */
+    private val capabilityDetector: PlaybackCapabilityDetector? = null,
 ) {
 
     /**
@@ -373,7 +378,10 @@ class DownloadEnqueuer(
         series: Boolean = false,
         downloadQualityOverride: DownloadQuality? = null,
     ): DownloadRequest {
-        val quality = downloadQualityOverride ?: DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first())
+        val quality = downloadQualityOverride
+            ?: repository.capability.value.effectiveDefault(
+                DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first()),
+            )
         return DownloadRequest(
             contentId = contentId,
             episodeId = episodeId,
@@ -381,6 +389,15 @@ class DownloadEnqueuer(
             series = series,
             quality = quality.wire,
             targetBitrateKbps = quality.targetBitrateKbps,
+            // A failed probe must not block the download; the server then
+            // treats the device as able to play the original.
+            caps = capabilityDetector?.let { detector ->
+                withContext(Dispatchers.Default) {
+                    runCatching { detector.downloadCaps(dolbyVision = playerSettingsStore.dolbyVisionPolicySnapshot()) }
+                        .onFailure { Log.w(TAG, "download caps probe failed", it) }
+                        .getOrNull()
+                }
+            },
         )
     }
 

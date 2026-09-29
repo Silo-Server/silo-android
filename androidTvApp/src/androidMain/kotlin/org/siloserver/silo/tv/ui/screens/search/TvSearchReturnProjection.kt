@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.search
 
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.tv.ui.focus.TvReturnSection
@@ -21,8 +22,13 @@ internal const val TvSearchCatalogSectionId: String = "search-catalog"
 
 internal const val TvSearchRequestSectionId: String = "search-requests"
 
+internal const val TvSearchPeopleSectionId: String = "search-people"
+
 /** Namespaced so a content id can never collide with a request id. */
 internal fun tvSearchCatalogItemId(contentId: String): String = "catalog:$contentId"
+
+/** Namespaced so a person id can never collide with a content id. */
+internal fun tvSearchPersonItemId(personId: Long): String = "person:$personId"
 
 /**
  * Namespaced on the request's OWN identity, not on the library item it may
@@ -45,7 +51,9 @@ private fun canonicalTvRequestMediaType(mediaType: String): String =
     }
 
 /**
- * Sections in rendered order: the grid, then the footer row beneath it.
+ * Sections: the grid, the footer row beneath it, then the people row. People
+ * render above the grid but are listed last, so the grid and request row keep
+ * the section indices their return targets were recorded with.
  *
  * [catalogComplete] is false while more pages can still arrive, which is what
  * lets a target deeper than the loaded results wait rather than settle for a
@@ -57,12 +65,17 @@ private fun canonicalTvRequestMediaType(mediaType: String): String =
  * is empty and not yet answered. Resolving then would read absence as final
  * and consume the target on a card that was about to come back. Modelled here
  * rather than left to the driver, so it cannot be forgotten at the call site.
+ *
+ * [peopleComplete] follows the same rule: the people row is cleared when a
+ * search starts and filled when its own lookup answers.
  */
 internal fun tvSearchReturnSections(
     catalogItems: List<BrowseItem>,
     requestResults: List<RequestMediaResult>,
     catalogComplete: Boolean,
     requestsComplete: Boolean,
+    people: List<Person> = emptyList(),
+    peopleComplete: Boolean = true,
 ): List<TvReturnSection> = listOf(
     TvReturnSection(
         id = TvSearchCatalogSectionId,
@@ -73,5 +86,10 @@ internal fun tvSearchReturnSections(
         id = TvSearchRequestSectionId,
         itemIds = requestResults.map { tvSearchRequestItemId(it.mediaType, it.tmdbId) },
         isComplete = requestsComplete,
+    ),
+    TvReturnSection(
+        id = TvSearchPeopleSectionId,
+        itemIds = people.map { tvSearchPersonItemId(it.id) },
+        isComplete = peopleComplete,
     ),
 )

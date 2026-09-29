@@ -68,6 +68,29 @@ class DownloadCreationV2Test {
         } finally { c.close() }
     }
 
+    @Test fun createSendsDecodeCapsForTheServerToFitTheDownload() = runTest {
+        var caps: JsonObject? = null
+        val c = client {
+            if (it.method == HttpMethod.Get) json("""{"items":[],"page":{"has_more":false}}""") else {
+                caps = SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject["caps"]?.jsonObject
+                json("""{"items":[$row],"skipped":[],"page":{"has_more":false}}""",HttpStatusCode.Accepted)
+            }
+        }
+        try {
+            val decode = org.siloserver.silo.model.playback.VideoDecodeCapability(codec = "h264", bitDepths = listOf(8), maxWidth = 1920, maxHeight = 1080, hardware = true)
+            val request = DownloadRequest("movie", fileId = 42, caps = DownloadCaps("exact", listOf("h264"), listOf("aac"), listOf("mp4", "mkv"), "1080p", false, listOf(decode)))
+            assertIs<ApiResult.Success<DownloadRecord>>(api(c).create(request, scope))
+            val sent = assertNotNull(caps)
+            assertEquals(JsonPrimitive("exact"), sent["video_evidence"])
+            assertEquals(JsonPrimitive("1080p"), sent["max_resolution"])
+            val entry = sent["video_decode"]!!.jsonArray.single().jsonObject
+            assertEquals(JsonPrimitive(1920), entry["max_width"])
+            // The server rejects fields outside its caps schema, and null for an integer.
+            assertEquals(setOf("video_evidence", "codecs_video", "codecs_audio", "containers", "max_resolution", "hdr", "video_decode"), sent.keys)
+            assertFalse(entry.values.any { value -> value is JsonNull })
+        } finally { c.close() }
+    }
+
     @Test fun matchingEntryReconcilesWithoutResetAnd401HasNoReplay() = runTest {
         var posts = 0
         val c = client {
@@ -80,6 +103,36 @@ class DownloadCreationV2Test {
             assertEquals("entry",assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42),scope)).data.id)
             assertEquals(0,posts)
             assertIs<ApiResult.Error>(api.create(DownloadRequest("movie",fileId=42,quality="5mbps"),scope))
+            assertEquals(1,posts)
+        } finally { c.close() }
+    }
+
+    @Test fun reusableEntryIsPostedWithCapsUntilBytesReachTheDevice() = runTest {
+        var listed = row
+        var posts = 0
+        val c = client {
+            if (it.method == HttpMethod.Get) json("""{"items":[$listed],"page":{"has_more":false}}""") else {
+                posts++
+                val body = SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject
+                assertNotNull(body["caps"])
+                assertEquals(JsonPrimitive(7), body["expected_revision"]); assertEquals(JsonPrimitive("entry"), body["expected_download_id"])
+                json("""{"items":[$listed],"skipped":[],"page":{"has_more":false}}""",HttpStatusCode.Accepted)
+            }
+        }
+        try {
+            val api = api(c)
+            val caps = DownloadCaps("exact", listOf("h264"), listOf("aac"), listOf("mp4"), "1080p", false, emptyList())
+            // A ready entry no bytes have reached is re-decided with the caps.
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
+            assertEquals(1,posts)
+            // Without caps there is nothing new to send.
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42),scope))
+            assertEquals(1,posts)
+            // Bytes already sent, or a completed entry, are never re-decided.
+            listed = row.replace("\"bytes_sent\":0", "\"bytes_sent\":50")
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
+            listed = row.replace("\"status\":\"ready\"", "\"status\":\"completed\"")
+            assertIs<ApiResult.Success<DownloadRecord>>(api.create(DownloadRequest("movie",fileId=42,caps=caps),scope))
             assertEquals(1,posts)
         } finally { c.close() }
     }

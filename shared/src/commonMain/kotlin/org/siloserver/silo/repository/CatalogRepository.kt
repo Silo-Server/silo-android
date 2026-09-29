@@ -285,9 +285,13 @@ class CatalogRepository(
     suspend fun getItemVersions(contentId: String, libraryId: Int? = null): ApiResult<List<FileVersion>> =
         catalogApi.getItemVersions(contentId, libraryId)
 
-    /** Searches for people (cast/crew) by name. */
-    suspend fun searchPeople(query: String): ApiResult<List<Person>> =
-        catalogApi.searchPeople(query)
+    /**
+     * Searches for people (cast/crew) by name. [mediaScope] limits results to
+     * people with accessible credits in that scope; only send it to a server
+     * that advertises `people_media_scope`.
+     */
+    suspend fun searchPeople(query: String, mediaScope: String? = null): ApiResult<List<Person>> =
+        catalogApi.searchPeople(query, mediaScope)
 
     /** Queues a server-side metadata refresh for a person. */
     suspend fun refreshPerson(id: Long, owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<Unit> =

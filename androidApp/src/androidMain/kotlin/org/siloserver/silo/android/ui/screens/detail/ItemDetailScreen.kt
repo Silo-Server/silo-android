@@ -79,6 +79,7 @@ import org.siloserver.silo.model.ebook.chooseEbookVersion
 import org.siloserver.silo.model.ebook.isInAppReadableEbookVersion
 import org.siloserver.silo.model.ebook.isSupportedEbookVersion
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
@@ -1002,6 +1003,7 @@ fun ItemDetailScreen(
                 estimate = pendingDownloadEstimate,
                 availableBytes = remember { downloadStorage.usableSpaceBytes() },
                 allowedQualities = pendingDownloadAllowedQualities,
+                qualityLabel = { quality -> downloadCapability.labelFor(quality) },
             )
         }
 
