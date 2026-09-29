@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -36,23 +38,29 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.theme.SuccessGreen
 
 /**
  * Tokens for the hero facts row, mirroring tvOS `TVHeroFactToken`.
  *
- * - [TextToken] plain text (year / runtime / ★rating); consecutive text
- *   tokens get a "·" divider between them.
+ * - [TextToken] plain text (year / runtime); consecutive text tokens get a
+ *   "·" divider between them.
+ * - [ExternalRating] one external rating as its source's mark and score.
  * - [Rating] a maturity/check token: green check icon + label.
  * - [Chip] a playback-format value (4K / HDR / DOLBY VISION / ATMOS / CC).
  *   Detail renders these with the same quiet monospaced treatment as Home's
@@ -60,6 +68,7 @@ import org.siloserver.silo.tv.ui.theme.SuccessGreen
  */
 internal sealed class TvHeroFactToken {
     data class TextToken(val value: String) : TvHeroFactToken()
+    data class ExternalRating(val rating: DisplayRating) : TvHeroFactToken()
     data class Rating(val value: String) : TvHeroFactToken()
     data class Chip(val value: String) : TvHeroFactToken()
 }
@@ -467,35 +476,14 @@ private fun MetadataRow(
     ratingChip: String?,
     compactRating: Boolean = false,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
+    WholeTokenRow(spacing = METADATA_TOKEN_SPACING) {
         ratingChip?.takeIf { it.isNotBlank() }?.let { rating ->
             RatingChip(text = rating, compact = compactRating)
         }
         tokens.forEachIndexed { index, token ->
-            if (index > 0) MetadataDivider()
-            when (token) {
-                is TvHeroFactToken.TextToken -> Text(
-                    text = token.value,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    lineHeight = 16.sp,
-                    color = Color.White.copy(alpha = 0.88f),
-                    maxLines = 1,
-                )
-                is TvHeroFactToken.Rating -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = SuccessGreen.copy(alpha = 0.9f),
-                        modifier = Modifier.height(12.dp),
-                    )
-                    Text(
+            MetadataToken(divided = index > 0) {
+                when (token) {
+                    is TvHeroFactToken.TextToken -> Text(
                         text = token.value,
                         fontWeight = FontWeight.Medium,
                         fontSize = 14.sp,
@@ -503,31 +491,106 @@ private fun MetadataRow(
                         color = Color.White.copy(alpha = 0.88f),
                         maxLines = 1,
                     )
+                    is TvHeroFactToken.ExternalRating -> RatingEntry(
+                        rating = token.rating,
+                        style = LocalTextStyle.current.merge(
+                            TextStyle(
+                                fontSize = 14.sp,
+                                lineHeight = 16.sp,
+                                color = Color.White.copy(alpha = 0.88f),
+                            ),
+                        ),
+                        // Ten-foot text floor; the shared entry would draw it at ~12sp.
+                        markFontSize = 14.sp,
+                    )
+                    is TvHeroFactToken.Rating -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = SuccessGreen.copy(alpha = 0.9f),
+                            modifier = Modifier.height(12.dp),
+                        )
+                        Text(
+                            text = token.value,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            lineHeight = 16.sp,
+                            color = Color.White.copy(alpha = 0.88f),
+                            maxLines = 1,
+                        )
+                    }
+                    is TvHeroFactToken.Chip -> Text(
+                        text = homeStyleFormatLabel(token.value),
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 14.sp,
+                        lineHeight = 16.sp,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 0.52.sp,
+                        color = Color.White.copy(alpha = 0.55f),
+                        maxLines = 1,
+                    )
                 }
-                is TvHeroFactToken.Chip -> Text(
-                    text = homeStyleFormatLabel(token.value),
+            }
+        }
+        sourceTokens.forEachIndexed { index, token ->
+            MetadataToken(divided = tokens.isNotEmpty() || index > 0) {
+                Text(
+                    text = token,
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp,
                     lineHeight = 16.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.52.sp,
-                    color = Color.White.copy(alpha = 0.55f),
+                    color = Color.White.copy(alpha = 0.90f),
                     maxLines = 1,
                 )
             }
         }
-        sourceTokens.forEachIndexed { index, token ->
-            if (tokens.isNotEmpty() || index > 0) MetadataDivider()
-            Text(
-                text = token,
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp,
-                lineHeight = 16.sp,
-                color = Color.White.copy(alpha = 0.90f),
-                maxLines = 1,
-            )
-        }
+    }
+}
 
+/** One facts-row token with its leading "·", so the two drop together. */
+@Composable
+private fun MetadataToken(divided: Boolean, content: @Composable () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(METADATA_TOKEN_SPACING),
+    ) {
+        if (divided) MetadataDivider()
+        content()
+    }
+}
+
+/**
+ * A single-line row that shows as many whole children as fit and drops the
+ * rest. The ratings made the facts line long enough to overflow the editorial
+ * column; this drops trailing genres instead of clipping one mid-word.
+ */
+@Composable
+private fun WholeTokenRow(spacing: Dp, content: @Composable () -> Unit) {
+    Layout(content = content) { measurables, constraints ->
+        val gap = spacing.roundToPx()
+        val placeables = measurables.map {
+            it.measure(Constraints(maxHeight = constraints.maxHeight))
+        }
+        val shown = mutableListOf<Placeable>()
+        var width = 0
+        for (placeable in placeables) {
+            val next = width + (if (shown.isEmpty()) 0 else gap) + placeable.width
+            if (next > constraints.maxWidth) break
+            shown += placeable
+            width = next
+        }
+        val height = (shown.maxOfOrNull { it.height } ?: 0)
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
+        layout(width.coerceAtLeast(constraints.minWidth), height) {
+            var x = 0
+            shown.forEach { placeable ->
+                placeable.placeRelative(x, (height - placeable.height) / 2)
+                x += placeable.width + gap
+            }
+        }
     }
 }
 
@@ -598,6 +661,7 @@ private val HERO_CONTENT_MAX_WIDTH = 540.dp
 private val HERO_CONTENT_SPACING = 9.dp
 private val EDITORIAL_SPACING = 7.dp
 private val SERIES_METADATA_SLOT_HEIGHT = 18.dp
+private val METADATA_TOKEN_SPACING = 7.dp
 private val SERIES_EPISODE_SYNOPSIS_HEIGHT = 56.dp
 private val SERIES_CREDIT_SLOT_HEIGHT = 14.dp
 

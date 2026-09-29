@@ -170,6 +170,11 @@ data class ItemDetail(
     @SerialName("rating_tmdb") val ratingTmdb: Double? = null,
     @SerialName("rating_rt_critic") val ratingRtCritic: Int? = null,
     @SerialName("rating_rt_audience") val ratingRtAudience: Int? = null,
+    /**
+     * The server's title-page ratings row, in display order. `null` when an
+     * older server omits it; read it through [titleRatings].
+     */
+    val ratings: List<DisplayRating>? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,
     @SerialName("tvdb_id") val tvdbId: String? = null,

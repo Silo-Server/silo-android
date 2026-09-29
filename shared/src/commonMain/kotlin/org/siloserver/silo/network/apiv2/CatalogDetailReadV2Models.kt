@@ -35,6 +35,8 @@ internal data class ItemDetailReadV2(
     @SerialName("rating_tmdb") val ratingTmdb: Double? = null,
     @SerialName("rating_rt_critic") val ratingRtCritic: Int? = null,
     @SerialName("rating_rt_audience") val ratingRtAudience: Int? = null,
+    // Absent on servers that predate the title-page ratings row.
+    val ratings: List<DisplayRating>? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,
     @SerialName("tvdb_id") val tvdbId: String? = null,
@@ -96,6 +98,7 @@ internal data class ItemDetailReadV2(
         ratingTmdb = ratingTmdb,
         ratingRtCritic = ratingRtCritic,
         ratingRtAudience = ratingRtAudience,
+        ratings = ratings,
         imdbId = imdbId,
         tmdbId = tmdbId,
         tvdbId = tvdbId,

@@ -19,8 +19,8 @@ import org.siloserver.silo.overlays.OverlayIconId
  * (iosApp/Overlays/OverlayIcon.swift). The generic glyph set (star,
  * clock, tv, …) is drawn with [Canvas] so this stays free of any
  * material-icons dependency — android-shared only links the core Compose
- * runtime/foundation/ui artifacts. Brand marks (HDR10, DV, Atmos, AV1,
- * Tomato) render as short text tokens via [overlayBrandToken]; the badge
+ * runtime/foundation/ui artifacts. Brand marks (HDR10, DV, Atmos, AV1)
+ * render as short text tokens via [overlayBrandToken]; the badge
  * composable lays those out as text rather than calling [OverlayIconGlyph].
  */
 
@@ -38,13 +38,6 @@ internal fun overlayBrandToken(iconId: OverlayIconId): String? =
         OverlayIconId.Av1 -> "AV1"
         else -> null
     }
-
-/**
- * The Tomato brand mark keeps an official-ish red when the preset does
- * not force a tint; the badge passes this through so a "minimal" preset
- * still paints it in the accent/foreground color.
- */
-internal val OverlayTomatoColor = Color(red = 0.98f, green = 0.20f, blue = 0.04f)
 
 /**
  * Draws a generic overlay glyph at [size], tinted [tint]. Brand-mark ids
@@ -66,9 +59,6 @@ internal fun OverlayIconGlyph(
         when (iconId) {
             OverlayIconId.Star, OverlayIconId.Award, OverlayIconId.Ribbon ->
                 drawPath(starPath(w, h), tint, style = Fill)
-
-            OverlayIconId.Tomato ->
-                drawCircle(tint, radius = w * 0.42f, center = Offset(w / 2f, h / 2f))
 
             OverlayIconId.Clock, OverlayIconId.Calendar -> {
                 drawCircle(tint, radius = w * 0.42f, center = Offset(w / 2f, h / 2f), style = stroke)

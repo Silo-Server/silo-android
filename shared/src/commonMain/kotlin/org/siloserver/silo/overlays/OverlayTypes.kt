@@ -174,7 +174,7 @@ data class CardOverlayPrefs(
 
 /**
  * Typed icon identifiers. Lucide icons map to platform icons in the
- * renderer; brand marks (HDR10, DV, Atmos, AV1, Tomato) render from
+ * renderer; brand marks (HDR10, DV, Atmos, AV1) render from
  * inline shape views.
  */
 enum class OverlayIconId(val raw: String) {
@@ -201,7 +201,6 @@ enum class OverlayIconId(val raw: String) {
     DolbyVision("dolby-vision"),
     Atmos("atmos"),
     Av1("av1"),
-    Tomato("tomato"),
 }
 
 /**

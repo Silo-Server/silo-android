@@ -109,6 +109,7 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
@@ -643,6 +644,7 @@ private fun TvDetailContent(
             runtimeMinutes = activeSeriesPlaybackDetail?.let { playbackDetail ->
                 selectedMediaRuntimeMinutes(playbackDetail, activeSeriesSelectedVersion)
             } ?: episode.runtime,
+            ratings = detail.titleRatings(),
         )
     } ?: TvDetailMetadata.factsLine(
         detail = detail,

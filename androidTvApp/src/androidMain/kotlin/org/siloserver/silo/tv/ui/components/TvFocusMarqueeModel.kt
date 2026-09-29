@@ -7,6 +7,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import org.siloserver.silo.model.catalog.DisplayRating
+import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.SectionItem
@@ -32,6 +34,13 @@ data class TvMarqueeContent(
     val badges: List<String>,
     /** Dot-joined editorial metadata after the badge. */
     val metaParts: List<String>,
+    /**
+     * The one external rating a hero shows, IMDb or else TMDB, drawn as its
+     * source's mark and score before `metaParts[ratingIndex]` (after the
+     * length, before the genre).
+     */
+    val rating: DisplayRating?,
+    val ratingIndex: Int,
     val synopsis: String?,
     /** A quieter detail line: cast / air-date when carried by the payload. */
     val detailLine: String?,
@@ -89,13 +98,16 @@ data class TvMarqueeContent(
             val isEpisode = item.type.equals("episode", ignoreCase = true)
 
             val meta = mutableListOf<String>()
+            var rating: DisplayRating? = null
+            var ratingIndex = 0
             if (isEpisode) {
                 episodeToken(item.seasonNumber, item.episodeNumber)?.let(meta::add)
                 if (item.title.isNotBlank()) meta.add(item.title)
             } else {
                 if (item.year > 0) meta.add(item.year.toString())
                 lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
-                ratingToken(item.ratingImdb)?.let(meta::add)
+                rating = ExternalRatings.primary(item.ratingImdb, item.ratingTmdb)
+                ratingIndex = meta.size
                 item.genres.firstOrNull { it.isNotBlank() }?.let(meta::add)
             }
 
@@ -113,6 +125,8 @@ data class TvMarqueeContent(
                 logoUrl = item.logoUrl?.takeIf { it.isNotBlank() },
                 badges = badges,
                 metaParts = meta,
+                rating = rating,
+                ratingIndex = ratingIndex,
                 synopsis = item.overview?.takeIf { it.isNotBlank() },
                 detailLine = null,
                 specLine = specLine(item.overlaySummary),
@@ -192,17 +206,6 @@ data class TvMarqueeContent(
             } else {
                 "$minutes min"
             }
-        }
-
-        private fun ratingToken(rating: Double?): String? =
-            validImdbRating(rating)?.let(::formatRating)
-
-        private fun validImdbRating(rating: Double?): Double? =
-            rating?.takeIf { it.isFinite() && it > 0.0 && it <= 10.0 }
-
-        private fun formatRating(rating: Double): String {
-            val rounded = (rating * 10).roundToInt() / 10.0
-            return rounded.toString()
         }
     }
 }

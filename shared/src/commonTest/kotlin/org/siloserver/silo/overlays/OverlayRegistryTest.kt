@@ -2,6 +2,7 @@ package org.siloserver.silo.overlays
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -67,9 +68,23 @@ class OverlayRegistryTest {
     @Test
     fun imdbRating_getValue_formatsOneDecimal() {
         val def = OverlayRegistry.def(OverlayId.RatingImdb)!!
-        assertEquals("8.4", def.getValue(OverlayData(ratingImdb = 8.42)))
-        assertEquals("7.0", def.getValue(OverlayData(ratingImdb = 7.0)))
+        assertEquals("IMDb 8.4", def.getValue(OverlayData(ratingImdb = 8.42)))
+        assertEquals("IMDb 7.0", def.getValue(OverlayData(ratingImdb = 7.0)))
         assertNull(def.getValue(OverlayData(ratingImdb = null)))
+    }
+
+    @Test
+    fun ratingBadges_labelTheirSource_andDrawNoIcon() {
+        val data = OverlayData(ratingTmdb = 8.25, ratingRtCritic = 93, ratingRtAudience = 95)
+        assertEquals("TMDB 8.3", OverlayRegistry.def(OverlayId.RatingTmdb)!!.getValue(data))
+        assertEquals("RT 93%", OverlayRegistry.def(OverlayId.RatingRt)!!.getValue(data))
+        assertEquals("RT Audience 95%", OverlayRegistry.def(OverlayId.RatingRtAudience)!!.getValue(data))
+        listOf(OverlayId.RatingImdb, OverlayId.RatingTmdb, OverlayId.RatingRt, OverlayId.RatingRtAudience)
+            .map { OverlayRegistry.def(it)!! }
+            .forEach { def ->
+                assertNull(def.iconId, def.id.raw)
+                assertFalse(def.iconCapable, def.id.raw)
+            }
     }
 
     @Test

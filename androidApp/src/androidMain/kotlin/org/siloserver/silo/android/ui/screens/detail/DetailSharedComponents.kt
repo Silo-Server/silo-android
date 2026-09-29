@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -60,6 +63,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,8 +80,11 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 
@@ -276,6 +283,7 @@ private fun ExpandedDetailHero(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             )
                         }
+                        DetailRatingsRow(ratings = detail.titleRatings())
                     }
                     if (hasPortrait) {
                         Spacer(modifier = Modifier.weight(1f))
@@ -514,8 +522,17 @@ fun DetailHero(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             val metadataTokens = (factsLine + sourceTokens).distinct()
-            if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
-                SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+            val ratings = detail.titleRatings()
+            if (metadataTokens.isNotEmpty() || detail.contentRating != null || ratings.isNotEmpty()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
+                        SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+                    }
+                    DetailRatingsRow(ratings = ratings)
+                }
             }
             actions()
             if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
@@ -914,6 +931,26 @@ private fun SourceRow(
         if (!ratingChip.isNullOrBlank()) {
             ContentRatingChip(text = ratingChip)
         }
+    }
+}
+
+/**
+ * The title's external ratings in the order given, centered under the
+ * metadata row and wrapping onto a second line when the width runs out.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun DetailRatingsRow(ratings: List<DisplayRating>) {
+    if (ratings.isEmpty()) return
+    val style = LocalTextStyle.current.merge(
+        TextStyle(color = DetailPrimaryText, fontSize = 15.sp, lineHeight = 20.sp),
+    )
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
     }
 }
 
@@ -1447,7 +1484,6 @@ object HeroMetadata {
     ): List<String> = buildList {
         if (detail.year > 0) add(detail.year.toString())
         if (runtimeMinutes > 0) add(formatRuntime(runtimeMinutes))
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
     fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
@@ -1455,7 +1491,6 @@ object HeroMetadata {
         detail.seasonCount?.takeIf { it > 0 }?.let {
             add("$it Season${if (it > 1) "s" else ""}")
         }
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
     private fun formatRuntime(minutes: Int): String {

@@ -1,11 +1,13 @@
 package org.siloserver.silo.tv.ui.components
 
 import java.io.File
+import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
@@ -32,9 +34,11 @@ class TvFocusMarqueeModelTest {
 
         assertEquals(listOf("PG-13"), content.badges)
         assertEquals(
-            listOf("2016", "1h 56m", "7.9", "Science Fiction"),
+            listOf("2016", "1h 56m", "Science Fiction"),
             content.metaParts,
         )
+        assertEquals(DisplayRating("imdb", "IMDb", 79.0, "7.9"), content.rating)
+        assertEquals(2, content.ratingIndex)
         assertEquals("4K · Dolby Vision · Atmos", content.specLine)
     }
 
@@ -120,6 +124,7 @@ class TvFocusMarqueeModelTest {
 
         assertEquals(emptyList(), content.badges)
         assertEquals(emptyList(), content.metaParts)
+        assertNull(content.rating)
     }
 
     @Test
@@ -144,6 +149,7 @@ class TvFocusMarqueeModelTest {
             )
 
             assertEquals(emptyList(), content.metaParts)
+            assertNull(content.rating)
         }
     }
 
@@ -176,7 +182,8 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Row",
         )
 
-        assertEquals(listOf("8.4"), content.metaParts)
+        assertEquals(emptyList(), content.metaParts)
+        assertEquals(DisplayRating("imdb", "IMDb", 84.0, "8.4"), content.rating)
     }
 
     @Test
