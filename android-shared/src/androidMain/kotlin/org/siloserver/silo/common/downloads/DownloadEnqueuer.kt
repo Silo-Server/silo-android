@@ -376,7 +376,14 @@ class DownloadEnqueuer(
         series: Boolean = false,
         downloadQualityOverride: DownloadQuality? = null,
     ): DownloadRequest {
-        val quality = downloadQualityOverride ?: DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first())
+        // A saved default this account can no longer request (transcoding
+        // turned off, say) falls back to Original rather than a request the
+        // server refuses; an unloaded capability leaves the saved value.
+        val allowed = repository.capability.value?.allowedQualities()
+        val quality = downloadQualityOverride
+            ?: DownloadQuality.fromWire(playerSettingsStore.defaultDownloadQualityFlow.first())
+                .takeIf { allowed == null || it in allowed }
+            ?: DownloadQuality.Original
         return DownloadRequest(
             contentId = contentId,
             episodeId = episodeId,

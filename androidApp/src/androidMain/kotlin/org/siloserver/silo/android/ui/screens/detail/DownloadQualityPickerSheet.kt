@@ -168,6 +168,6 @@ internal fun downloadEstimateWarning(
 
 private fun downloadQualityDescription(quality: DownloadQuality): String =
     when (quality) {
-        DownloadQuality.Original -> "Original file, best quality, largest download."
-        else -> "Smaller copy prepared on the server before download starts."
+        DownloadQuality.Original -> "Source quality, with compatibility fallback if needed."
+        else -> "Prepared on the server when the original is larger."
     }
