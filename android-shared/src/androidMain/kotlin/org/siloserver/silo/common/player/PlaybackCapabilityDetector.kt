@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
+import org.siloserver.silo.model.download.DownloadCaps
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_EXACT
@@ -402,6 +403,30 @@ class PlaybackCapabilityDetector(
         )
         planningSnapshots.remember(detected, audioRoute)
         return detected
+    }
+
+    /**
+     * Decode-only capability for `POST /api/v2/downloads`. A download plays
+     * later on whatever output is attached then, so this omits the display
+     * and audio-route facts [detect] intersects in: the codec, container and
+     * resolution facts come from the same probes, and HDR is the decoder's own
+     * support.
+     */
+    fun downloadCaps(ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable()): DownloadCaps {
+        val codecProbe = MediaCodecCapabilitiesProbe.probe()
+        val decoderHdr = codecProbe.hdr
+        return DownloadCaps(
+            videoEvidence = CAPABILITY_EVIDENCE_EXACT,
+            codecsVideo = codecProbe.videoCodecs.toList(),
+            codecsAudio = advertisedAudioDecodeCodecs(
+                platformCodecs = detectPlatformSoftwareAudioCodecs().codecs,
+                ffmpegCodecs = if (ffmpegAvailable) FfmpegAudioSupport.supportedCodecShortCodes() else emptyList(),
+            ),
+            containers = media3OriginalPlaybackContainers,
+            maxResolution = codecProbe.maxResolution,
+            hdr = decoderHdr.hdr10 || decoderHdr.hdr10Plus || decoderHdr.hlg || decoderHdr.dolbyVisionProfiles.isNotEmpty(),
+            videoDecode = codecProbe.videoDecodeCapabilities,
+        )
     }
 
     /**

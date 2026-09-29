@@ -68,6 +68,29 @@ class DownloadCreationV2Test {
         } finally { c.close() }
     }
 
+    @Test fun createSendsDecodeCapsForTheServerToFitTheDownload() = runTest {
+        var caps: JsonObject? = null
+        val c = client {
+            if (it.method == HttpMethod.Get) json("""{"items":[],"page":{"has_more":false}}""") else {
+                caps = SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject["caps"]?.jsonObject
+                json("""{"items":[$row],"skipped":[],"page":{"has_more":false}}""",HttpStatusCode.Accepted)
+            }
+        }
+        try {
+            val decode = org.siloserver.silo.model.playback.VideoDecodeCapability(codec = "h264", bitDepths = listOf(8), maxWidth = 1920, maxHeight = 1080, hardware = true)
+            val request = DownloadRequest("movie", fileId = 42, caps = DownloadCaps("exact", listOf("h264"), listOf("aac"), listOf("mp4", "mkv"), "1080p", false, listOf(decode)))
+            assertIs<ApiResult.Success<DownloadRecord>>(api(c).create(request, scope))
+            val sent = assertNotNull(caps)
+            assertEquals(JsonPrimitive("exact"), sent["video_evidence"])
+            assertEquals(JsonPrimitive("1080p"), sent["max_resolution"])
+            val entry = sent["video_decode"]!!.jsonArray.single().jsonObject
+            assertEquals(JsonPrimitive(1920), entry["max_width"])
+            // The server rejects fields outside its caps schema, and null for an integer.
+            assertEquals(setOf("video_evidence", "codecs_video", "codecs_audio", "containers", "max_resolution", "hdr", "video_decode"), sent.keys)
+            assertFalse(entry.values.any { value -> value is JsonNull })
+        } finally { c.close() }
+    }
+
     @Test fun matchingEntryReconcilesWithoutResetAnd401HasNoReplay() = runTest {
         var posts = 0
         val c = client {

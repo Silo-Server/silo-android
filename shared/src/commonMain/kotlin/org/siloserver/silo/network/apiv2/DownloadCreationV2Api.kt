@@ -34,6 +34,7 @@ class DownloadCreationV2Api(
         request.episodeId?.let { put("episode_id",it) }
         request.fileId?.let { put("media_file_id",it.toString()) }
         put("quality", request.quality ?: "original")
+        request.caps?.let { put("caps", SiloJson.encodeToJsonElement(DownloadCaps.serializer(), it)) }
     }.toMutableMap()
 
     private suspend fun send(scope: AuthScopeSnapshot, device: String, body: JsonObject, cursor: String? = null): ApiResult<CreatedDownloadsV2> {
