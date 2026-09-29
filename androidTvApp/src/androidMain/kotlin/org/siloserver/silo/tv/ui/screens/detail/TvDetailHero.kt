@@ -29,8 +29,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -38,8 +36,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
@@ -50,6 +46,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
 import org.siloserver.silo.common.ui.RatingEntry
+import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.tv.R
@@ -476,6 +473,7 @@ private fun MetadataRow(
     ratingChip: String?,
     compactRating: Boolean = false,
 ) {
+    // Past the column's width, trailing tokens drop whole instead of clipping mid-word.
     WholeTokenRow(spacing = METADATA_TOKEN_SPACING) {
         ratingChip?.takeIf { it.isNotBlank() }?.let { rating ->
             RatingChip(text = rating, compact = compactRating)
@@ -559,38 +557,6 @@ private fun MetadataToken(divided: Boolean, content: @Composable () -> Unit) {
     ) {
         if (divided) MetadataDivider()
         content()
-    }
-}
-
-/**
- * A single-line row that shows as many whole children as fit and drops the
- * rest. The ratings made the facts line long enough to overflow the editorial
- * column; this drops trailing genres instead of clipping one mid-word.
- */
-@Composable
-private fun WholeTokenRow(spacing: Dp, content: @Composable () -> Unit) {
-    Layout(content = content) { measurables, constraints ->
-        val gap = spacing.roundToPx()
-        val placeables = measurables.map {
-            it.measure(Constraints(maxHeight = constraints.maxHeight))
-        }
-        val shown = mutableListOf<Placeable>()
-        var width = 0
-        for (placeable in placeables) {
-            val next = width + (if (shown.isEmpty()) 0 else gap) + placeable.width
-            if (next > constraints.maxWidth) break
-            shown += placeable
-            width = next
-        }
-        val height = (shown.maxOfOrNull { it.height } ?: 0)
-            .coerceIn(constraints.minHeight, constraints.maxHeight)
-        layout(width.coerceAtLeast(constraints.minWidth), height) {
-            var x = 0
-            shown.forEach { placeable ->
-                placeable.placeRelative(x, (height - placeable.height) / 2)
-                x += placeable.width + gap
-            }
-        }
     }
 }
 

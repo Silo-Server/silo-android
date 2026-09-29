@@ -27,6 +27,12 @@ object ExternalRatings {
     const val SOURCE_TMDB = "tmdb"
 
     /**
+     * The most ratings a phone-width title page shows. Web and iOS use the
+     * same limit. Wide layouts (tablet, fold, TV) show the whole list.
+     */
+    const val PHONE_LIMIT = 3
+
+    /**
      * The ratings row for a title page. A current server sends [ratings]
      * (empty when there is nothing to show), already chosen and formatted:
      * it is returned untouched. An older server omits the member (`null`), so
@@ -39,6 +45,12 @@ object ExternalRatings {
         ratingImdb: Double?,
         ratingTmdb: Double?,
     ): List<DisplayRating> = ratings ?: listOfNotNull(imdb(ratingImdb), tmdb(ratingTmdb))
+
+    /**
+     * The ratings a phone-width title page shows: the first [PHONE_LIMIT]
+     * of [ratings], in the server's order.
+     */
+    fun forPhone(ratings: List<DisplayRating>): List<DisplayRating> = ratings.take(PHONE_LIMIT)
 
     /** The one rating a hero shows from card fields: IMDb, else TMDB. */
     fun primary(ratingImdb: Double?, ratingTmdb: Double?): DisplayRating? =

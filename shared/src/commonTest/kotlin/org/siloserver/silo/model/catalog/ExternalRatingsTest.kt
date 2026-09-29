@@ -58,6 +58,22 @@ class ExternalRatingsTest {
     }
 
     @Test
+    fun phoneShowsTheFirstThreeInServerOrder() {
+        val server = listOf(
+            DisplayRating("imdb", "IMDb", 85.0, "8.5"),
+            DisplayRating("tmdb", "TMDB", 82.5, "8.3"),
+            DisplayRating("rt_critic", "RT", 93.0, "93%"),
+            DisplayRating("rt_audience", "RT Audience", 95.0, "95%"),
+            DisplayRating("metacritic", "Metacritic", 87.0, "87"),
+        )
+
+        assertEquals(3, ExternalRatings.PHONE_LIMIT)
+        assertEquals(server.take(3), ExternalRatings.forPhone(server))
+        assertEquals(server.take(2), ExternalRatings.forPhone(server.take(2)))
+        assertEquals(emptyList(), ExternalRatings.forPhone(emptyList()))
+    }
+
+    @Test
     fun primaryPrefersImdbAndFallsBackToTmdb() {
         assertEquals(DisplayRating("imdb", "IMDb", 79.0, "7.9"), ExternalRatings.primary(7.9, 8.2))
         assertEquals(DisplayRating("tmdb", "TMDB", 82.0, "8.2"), ExternalRatings.primary(null, 8.2))

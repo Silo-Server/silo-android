@@ -36,10 +36,10 @@ import org.siloserver.silo.model.catalog.ExternalRatings
  * little smaller than the score, and the TMDB logo is sized to about the
  * score's cap height.
  *
- * Callers lay entries out themselves. Do not add a FlowRow-based row here:
- * FlowRow is experimental, and this module compiles against an older Compose
- * foundation than the apps ship, so the call fails at runtime with
- * NoSuchMethodError.
+ * Callers lay entries out themselves; [WholeTokenRow] keeps them on one line.
+ * Do not add a FlowRow-based row here: FlowRow is experimental, and this
+ * module compiles against an older Compose foundation than the apps ship, so
+ * the call fails at runtime with NoSuchMethodError.
  */
 @Composable
 fun RatingEntry(

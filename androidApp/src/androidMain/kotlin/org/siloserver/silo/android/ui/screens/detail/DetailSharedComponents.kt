@@ -81,8 +81,10 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.ui.RatingEntry
+import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.DisplayRating
+import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
@@ -531,7 +533,7 @@ fun DetailHero(
                     if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
                         SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
                     }
-                    DetailRatingsRow(ratings = ratings)
+                    PhoneDetailRatingsRow(ratings = ratings)
                 }
             }
             actions()
@@ -935,24 +937,45 @@ private fun SourceRow(
 }
 
 /**
- * The title's external ratings in the order given, centered under the
- * metadata row and wrapping onto a second line when the width runs out.
+ * The expanded (tablet, fold) layout's external ratings: every one, in the
+ * order given, centered under the metadata row and wrapping onto a second
+ * line when the width runs out.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DetailRatingsRow(ratings: List<DisplayRating>) {
     if (ratings.isEmpty()) return
-    val style = LocalTextStyle.current.merge(
-        TextStyle(color = DetailPrimaryText, fontSize = 15.sp, lineHeight = 20.sp),
-    )
+    val style = detailRatingStyle()
     FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(DetailRatingSpacing, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
     }
 }
+
+/**
+ * The phone layout's external ratings: at most [ExternalRatings.PHONE_LIMIT],
+ * centered on one line. When even those do not fit, whole entries drop from
+ * the end; the row never wraps.
+ */
+@Composable
+private fun PhoneDetailRatingsRow(ratings: List<DisplayRating>) {
+    val shown = ExternalRatings.forPhone(ratings)
+    if (shown.isEmpty()) return
+    val style = detailRatingStyle()
+    WholeTokenRow(spacing = DetailRatingSpacing) {
+        shown.forEach { rating -> RatingEntry(rating = rating, style = style) }
+    }
+}
+
+@Composable
+private fun detailRatingStyle(): TextStyle = LocalTextStyle.current.merge(
+    TextStyle(color = DetailPrimaryText, fontSize = 15.sp, lineHeight = 20.sp),
+)
+
+private val DetailRatingSpacing = 20.dp
 
 @Composable
 private fun ContentRatingChip(text: String) {
