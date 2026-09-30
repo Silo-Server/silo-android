@@ -206,6 +206,11 @@ fun ItemDetailScreen(
             }
         }
     }
+    LaunchedEffect(Unit) {
+        viewModel.downloadFailureMessages.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
 
     val downloadStorage: DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()

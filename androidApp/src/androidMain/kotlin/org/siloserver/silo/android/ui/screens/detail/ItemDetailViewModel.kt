@@ -17,6 +17,7 @@ import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.statusEnum
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -273,6 +274,20 @@ class ItemDetailViewModel(
     private val _downloadStartEvents = kotlinx.coroutines.flow.MutableSharedFlow<Boolean>(extraBufferCapacity = 4)
     val downloadStartEvents: kotlinx.coroutines.flow.SharedFlow<Boolean> = _downloadStartEvents
 
+    /** Why a download couldn't start, such as the server's "concurrent
+     *  download limit reached". The screen shows it; without it a rejected
+     *  request, and above all a rejected series batch, looked like nothing
+     *  happened. */
+    private val _downloadFailureMessages = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val downloadFailureMessages: kotlinx.coroutines.flow.SharedFlow<String> = _downloadFailureMessages
+
+    private suspend fun reportDownloadStart(result: ApiResult<*>) {
+        _downloadStartEvents.emit(result is ApiResult.Success)
+        if (result !is ApiResult.Success) {
+            _downloadFailureMessages.emit(result.errorMessage("Couldn't start the download."))
+        }
+    }
+
     private suspend fun startDownload(
         version: FileVersion,
         displayTitle: String,
@@ -329,7 +344,7 @@ class ItemDetailViewModel(
                 downloadQualityOverride = downloadQuality,
             )
         }
-        _downloadStartEvents.emit(result is ApiResult.Success)
+        reportDownloadStart(result)
     }
 
     /** Series-level "Download series" — uses the server's batch endpoint
@@ -337,9 +352,11 @@ class ItemDetailViewModel(
     fun onSeriesDownloadTapped(downloadQuality: DownloadQuality? = null) {
         val detail = _uiState.value.detail ?: return
         viewModelScope.launch {
-            downloadEnqueuer.startSeries(
-                seriesContentId = detail.contentId,
-                downloadQualityOverride = downloadQuality,
+            reportDownloadStart(
+                downloadEnqueuer.startSeries(
+                    seriesContentId = detail.contentId,
+                    downloadQualityOverride = downloadQuality,
+                ),
             )
         }
     }
