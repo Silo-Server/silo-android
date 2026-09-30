@@ -44,11 +44,12 @@ fun WholeTokenRow(
         fun widthOf(tokens: List<Int>): Int =
             tokens.withIndex().sumOf { (k, index) -> joinWidth(tokens.getOrNull(k - 1)) + widths[index] }
 
-        // Too wide: drop the tokens marked dropFirst, last first, before any other.
+        // Too wide: drop the tokens marked dropFirst before any other, the
+        // highest rank first and, within a rank, the last first.
         val kept = measurables.indices.filterNot { flags[it].separator }.toMutableList()
         while (widthOf(kept) > constraints.maxWidth) {
-            val drop = kept.lastOrNull { flags[it].dropFirst } ?: break
-            kept.remove(drop)
+            val rank = kept.maxOfOrNull { flags[it].dropRank }?.takeIf { it > 0 } ?: break
+            kept.remove(kept.last { flags[it].dropRank == rank })
         }
 
         // Then keep the leading tokens that fit. A shrinkable token takes the
@@ -85,8 +86,12 @@ fun WholeTokenRow(
 }
 
 object WholeTokenRowScope {
-    /** When the row is too wide, drop this token before any unmarked one, starting from the end. */
-    fun Modifier.dropFirst(): Modifier = then(TokenFlags(dropFirst = true))
+    /**
+     * When the row is too wide, drop this token before any unmarked one,
+     * starting from the end. Tokens with a higher [rank] drop before those
+     * with a lower one.
+     */
+    fun Modifier.dropFirst(rank: Int = 1): Modifier = then(TokenFlags(dropRank = rank.coerceAtLeast(1)))
 
     /**
      * When this token does not fit whole, give it the width left instead of
@@ -103,14 +108,14 @@ object WholeTokenRowScope {
 }
 
 private data class TokenFlags(
-    val dropFirst: Boolean = false,
+    val dropRank: Int = 0,
     val shrinkable: Boolean = false,
     val separator: Boolean = false,
 ) : ParentDataModifier {
     override fun Density.modifyParentData(parentData: Any?): Any {
         val current = parentData as? TokenFlags ?: TokenFlags()
         return TokenFlags(
-            dropFirst = current.dropFirst || dropFirst,
+            dropRank = maxOf(current.dropRank, dropRank),
             shrinkable = current.shrinkable || shrinkable,
             separator = current.separator || separator,
         )

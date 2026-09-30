@@ -29,6 +29,8 @@ import org.siloserver.silo.tv.ui.theme.SuccessGreen
  *
  * - [TextToken] plain text (year / runtime / genre). [TextToken.truncates]
  *   lets a long value (an episode title) end in "…" instead of dropping.
+ *   [TextToken.givesWayFirst] marks a source token (type, genre, episode
+ *   number) that drops before any rating or format.
  * - [ExternalRating] one external rating as its source's mark and score.
  * - [Rating] a maturity/check token: green check icon + label.
  * - [Chip] a playback-format value (4K / HDR / DOLBY VISION / ATMOS / CC).
@@ -36,7 +38,11 @@ import org.siloserver.silo.tv.ui.theme.SuccessGreen
  *   format line rather than promoting every value to an outlined badge.
  */
 sealed class TvHeroFactToken {
-    data class TextToken(val value: String, val truncates: Boolean = false) : TvHeroFactToken()
+    data class TextToken(
+        val value: String,
+        val truncates: Boolean = false,
+        val givesWayFirst: Boolean = false,
+    ) : TvHeroFactToken()
     data class ExternalRating(val rating: DisplayRating) : TvHeroFactToken()
     data class Rating(val value: String) : TvHeroFactToken()
     data class Chip(val value: String) : TvHeroFactToken()
@@ -45,9 +51,10 @@ sealed class TvHeroFactToken {
 /**
  * One line of [tokens] with a "·" between them, used by the detail hero, the
  * Home marquee and request detail. Past the line's width, whole tokens drop
- * from the end; with [ratingsDropFirst], external ratings go before anything
- * else. [leading] (a content-rating chip) sits before the first token with no
- * divider.
+ * from the end. Text tokens marked [TvHeroFactToken.TextToken.givesWayFirst]
+ * go first; then, with [ratingsDropFirst], external ratings go, from the end of
+ * the list, before the other facts and formats. [leading] (a content-rating
+ * chip) sits before the first token with no divider.
  *
  * [style] should carry the text's color and font size. Ratings keep their mark
  * at that size too: the ten-foot text floor rules out the smaller mark
@@ -76,7 +83,13 @@ internal fun TvFactsRow(
                 )
             }
             val tokenModifier = Modifier
-                .then(if (ratingsDropFirst && token is TvHeroFactToken.ExternalRating) Modifier.dropFirst() else Modifier)
+                .then(
+                    when {
+                        token is TvHeroFactToken.TextToken && token.givesWayFirst -> Modifier.dropFirst(rank = 2)
+                        ratingsDropFirst && token is TvHeroFactToken.ExternalRating -> Modifier.dropFirst()
+                        else -> Modifier
+                    },
+                )
                 .then(if (token is TvHeroFactToken.TextToken && token.truncates) Modifier.shrinkable() else Modifier)
             Box(modifier = tokenModifier, contentAlignment = Alignment.CenterStart) {
                 FactToken(token = token, style = style)

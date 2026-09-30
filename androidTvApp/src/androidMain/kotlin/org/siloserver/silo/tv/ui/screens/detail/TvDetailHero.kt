@@ -450,9 +450,11 @@ private fun MetadataRow(
     ratingChip: String?,
     compactRating: Boolean = false,
 ) {
-    // Ratings drop first so the playback formats and sources stay visible.
+    // Like tvOS: the source tokens (type, genres) give way first, then
+    // ratings from the end of the list, so the other facts and any playback
+    // formats stay visible.
     TvFactsRow(
-        tokens = tokens + sourceTokens.map { TvHeroFactToken.TextToken(it) },
+        tokens = tokens + sourceTokens.map { TvHeroFactToken.TextToken(it, givesWayFirst = true) },
         style = LocalTextStyle.current.merge(
             TextStyle(
                 fontWeight = FontWeight.Medium,

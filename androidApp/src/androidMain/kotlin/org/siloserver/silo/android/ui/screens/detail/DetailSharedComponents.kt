@@ -298,7 +298,7 @@ private fun ExpandedDetailHero(
                         }
                         DetailRatingsRow(ratings = detail.titleRatings())
                     }
-                    if (!hasPortrait) Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(if (hasPortrait) 12.dp else 20.dp))
                     // Expanded/tablet only: Play and its bottom action row end
                     // no lower than the portrait. The compact phone branch is
                     // intentionally unchanged.
