@@ -270,7 +270,10 @@ fun SeriesDetailContent(
                 } else {
                     detail.overview
                 },
-                reserveOverviewSpace = !isExpandedDetailLayout && usesEpisodeEditorial,
+                // A hidden (spoiler) overview collapses instead of leaving
+                // the reserved block empty between the actions and the credit.
+                reserveOverviewSpace = !isExpandedDetailLayout && usesEpisodeEditorial &&
+                    !hidesSelectedEpisodeOverview,
                 directorText = fixedSeriesCredit,
                 isCreditLoading = false,
                 reserveCreditSpace = !isExpandedDetailLayout && usesEpisodeEditorial,

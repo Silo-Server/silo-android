@@ -655,9 +655,9 @@ fun TvAppNavigation(
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
-                        episodeSpoilerStore.clear()
-                        // Not seekIntervalStore.clear(): its identity flow already reset
-                        // it for the new server and is hydrating; clearing would drop that.
+                        // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+                        // their identity flow already reset them for the new server
+                        // and is hydrating; clearing would drop that.
                         watchNextSeeder.clear()
                         watchNextSeeder.seedNow()
                         watchNextSeeder.enqueuePeriodic()

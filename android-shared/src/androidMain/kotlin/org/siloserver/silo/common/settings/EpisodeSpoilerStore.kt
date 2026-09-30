@@ -10,9 +10,11 @@ import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -74,6 +76,12 @@ data class EpisodeSpoilerState(
  * last-known cache, refresh on foreground and reconnect through
  * [ServerDrivenConfigRefresher], optimistic writes with rollback, and [clear]
  * at sign-out and profile-switch boundaries.
+ *
+ * Like [SeekIntervalStore], it also resets and re-resolves on its own when the
+ * active server or profile changes, and a hydration only counts for the
+ * identity it ran against. Signing in to another server through Add Server
+ * clears nothing, so a store that trusted a plain "already hydrated" flag
+ * kept the previous server's answer until the next cold start.
  */
 interface EpisodeSpoilerStore {
     val state: StateFlow<EpisodeSpoilerState>
@@ -102,6 +110,7 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
     private val cache: EpisodeSpoilerCache,
+    identityChanges: Flow<Unit>,
 ) : EpisodeSpoilerStore {
 
     constructor(
@@ -110,6 +119,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         scope: CoroutineScope,
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
+        identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         repository = repository,
         scope = scope,
@@ -118,6 +128,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         cache = SharedPreferencesEpisodeSpoilerCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
+        identityChanges = identityChanges,
     )
 
     private val _state = MutableStateFlow(EpisodeSpoilerState())
@@ -138,6 +149,10 @@ class DefaultEpisodeSpoilerStore private constructor(
     @Volatile
     private var hasHydrated = false
 
+    /** The server|profile the shown state belongs to; null after a reset. */
+    @Volatile
+    private var stateIdentity: String? = null
+
     /** The last values the server confirmed; a failed write restores these. */
     private var confirmed = EpisodeSpoilerState()
 
@@ -151,8 +166,19 @@ class DefaultEpisodeSpoilerStore private constructor(
     // Serializes writes so the wire order matches the order of the taps.
     private val writeLock = Mutex()
 
+    init {
+        scope.launch {
+            identityChanges.collect { onIdentityChanged() }
+        }
+    }
+
+    private suspend fun onIdentityChanged() {
+        synchronized(lock) { resetLocked() }
+        hydrateIfNeeded()
+    }
+
     override suspend fun hydrateIfNeeded() {
-        if (hasHydrated) return
+        if (hasHydrated && stateIdentity == currentIdentity()) return
         refresh()
     }
 
@@ -161,6 +187,11 @@ class DefaultEpisodeSpoilerStore private constructor(
         val startGeneration: Int
         val startEpoch: Long
         synchronized(lock) {
+            // Another server or profile: the shown answer is not ours.
+            if (stateIdentity != identity) {
+                resetLocked()
+                stateIdentity = identity
+            }
             startGeneration = generation
             startEpoch = mutationEpoch
         }
@@ -260,15 +291,18 @@ class DefaultEpisodeSpoilerStore private constructor(
     }
 
     override fun clear() {
-        synchronized(lock) {
-            generation += 1
-            mutationEpoch += 1
-            hasHydrated = false
-            _state.value = EpisodeSpoilerState()
-            confirmed = EpisodeSpoilerState()
-            latestRequest.clear()
-            _lastError.value = null
-        }
+        synchronized(lock) { resetLocked() }
+    }
+
+    private fun resetLocked() {
+        generation += 1
+        mutationEpoch += 1
+        hasHydrated = false
+        stateIdentity = null
+        _state.value = EpisodeSpoilerState()
+        confirmed = EpisodeSpoilerState()
+        latestRequest.clear()
+        _lastError.value = null
     }
 
     private suspend fun currentIdentity(): String? {
@@ -296,12 +330,14 @@ class DefaultEpisodeSpoilerStore private constructor(
             getActiveProfileId: suspend () -> String? = { "profile-1" },
             getServerUrl: suspend () -> String? = { "https://server.test" },
             cache: EpisodeSpoilerCache = InMemoryEpisodeSpoilerCache(),
+            identityChanges: Flow<Unit> = emptyFlow(),
         ): DefaultEpisodeSpoilerStore = DefaultEpisodeSpoilerStore(
             repository = repository,
             scope = scope,
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
             cache = cache,
+            identityChanges = identityChanges,
         )
     }
 }

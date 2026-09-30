@@ -12,6 +12,9 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -130,22 +133,67 @@ class EpisodeSpoilerStoreTest {
         assertEquals(EpisodeSpoilerPrefs.NONE, store.state.value.prefs)
     }
 
+    @Test
+    fun `hydrating for another server re-resolves without a clear`() = runTest {
+        // Add Server → sign in → pick profile: nothing calls clear(), and the
+        // old server's Unsupported answer must not survive the switch.
+        var serverUrl = "https://old.test"
+        var profileId = "old-profile"
+        val api = FakeSpoilerSettingsApi(revision = 14)
+        val store = storeFor(api, serverUrl = { serverUrl }, profileId = { profileId })
+        store.hydrateIfNeeded()
+        assertEquals(EpisodeSpoilerSupport.Unsupported, store.state.value.support)
+
+        serverUrl = "https://new.test"
+        profileId = "new-profile"
+        api.serve(revision = 15, values = bothOn)
+        store.hydrateIfNeeded()
+
+        assertEquals(EpisodeSpoilerPrefs(hideImages = true, hideOverviews = true), store.state.value.prefs)
+    }
+
+    @Test
+    fun `an active server or profile change resets and re-resolves`() = runTest {
+        var serverUrl = "https://old.test"
+        val identityChanges = MutableSharedFlow<Unit>()
+        val api = FakeSpoilerSettingsApi(revision = 14)
+        val store = storeFor(api, serverUrl = { serverUrl }, identityChanges = identityChanges)
+        runCurrent()
+        store.hydrateIfNeeded()
+
+        serverUrl = "https://new.test"
+        api.serve(revision = 15, values = bothOn)
+        identityChanges.emit(Unit)
+        runCurrent()
+
+        assertEquals(EpisodeSpoilerPrefs(hideImages = true, hideOverviews = true), store.state.value.prefs)
+    }
+
+    private val bothOn = mapOf(
+        SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true),
+        SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS to JsonPrimitive(true),
+    )
+
     private fun TestScope.storeFor(
         api: FakeSpoilerSettingsApi,
         cache: EpisodeSpoilerCache = InMemoryEpisodeSpoilerCache(),
+        serverUrl: suspend () -> String? = { "https://server.test" },
+        profileId: suspend () -> String? = { "profile-1" },
+        identityChanges: Flow<Unit> = emptyFlow(),
     ) = DefaultEpisodeSpoilerStore.forTest(
         repository = SettingsRepository(api),
         scope = backgroundScope,
+        getActiveProfileId = profileId,
+        getServerUrl = serverUrl,
         cache = cache,
+        identityChanges = identityChanges,
     )
 }
 
 private class FakeSpoilerSettingsApi(
     revision: Int = 15,
-    val capabilities: ApiResult<SettingsContractCapabilities> = ApiResult.Success(
-        SettingsContractCapabilities(apiVersion = 1, manifestRevision = revision, supportsBatchedEffective = true),
-    ),
-    private val values: Map<String, JsonElement> = emptyMap(),
+    var capabilities: ApiResult<SettingsContractCapabilities> = capabilitiesAt(revision),
+    private var values: Map<String, JsonElement> = emptyMap(),
     private val failPuts: Boolean = false,
 ) : SettingsApi(
     org.siloserver.silo.network.apiv2.SettingsV2Api(
@@ -156,6 +204,12 @@ private class FakeSpoilerSettingsApi(
 ) {
     val puts = mutableListOf<Triple<String, SettingScope, JsonElement>>()
     val effectiveReads = mutableListOf<List<String>>()
+
+    /** Become a different server: [revision] and stored [values]. */
+    fun serve(revision: Int, values: Map<String, JsonElement>) {
+        capabilities = capabilitiesAt(revision)
+        this.values = values
+    }
 
     override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
 
@@ -191,3 +245,7 @@ private class FakeSpoilerSettingsApi(
         return ApiResult.Success(StoredSettingValue(key = key, scope = scope.scope.wire))
     }
 }
+
+private fun capabilitiesAt(revision: Int): ApiResult<SettingsContractCapabilities> = ApiResult.Success(
+    SettingsContractCapabilities(apiVersion = 1, manifestRevision = revision, supportsBatchedEffective = true),
+)

@@ -593,10 +593,10 @@ fun AppNavigation(
                     overlayPrefsStore.clear()
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
-                    episodeSpoilerStore.clear()
-                    // Not seekIntervalStore.clear(): the registry switch has already
-                    // reset it and started hydrating the new server's profile through
-                    // its identity flow, and a clear here would discard that load.
+                    // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+                    // the registry switch has already reset them and started
+                    // hydrating the new server's profile through their identity
+                    // flow, and a clear here would discard that load.
                     navController.navigate(target) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true

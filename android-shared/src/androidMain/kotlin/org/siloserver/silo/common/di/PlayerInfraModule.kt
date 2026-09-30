@@ -202,14 +202,21 @@ val playerInfraModule = module {
 
     // Spoiler protection for unwatched episodes (settings revision 15). Both
     // keys are profile-scope only, so the store writes the profile row itself
-    // rather than going through the profile_device flusher.
+    // rather than going through the profile_device flusher. Resets and
+    // re-resolves on a server or profile change, like SeekIntervalStore:
+    // Add Server → sign in → pick profile clears nothing on its own.
     single<EpisodeSpoilerStore> {
+        val identityChanges = get<ServerRegistry>().activeEntry
+            .map { it?.url to it?.profileId }
+            .distinctUntilChanged()
+            .map { Unit }
         DefaultEpisodeSpoilerStore(
             context = androidContext(),
             repository = get<SettingsRepository>(),
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            identityChanges = identityChanges,
         )
     }
 
