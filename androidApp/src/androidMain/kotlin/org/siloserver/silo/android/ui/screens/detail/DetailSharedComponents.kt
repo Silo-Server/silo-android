@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -289,7 +291,7 @@ private fun ExpandedDetailHero(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             )
                         }
-                        DetailRatingsRow(ratings = detail.titleRatings())
+                        ExpandedDetailRatingsRow(ratings = detail.titleRatings())
                     }
                     if (!hasPortrait) Spacer(modifier = Modifier.height(20.dp))
                     // Expanded/tablet only: Play and its bottom action row end
@@ -533,7 +535,7 @@ fun DetailHero(
                     if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
                         SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
                     }
-                    DetailRatingsRow(ratings = ExternalRatings.forPhone(ratings))
+                    PhoneDetailRatingsRow(ratings = ratings)
                 }
             }
             actions()
@@ -937,17 +939,36 @@ private fun SourceRow(
 }
 
 /**
- * External ratings centered on one line, in the order given. When they do not
- * all fit, whole entries drop from the end; the row never wraps. The phone
- * layout passes at most [ExternalRatings.PHONE_LIMIT]; the expanded (tablet,
- * fold) layout passes them all.
+ * The expanded (tablet, fold) layout's external ratings: every one, in the
+ * order given, centered under the metadata row and wrapping onto another line
+ * when the width runs out.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DetailRatingsRow(ratings: List<DisplayRating>) {
+private fun ExpandedDetailRatingsRow(ratings: List<DisplayRating>) {
     if (ratings.isEmpty()) return
     val style = detailRatingStyle()
-    WholeTokenRow(spacing = DetailRatingSpacing) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(DetailRatingSpacing, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
+    }
+}
+
+/**
+ * The phone layout's external ratings: at most [ExternalRatings.PHONE_LIMIT],
+ * centered on one line. When even those do not fit, whole entries drop from
+ * the end; the row never wraps.
+ */
+@Composable
+private fun PhoneDetailRatingsRow(ratings: List<DisplayRating>) {
+    val shown = ExternalRatings.forPhone(ratings)
+    if (shown.isEmpty()) return
+    val style = detailRatingStyle()
+    WholeTokenRow(spacing = DetailRatingSpacing) {
+        shown.forEach { rating -> RatingEntry(rating = rating, style = style) }
     }
 }
 

@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
@@ -65,28 +66,19 @@ internal fun TvFactsRow(
     WholeTokenRow(spacing = spacing, modifier = modifier) {
         leading?.invoke()
         tokens.forEachIndexed { index, token ->
-            val tokenModifier = Modifier
-                .then(
-                    if (ratingsDropFirst && index > 0 && token is TvHeroFactToken.ExternalRating) {
-                        Modifier.dropFirst()
-                    } else {
-                        Modifier
-                    },
+            // The row shows a "·" only between two facts it keeps.
+            if (index > 0) {
+                Text(
+                    text = "·",
+                    style = style.merge(TextStyle(fontWeight = FontWeight.SemiBold, color = dividerColor)),
+                    maxLines = 1,
+                    modifier = Modifier.separator(),
                 )
+            }
+            val tokenModifier = Modifier
+                .then(if (ratingsDropFirst && token is TvHeroFactToken.ExternalRating) Modifier.dropFirst() else Modifier)
                 .then(if (token is TvHeroFactToken.TextToken && token.truncates) Modifier.shrinkable() else Modifier)
-            // Each token carries its leading "·", so the two drop together.
-            Row(
-                modifier = tokenModifier,
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(spacing),
-            ) {
-                if (index > 0) {
-                    Text(
-                        text = "·",
-                        style = style.merge(TextStyle(fontWeight = FontWeight.SemiBold, color = dividerColor)),
-                        maxLines = 1,
-                    )
-                }
+            Box(modifier = tokenModifier, contentAlignment = Alignment.CenterStart) {
                 FactToken(token = token, style = style)
             }
         }

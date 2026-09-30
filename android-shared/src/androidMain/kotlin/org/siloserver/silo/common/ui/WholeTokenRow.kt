@@ -14,6 +14,10 @@ import androidx.compose.ui.unit.Dp
  * partway unless it opts in with [WholeTokenRowScope.shrinkable]. The row is
  * as wide as the children it shows, so a centering parent centers them.
  * Children are vertically centered.
+ *
+ * Children marked [WholeTokenRowScope.separator] (a "·") are not tokens: the
+ * row shows one only between two shown tokens, so dropping a token never
+ * leaves a separator at either end or two in a row.
  */
 @Composable
 fun WholeTokenRow(
@@ -25,10 +29,23 @@ fun WholeTokenRow(
         val gap = spacing.roundToPx()
         val flags = measurables.map { it.parentData as? TokenFlags ?: TokenFlags() }
         val widths = measurables.map { it.maxIntrinsicWidth(Constraints.Infinity) }
-        fun widthOf(indices: List<Int>) = indices.sumOf { widths[it] } + gap * (indices.size - 1).coerceAtLeast(0)
+
+        // The separator written right after token [index], if any. A shown
+        // token keeps it only when another token is shown after it.
+        fun separatorAfter(index: Int): Int? = (index + 1).takeIf { it < measurables.size && flags[it].separator }
+
+        // Width a token adds after [previous]: the gap, plus previous's separator and its gap.
+        fun joinWidth(previous: Int?): Int = if (previous == null) {
+            0
+        } else {
+            gap + (separatorAfter(previous)?.let { widths[it] + gap } ?: 0)
+        }
+
+        fun widthOf(tokens: List<Int>): Int =
+            tokens.withIndex().sumOf { (k, index) -> joinWidth(tokens.getOrNull(k - 1)) + widths[index] }
 
         // Too wide: drop the tokens marked dropFirst, last first, before any other.
-        val kept = measurables.indices.toMutableList()
+        val kept = measurables.indices.filterNot { flags[it].separator }.toMutableList()
         while (widthOf(kept) > constraints.maxWidth) {
             val drop = kept.lastOrNull { flags[it].dropFirst } ?: break
             kept.remove(drop)
@@ -38,19 +55,17 @@ fun WholeTokenRow(
         // width left and handles its own overflow; any other stops the row.
         val shown = mutableListOf<Pair<Int, Int>>()
         var width = 0
+        var previous: Int? = null
         for (index in kept) {
-            val start = width + if (shown.isEmpty()) 0 else gap
+            val start = width + joinWidth(previous)
             val left = constraints.maxWidth - start
-            if (widths[index] <= left) {
-                shown += index to widths[index]
-                width = start + widths[index]
-                continue
-            }
-            if (flags[index].shrinkable && left > 0) {
-                shown += index to left
-                width = constraints.maxWidth
-            }
-            break
+            val fits = widths[index] <= left
+            if (!fits && !(flags[index].shrinkable && left > 0)) break
+            previous?.let(::separatorAfter)?.let { shown += it to widths[it] }
+            shown += index to if (fits) widths[index] else left
+            if (!fits) break
+            width = start + widths[index]
+            previous = index
         }
 
         val placeables = shown.map { (index, maxWidth) ->
@@ -70,11 +85,7 @@ fun WholeTokenRow(
 }
 
 object WholeTokenRowScope {
-    /**
-     * When the row is too wide, drop this token before any unmarked one,
-     * starting from the end. Do not mark the first token: later tokens may
-     * carry a leading divider that assumes something precedes them.
-     */
+    /** When the row is too wide, drop this token before any unmarked one, starting from the end. */
     fun Modifier.dropFirst(): Modifier = then(TokenFlags(dropFirst = true))
 
     /**
@@ -83,17 +94,25 @@ object WholeTokenRowScope {
      * ellipsis.
      */
     fun Modifier.shrinkable(): Modifier = then(TokenFlags(shrinkable = true))
+
+    /**
+     * This child separates the tokens either side of it, and shows only when
+     * both of them do.
+     */
+    fun Modifier.separator(): Modifier = then(TokenFlags(separator = true))
 }
 
 private data class TokenFlags(
     val dropFirst: Boolean = false,
     val shrinkable: Boolean = false,
+    val separator: Boolean = false,
 ) : ParentDataModifier {
     override fun Density.modifyParentData(parentData: Any?): Any {
         val current = parentData as? TokenFlags ?: TokenFlags()
         return TokenFlags(
             dropFirst = current.dropFirst || dropFirst,
             shrinkable = current.shrinkable || shrinkable,
+            separator = current.separator || separator,
         )
     }
 }
