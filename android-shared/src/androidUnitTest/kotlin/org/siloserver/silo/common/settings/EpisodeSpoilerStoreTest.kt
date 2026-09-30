@@ -30,7 +30,7 @@ import kotlin.test.assertTrue
 class EpisodeSpoilerStoreTest {
 
     @Test
-    fun `a revision 15 server resolves both switches`() = runTest {
+    fun `a revision 16 server resolves both switches`() = runTest {
         val api = FakeSpoilerSettingsApi(
             values = mapOf(SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true)),
         )
@@ -46,7 +46,7 @@ class EpisodeSpoilerStoreTest {
     @Test
     fun `an older server hides nothing, never reads the keys, and never receives writes`() = runTest {
         val api = FakeSpoilerSettingsApi(
-            revision = 14,
+            revision = 15,
             values = mapOf(SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true)),
         )
         val store = storeFor(api)
@@ -141,14 +141,14 @@ class EpisodeSpoilerStoreTest {
         // old server's Unsupported answer must not survive the switch.
         var serverUrl = "https://old.test"
         var profileId = "old-profile"
-        val api = FakeSpoilerSettingsApi(revision = 14)
+        val api = FakeSpoilerSettingsApi(revision = 15)
         val store = storeFor(api, serverUrl = { serverUrl }, profileId = { profileId })
         store.hydrateIfNeeded()
         assertEquals(EpisodeSpoilerSupport.Unsupported, store.state.value.support)
 
         serverUrl = "https://new.test"
         profileId = "new-profile"
-        api.serve(revision = 15, values = bothOn)
+        api.serve(revision = 16, values = bothOn)
         store.hydrateIfNeeded()
 
         assertEquals(EpisodeSpoilerPrefs(hideImages = true, hideOverviews = true), store.state.value.prefs)
@@ -158,13 +158,13 @@ class EpisodeSpoilerStoreTest {
     fun `an active server or profile change resets and re-resolves`() = runTest {
         var serverUrl = "https://old.test"
         val identityChanges = MutableSharedFlow<Unit>()
-        val api = FakeSpoilerSettingsApi(revision = 14)
+        val api = FakeSpoilerSettingsApi(revision = 15)
         val store = storeFor(api, serverUrl = { serverUrl }, identityChanges = identityChanges)
         runCurrent()
         store.hydrateIfNeeded()
 
         serverUrl = "https://new.test"
-        api.serve(revision = 15, values = bothOn)
+        api.serve(revision = 16, values = bothOn)
         identityChanges.emit(Unit)
         runCurrent()
 
@@ -235,7 +235,7 @@ class EpisodeSpoilerStoreTest {
 
         serverUrl = "https://new.test"
         api.beforeCapabilities = { }
-        api.serve(revision = 15, values = bothOn)
+        api.serve(revision = 16, values = bothOn)
         backgroundScope.launch { changes.emit(Unit) }
         runCurrent()
 
@@ -264,7 +264,7 @@ class EpisodeSpoilerStoreTest {
 }
 
 private class FakeSpoilerSettingsApi(
-    revision: Int = 15,
+    revision: Int = 16,
     var capabilities: ApiResult<SettingsContractCapabilities> = capabilitiesAt(revision),
     private var values: Map<String, JsonElement> = emptyMap(),
     private val failPuts: Boolean = false,

@@ -38,18 +38,18 @@ class EpisodeSpoilersTest {
     }
 
     @Test
-    fun supportNeedsRevision15AndBatchedEffective() {
+    fun supportNeedsRevision16AndBatchedEffective() {
         fun caps(revision: Int, batched: Boolean = true, apiVersion: Int = 1) =
             SettingsContractCapabilities(
                 apiVersion = apiVersion,
                 manifestRevision = revision,
                 supportsBatchedEffective = batched,
             )
-        assertTrue(EpisodeSpoilers.isSupported(caps(15)))
         assertTrue(EpisodeSpoilers.isSupported(caps(16)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(14)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(15, batched = false)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(15, apiVersion = 2)))
+        assertTrue(EpisodeSpoilers.isSupported(caps(17)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(15)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(16, batched = false)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(16, apiVersion = 2)))
     }
 
     @Test
