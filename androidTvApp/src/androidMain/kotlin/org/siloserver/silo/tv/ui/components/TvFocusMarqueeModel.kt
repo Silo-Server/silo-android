@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
@@ -321,6 +322,18 @@ class TvFocusMarqueeState internal constructor() {
 
     private fun TvMarqueeContent.withCurrentSpoilers(): TvMarqueeContent =
         TvMarqueeContent.from(source, rowTitle = "", spoilers = spoilerPrefs).copy(id = id)
+
+    /** Refresh retained watch state without another focus event or a new detail fetch. */
+    internal fun refreshSources(rows: List<ResolvedSection>) {
+        fun TvMarqueeContent.refreshed(): TvMarqueeContent {
+            val row = rows.firstOrNull { "${it.id}#$contentId" == id } ?: return this
+            val item = row.items.firstOrNull { it.contentId == contentId } ?: return this
+            if (item == source) return this
+            return TvMarqueeContent.from(item, row.title, row.id, spoilerPrefs)
+        }
+        content = content?.refreshed()
+        candidate = candidate?.refreshed()
+    }
 
     /** Report card focus. The displayed content swaps on the next composition turn. */
     fun preview(item: SectionItem, rowTitle: String, rowIdentity: String = rowTitle) {
