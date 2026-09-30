@@ -118,7 +118,8 @@ data class TvMarqueeContent(
                 ?.let(::listOf)
                 .orEmpty()
 
-            val hidesStill = spoilers.hidesImage(unwatchedEpisode)
+            val hidesBackdrop = spoilers.hidesImage(unwatchedEpisode, item.backdropIsEpisodeStill)
+            val hidesPoster = spoilers.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill)
             val sectionBackdropUrl = item.backdropUrl?.takeIf { it.isNotBlank() }
             val sectionPosterUrl = item.posterUrl?.takeIf { it.isNotBlank() }
             return TvMarqueeContent(
@@ -133,16 +134,16 @@ data class TvMarqueeContent(
                 specLine = specLine(item.overlaySummary),
                 // Match tvOS: a section backdrop (or poster fallback) is always
                 // available for the first rested frame. Episode enrichment may
-                // replace it with series art later. A still hidden by spoiler
-                // protection leaves only its ThumbHash until that upgrade.
-                backdropUrl = if (hidesStill) null else sectionBackdropUrl ?: sectionPosterUrl,
-                backdropThumbhash = if (sectionBackdropUrl != null) {
+                // replace it with series art later. Hidden stills also drop
+                // their ThumbHash so the placeholder cannot reveal them.
+                backdropUrl = (if (hidesBackdrop) null else sectionBackdropUrl) ?: (if (hidesPoster) null else sectionPosterUrl),
+                backdropThumbhash = if (!hidesBackdrop && sectionBackdropUrl != null) {
                     item.backdropThumbhash
-                } else {
+                } else if (!hidesPoster) {
                     item.posterThumbhash
-                },
-                posterUrl = sectionPosterUrl,
-                posterThumbhash = item.posterThumbhash,
+                } else null,
+                posterUrl = if (hidesPoster) null else sectionPosterUrl,
+                posterThumbhash = if (hidesPoster) null else item.posterThumbhash,
                 isEpisode = isEpisode,
                 source = item,
             )

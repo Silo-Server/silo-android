@@ -278,7 +278,7 @@ private fun OnDeckCard(
             SpoilerImage(
                 url = item.artUrl,
                 thumbhash = item.artThumbhash,
-                hidden = LocalEpisodeSpoilerPrefs.current.hidesImage(item.isUnwatchedEpisode),
+                hidden = LocalEpisodeSpoilerPrefs.current.hidesImage(item.isUnwatchedEpisode, item.imageIsEpisodeStill),
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
             )

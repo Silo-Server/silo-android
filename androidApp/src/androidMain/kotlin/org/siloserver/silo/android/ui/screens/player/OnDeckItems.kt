@@ -34,6 +34,7 @@ internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: St
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,
+                imageIsEpisodeStill = item.backdropIsEpisodeStill,
                 isUnwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
                     EpisodeSpoilers.isUnwatched(item),
             )

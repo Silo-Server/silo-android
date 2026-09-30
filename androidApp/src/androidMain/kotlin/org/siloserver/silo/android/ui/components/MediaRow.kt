@@ -71,7 +71,7 @@ private data class MediaRowItemModel(
  */
 private fun hidesEpisodeArtwork(item: SectionItem, prefs: EpisodeSpoilerPrefs): Boolean =
     item.type.equals("episode", ignoreCase = true) &&
-        prefs.hidesImage(EpisodeSpoilers.isUnwatched(item))
+        prefs.hidesImage(EpisodeSpoilers.isUnwatched(item), EpisodeSpoilers.selectedImageIsStill(item))
 
 /**
  * Horizontal row of media cards with a section headline above.
@@ -123,13 +123,10 @@ fun MediaRow(
             } else {
                 null
             }
-            // Landscape cards take the backdrop first for every item type
-            // (iOS EpisodeThumbCard). For episodes the server's backdrop_url
-            // IS the episode still (falling back to the series backdrop),
-            // while poster_url is the season/series portrait — which the
-            // 16:9 frame used to crop down to a sliver of the title art.
-            val imageUrl = item.backdropUrl ?: item.posterUrl
-            val imageThumbhash = item.backdropThumbhash ?: item.posterThumbhash
+            // Landscape cards prefer the backdrop. Episode provenance tells
+            // us whether the selected artwork is a still or series fallback.
+            val imageUrl = item.backdropUrl?.takeIf { it.isNotBlank() } ?: item.posterUrl
+            val imageThumbhash = if (!item.backdropUrl.isNullOrBlank()) item.backdropThumbhash else item.posterThumbhash
             MediaRowItemModel(
                 item = item,
                 progress = progress,
@@ -321,6 +318,7 @@ fun MediaRow(
                     CardStyle.Poster -> {
                         MediaCard(
                             title = item.title,
+                            hideArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), item.posterIsEpisodeStill),
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,
                             year = item.year,

@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -70,6 +70,7 @@ object MediaGridDefaults {
 @Composable
 fun MediaCard(
     title: String,
+    hideArtwork: Boolean = false,
     posterUrl: String?,
     posterThumbhash: String?,
     year: Int? = null,
@@ -135,7 +136,8 @@ fun MediaCard(
                 .heroSource(heroKey)
                 .clip(MaterialTheme.shapes.small),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
+                hidden = hideArtwork,
                 url = posterUrl,
                 thumbhash = posterThumbhash,
                 contentDescription = title,

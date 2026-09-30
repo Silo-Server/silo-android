@@ -360,6 +360,7 @@ class PlayerViewModel(
         val progressFraction: Float?,
         /** An episode the profile has not started (spoiler protection). */
         val isUnwatchedEpisode: Boolean = false,
+        val imageIsEpisodeStill: Boolean? = null,
     )
 
     data class NextEpisodeInfo(

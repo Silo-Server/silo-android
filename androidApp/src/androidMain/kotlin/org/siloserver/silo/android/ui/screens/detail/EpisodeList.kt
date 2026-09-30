@@ -204,7 +204,7 @@ private fun EpisodeRailCard(
             SpoilerImage(
                 url = episode.stillUrl,
                 thumbhash = episode.stillThumbhash,
-                hidden = spoilers.hidesImage(unwatched),
+                hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
                 modifier = Modifier.fillMaxSize(),
             )

@@ -58,6 +58,8 @@ data class BrowseItem(
     val networks: List<String> = emptyList(),
     @SerialName("show_status") val showStatus: String? = null,
     val overview: String? = null,
+    @SerialName("poster_is_episode_still") val posterIsEpisodeStill: Boolean? = null,
+    @SerialName("backdrop_is_episode_still") val backdropIsEpisodeStill: Boolean? = null,
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
@@ -182,6 +184,8 @@ data class ItemDetail(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("first_air_date") val firstAirDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
+    @SerialName("poster_is_episode_still") val posterIsEpisodeStill: Boolean? = null,
+    @SerialName("backdrop_is_episode_still") val backdropIsEpisodeStill: Boolean? = null,
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,
@@ -497,6 +501,7 @@ data class EpisodeListItem(
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,
     @SerialName("tvdb_id") val tvdbId: String? = null,
+    @SerialName("still_is_episode_still") val stillIsEpisodeStill: Boolean? = null,
     @SerialName("still_url") val stillUrl: String? = null,
     @SerialName("still_thumbhash") val stillThumbhash: String? = null,
     @SerialName("user_data") val userData: LeafItemUserData? = null,
@@ -567,6 +572,8 @@ data class WatchDetail(
     // Optional forward-compatible artwork. Current servers expose these on
     // ItemDetail rather than WatchDetail, so playback clients must fall back
     // to the full catalog detail when these fields are absent.
+    @SerialName("poster_is_episode_still") val posterIsEpisodeStill: Boolean? = null,
+    @SerialName("backdrop_is_episode_still") val backdropIsEpisodeStill: Boolean? = null,
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,

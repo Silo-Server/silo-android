@@ -52,6 +52,18 @@ class EpisodeSpoilersTest {
         assertFalse(EpisodeSpoilers.isSupported(caps(15, apiVersion = 2)))
     }
 
+    @Test
+    fun imageProvenanceFollowsFallbackAndPreservesSeriesArt() {
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        val still = sectionItem().copy(backdropUrl = "https://example.invalid/still", backdropIsEpisodeStill = true)
+        assertTrue(prefs.hidesImage(EpisodeSpoilers.isUnwatched(still), EpisodeSpoilers.selectedImageIsStill(still)))
+        val seriesArt = still.copy(backdropIsEpisodeStill = false)
+        assertFalse(prefs.hidesImage(EpisodeSpoilers.isUnwatched(seriesArt), EpisodeSpoilers.selectedImageIsStill(seriesArt)))
+        val fallback = still.copy(backdropUrl = "", posterUrl = "https://example.invalid/poster", posterIsEpisodeStill = false)
+        assertFalse(prefs.hidesImage(true, EpisodeSpoilers.selectedImageIsStill(fallback)))
+        assertTrue(prefs.hidesImage(true, null))
+    }
+
     private fun sectionItem(
         userState: MediaItemUserState? = null,
         positionSeconds: Double? = null,

@@ -505,7 +505,7 @@ fun DetailHero(
             artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
             hidden = detail.type.equals("episode", ignoreCase = true) && detail.backdropUrl.isNullOrBlank() &&
                 LocalEpisodeSpoilerPrefs.current.hidesImage(
-                    EpisodeSpoilers.isUnwatched(detail.userData),
+                    EpisodeSpoilers.isUnwatched(detail.userData), detail.posterIsEpisodeStill,
                 ),
             contentDescription = detail.title,
         ) {

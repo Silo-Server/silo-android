@@ -437,7 +437,7 @@ private fun TvDetailEpisodeCard(
                 SpoilerImage(
                     url = episode.stillUrl,
                     thumbhash = episode.stillThumbhash,
-                    hidden = spoilers.hidesImage(unwatched),
+                    hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                     contentDescription = episode.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

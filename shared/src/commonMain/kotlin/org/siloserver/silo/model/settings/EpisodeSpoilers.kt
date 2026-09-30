@@ -48,6 +48,10 @@ object EpisodeSpoilers {
         userData == null ||
             isUnwatched(userData.played, userData.isInProgress, userData.positionSeconds)
 
+    /** Provenance follows the image selected for the wide card; null preserves older-server protection. */
+    fun selectedImageIsStill(item: SectionItem): Boolean? =
+        if (!item.backdropUrl.isNullOrBlank()) item.backdropIsEpisodeStill else item.posterIsEpisodeStill
+
     /** Section rows carry no in-progress flag; played and position decide. */
     fun isUnwatched(item: SectionItem): Boolean =
         isUnwatched(item.userState?.played, isInProgress = null, positionSeconds = item.positionSeconds)
@@ -60,7 +64,8 @@ data class EpisodeSpoilerPrefs(
     /** Hide the description of an episode the profile has not started. */
     val hideOverviews: Boolean = false,
 ) {
-    fun hidesImage(unwatched: Boolean): Boolean = hideImages && unwatched
+    fun hidesImage(unwatched: Boolean, isEpisodeStill: Boolean? = null): Boolean =
+        hideImages && unwatched && isEpisodeStill != false
 
     fun hidesOverview(unwatched: Boolean): Boolean = hideOverviews && unwatched
 

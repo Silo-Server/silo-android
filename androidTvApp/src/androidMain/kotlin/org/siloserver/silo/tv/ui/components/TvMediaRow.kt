@@ -157,9 +157,9 @@ fun TvMediaRow(
                 shelfSubtitle = item.shelfSubtitle(showProgress = showProgress),
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
-                // For episodes the backdrop is the still.
+                // Protect the selected still while preserving series fallback art.
                 hidesArtwork = item.type.equals("episode", ignoreCase = true) &&
-                    spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item)),
+                    spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), EpisodeSpoilers.selectedImageIsStill(item)),
             )
         }
     }
@@ -350,6 +350,7 @@ fun TvMediaRow(
                 val itemLongClick = remember(item, longClickAction) { longClickAction(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
+                        hideArtwork = rowItem.hidesArtwork,
                         title = rowItem.shelfTitle,
                         imageUrl = rowItem.backdropUrl,
                         imageThumbhash = rowItem.backdropThumbhash,
@@ -383,6 +384,7 @@ fun TvMediaRow(
                             onLongClick = itemLongClick,
                         )
                         TvRowStyle.Poster -> TvMediaCard(
+                            hideArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), item.posterIsEpisodeStill),
                             title = item.title,
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,
@@ -435,11 +437,11 @@ private fun SectionItem.remainingMinutes(): Int? {
 
 /** Prefer wide artwork for 16:9 row cards, falling back to poster only if needed. */
 private fun SectionItem.bestBackdropUrl(): String? {
-    return backdropUrl ?: posterUrl
+    return backdropUrl?.takeIf { it.isNotBlank() } ?: posterUrl
 }
 
 private fun SectionItem.bestBackdropThumbhash(): String? {
-    return backdropThumbhash ?: posterThumbhash
+    return if (!backdropUrl.isNullOrBlank()) backdropThumbhash else posterThumbhash
 }
 
 private fun SectionItem.shelfTitle(showProgress: Boolean): String {
@@ -462,4 +464,3 @@ private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
         else -> null
     }
 }
-

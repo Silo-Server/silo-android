@@ -2591,7 +2591,7 @@ internal fun resolveTvDetailHeroArtwork(
     return when (detail.type.lowercase()) {
         "series", "season" -> {
             val hidesStill = nextUpEpisode != null &&
-                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(nextUpEpisode.userData))
+                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(nextUpEpisode.userData), nextUpEpisode.stillIsEpisodeStill)
             TvDetailHeroArtwork(
                 nextUpEpisode?.stillUrl.takeUnless { hidesStill },
                 nextUpEpisode?.stillThumbhash,
@@ -2599,7 +2599,7 @@ internal fun resolveTvDetailHeroArtwork(
         }
         "episode" -> TvDetailHeroArtwork(
             detail.posterUrl.takeUnless {
-                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData))
+                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData), detail.posterIsEpisodeStill)
             },
             detail.posterThumbhash,
         )
