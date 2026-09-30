@@ -65,7 +65,10 @@ object ExternalRatings {
 
     /**
      * The most ratings a phone-width title page shows. Web and iOS use the
-     * same limit. Wide layouts (tablet, fold, TV) show the whole list.
+     * same limit. The server already sends at most three, so this only guards
+     * against an older server that sends more. Every layout (phone, tablet,
+     * fold, TV) shows ratings on one line and drops whole entries from the
+     * end when they do not fit.
      */
     const val PHONE_LIMIT = 3
 
@@ -85,7 +88,8 @@ object ExternalRatings {
 
     /**
      * The ratings a phone-width title page shows: the first [PHONE_LIMIT]
-     * of [ratings], in the server's order.
+     * of [ratings], in the server's order. Wider layouts pass the server's
+     * list as is.
      */
     fun forPhone(ratings: List<DisplayRating>): List<DisplayRating> = ratings.take(PHONE_LIMIT)
 
