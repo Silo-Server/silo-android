@@ -768,6 +768,9 @@ class PlayerViewModel(
     // (then the OS captioning style, tvOS parity).
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.effectiveSubtitleAppearanceFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SubtitleAppearance.DEFAULT)
+    /** False when the server is known to discard subtitle text opacity. */
+    val subtitleTextOpacitySupported: StateFlow<Boolean> = playerSettingsStore.subtitleTextOpacitySupportedFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /**
      * Per-device audio/subtitle delay in ms. Mirrors iOS phone's `audioSyncMs` /
      * `subtitleSyncMs` (`iosApp/Screens/Player/Sheets/PlayerSettingsSheet.swift:265-285`).
@@ -4310,8 +4313,16 @@ class PlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setDolbyVisionEnabled(value) }
     }
 
-    fun onSetSubtitleAppearance(value: SubtitleAppearance) {
-        viewModelScope.launch { playerSettingsStore.setSubtitleAppearance(value) }
+    /**
+     * Commits a subtitle-appearance change via a transform rather than a
+     * precomputed value (replaced the former `onSetSubtitleAppearance`).
+     * [PlayerSettingsStore.updateSubtitleAppearance] applies it atomically
+     * inside the store's own write transaction, so two edits committing
+     * around the same time (e.g. two opacity fields as the sheet is
+     * dismissed) can't race on a snapshot read before either writes.
+     */
+    fun onEditSubtitleAppearance(transform: (SubtitleAppearance) -> SubtitleAppearance) {
+        viewModelScope.launch { playerSettingsStore.updateSubtitleAppearance(transform) }
     }
 
     /**

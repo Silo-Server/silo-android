@@ -21,12 +21,14 @@ import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
 import org.siloserver.silo.common.settings.SeekIntervalStore
+import org.siloserver.silo.common.settings.SettingsContractRevision
 import org.siloserver.silo.common.settings.ServerSettingsFlusher
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.settings.SeekIntervalController
 import org.siloserver.silo.network.DeviceMetadataProvider
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.LibraryPlaybackPrefsRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SettingsRepository
@@ -89,6 +91,16 @@ val playerInfraModule = module {
         }
     }
 
+    // The connected server's settings manifest revision. One instance, so the
+    // flusher's send-time gates and the settings UI agree on what it supports.
+    single<SettingsContractRevision> {
+        val settingsApi = get<SettingsApi>()
+        SettingsContractRevision(
+            fetchCapabilities = { settingsApi.getContractCapabilities() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+        )
+    }
+
     // Long-lived application-scope flusher: debounced server writes survive
     // ViewModel teardown. Uses Dispatchers.IO since flushOne does network work.
     single<ServerSettingsFlusher> {
@@ -100,6 +112,7 @@ val playerInfraModule = module {
             // against is still the one requests would reach.
             getServerUrl = { get<TokenManager>().getServerUrl() },
             getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
+            contractRevision = get(),
         )
     }
 
@@ -132,6 +145,7 @@ val playerInfraModule = module {
             // server so settings scope stays in lockstep with what the
             // server records as `device_id` for each override.
             getDeviceId = { get<DeviceMetadataProvider>().current()?.id },
+            contractRevision = get(),
         )
     }
 

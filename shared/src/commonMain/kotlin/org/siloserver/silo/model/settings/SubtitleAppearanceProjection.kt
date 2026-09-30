@@ -21,6 +21,7 @@ object SubtitleAppearanceProjection {
         PlaybackSettingsKeys.SubtitleFontSize,
         PlaybackSettingsKeys.SubtitleFontFamily,
         PlaybackSettingsKeys.SubtitleTextColor,
+        PlaybackSettingsKeys.SubtitleTextOpacity,
         PlaybackSettingsKeys.SubtitleBackgroundColor,
         PlaybackSettingsKeys.SubtitleBackgroundStyle,
         PlaybackSettingsKeys.SubtitleBackgroundOpacity,
@@ -48,6 +49,9 @@ object SubtitleAppearanceProjection {
         }
         fields[PlaybackSettingsKeys.SubtitleTextColor]?.let { raw ->
             hexColor(raw)?.let { out = out.copy(fontColor = it) }
+        }
+        fields[PlaybackSettingsKeys.SubtitleTextOpacity]?.let { raw ->
+            raw.trim().toIntOrNull()?.let { out = out.copy(textOpacity = it.coerceIn(1, 100)) }
         }
         fields[PlaybackSettingsKeys.SubtitleBackgroundColor]?.let { raw ->
             hexColor(raw)?.let { out = out.copy(backgroundColor = it) }
@@ -80,6 +84,7 @@ object SubtitleAppearanceProjection {
             PlaybackSettingsKeys.SubtitleFontSize to safe.fontSize.wire,
             PlaybackSettingsKeys.SubtitleFontFamily to safe.fontFamily,
             PlaybackSettingsKeys.SubtitleTextColor to safe.fontColor,
+            PlaybackSettingsKeys.SubtitleTextOpacity to safe.textOpacity.toString(),
             PlaybackSettingsKeys.SubtitleBackgroundColor to safe.backgroundColor,
             PlaybackSettingsKeys.SubtitleBackgroundStyle to safe.backgroundStyle.wire,
             PlaybackSettingsKeys.SubtitleBackgroundOpacity to safe.backgroundOpacity.toString(),

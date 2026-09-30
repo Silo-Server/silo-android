@@ -54,6 +54,7 @@ object PlaybackSettingsKeys {
     const val SubtitleFontSize = "subtitle.font_size"
     const val SubtitleFontFamily = "subtitle.font_family"
     const val SubtitleTextColor = "subtitle.text_color"
+    const val SubtitleTextOpacity = "subtitle.text_opacity"
     const val SubtitleBackgroundColor = "subtitle.background_color"
     const val SubtitleBackgroundStyle = "subtitle.background_style"
     const val SubtitleBackgroundOpacity = "subtitle.background_opacity"
@@ -173,6 +174,7 @@ object PlaybackSettingsKeys {
         SubtitleFontSize,
         SubtitleFontFamily,
         SubtitleTextColor,
+        SubtitleTextOpacity,
         SubtitleBackgroundColor,
         SubtitleBackgroundStyle,
         SubtitleBackgroundOpacity,

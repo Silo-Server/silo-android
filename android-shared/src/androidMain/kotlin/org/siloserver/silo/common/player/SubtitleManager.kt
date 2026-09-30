@@ -328,7 +328,8 @@ class SubtitleManager(
     }
 
     private fun buildCaptionStyle(appearance: SubtitleAppearance): CaptionStyleCompat {
-        val foreground = parseHexColor(appearance.fontColor)
+        val foregroundAlpha = appearance.textOpacity.coerceIn(1, 100) * 255 / 100
+        val foreground = parseHexColor(appearance.fontColor, foregroundAlpha)
         val backgroundAlpha = if (appearance.backgroundStyle == SubtitleBackgroundStylePreset.Box) {
             (appearance.backgroundOpacity.coerceIn(0, 100) * 255 / 100)
         } else {

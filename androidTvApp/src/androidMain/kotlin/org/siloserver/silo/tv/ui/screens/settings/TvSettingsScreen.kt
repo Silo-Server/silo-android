@@ -291,6 +291,7 @@ fun TvSettingsScreen(
         onSubtitleFontSizeChanged = viewModel::setSubtitleFontSize,
         onSubtitleFontFamilyChanged = viewModel::setSubtitleFontFamily,
         onSubtitleFontColorChanged = viewModel::setSubtitleFontColor,
+        onSubtitleTextOpacityChanged = viewModel::setSubtitleTextOpacity,
         onSubtitleTextOutlineChanged = viewModel::setSubtitleTextOutline,
         onSubtitleTextOutlineColorChanged = viewModel::setSubtitleTextOutlineColor,
         onSubtitleBackgroundStyleChanged = viewModel::setSubtitleBackgroundStyle,
@@ -435,6 +436,7 @@ private fun SettingsSplitLayout(
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
+    onSubtitleTextOpacityChanged: (Int) -> Unit,
     onSubtitleTextOutlineChanged: (Boolean) -> Unit,
     onSubtitleTextOutlineColorChanged: (String) -> Unit,
     onSubtitleBackgroundStyleChanged: (SubtitleBackgroundStylePreset) -> Unit,
@@ -513,6 +515,7 @@ private fun SettingsSplitLayout(
             onSubtitleFontSizeChanged = onSubtitleFontSizeChanged,
             onSubtitleFontFamilyChanged = onSubtitleFontFamilyChanged,
             onSubtitleFontColorChanged = onSubtitleFontColorChanged,
+            onSubtitleTextOpacityChanged = onSubtitleTextOpacityChanged,
             onSubtitleTextOutlineChanged = onSubtitleTextOutlineChanged,
             onSubtitleTextOutlineColorChanged = onSubtitleTextOutlineColorChanged,
             onSubtitleBackgroundStyleChanged = onSubtitleBackgroundStyleChanged,
@@ -781,6 +784,7 @@ private fun SettingsDetailPane(
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
+    onSubtitleTextOpacityChanged: (Int) -> Unit,
     onSubtitleTextOutlineChanged: (Boolean) -> Unit,
     onSubtitleTextOutlineColorChanged: (String) -> Unit,
     onSubtitleBackgroundStyleChanged: (SubtitleBackgroundStylePreset) -> Unit,
@@ -852,6 +856,7 @@ private fun SettingsDetailPane(
                 onSubtitleFontSizeChanged = onSubtitleFontSizeChanged,
                 onSubtitleFontFamilyChanged = onSubtitleFontFamilyChanged,
                 onSubtitleFontColorChanged = onSubtitleFontColorChanged,
+                onSubtitleTextOpacityChanged = onSubtitleTextOpacityChanged,
                 onSubtitleTextOutlineChanged = onSubtitleTextOutlineChanged,
                 onSubtitleTextOutlineColorChanged = onSubtitleTextOutlineColorChanged,
                 onSubtitleBackgroundStyleChanged = onSubtitleBackgroundStyleChanged,
@@ -1477,6 +1482,7 @@ private fun TvSubtitleSettingsPane(
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
+    onSubtitleTextOpacityChanged: (Int) -> Unit,
     onSubtitleTextOutlineChanged: (Boolean) -> Unit,
     onSubtitleTextOutlineColorChanged: (String) -> Unit,
     onSubtitleBackgroundStyleChanged: (SubtitleBackgroundStylePreset) -> Unit,
@@ -1587,6 +1593,14 @@ private fun TvSubtitleSettingsPane(
                         onClick = { activePicker = SubtitlePicker.FontColor },
                         enabled = state.subtitleUsesDeviceOverride,
                     )
+                    if (state.subtitleTextOpacitySupported) {
+                        SettingsValueRow(
+                            label = "Text Opacity",
+                            value = "${appearance.textOpacity}%",
+                            onClick = { activePicker = SubtitlePicker.TextOpacity },
+                            enabled = state.subtitleUsesDeviceOverride,
+                        )
+                    }
                     SettingsToggleRow(
                         label = "Text Outline",
                         checked = appearance.textOutline,
@@ -1702,6 +1716,19 @@ private fun TvSubtitleSettingsPane(
             },
             onDismiss = { activePicker = null },
         )
+        SubtitlePicker.TextOpacity -> TvSettingsPickerSheet(
+            title = "Text Opacity",
+            options = TvSubtitleAppearanceOptions.percentOptions(
+                TvSubtitleAppearanceOptions.TEXT_OPACITY_PERCENT_STEPS,
+                appearance.textOpacity,
+            ).map { PickerOption(it.toString(), "$it%") },
+            selectedId = appearance.textOpacity.toString(),
+            onSelect = { id ->
+                id.toIntOrNull()?.let { onSubtitleTextOpacityChanged(it) }
+                activePicker = null
+            },
+            onDismiss = { activePicker = null },
+        )
         SubtitlePicker.OutlineColor -> TvSettingsPickerSheet(
             title = "Outline Color",
             options = TvSubtitleAppearanceOptions.OUTLINE_COLORS.map { PickerOption(it.first, it.second) },
@@ -1726,7 +1753,10 @@ private fun TvSubtitleSettingsPane(
         )
         SubtitlePicker.BackgroundOpacity -> TvSettingsPickerSheet(
             title = "Background Opacity",
-            options = TvSubtitleAppearanceOptions.OPACITY_PERCENT_STEPS.map { PickerOption(it.toString(), "$it%") },
+            options = TvSubtitleAppearanceOptions.percentOptions(
+                TvSubtitleAppearanceOptions.OPACITY_PERCENT_STEPS,
+                appearance.backgroundOpacity,
+            ).map { PickerOption(it.toString(), "$it%") },
             selectedId = appearance.backgroundOpacity.toString(),
             onSelect = { id ->
                 id.toIntOrNull()?.let { onSubtitleBackgroundOpacityChanged(it) }
@@ -1789,12 +1819,14 @@ private fun TvSettingsSubtitlePreview(appearance: SubtitleAppearance) {
         else -> FontFamily.SansSerif
     }
     val fontSize = (safe.fontSize.pointSize * 0.36).sp
-    val foreground = settingsHexColor(safe.fontColor)
+    val foreground = settingsHexColor(safe.fontColor).copy(
+        alpha = TvSubtitleAppearanceOptions.previewOpacityAlpha(safe.textOpacity, floor = 1),
+    )
     val outline = settingsHexColor(safe.textOutlineColor)
     val showOutline = safe.textOutline || safe.backgroundStyle == SubtitleBackgroundStylePreset.Outline
     val boxColor = settingsHexColor(safe.backgroundColor).copy(
         alpha = if (safe.backgroundStyle == SubtitleBackgroundStylePreset.Box) {
-            safe.backgroundOpacity.coerceIn(0, 100) / 100f
+            TvSubtitleAppearanceOptions.previewOpacityAlpha(safe.backgroundOpacity, floor = 0)
         } else {
             0f
         },
@@ -1931,6 +1963,7 @@ private enum class SubtitlePicker {
     FontSize,
     FontFamily,
     FontColor,
+    TextOpacity,
     OutlineColor,
     BackgroundStyle,
     BackgroundOpacity,

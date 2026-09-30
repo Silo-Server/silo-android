@@ -129,6 +129,15 @@ interface PlayerSettingsStore {
     /** [subtitleAppearanceFlow] with the match-device override applied. */
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
+    /**
+     * False only when the active server is known to run a settings manifest
+     * older than [SubtitleAppearance.TEXT_OPACITY_MIN_MANIFEST_REVISION], so it
+     * would discard [SubtitleAppearance.textOpacity]. An unknown revision
+     * counts as supported: the flusher holds the value until it is known.
+     */
+    val subtitleTextOpacitySupportedFlow: Flow<Boolean>
+        get() = flowOf(true)
+
     // Setters
     suspend fun setIntroSkipMode(value: IntroSkipMode)
 
@@ -178,6 +187,23 @@ interface PlayerSettingsStore {
     suspend fun setOrientationMode(value: String)
 
     suspend fun setSubtitleAppearance(value: SubtitleAppearance)
+
+    /**
+     * Applies [transform] atomically against the current stored appearance,
+     * read inside the same DataStore transaction that writes the result.
+     * Unlike a caller reading [subtitleAppearanceFlow] and then calling
+     * [setSubtitleAppearance] separately, no write from another caller can
+     * land in the gap between the read and the write — two edits committing
+     * around the same time (e.g. two fields as a sheet dismisses) each see
+     * the other's result instead of racing on a shared pre-transaction read.
+     *
+     * The default falls back to the non-atomic read-then-write for fakes
+     * that only need to capture the resulting value; [AndroidPlayerSettingsStore]
+     * overrides this with the real atomic transaction.
+     */
+    suspend fun updateSubtitleAppearance(transform: (SubtitleAppearance) -> SubtitleAppearance) {
+        setSubtitleAppearance(transform(subtitleAppearanceFlow.first()))
+    }
 
     /**
      * Project the granular, client-local `subtitle.*` fields into the

@@ -4,6 +4,7 @@ import org.siloserver.silo.common.diagnostics.SiloLog
 import org.siloserver.silo.model.diagnostics.DiagnosticsLogCategory
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
@@ -95,6 +96,13 @@ class DefaultServerSettingsFlusher(
      */
     private val getServerUrl: suspend () -> String? = { null },
     private val getAuthScope: (suspend () -> AuthScopeSnapshot?)? = null,
+    /**
+     * The connected server's settings manifest revision, for writes whose
+     * accepted shape depends on it. Share the app's instance so the settings
+     * UI and the flusher agree on what the server supports.
+     */
+    private val contractRevision: SettingsContractRevision =
+        SettingsContractRevision({ settingsApi.getContractCapabilities() }, getServerUrl),
 ) : ServerSettingsFlusher {
 
     private val lock = Any()
@@ -275,11 +283,13 @@ class DefaultServerSettingsFlusher(
             SiloLog.w(CATEGORY, TAG, "dropping $key: ${op.value} does not encode as the contract type")
             return false
         }
+        val wire = gateForServerRevision(key, encoded, op.serverUrl)
+            ?: return failed("put", key, "settings manifest revision unknown", retry = true)
         return when (
             val result = settingsApi.putValue(
                 key = key,
                 scope = SettingScopeIdentity.profileDevice(),
-                value = encoded,
+                value = wire,
                 profileId = profileId,
                 authority = op.authority,
             )
@@ -292,6 +302,26 @@ class DefaultServerSettingsFlusher(
             is ApiResult.NetworkError ->
                 failed("put", key, "network error: ${result.exception}", retry = true)
         }
+    }
+
+    /**
+     * [encoded] in the shape the server at [serverUrl] accepts, or null when
+     * that depends on a manifest revision not known yet.
+     *
+     * Decided here, at send time, rather than at enqueue: a value queued
+     * before the revision was known has to reach a revision-14 server whole,
+     * because a PUT replaces the stored object and a stripped one would reset
+     * the textOpacity stored there. While the revision is unknown the write is
+     * held — kept queued and retried like a transient failure — because both
+     * alternatives lose data: sent whole, a server below 14 rejects it as a
+     * contract error, the op is dropped and the next refresh reverts every
+     * field in it; sent stripped, it can reset a revision-14 server's value.
+     */
+    private suspend fun gateForServerRevision(key: String, encoded: JsonElement, serverUrl: String): JsonElement? {
+        if (key != SettingKeys.PLAYBACK_SUBTITLE_APPEARANCE) return encoded
+        if (encoded !is JsonObject || SubtitleAppearance.TEXT_OPACITY_FIELD !in encoded) return encoded
+        val revision = contractRevision.revisionFor(serverUrl) ?: return null
+        return SubtitleAppearance.wireObjectForRevision(encoded, revision)
     }
 
     private suspend fun flushDelete(profileId: String, key: String, op: PendingOp.Delete): Boolean {

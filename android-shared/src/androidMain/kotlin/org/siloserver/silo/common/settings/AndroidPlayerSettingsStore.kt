@@ -51,6 +51,8 @@ class AndroidPlayerSettingsStore(
     private val getDeviceId: suspend () -> String? = { null },
     private val serverChangeSignal: Flow<Unit> = flowOf(Unit),
     private val getAuthScope: suspend () -> org.siloserver.silo.network.AuthScopeSnapshot? = { null },
+    /** Null in tests that never reach a server; text opacity then counts as supported. */
+    private val contractRevision: SettingsContractRevision? = null,
     private val dataStoreFactory: (profileId: String) -> DataStore<Preferences> = { profileId ->
         PreferenceDataStoreFactory.create(
             produceFile = { context.preferencesDataStoreFile(fileNameFor(profileId)) },
@@ -400,6 +402,17 @@ class AndroidPlayerSettingsStore(
             if (matchDevice) deviceCaptioningAppearance(context, appearance) else appearance
         }
 
+    override val subtitleTextOpacitySupportedFlow: Flow<Boolean> =
+        if (contractRevision == null) {
+            flowOf(true)
+        } else {
+            combine(currentScopeFlow, contractRevision.known) { scope, known ->
+                val revision = known?.takeIf { scope != null && it.serverUrl == scope.serverUrl }
+                    ?.manifestRevision
+                revision == null || SubtitleAppearance.supportsTextOpacity(revision)
+            }.distinctUntilChanged()
+        }
+
     override suspend fun setSubtitleMatchesDevice(enabled: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.SubtitleMatchesDevice, enabled)
 
@@ -532,10 +545,27 @@ class AndroidPlayerSettingsStore(
         writeString(PlaybackSettingsKeys.OrientationMode, value)
 
     override suspend fun setSubtitleAppearance(value: SubtitleAppearance) {
-        val sanitized = value.sanitized()
-        val json = sanitized.toJsonString()
+        updateSubtitleAppearance { value }
+    }
+
+    // Reads the current appearance from `prefs` inside the same `edit`
+    // transaction that writes the transformed result. DataStore serializes
+    // `edit` calls against each other (each transform lambda runs to
+    // completion holding the store's internal lock before the next one
+    // starts), so this is the actual fix for two callers racing on a
+    // separately-read "current" value — not just a smaller window.
+    //
+    // The enqueue happens inside the transaction for the same reason: the
+    // flusher keeps the last value enqueued per key, so enqueueing after
+    // `edit` returns would let two concurrent edits enqueue in the opposite
+    // order to the one they committed in, and the server would keep the
+    // older composite.
+    override suspend fun updateSubtitleAppearance(transform: (SubtitleAppearance) -> SubtitleAppearance) {
         withScope { scope, store ->
             store.edit { prefs ->
+                val current = prefs.projectedAppearance(scope)
+                val sanitized = transform(current).sanitized()
+                val json = sanitized.toJsonString()
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
                 // The granular slots are rewritten from the composite rather
@@ -545,8 +575,8 @@ class AndroidPlayerSettingsStore(
                 // Setting an explicit appearance implicitly enables the
                 // device override (matches iOS `setSubtitleAppearance`).
                 prefs[booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleUsesDeviceOverride)] = true
+                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
         }
     }
 
@@ -561,15 +591,16 @@ class AndroidPlayerSettingsStore(
      */
     override suspend fun flushProjectedSubtitleAppearance() {
         withScope { scope, store ->
-            val snapshot = store.data.first()
-            val projected = snapshot.projectedAppearance(scope)
-            val json = projected.toJsonString()
-            if (snapshot.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "") == json) return@withScope
+            // Projected and enqueued inside the transaction, like
+            // [updateSubtitleAppearance], so a concurrent edit cannot commit
+            // between the read and the write or enqueue out of commit order.
             store.edit { prefs ->
+                val json = prefs.projectedAppearance(scope).toJsonString()
+                if (prefs.stringFor(scope, PlaybackSettingsKeys.SubtitleAppearance, "") == json) return@edit
                 prefs[stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.SubtitleAppearance)] = json
                 prefs[stringPreferencesKey(scope.keyPrefix + SAVED_CUSTOM_SUBTITLE_APPEARANCE)] = json
+                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
             }
-            serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
         }
     }
 
@@ -594,6 +625,13 @@ class AndroidPlayerSettingsStore(
         // restarting the session in place reverted the toggle every time.
         // Draining first makes the pull observe the write. Offline, both
         // fail and the local value stands.
+        //
+        // Re-read the server's settings revision first, so the push below
+        // gates revision-dependent fields on a current answer and a server
+        // upgraded while the app ran is noticed.
+        contractRevision?.let { revision ->
+            getServerUrl()?.takeIf { it.isNotBlank() }?.let { url -> runCatching { revision.refresh(url) } }
+        }
         runCatching { serverSettingsFlusher.flushNow() }
         withScope { scope, store ->
             // Batched canonical resolution: one request answers every
@@ -638,8 +676,9 @@ class AndroidPlayerSettingsStore(
                     // otherwise the fields left by whatever resolved while the
                     // override was off win right back over it.
                     writeGranularAppearance(it, scope, sanitized)
+                    // In the transaction, so it enqueues in commit order.
+                    serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
                 }
-                serverSettingsFlusher.enqueue(scope.profileId, PlaybackSettingsKeys.SubtitleAppearance, json, scope.serverUrl, scope.authority)
                 serverSettingsFlusher.flushNow()
             } else {
                 store.edit {

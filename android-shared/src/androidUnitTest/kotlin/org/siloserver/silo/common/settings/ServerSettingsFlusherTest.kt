@@ -4,6 +4,7 @@ import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.model.settings.SettingScope
 import org.siloserver.silo.model.settings.SettingScopeIdentity
+import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.network.ApiResult
@@ -19,6 +20,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -502,6 +504,76 @@ class ServerSettingsFlusherTest {
 
         assertEquals(0, api.calls.size, "non-remote keys would 404 as unknown_setting; drop locally")
     }
+
+    // ---- Settings revision gate for subtitle text opacity -------------------
+
+    private val translucentText = SubtitleAppearance.DEFAULT.copy(textOpacity = 40).toJsonString()
+
+    private fun sentAppearance(api: RecordingSettingsApi): JsonObject =
+        api.calls.last { it.key == objectKey }.value as JsonObject
+
+    @Test
+    fun `subtitle appearance omits textOpacity for a server below revision 14`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(13) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl)
+        advanceUntilIdle()
+
+        val sent = sentAppearance(api)
+        assertFalse(SubtitleAppearance.TEXT_OPACITY_FIELD in sent, "a revision 13 server rejects the whole object")
+        assertEquals(JsonPrimitive("#ffffff"), sent["fontColor"], "every other field still goes up")
+    }
+
+    @Test
+    fun `subtitle appearance keeps textOpacity for a revision 14 server`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(14) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl)
+        advanceUntilIdle()
+
+        assertEquals(JsonPrimitive(40), sentAppearance(api)[SubtitleAppearance.TEXT_OPACITY_FIELD])
+    }
+
+    @Test
+    fun `subtitle appearance is held while the revision is unknown, then sent whole`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl)
+        flusher.enqueue("p1", stringKey, "720p", serverUrl)
+        flusher.flushNow()
+
+        // Neither stripped nor whole: stripped could reset a revision-14
+        // server's stored value, whole would be refused by an older one.
+        assertTrue(api.calls.none { it.key == objectKey })
+        assertEquals(setOf(objectKey), flusher.pendingKeys("p1"), "held, not dropped")
+        assertTrue(api.calls.any { it.key == stringKey }, "the hold is per key; other writes still land")
+
+        // Queued before the revision was known; gated when it is sent.
+        api.manifestRevision(14)
+        flusher.flushNow()
+
+        assertEquals(JsonPrimitive(40), sentAppearance(api)[SubtitleAppearance.TEXT_OPACITY_FIELD])
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `the revision is probed once per server, not per write`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(13) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl)
+        flusher.flushNow()
+        flusher.enqueue("p1", objectKey, SubtitleAppearance.DEFAULT.copy(textOpacity = 60).toJsonString(), serverUrl)
+        flusher.flushNow()
+
+        assertEquals(1, api.capabilityCalls)
+        assertEquals(2, api.calls.count { it.key == objectKey })
+    }
 }
 
 /**
@@ -522,6 +594,19 @@ private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.api
 
     val calls = mutableListOf<Call>()
 
+    /** What the settings capabilities probe answers; the generated revision by default. */
+    var capabilities: ApiResult<SettingsContractCapabilities> = capabilitiesAt(SettingKeys.REVISION)
+    var capabilityCalls = 0
+
+    fun manifestRevision(revision: Int) {
+        capabilities = capabilitiesAt(revision)
+    }
+
+    override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> {
+        capabilityCalls++
+        return capabilities
+    }
+
     /**
      * Runs while a call is "in flight", before its result is returned — the
      * hook for simulating the user editing the same setting during a flush.
@@ -533,6 +618,11 @@ private class RecordingSettingsApi : SettingsApi(org.siloserver.silo.network.api
     private var putFailure: ApiResult<StoredSettingValue>? = null
     private var deleteFailuresRemaining = 0
     private var deleteFailure: ApiResult<Unit>? = null
+
+    private fun capabilitiesAt(revision: Int): ApiResult<SettingsContractCapabilities> =
+        ApiResult.Success(
+            SettingsContractCapabilities(apiVersion = 1, manifestRevision = revision, supportsBatchedEffective = true),
+        )
 
     fun failNextPuts(count: Int, failure: ApiResult<StoredSettingValue>) {
         putFailuresRemaining = count

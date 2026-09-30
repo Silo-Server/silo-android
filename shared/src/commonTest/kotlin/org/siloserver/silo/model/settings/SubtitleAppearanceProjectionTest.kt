@@ -21,6 +21,7 @@ class SubtitleAppearanceProjectionTest {
                 PlaybackSettingsKeys.SubtitleBackgroundColor to "#101010",
                 PlaybackSettingsKeys.SubtitleBackgroundStyle to "box",
                 PlaybackSettingsKeys.SubtitleBackgroundOpacity to "40",
+                PlaybackSettingsKeys.SubtitleTextOpacity to "65",
                 PlaybackSettingsKeys.SubtitleTextOutline to "true",
                 PlaybackSettingsKeys.SubtitleTextOutlineColor to "#001122",
                 PlaybackSettingsKeys.SubtitlePosition to "lower-third",
@@ -33,6 +34,7 @@ class SubtitleAppearanceProjectionTest {
         assertEquals("#101010", projected.backgroundColor)
         assertEquals(SubtitleBackgroundStylePreset.Box, projected.backgroundStyle)
         assertEquals(40, projected.backgroundOpacity)
+        assertEquals(65, projected.textOpacity)
         assertEquals(true, projected.textOutline)
         assertEquals("#001122", projected.textOutlineColor)
         assertEquals(SubtitlePositionPreset.LowerThird, projected.position)
@@ -96,6 +98,30 @@ class SubtitleAppearanceProjectionTest {
             SubtitleAppearanceProjection.project(
                 mapOf(PlaybackSettingsKeys.SubtitleBackgroundOpacity to "-5"),
             ).backgroundOpacity,
+        )
+    }
+
+    @Test
+    fun `text opacity floors at 1 rather than 0`() {
+        // Unlike backgroundOpacity (0-100), textOpacity's floor is 1: fully
+        // invisible text isn't a state this field can express.
+        assertEquals(
+            100,
+            SubtitleAppearanceProjection.project(
+                mapOf(PlaybackSettingsKeys.SubtitleTextOpacity to "180"),
+            ).textOpacity,
+        )
+        assertEquals(
+            1,
+            SubtitleAppearanceProjection.project(
+                mapOf(PlaybackSettingsKeys.SubtitleTextOpacity to "0"),
+            ).textOpacity,
+        )
+        assertEquals(
+            1,
+            SubtitleAppearanceProjection.project(
+                mapOf(PlaybackSettingsKeys.SubtitleTextOpacity to "-5"),
+            ).textOpacity,
         )
     }
 

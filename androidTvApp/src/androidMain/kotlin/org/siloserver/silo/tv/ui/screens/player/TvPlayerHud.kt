@@ -204,6 +204,8 @@ internal fun TvPlayerHud(
     onSubtitleDelayChanged: (Int) -> Unit,
     subtitleAppearance: SubtitleAppearance,
     onSubtitleAppearanceChanged: (SubtitleAppearance) -> Unit,
+    /** False when the server is known to discard subtitle text opacity. */
+    subtitleTextOpacitySupported: Boolean = true,
     onSubtitlesPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
@@ -546,6 +548,7 @@ internal fun TvPlayerHud(
                         onSubtitleDelayChanged = onSubtitleDelayChanged,
                         appearance = subtitleAppearance,
                         onAppearanceChanged = onSubtitleAppearanceChanged,
+                        showTextOpacity = subtitleTextOpacitySupported,
                         onPaneShown = onSubtitlesPaneShown,
                         onSearchSubtitles = onSearchSubtitles,
                         onTranslateWithAi = onTranslateWithAi,
@@ -1482,6 +1485,7 @@ private fun HudSubtitlesPane(
     onSubtitleDelayChanged: (Int) -> Unit,
     appearance: SubtitleAppearance,
     onAppearanceChanged: (SubtitleAppearance) -> Unit,
+    showTextOpacity: Boolean,
     onPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
@@ -1627,6 +1631,32 @@ private fun HudSubtitlesPane(
                     },
                 )
 
+                if (showTextOpacity) {
+                    HudFocusedSettingRow(
+                        label = "Text Opacity",
+                        value = "${appearance.textOpacity}%",
+                        enabled = stylingEnabled,
+                        rightFocusRequester = subtitleTextColorFocus,
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Text Opacity",
+                                    options = TvSubtitleAppearanceOptions.percentOptions(
+                                        TEXT_OPACITY_STEPS,
+                                        appearance.textOpacity,
+                                    ).map { HudPickerOption(it.toString(), "$it%") },
+                                    selectedId = appearance.textOpacity.toString(),
+                                    onSelect = { id ->
+                                        id.toIntOrNull()?.let {
+                                            onAppearanceChanged(appearance.copy(textOpacity = it))
+                                        }
+                                    },
+                                ),
+                            )
+                        },
+                    )
+                }
+
                 HudFocusedSettingRow(
                     label = "Background",
                     value = BACKGROUND_STYLES.firstOrNull { it.first == appearance.backgroundStyle }?.second
@@ -1658,7 +1688,10 @@ private fun HudSubtitlesPane(
                         onPresentPicker(
                             HudPickerPresentation(
                                 title = "Background Opacity",
-                                options = OPACITY_STEPS.map { HudPickerOption(it.toString(), "$it%") },
+                                options = TvSubtitleAppearanceOptions.percentOptions(
+                                    OPACITY_STEPS,
+                                    appearance.backgroundOpacity,
+                                ).map { HudPickerOption(it.toString(), "$it%") },
                                 selectedId = appearance.backgroundOpacity.toString(),
                                 onSelect = { id ->
                                     id.toIntOrNull()?.let {
@@ -1818,11 +1851,13 @@ private fun HudSubtitlePreview(
     val decoration = TvSubtitleAppearanceOptions.previewDecoration(safe)
     val fontSize = TvSubtitleAppearanceOptions.previewFontSizeSp(safe.fontSize).sp
     val fontFamily = TvSubtitleAppearanceOptions.previewFontFamily(safe.fontFamily)
-    val foreground = hexToColor(safe.fontColor)
+    val foreground = hexToColor(safe.fontColor).copy(
+        alpha = TvSubtitleAppearanceOptions.previewOpacityAlpha(safe.textOpacity, floor = 1),
+    )
     val outline = hexToColor(safe.textOutlineColor)
     val backgroundColor = hexToColor(safe.backgroundColor).copy(
         alpha = if (safe.backgroundStyle == SubtitleBackgroundStylePreset.Box) {
-            safe.backgroundOpacity.coerceIn(0, 100) / 100f
+            TvSubtitleAppearanceOptions.previewOpacityAlpha(safe.backgroundOpacity, floor = 0)
         } else {
             0f
         },
@@ -1997,6 +2032,7 @@ private val FONT_FAMILIES = TvSubtitleAppearanceOptions.FONT_FAMILIES
 private val BACKGROUND_STYLES = TvSubtitleAppearanceOptions.BACKGROUND_STYLES
 private val POSITIONS = TvSubtitleAppearanceOptions.POSITIONS
 private val OPACITY_STEPS = TvSubtitleAppearanceOptions.OPACITY_STEPS
+private val TEXT_OPACITY_STEPS = TvSubtitleAppearanceOptions.TEXT_OPACITY_STEPS
 private val TEXT_COLOR_SWATCHES = TvSubtitleAppearanceOptions.TEXT_COLOR_SWATCHES
 private val BACKGROUND_COLOR_SWATCHES = TvSubtitleAppearanceOptions.BACKGROUND_COLOR_SWATCHES
 private val OUTLINE_COLOR_SWATCHES = TvSubtitleAppearanceOptions.OUTLINE_COLOR_SWATCHES

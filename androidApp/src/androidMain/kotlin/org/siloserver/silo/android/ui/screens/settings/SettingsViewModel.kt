@@ -84,6 +84,8 @@ data class SettingsUiState(
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /** False when the server is known to discard subtitle text opacity. */
+    val subtitleTextOpacitySupported: Boolean = true,
     // Up Next card: auto-play the next episode at countdown expiry, and how
     // many seconds before the end to surface the card (0 = only at end).
     val autoPlayNext: Boolean = true,
@@ -279,6 +281,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
+            _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
         }.launchIn(viewModelScope)    }
 
     fun setDownloadsWifiOnly(value: Boolean) {
@@ -520,12 +525,19 @@ class SettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setShowAudiobooks(enabled) }
     }
 
-    fun setSubtitleAppearance(value: org.siloserver.silo.model.settings.SubtitleAppearance) {
+    /**
+     * Commits a subtitle-appearance change via a transform rather than a
+     * precomputed value (replaced the former `setSubtitleAppearance`).
+     * [PlayerSettingsStore.updateSubtitleAppearance][org.siloserver.silo.common.settings.PlayerSettingsStore.updateSubtitleAppearance]
+     * applies it atomically inside the store's own write transaction, so two
+     * edits committing around the same time (e.g. two opacity fields as the
+     * sheet is dismissed) can't race on a snapshot read before either writes.
+     */
+    fun editSubtitleAppearance(
+        transform: (org.siloserver.silo.model.settings.SubtitleAppearance) -> org.siloserver.silo.model.settings.SubtitleAppearance,
+    ) {
         viewModelScope.launch {
-            playerSettingsStore.setSubtitleAppearance(value)
-            // The granular subtitle.* fields are client-local — the contract
-            // carries appearance as one object — so a per-field edit only
-            // reaches the server once projected into the composite.
+            playerSettingsStore.updateSubtitleAppearance(transform)
             playerSettingsStore.flushProjectedSubtitleAppearance()
         }
     }

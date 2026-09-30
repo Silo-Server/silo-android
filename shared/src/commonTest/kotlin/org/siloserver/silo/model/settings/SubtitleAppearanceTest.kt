@@ -1,7 +1,13 @@
 package org.siloserver.silo.model.settings
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertSame
+import kotlin.test.assertTrue
 
 class SubtitleAppearanceTest {
 
@@ -49,4 +55,27 @@ class SubtitleAppearanceTest {
 
         assertEquals(SubtitleBackgroundStylePreset.Shadow, decoded.backgroundStyle)
     }
+
+    @Test
+    fun textOpacityIsRemovedFromTheWireObjectBelowRevision14() {
+        val wire = wireObject(SubtitleAppearance.DEFAULT.copy(textOpacity = 40))
+
+        val forOldServer = SubtitleAppearance.wireObjectForRevision(wire, manifestRevision = 13)
+
+        assertFalse(SubtitleAppearance.TEXT_OPACITY_FIELD in forOldServer)
+        // Every other field still reaches the server.
+        assertEquals(wire - SubtitleAppearance.TEXT_OPACITY_FIELD, forOldServer.toMap())
+    }
+
+    @Test
+    fun textOpacityIsKeptInTheWireObjectFromRevision14() {
+        val wire = wireObject(SubtitleAppearance.DEFAULT.copy(textOpacity = 40))
+
+        assertSame(wire, SubtitleAppearance.wireObjectForRevision(wire, manifestRevision = 14))
+        assertTrue(SubtitleAppearance.supportsTextOpacity(14))
+        assertFalse(SubtitleAppearance.supportsTextOpacity(13))
+    }
+
+    private fun wireObject(appearance: SubtitleAppearance): JsonObject =
+        Json.parseToJsonElement(appearance.toJsonString()).jsonObject
 }
