@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -168,7 +169,7 @@ class DefaultEpisodeSpoilerStore private constructor(
 
     init {
         scope.launch {
-            identityChanges.collect { onIdentityChanged() }
+            identityChanges.collectLatest { onIdentityChanged() }
         }
     }
 
@@ -220,7 +221,9 @@ class DefaultEpisodeSpoilerStore private constructor(
             }
         }
         val committed = synchronized(lock) {
-            if (generation != startGeneration || mutationEpoch != startEpoch) return@synchronized false
+            if (generation != startGeneration || mutationEpoch != startEpoch || latestRequest.isNotEmpty()) {
+                return@synchronized false
+            }
             _state.value = resolved
             confirmed = resolved
             _lastError.value = null
@@ -254,9 +257,11 @@ class DefaultEpisodeSpoilerStore private constructor(
     override fun set(setting: EpisodeSpoilerSetting, enabled: Boolean) {
         val startGeneration: Int
         val request: Long
+        val identity: String
         synchronized(lock) {
             val current = _state.value
             if (!current.isSupported) return
+            identity = stateIdentity ?: return
             startGeneration = generation
             request = ++requestCounter
             latestRequest[setting] = request
@@ -277,6 +282,7 @@ class DefaultEpisodeSpoilerStore private constructor(
                 if (generation != startGeneration) return@launch
                 if (error == null) confirmed = confirmed.with(setting, enabled)
                 if (latestRequest[setting] == request) {
+                    latestRequest.remove(setting)
                     mutationEpoch += 1
                     // Saved: re-assert the value. Failed: return to what the
                     // server last confirmed.
@@ -286,7 +292,9 @@ class DefaultEpisodeSpoilerStore private constructor(
                 _lastError.value = error
                 confirmed
             }
-            if (error == null) currentIdentity()?.let { cache.write(it, snapshot) }
+            if (error == null) synchronized(lock) {
+                if (generation == startGeneration && stateIdentity == identity) cache.write(identity, snapshot)
+            }
         }
     }
 

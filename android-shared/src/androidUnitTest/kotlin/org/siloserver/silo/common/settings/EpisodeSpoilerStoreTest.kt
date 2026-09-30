@@ -12,9 +12,11 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -169,6 +171,77 @@ class EpisodeSpoilerStoreTest {
         assertEquals(EpisodeSpoilerPrefs(hideImages = true, hideOverviews = true), store.state.value.prefs)
     }
 
+    @Test
+    fun `refresh preserves a toggle while its write is pending`() = runTest {
+        val api = FakeSpoilerSettingsApi()
+        val store = storeFor(api)
+        store.refresh()
+        val finishWrite = CompletableDeferred<Unit>()
+        api.beforePut = { finishWrite.await() }
+
+        store.set(EpisodeSpoilerSetting.Images, true)
+        runCurrent()
+        store.refresh()
+
+        assertTrue(store.state.value.hideImages)
+        finishWrite.complete(Unit)
+        runCurrent()
+        assertTrue(store.state.value.hideImages)
+    }
+
+    @Test
+    fun `a completed write never caches its values for a later profile`() = runTest {
+        var profileId = "profile-1"
+        var delayIdentityRead = false
+        val finishIdentityRead = CompletableDeferred<Unit>()
+        val api = FakeSpoilerSettingsApi()
+        val cache = InMemoryEpisodeSpoilerCache()
+        val store = storeFor(api, cache, profileId = {
+            if (delayIdentityRead) finishIdentityRead.await()
+            profileId
+        })
+        store.refresh()
+        delayIdentityRead = true
+        store.set(EpisodeSpoilerSetting.Images, true)
+        runCurrent()
+
+        profileId = "profile-2"
+        delayIdentityRead = false
+        store.clear()
+        store.hydrateIfNeeded()
+        finishIdentityRead.complete(Unit)
+        runCurrent()
+
+        assertEquals(false, cache.read("https://server.test|profile-2")?.hideImages)
+        assertEquals(true, cache.read("https://server.test|profile-1")?.hideImages)
+    }
+
+    @Test
+    fun `a second identity change cancels hydration and loads its own cache`() = runTest {
+        var serverUrl = "https://old.test"
+        val changes = MutableSharedFlow<Unit>()
+        val api = FakeSpoilerSettingsApi()
+        val cache = InMemoryEpisodeSpoilerCache()
+        cache.write("https://new.test|profile-1", EpisodeSpoilerState(
+            EpisodeSpoilerSupport.Supported, hideImages = true, hideOverviews = true,
+        ))
+        val store = storeFor(api, cache, serverUrl = { serverUrl }, identityChanges = changes)
+        runCurrent()
+        store.refresh()
+        val oldHydration = CompletableDeferred<Unit>()
+        api.beforeCapabilities = { oldHydration.await() }
+        changes.emit(Unit)
+        runCurrent()
+
+        serverUrl = "https://new.test"
+        api.beforeCapabilities = { }
+        api.serve(revision = 15, values = bothOn)
+        backgroundScope.launch { changes.emit(Unit) }
+        runCurrent()
+
+        assertEquals(EpisodeSpoilerPrefs(true, true), store.state.value.prefs)
+    }
+
     private val bothOn = mapOf(
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true),
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS to JsonPrimitive(true),
@@ -204,6 +277,8 @@ private class FakeSpoilerSettingsApi(
 ) {
     val puts = mutableListOf<Triple<String, SettingScope, JsonElement>>()
     val effectiveReads = mutableListOf<List<String>>()
+    var beforeCapabilities: suspend () -> Unit = { }
+    var beforePut: suspend () -> Unit = { }
 
     /** Become a different server: [revision] and stored [values]. */
     fun serve(revision: Int, values: Map<String, JsonElement>) {
@@ -211,7 +286,10 @@ private class FakeSpoilerSettingsApi(
         this.values = values
     }
 
-    override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> = capabilities
+    override suspend fun getContractCapabilities(): ApiResult<SettingsContractCapabilities> {
+        beforeCapabilities()
+        return capabilities
+    }
 
     override suspend fun getEffectiveValues(
         keys: List<String>,
@@ -241,6 +319,7 @@ private class FakeSpoilerSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         puts += Triple(key, scope.scope, value)
+        beforePut()
         if (failPuts) return ApiResult.Error(500, "boom", "Server error")
         return ApiResult.Success(StoredSettingValue(key = key, scope = scope.scope.wire))
     }

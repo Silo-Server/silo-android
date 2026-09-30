@@ -4,12 +4,33 @@ import androidx.compose.ui.graphics.Color
 import java.io.File
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class TvDetailHeroArtworkTest {
+    @Test
+    fun standaloneEpisodeFallbackProtectsOnlyUnstartedStills() {
+        val detail = ItemDetail(
+            contentId = "episode-1", type = "episode", title = "Episode",
+            posterUrl = "episode-still", posterThumbhash = "still-hash",
+        )
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+
+        assertEquals(TvDetailHeroArtwork(null, "still-hash"), resolveTvDetailHeroArtwork(detail, null, prefs))
+        assertEquals(
+            TvDetailHeroArtwork("episode-still", "still-hash"),
+            resolveTvDetailHeroArtwork(detail.copy(userData = LeafItemUserData(played = true)), null, prefs),
+        )
+        assertEquals(
+            TvDetailHeroArtwork("series-backdrop", "series-hash"),
+            resolveTvDetailHeroArtwork(detail.copy(backdropUrl = "series-backdrop", backdropThumbhash = "series-hash"), null, prefs),
+        )
+    }
+
     @Test
     fun episodicDetailFallsBackToLandscapeEpisodeStill() {
         val detail = ItemDetail(

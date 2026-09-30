@@ -2597,7 +2597,12 @@ internal fun resolveTvDetailHeroArtwork(
                 nextUpEpisode?.stillThumbhash,
             )
         }
-        "episode" -> TvDetailHeroArtwork(detail.posterUrl, detail.posterThumbhash)
+        "episode" -> TvDetailHeroArtwork(
+            detail.posterUrl.takeUnless {
+                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData))
+            },
+            detail.posterThumbhash,
+        )
         else -> TvDetailHeroArtwork(null, null)
     }
 }

@@ -312,6 +312,15 @@ class TvFocusMarqueeState internal constructor() {
 
     /** The profile's spoiler protection, kept current by [rememberTvFocusMarqueeState]. */
     internal var spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE
+        set(value) {
+            if (field == value) return
+            field = value
+            content = content?.withCurrentSpoilers()
+            candidate = candidate?.withCurrentSpoilers()
+        }
+
+    private fun TvMarqueeContent.withCurrentSpoilers(): TvMarqueeContent =
+        TvMarqueeContent.from(source, rowTitle = "", spoilers = spoilerPrefs).copy(id = id)
 
     /** Report card focus. The displayed content swaps on the next composition turn. */
     fun preview(item: SectionItem, rowTitle: String, rowIdentity: String = rowTitle) {
@@ -343,7 +352,7 @@ class TvFocusMarqueeState internal constructor() {
         // Apply cached enrichment in the same snapshot as the base-content swap,
         // so revisiting an item presents one complete frame without a refetch.
         enrichment = value?.contentId?.let(enrichmentCache::get)
-        content = value
+        content = value?.withCurrentSpoilers()
     }
 
     /** True if detail for [contentId] is already cached (skip the fetch). */
@@ -389,12 +398,12 @@ fun rememberTvFocusMarqueeState(
     val state = remember { TvFocusMarqueeState() }
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     SideEffect { state.spoilerPrefs = spoilerPrefs }
-    LaunchedEffect(state.candidate?.id) {
+    LaunchedEffect(state.candidate) {
         val candidate = state.candidate ?: return@LaunchedEffect
         // Page-entry seed stays immediate so the hero never opens blank. Only
         // subsequent D-pad focus moves wait for the focus-rest interval.
         if (state.content != null) delay(TvMarqueeFocusRestMillis)
-        if (state.candidate?.id == candidate.id) state.commit(candidate)
+        if (state.candidate == candidate) state.commit(candidate)
     }
 
     // Populate the cache and enrich the active hero when identity still

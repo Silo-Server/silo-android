@@ -3,12 +3,39 @@ package org.siloserver.silo.tv.ui.components
 import java.io.File
 import org.siloserver.silo.model.catalog.OverlaySummary
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
+    @Test
+    fun preferencesReprojectTheDisplayedAndPendingEpisodes() {
+        val state = TvFocusMarqueeState()
+        val episode = SectionItem(
+            contentId = "unstarted", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        state.preview(episode, "Next Up")
+        state.commit(state.candidate)
+        state.preview(episode.copy(contentId = "pending"), "Next Up")
+        val pendingBeforeHydration = state.candidate
+
+        state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)
+
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
+        assertEquals(null, state.candidate?.synopsis)
+        state.commit(pendingBeforeHydration)
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
+
+        state.spoilerPrefs = EpisodeSpoilerPrefs.NONE
+        assertEquals("Spoiler", state.content?.synopsis)
+        assertEquals(episode.backdropUrl, state.backdropContent?.heroBackdropUrl)
+    }
+
     @Test
     fun movieHeroSeparatesEditorialMetadataFromFormatBadges() {
         val content = TvMarqueeContent.from(
