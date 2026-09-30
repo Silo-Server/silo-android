@@ -12,10 +12,12 @@ import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.settings.AndroidPlayerSettingsStore
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.DefaultCardPresentationStore
+import org.siloserver.silo.common.settings.DefaultEpisodeSpoilerStore
 import org.siloserver.silo.common.settings.DefaultLibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.DefaultOverlayPrefsStore
 import org.siloserver.silo.common.settings.DefaultSeekIntervalStore
 import org.siloserver.silo.common.settings.DefaultServerSettingsFlusher
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -198,6 +200,19 @@ val playerInfraModule = module {
         )
     }
 
+    // Spoiler protection for unwatched episodes (settings revision 15). Both
+    // keys are profile-scope only, so the store writes the profile row itself
+    // rather than going through the profile_device flusher.
+    single<EpisodeSpoilerStore> {
+        DefaultEpisodeSpoilerStore(
+            context = androidContext(),
+            repository = get<SettingsRepository>(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
+            getServerUrl = { get<TokenManager>().getServerUrl() },
+        )
+    }
+
     single {
         ServerDrivenConfigRefresher(
             overlayPrefsStore = get(),
@@ -205,6 +220,7 @@ val playerInfraModule = module {
             libraryPlaybackPrefsStore = get(),
             playerSettingsStore = get(),
             seekIntervalStore = get(),
+            episodeSpoilerStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },

@@ -26,7 +26,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.ExperimentalComposeUiApi
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
@@ -51,6 +53,8 @@ private data class TvMediaRowItemModel(
     val shelfSubtitle: String?,
     val overlay: OverlayData,
     val contentType: String,
+    /** Spoiler protection: blur this card's still (an unstarted episode). */
+    val hidesArtwork: Boolean,
 )
 
 /**
@@ -135,7 +139,8 @@ fun TvMediaRow(
     }
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
-    val rowItems = remember(items, showProgress, style, cardLayout) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
@@ -152,6 +157,9 @@ fun TvMediaRow(
                 shelfSubtitle = item.shelfSubtitle(showProgress = showProgress),
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
+                // For episodes the backdrop is the still.
+                hidesArtwork = item.type.equals("episode", ignoreCase = true) &&
+                    spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item)),
             )
         }
     }
@@ -360,6 +368,7 @@ fun TvMediaRow(
                             title = item.title,
                             stillUrl = rowItem.backdropUrl,
                             stillThumbhash = rowItem.backdropThumbhash,
+                            hideStill = rowItem.hidesArtwork,
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,

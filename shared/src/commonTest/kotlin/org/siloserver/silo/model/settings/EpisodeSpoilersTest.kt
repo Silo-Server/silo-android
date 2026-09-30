@@ -1,0 +1,65 @@
+package org.siloserver.silo.model.settings
+
+import org.siloserver.silo.model.catalog.LeafItemUserData
+import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.section.SectionItem
+import kotlin.test.Test
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+class EpisodeSpoilersTest {
+
+    @Test
+    fun missingWatchStateCountsAsUnwatched() {
+        assertTrue(EpisodeSpoilers.isUnwatched(userData = null))
+        assertTrue(EpisodeSpoilers.isUnwatched(LeafItemUserData()))
+        assertTrue(EpisodeSpoilers.isUnwatched(LeafItemUserData(positionSeconds = 0.0)))
+    }
+
+    @Test
+    fun playedOrStartedEpisodesAreWatched() {
+        assertFalse(EpisodeSpoilers.isUnwatched(LeafItemUserData(played = true)))
+        assertFalse(EpisodeSpoilers.isUnwatched(LeafItemUserData(isInProgress = true)))
+        assertFalse(EpisodeSpoilers.isUnwatched(LeafItemUserData(positionSeconds = 12.0)))
+        // A played episode whose position was reset stays revealed.
+        assertFalse(
+            EpisodeSpoilers.isUnwatched(LeafItemUserData(played = true, positionSeconds = 0.0)),
+        )
+    }
+
+    @Test
+    fun sectionItemsUsePlayedAndPosition() {
+        assertTrue(EpisodeSpoilers.isUnwatched(sectionItem()))
+        assertTrue(EpisodeSpoilers.isUnwatched(sectionItem(userState = MediaItemUserState())))
+        assertFalse(EpisodeSpoilers.isUnwatched(sectionItem(positionSeconds = 30.0)))
+        assertFalse(
+            EpisodeSpoilers.isUnwatched(sectionItem(userState = MediaItemUserState(played = true))),
+        )
+    }
+
+    @Test
+    fun supportNeedsRevision15AndBatchedEffective() {
+        fun caps(revision: Int, batched: Boolean = true, apiVersion: Int = 1) =
+            SettingsContractCapabilities(
+                apiVersion = apiVersion,
+                manifestRevision = revision,
+                supportsBatchedEffective = batched,
+            )
+        assertTrue(EpisodeSpoilers.isSupported(caps(15)))
+        assertTrue(EpisodeSpoilers.isSupported(caps(16)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(14)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(15, batched = false)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(15, apiVersion = 2)))
+    }
+
+    private fun sectionItem(
+        userState: MediaItemUserState? = null,
+        positionSeconds: Double? = null,
+    ) = SectionItem(
+        contentId = "ep-1",
+        type = "episode",
+        title = "Pilot",
+        positionSeconds = positionSeconds,
+        userState = userState,
+    )
+}

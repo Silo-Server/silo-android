@@ -1,6 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -76,6 +76,8 @@ fun BackdropCard(
     title: String,
     backdropUrl: String?,
     backdropThumbhash: String?,
+    /** Spoiler protection: blur the artwork (an unstarted episode's still). */
+    hideArtwork: Boolean = false,
     seriesTitle: String? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
@@ -115,9 +117,10 @@ fun BackdropCard(
                     shape = RoundedCornerShape(10.dp),
                 ),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
                 url = backdropUrl,
                 thumbhash = backdropThumbhash,
+                hidden = hideArtwork,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

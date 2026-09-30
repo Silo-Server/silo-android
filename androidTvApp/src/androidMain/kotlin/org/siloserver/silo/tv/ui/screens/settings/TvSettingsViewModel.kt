@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationSupport
+import org.siloserver.silo.common.settings.EpisodeSpoilerSetting
+import org.siloserver.silo.common.settings.EpisodeSpoilerState
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -63,6 +66,7 @@ class TvSettingsViewModel(
     private val profileSettings: ProfileSettingsController,
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
     private val seekIntervalStore: SeekIntervalStore? = null,
+    private val episodeSpoilerStore: EpisodeSpoilerStore? = null,
     audiobookSettingsStore: AudiobookSettingsStore? = null,
 ) : ViewModel() {
 
@@ -138,6 +142,9 @@ class TvSettingsViewModel(
         val cardPresentation: CardPresentation = CardPresentation.DEFAULT,
         val cardPresentationSource: CardPresentationSource = CardPresentationSource.Unknown,
         val cardPresentationSupport: CardPresentationSupport = CardPresentationSupport.Unknown,
+        // Spoiler protection for unwatched episodes (revision 15), mirrored
+        // from EpisodeSpoilerStore. The group is hidden unless supported.
+        val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
         val navAction: NavAction? = null,
     )
 
@@ -149,6 +156,7 @@ class TvSettingsViewModel(
         loadSettings()
         observePlayerSettings()
         observeCardPresentation()
+        observeEpisodeSpoilers()
     }
 
     /**
@@ -415,6 +423,25 @@ class TvSettingsViewModel(
                 _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
             }
         }
+    }
+
+    /** Mirror the spoiler store into UI state and re-read it from the server. */
+    private fun observeEpisodeSpoilers() {
+        val store = episodeSpoilerStore ?: return
+        viewModelScope.launch {
+            store.state.collect { spoilers -> _uiState.update { it.copy(episodeSpoilers = spoilers) } }
+        }
+        viewModelScope.launch { store.refresh() }
+    }
+
+    /** Profile-wide; the store writes it optimistically and rolls back on failure. */
+    fun setHideUnwatchedEpisodeImages(enabled: Boolean) {
+        episodeSpoilerStore?.set(EpisodeSpoilerSetting.Images, enabled)
+    }
+
+    /** Profile-wide; the store writes it optimistically and rolls back on failure. */
+    fun setHideUnwatchedEpisodeOverviews(enabled: Boolean) {
+        episodeSpoilerStore?.set(EpisodeSpoilerSetting.Overviews, enabled)
     }
 
     /** Mirror the card-presentation store into UI state (single source of truth). */
@@ -704,6 +731,7 @@ class TvSettingsViewModel(
             overlayPrefsStore.clear()
             cardPresentationStore.clear()
             seekIntervalStore?.clear()
+            episodeSpoilerStore?.clear()
             _uiState.update { it.copy(navAction = NavAction.SIGNED_OUT) }
         }
     }

@@ -40,7 +40,10 @@ import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrol
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyAnomalyLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsKeyCollection
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
@@ -57,7 +60,18 @@ private data class MediaRowItemModel(
     val overlay: OverlayData,
     val isBook: Boolean,
     val contentType: String,
+    /** Spoiler protection: blur this card's episode still. */
+    val hidesArtwork: Boolean,
 )
+
+/**
+ * True when [item] is an episode the profile has not started and [prefs]
+ * blur such stills. For episodes the backdrop is the still, so the card and
+ * the detail hand-off both treat it as a spoiler.
+ */
+private fun hidesEpisodeArtwork(item: SectionItem, prefs: EpisodeSpoilerPrefs): Boolean =
+    item.type.equals("episode", ignoreCase = true) &&
+        prefs.hidesImage(EpisodeSpoilers.isUnwatched(item))
 
 /**
  * Horizontal row of media cards with a section headline above.
@@ -94,7 +108,8 @@ fun MediaRow(
             diagnosticsKeySnapshot,
         )
     }
-    val rowItems = remember(uniqueItems, showProgress, cardStyle) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val rowItems = remember(uniqueItems, showProgress, cardStyle, spoilerPrefs) {
         uniqueItems.map { item ->
             val pos = item.positionSeconds
             val dur = item.durationSeconds
@@ -124,6 +139,7 @@ fun MediaRow(
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 isBook = isBookLikeItemType(item.type),
                 contentType = "${cardStyle.name}:${item.type}",
+                hidesArtwork = hidesEpisodeArtwork(item, spoilerPrefs),
             )
         }
     }
@@ -207,6 +223,15 @@ fun MediaRow(
         // vertical fling (the helper ORs in any deferral already in scope).
         val rowState = rememberLazyListState()
         fun openDetail(item: SectionItem) {
+            // A blurred episode still must not reappear sharp as the detail
+            // page's loading artwork, so it is neither warmed nor handed off.
+            // (Home swaps in the parent series artwork when it knows it.)
+            if (hidesEpisodeArtwork(item, spoilerPrefs)) {
+                heroHandoff?.pendingArtworkUrl = null
+                heroHandoff?.pendingArtworkThumbhash = null
+                onItemClick(item.contentId)
+                return
+            }
             // Keep one full-size backdrop request alive across the loading-
             // skeleton -> detail-content composition swap. Without this, the
             // skeleton's differently-sized request can be cancelled as soon as
@@ -273,6 +298,7 @@ fun MediaRow(
                             title = item.title,
                             backdropUrl = rowItem.backdropUrl,
                             backdropThumbhash = rowItem.backdropThumbhash,
+                            hideArtwork = rowItem.hidesArtwork,
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,

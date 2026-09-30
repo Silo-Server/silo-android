@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -63,6 +63,8 @@ fun TvEpisodeCard(
     stillUrl: String?,
     stillThumbhash: String?,
     onClick: () -> Unit,
+    /** Spoiler protection: blur the still of an episode not yet started. */
+    hideStill: Boolean = false,
     modifier: Modifier = Modifier,
     seriesTitle: String? = null,
     year: Int? = null,
@@ -113,9 +115,10 @@ fun TvEpisodeCard(
                 .aspectRatio(16f / 9f),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                ThumbhashImage(
+                SpoilerImage(
                     url = stillUrl,
                     thumbhash = stillThumbhash,
+                    hidden = hideStill,
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),

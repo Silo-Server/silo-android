@@ -53,7 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.common.player.videoViewportBounds
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.ui.components.SpoilerImage
 
 /** Episode details and controls beside the mounted player's preview pane. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -120,7 +121,10 @@ fun PlayerNextUpScreen(
                             fontSize = 13.sp,
                         )
                     }
-                    nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                    val hidesOverview =
+                        LocalEpisodeSpoilerPrefs.current.hidesOverview(nextEpisode.isUnwatched)
+                    val overview = nextEpisode.overview?.takeIf { it.isNotBlank() && !hidesOverview }
+                    if (overview != null) {
                         Text(
                             text = overview,
                             color = Color.White.copy(alpha = 0.58f),
@@ -271,9 +275,10 @@ private fun OnDeckCard(
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(8.dp)),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
                 url = item.artUrl,
                 thumbhash = item.artThumbhash,
+                hidden = LocalEpisodeSpoilerPrefs.current.hidesImage(item.isUnwatchedEpisode),
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
             )

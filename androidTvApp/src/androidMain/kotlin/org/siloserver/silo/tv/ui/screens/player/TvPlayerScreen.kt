@@ -2993,7 +2993,10 @@ private fun TvPlayerNextUpOverlay(
                                 style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                             )
                         }
-                        nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                        val hidesOverview = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
+                            .hidesOverview(nextEpisode.isUnwatched)
+                        val overview = nextEpisode.overview?.takeIf { it.isNotBlank() && !hidesOverview }
+                        if (overview != null) {
                             androidx.tv.material3.Text(
                                 text = overview,
                                 color = Color.White.copy(alpha = 0.58f),

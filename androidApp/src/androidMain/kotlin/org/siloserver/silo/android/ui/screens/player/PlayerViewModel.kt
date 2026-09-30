@@ -358,6 +358,8 @@ class PlayerViewModel(
         val artUrl: String?,
         val artThumbhash: String?,
         val progressFraction: Float?,
+        /** An episode the profile has not started (spoiler protection). */
+        val isUnwatchedEpisode: Boolean = false,
     )
 
     data class NextEpisodeInfo(
@@ -370,6 +372,8 @@ class PlayerViewModel(
         val runtimeMinutes: Int,
         val seriesTitle: String? = null,
         val overview: String? = null,
+        /** Not started by this profile; spoiler protection may hide [overview]. */
+        val isUnwatched: Boolean = true,
     ) {
         val label: String
             get() = "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
@@ -4066,6 +4070,7 @@ class PlayerViewModel(
                 runtimeMinutes = next.runtime,
                 seriesTitle = state.seriesTitle,
                 overview = next.overview,
+                isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
             _uiState.update {
                 // Drop the result if the player has since moved to another item.

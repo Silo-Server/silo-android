@@ -160,6 +160,7 @@ fun MainScreen(
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
+    val episodeSpoilerStore: org.siloserver.silo.common.settings.EpisodeSpoilerStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -290,6 +291,7 @@ fun MainScreen(
             activeProfileStore.reset()
             cardPresentationStore.clear()
             seekIntervalStore.clear()
+            episodeSpoilerStore.clear()
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
@@ -311,6 +313,7 @@ fun MainScreen(
         activeProfileStore.reset()
         cardPresentationStore.clear()
         seekIntervalStore.clear()
+        episodeSpoilerStore.clear()
     }
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }
