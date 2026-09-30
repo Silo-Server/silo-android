@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -270,8 +268,10 @@ private fun ExpandedDetailHero(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     // Beside a portrait, the text block takes only the height
-                    // the actions leave, so a tall title or ratings row clips
-                    // rather than pushing Play below the poster.
+                    // the actions leave, so Play stays level with the poster.
+                    // Only the title gives up height: it is weighted, so the
+                    // facts and ratings rows are measured first and never clip,
+                    // and a logo scales down to what is left.
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -282,7 +282,12 @@ private fun ExpandedDetailHero(
                         if (!eyebrow.isNullOrBlank()) {
                             EyebrowChip(text = eyebrow)
                         }
-                        ExpandedHeroTitle(detail = detail)
+                        Box(
+                            modifier = if (hasPortrait) Modifier.weight(1f, fill = false).clipToBounds() else Modifier,
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            ExpandedHeroTitle(detail = detail)
+                        }
                         val metadataTokens = (factsLine + sourceTokens).distinct()
                         if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
                             SourceRow(
@@ -291,7 +296,7 @@ private fun ExpandedDetailHero(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             )
                         }
-                        ExpandedDetailRatingsRow(ratings = detail.titleRatings())
+                        DetailRatingsRow(ratings = detail.titleRatings())
                     }
                     if (!hasPortrait) Spacer(modifier = Modifier.height(20.dp))
                     // Expanded/tablet only: Play and its bottom action row end
@@ -535,7 +540,7 @@ fun DetailHero(
                     if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
                         SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
                     }
-                    PhoneDetailRatingsRow(ratings = ratings)
+                    DetailRatingsRow(ratings = ExternalRatings.forPhone(ratings))
                 }
             }
             actions()
@@ -939,36 +944,17 @@ private fun SourceRow(
 }
 
 /**
- * The expanded (tablet, fold) layout's external ratings: every one, in the
- * order given, centered under the metadata row and wrapping onto another line
- * when the width runs out.
+ * External ratings centered on one line, in the order given. When they do not
+ * all fit, whole entries drop from the end; the row never wraps. The server
+ * sends at most three; the phone layout also caps at
+ * [ExternalRatings.PHONE_LIMIT].
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExpandedDetailRatingsRow(ratings: List<DisplayRating>) {
+private fun DetailRatingsRow(ratings: List<DisplayRating>) {
     if (ratings.isEmpty()) return
     val style = detailRatingStyle()
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(DetailRatingSpacing, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
-    }
-}
-
-/**
- * The phone layout's external ratings: at most [ExternalRatings.PHONE_LIMIT],
- * centered on one line. When even those do not fit, whole entries drop from
- * the end; the row never wraps.
- */
-@Composable
-private fun PhoneDetailRatingsRow(ratings: List<DisplayRating>) {
-    val shown = ExternalRatings.forPhone(ratings)
-    if (shown.isEmpty()) return
-    val style = detailRatingStyle()
     WholeTokenRow(spacing = DetailRatingSpacing) {
-        shown.forEach { rating -> RatingEntry(rating = rating, style = style) }
+        ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
     }
 }
 
