@@ -174,6 +174,7 @@ data class ItemDetail(
      * The server's title-page ratings row, in display order. `null` when an
      * older server omits it; read it through [titleRatings].
      */
+    @Serializable(with = DisplayRatingListSerializer::class)
     val ratings: List<DisplayRating>? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,

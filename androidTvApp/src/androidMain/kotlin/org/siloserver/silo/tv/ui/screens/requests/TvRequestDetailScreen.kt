@@ -34,7 +34,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -44,7 +43,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -54,6 +52,8 @@ import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
+import org.siloserver.silo.tv.ui.components.TvFactsRow
+import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -339,39 +339,24 @@ private fun RequestDetailContent(
     }
 }
 
-/** `2024  ·  128 min  ·  PG-13  ·  TMDB 7.8  ·  Drama · Crime`. */
+/** `2024 · 128 min · PG-13 · TMDB 7.8 · Drama · Crime`; past the width, whole facts drop from the end. */
 @Composable
 private fun RequestMetaLine(detail: RequestMediaDetail) {
-    val facts = buildList {
-        detail.year?.takeIf { it > 0 }?.let { add(it.toString()) }
-        detail.runtime?.takeIf { it > 0 }?.let { add("${it} min") }
-        detail.contentRating.takeIf { it.isNotBlank() }?.let { add(it) }
-    }.joinToString("  ·  ")
-    val rating = ExternalRatings.tmdb(detail.voteAverage)
-    val genres = detail.genres.take(3).takeIf { it.isNotEmpty() }?.joinToString(" · ")
-    if (facts.isEmpty() && rating == null && genres == null) return
-    val style = MaterialTheme.typography.titleMedium.copy(
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (facts.isNotEmpty()) RequestMetaText(facts, style)
-        if (rating != null) {
-            if (facts.isNotEmpty()) RequestMetaText("·", style)
-            RatingEntry(rating = rating, style = style)
-        }
-        if (genres != null) {
-            if (facts.isNotEmpty() || rating != null) RequestMetaText("·", style)
-            RequestMetaText(genres, style)
-        }
+    val tokens = buildList {
+        detail.year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(it.toString())) }
+        detail.runtime?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken("$it min")) }
+        detail.contentRating.takeIf { it.isNotBlank() }?.let { add(TvHeroFactToken.TextToken(it)) }
+        ExternalRatings.tmdb(detail.voteAverage)?.let { add(TvHeroFactToken.ExternalRating(it)) }
+        detail.genres.take(3).forEach { add(TvHeroFactToken.TextToken(it)) }
     }
-}
-
-@Composable
-private fun RequestMetaText(text: String, style: TextStyle) {
-    Text(text = text, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    if (tokens.isEmpty()) return
+    TvFactsRow(
+        tokens = tokens,
+        style = MaterialTheme.typography.titleMedium.copy(
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        ),
+        spacing = 10.dp,
+    )
 }
 
 /**

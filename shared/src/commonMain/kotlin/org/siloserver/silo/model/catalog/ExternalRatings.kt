@@ -1,6 +1,13 @@
 package org.siloserver.silo.model.catalog
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonDecoder
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -8,15 +15,45 @@ import kotlin.math.roundToLong
  * One external rating as a title page shows it: the source key (`imdb`,
  * `tmdb`, `rt_critic`, or one a plugin adds later), the plain-text mark
  * (`IMDb`, `RT Audience`), a 0-100 score, and the value already formatted on
- * the source's own scale (`8.5`, `93%`). Show [display] as it comes.
+ * the source's own scale (`8.5`, `93%`). Show [display] as it comes. The
+ * client never reads [score], so an entry without one still shows.
  */
 @Serializable
 data class DisplayRating(
     val source: String,
     val name: String,
-    val score: Double,
+    val score: Double? = null,
     val display: String,
 )
+
+/**
+ * Decodes a `ratings` list entry by entry, so one malformed entry (a plugin
+ * source without `display`, a blank name) is dropped instead of failing the
+ * whole item detail.
+ */
+internal object DisplayRatingListSerializer : KSerializer<List<DisplayRating>> {
+    private val strict = ListSerializer(DisplayRating.serializer())
+
+    override val descriptor = strict.descriptor
+
+    override fun deserialize(decoder: Decoder): List<DisplayRating> {
+        val jsonDecoder = decoder as? JsonDecoder ?: return strict.deserialize(decoder)
+        val entries = jsonDecoder.decodeJsonElement() as? JsonArray ?: return emptyList()
+        return entries.mapNotNull { entry ->
+            try {
+                jsonDecoder.json.decodeFromJsonElement(DisplayRating.serializer(), entry)
+                    .takeIf { it.name.isNotBlank() && it.display.isNotBlank() }
+            } catch (_: SerializationException) {
+                null
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+    }
+
+    override fun serialize(encoder: Encoder, value: List<DisplayRating>) =
+        strict.serialize(encoder, value)
+}
 
 /**
  * The external ratings a title page or hero shows, shared by the phone and TV

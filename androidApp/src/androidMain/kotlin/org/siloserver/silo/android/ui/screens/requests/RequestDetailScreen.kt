@@ -177,12 +177,15 @@ private fun RequestDetailContent(
                         fontWeight = FontWeight.Bold,
                     )
                     RequestMetaLine(mediaType = detail.mediaType, year = detail.year)
-                    Text(
-                        text = detail.basicFacts(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    ExternalRatings.tmdb(detail.voteAverage)?.let { rating ->
+                    val tmdbRating = ExternalRatings.tmdb(detail.voteAverage)
+                    detail.basicFacts(hasRating = tmdbRating != null)?.let { facts ->
+                        Text(
+                            text = facts,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    tmdbRating?.let { rating ->
                         RatingEntry(
                             rating = rating,
                             style = MaterialTheme.typography.bodyMedium.copy(
@@ -346,11 +349,15 @@ private fun RequestDetailStatus(detail: RequestMediaDetail) {
     )
 }
 
-private fun RequestMediaDetail.basicFacts(): String {
+/**
+ * Runtime, genres and seasons. With none of those, the availability label
+ * fills the line, unless a rating already shows below it.
+ */
+private fun RequestMediaDetail.basicFacts(hasRating: Boolean): String? {
     val facts = buildList {
         runtime?.let { add("${it}m") }
         if (genres.isNotEmpty()) add(genres.take(2).joinToString(", "))
         if (numberOfSeasons != null) add("$numberOfSeasons seasons")
     }
-    return facts.joinToString(" • ").ifBlank { availability.requestDisplayLabel() }
+    return facts.joinToString(" • ").ifBlank { if (hasRating) null else availability.requestDisplayLabel() }
 }

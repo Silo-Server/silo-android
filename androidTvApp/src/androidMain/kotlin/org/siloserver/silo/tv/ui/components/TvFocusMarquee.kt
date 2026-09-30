@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
@@ -188,13 +187,25 @@ private fun TvMarqueeBlock(
         }
 
         // Badge + meta line.
-        if (content.badges.isNotEmpty() || content.metaParts.isNotEmpty() || content.rating != null) {
+        if (content.badges.isNotEmpty() || content.metaParts.isNotEmpty()) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 content.badges.forEach { badge -> MarqueeBadge(badge) }
-                MarqueeMetaLine(content)
+                if (content.metaParts.isNotEmpty()) {
+                    TvFactsRow(
+                        tokens = content.metaParts,
+                        style = LocalTextStyle.current.merge(
+                            TextStyle(
+                                color = SiloSecondaryText,
+                                fontSize = MarqueeMetaSize,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                        ),
+                        spacing = MarqueeMetaGap,
+                    )
+                }
             }
         }
 
@@ -259,51 +270,6 @@ private fun TvMarqueeBlock(
                 }
             }
     }
-}
-
-/** `2016 · 1h 56m · IMDb 7.9 · Drama`, the rating drawn as its mark and score. */
-@Composable
-private fun MarqueeMetaLine(content: TvMarqueeContent) {
-    val rating = content.rating
-    val before = if (rating == null) content.metaParts else content.metaParts.take(content.ratingIndex)
-    val after = if (rating == null) emptyList() else content.metaParts.drop(content.ratingIndex)
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(MarqueeMetaGap),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (before.isNotEmpty()) MarqueeMetaText(before.joinToString(" · "))
-        if (rating != null) {
-            if (before.isNotEmpty()) MarqueeMetaText("·")
-            RatingEntry(
-                rating = rating,
-                style = LocalTextStyle.current.merge(
-                    TextStyle(
-                        color = SiloSecondaryText,
-                        fontSize = MarqueeMetaSize,
-                        fontWeight = FontWeight.Medium,
-                    ),
-                ),
-                // Ten-foot text floor; the shared entry would draw it at ~12sp.
-                markFontSize = MarqueeMetaSize,
-            )
-            if (after.isNotEmpty()) {
-                MarqueeMetaText("·")
-                MarqueeMetaText(after.joinToString(" · "))
-            }
-        }
-    }
-}
-
-@Composable
-private fun MarqueeMetaText(text: String) {
-    Text(
-        text = text,
-        color = SiloSecondaryText,
-        fontSize = MarqueeMetaSize,
-        fontWeight = FontWeight.Medium,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
 }
 
 @Composable

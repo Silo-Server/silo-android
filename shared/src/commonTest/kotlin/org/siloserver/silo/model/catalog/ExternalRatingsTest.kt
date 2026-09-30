@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.catalog
 
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.apiv2.ItemDetailReadV2
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -99,5 +100,30 @@ class ExternalRatingsTest {
         ).toDomain()
 
         assertEquals(listOf(DisplayRating("tmdb", "TMDB", 82.5, "8.3")), detail.titleRatings())
+    }
+
+    @Test
+    fun malformedRatingEntriesAreDroppedOneByOne() {
+        val detail = SiloJson.decodeFromString<ItemDetailReadV2>(
+            """
+            {"content_id":"movie-1","type":"movie","title":"Movie",
+             "cast":[],"crew":[],"versions":[],"subtitles":[],
+             "ratings":[
+               {"source":"imdb","name":"IMDb","score":85.0,"display":"8.5"},
+               {"source":"plugin","name":"Plugin","score":null},
+               {"source":"blank","name":"","score":50,"display":"5"},
+               "not an object",
+               {"source":"letterboxd","name":"Letterboxd","score":null,"display":"4.2"}
+             ]}
+            """.trimIndent(),
+        ).toDomain()
+
+        assertEquals(
+            listOf(
+                DisplayRating("imdb", "IMDb", 85.0, "8.5"),
+                DisplayRating("letterboxd", "Letterboxd", null, "4.2"),
+            ),
+            detail.titleRatings(),
+        )
     }
 }

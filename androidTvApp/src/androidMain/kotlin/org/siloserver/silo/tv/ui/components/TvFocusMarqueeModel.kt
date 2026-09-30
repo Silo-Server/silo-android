@@ -7,7 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
@@ -32,15 +31,11 @@ data class TvMarqueeContent(
     val logoUrl: String?,
     /** Optional uppercase content-classification badge before the editorial metadata. */
     val badges: List<String>,
-    /** Dot-joined editorial metadata after the badge. */
-    val metaParts: List<String>,
     /**
-     * The one external rating a hero shows, IMDb or else TMDB, drawn as its
-     * source's mark and score before `metaParts[ratingIndex]` (after the
-     * length, before the genre).
+     * Dot-separated editorial metadata after the badge. A title's one external
+     * rating (IMDb, else TMDB) sits after its length, before the genre.
      */
-    val rating: DisplayRating?,
-    val ratingIndex: Int,
+    val metaParts: List<TvHeroFactToken>,
     val synopsis: String?,
     /** A quieter detail line: cast / air-date when carried by the payload. */
     val detailLine: String?,
@@ -97,18 +92,15 @@ data class TvMarqueeContent(
         ): TvMarqueeContent {
             val isEpisode = item.type.equals("episode", ignoreCase = true)
 
-            val meta = mutableListOf<String>()
-            var rating: DisplayRating? = null
-            var ratingIndex = 0
+            val meta = mutableListOf<TvHeroFactToken>()
             if (isEpisode) {
-                episodeToken(item.seasonNumber, item.episodeNumber)?.let(meta::add)
-                if (item.title.isNotBlank()) meta.add(item.title)
+                episodeToken(item.seasonNumber, item.episodeNumber)?.let { meta += TvHeroFactToken.TextToken(it) }
+                if (item.title.isNotBlank()) meta += TvHeroFactToken.TextToken(item.title, truncates = true)
             } else {
-                if (item.year > 0) meta.add(item.year.toString())
-                lengthText(item.runtime, item.durationSeconds)?.let(meta::add)
-                rating = ExternalRatings.primary(item.ratingImdb, item.ratingTmdb)
-                ratingIndex = meta.size
-                item.genres.firstOrNull { it.isNotBlank() }?.let(meta::add)
+                if (item.year > 0) meta += TvHeroFactToken.TextToken(item.year.toString())
+                lengthText(item.runtime, item.durationSeconds)?.let { meta += TvHeroFactToken.TextToken(it) }
+                ExternalRatings.primary(item.ratingImdb, item.ratingTmdb)?.let { meta += TvHeroFactToken.ExternalRating(it) }
+                item.genres.firstOrNull { it.isNotBlank() }?.let { meta += TvHeroFactToken.TextToken(it) }
             }
 
             val badges = item.contentRating
@@ -125,8 +117,6 @@ data class TvMarqueeContent(
                 logoUrl = item.logoUrl?.takeIf { it.isNotBlank() },
                 badges = badges,
                 metaParts = meta,
-                rating = rating,
-                ratingIndex = ratingIndex,
                 synopsis = item.overview?.takeIf { it.isNotBlank() },
                 detailLine = null,
                 specLine = specLine(item.overlaySummary),

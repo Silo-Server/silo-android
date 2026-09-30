@@ -1,7 +1,5 @@
 package org.siloserver.silo.overlays
 
-import org.siloserver.silo.model.catalog.ExternalRatings
-
 /**
  * Single source of truth for which overlays exist. Order within the
  * list determines the default render order within each corner. These
@@ -262,15 +260,20 @@ object OverlayRegistry {
 
     // MARK: - Ratings helpers
 
-    // A rating badge carries its source's mark in the label ("IMDb 8.5",
-    // "RT 93%"), the same plain-text mark title pages use, so a score never
-    // shows without its source. No source artwork: the owners of these scores
-    // restrict their logos.
-    private fun ratingLabel(mark: String, value: Double?): String? =
-        value?.let { "$mark ${ExternalRatings.formatOneDecimal(it)}" }
+    private fun formatRating(value: Double?, max: Int, suffix: String? = null): String? {
+        if (value == null) return null
+        if (max == 100) {
+            val intValue = value.toInt()
+            return if (suffix != null) "$intValue% $suffix" else "$intValue%"
+        }
+        val formatted = formatOneDecimal(value)
+        return if (suffix != null) "$formatted $suffix" else formatted
+    }
 
-    private fun percentLabel(mark: String, value: Int?): String? =
-        value?.let { "$mark $it%" }
+    private fun formatPercent(value: Int?, suffix: String? = null): String? {
+        if (value == null) return null
+        return if (suffix != null) "$value% $suffix" else "$value%"
+    }
 
     private val ratings: List<OverlayDef> = listOf(
         OverlayDef(
@@ -280,9 +283,10 @@ object OverlayRegistry {
             description = "IMDb score out of 10",
             defaultPosition = OverlayPosition.TopRight,
             defaultEnabled = false,
+            iconId = OverlayIconId.Star,
             defaultAccent = "#f5c518",
-            iconCapable = false,
-            getValue = { ratingLabel("IMDb", it.ratingImdb) },
+            iconCapable = true,
+            getValue = { formatRating(it.ratingImdb, max = 10) },
         ),
         OverlayDef(
             id = OverlayId.RatingTmdb,
@@ -291,31 +295,34 @@ object OverlayRegistry {
             description = "TMDB score out of 10",
             defaultPosition = OverlayPosition.TopRight,
             defaultEnabled = false,
+            iconId = OverlayIconId.Star,
             defaultAccent = "#01b4e4",
-            iconCapable = false,
-            getValue = { ratingLabel("TMDB", it.ratingTmdb) },
+            iconCapable = true,
+            getValue = { formatRating(it.ratingTmdb, max = 10) },
         ),
         OverlayDef(
             id = OverlayId.RatingRt,
             category = OverlayCategory.Ratings,
             label = "RT Critics",
-            description = "Rotten Tomatoes critic score, when an administrator shows it",
+            description = "Rotten Tomatoes critic score",
             defaultPosition = OverlayPosition.TopRight,
             defaultEnabled = false,
+            iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa320a",
-            iconCapable = false,
-            getValue = { percentLabel("RT", it.ratingRtCritic) },
+            iconCapable = true,
+            getValue = { formatPercent(it.ratingRtCritic) },
         ),
         OverlayDef(
             id = OverlayId.RatingRtAudience,
             category = OverlayCategory.Ratings,
             label = "RT Audience",
-            description = "Rotten Tomatoes audience score, when an administrator shows it",
+            description = "Rotten Tomatoes audience score",
             defaultPosition = OverlayPosition.TopRight,
             defaultEnabled = false,
+            iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa6400",
-            iconCapable = false,
-            getValue = { percentLabel("RT Audience", it.ratingRtAudience) },
+            iconCapable = true,
+            getValue = { formatPercent(it.ratingRtAudience) },
         ),
         OverlayDef(
             id = OverlayId.ContentRating,
@@ -452,10 +459,26 @@ object OverlayRegistry {
             description = "Shown for Rotten Tomatoes Certified Fresh titles",
             defaultPosition = OverlayPosition.TopRight,
             defaultEnabled = false,
+            iconId = OverlayIconId.Tomato,
             defaultAccent = "#fa320a",
-            iconCapable = false,
+            iconCapable = true,
             availabilityNote = "Requires Rotten Tomatoes certification data (planned)",
             getValue = { if (it.rtCertifiedFresh == true) "Certified Fresh" else null },
         ),
     )
+
+    /**
+     * Format a double with exactly one decimal place, matching Apple's
+     * `String(format: "%.1f")`. Avoids platform locale dependence (always
+     * uses a `.` decimal separator) so the wire/label format is stable.
+     */
+    private fun formatOneDecimal(value: Double): String {
+        val rounded = kotlin.math.round(value * 10.0) / 10.0
+        val whole = rounded.toLong()
+        val frac = kotlin.math.round((rounded - whole) * 10.0).toLong().let {
+            // Guard against -0 / rounding to 10.
+            if (it < 0) -it else it
+        }
+        return if (frac >= 10) "${whole + 1}.0" else "$whole.$frac"
+    }
 }

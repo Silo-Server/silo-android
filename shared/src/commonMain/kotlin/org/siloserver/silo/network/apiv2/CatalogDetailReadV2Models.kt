@@ -36,6 +36,7 @@ internal data class ItemDetailReadV2(
     @SerialName("rating_rt_critic") val ratingRtCritic: Int? = null,
     @SerialName("rating_rt_audience") val ratingRtAudience: Int? = null,
     // Absent on servers that predate the title-page ratings row.
+    @Serializable(with = DisplayRatingListSerializer::class)
     val ratings: List<DisplayRating>? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,

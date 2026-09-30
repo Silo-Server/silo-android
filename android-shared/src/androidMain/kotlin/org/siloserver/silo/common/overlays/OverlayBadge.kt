@@ -126,14 +126,14 @@ internal fun OverlayBadge(
                 BadgeText(
                     text = token,
                     preset = preset,
-                    color = foreground,
+                    color = brandTint(iconId, foreground),
                 )
                 renderedIcon = true
             } else {
                 OverlayIconGlyph(
                     iconId = iconId,
                     size = preset.iconSize,
-                    tint = foreground,
+                    tint = brandTint(iconId, foreground),
                 )
                 renderedIcon = true
             }
@@ -150,6 +150,15 @@ internal fun OverlayBadge(
         }
     }
 }
+
+private fun brandTint(iconId: OverlayIconId, foreground: Color): Color =
+    when (iconId) {
+        // Tomato keeps its official red unless the preset paints everything
+        // in the accent/foreground; here we always pass the preset
+        // foreground, matching Apple's `tint` path inside a real card.
+        OverlayIconId.Tomato -> foreground
+        else -> foreground
+    }
 
 @Composable
 private fun BadgeText(

@@ -7,7 +7,6 @@ import org.siloserver.silo.model.section.SectionItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
@@ -34,11 +33,13 @@ class TvFocusMarqueeModelTest {
 
         assertEquals(listOf("PG-13"), content.badges)
         assertEquals(
-            listOf("2016", "1h 56m", "Science Fiction"),
-            content.metaParts,
+            listOf("2016", "1h 56m", "IMDb 7.9", "Science Fiction"),
+            content.metaText(),
         )
-        assertEquals(DisplayRating("imdb", "IMDb", 79.0, "7.9"), content.rating)
-        assertEquals(2, content.ratingIndex)
+        assertEquals(
+            TvHeroFactToken.ExternalRating(DisplayRating("imdb", "IMDb", 79.0, "7.9")),
+            content.metaParts[2],
+        )
         assertEquals("4K · Dolby Vision · Atmos", content.specLine)
     }
 
@@ -65,7 +66,10 @@ class TvFocusMarqueeModelTest {
 
         assertEquals("The Last of Us", content.title)
         assertEquals(listOf("TV-MA"), content.badges)
-        assertEquals(listOf("S01E03", "Long, Long Time"), content.metaParts)
+        assertEquals(
+            listOf(TvHeroFactToken.TextToken("S01E03"), TvHeroFactToken.TextToken("Long, Long Time", truncates = true)),
+            content.metaParts,
+        )
         assertEquals("1080P · EAC3", content.specLine)
     }
 
@@ -86,9 +90,9 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Continue Watching",
         )
 
-        assertEquals(listOf("S03E01", "Persuader"), content.metaParts)
-        assertFalse(content.metaParts.any { it.contains("left", ignoreCase = true) })
-        assertFalse(content.metaParts.any { it.contains("min", ignoreCase = true) })
+        assertEquals(listOf("S03E01", "Persuader"), content.metaText())
+        assertFalse(content.metaText().any { it.contains("left", ignoreCase = true) })
+        assertFalse(content.metaText().any { it.contains("min", ignoreCase = true) })
     }
 
     @Test
@@ -124,7 +128,6 @@ class TvFocusMarqueeModelTest {
 
         assertEquals(emptyList(), content.badges)
         assertEquals(emptyList(), content.metaParts)
-        assertNull(content.rating)
     }
 
     @Test
@@ -149,8 +152,7 @@ class TvFocusMarqueeModelTest {
             )
 
             assertEquals(emptyList(), content.metaParts)
-            assertNull(content.rating)
-        }
+            }
     }
 
     @Test
@@ -166,7 +168,7 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Row",
         )
 
-        assertEquals(listOf("2h"), content.metaParts)
+        assertEquals(listOf("2h"), content.metaText())
     }
 
     @Test
@@ -182,8 +184,7 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Row",
         )
 
-        assertEquals(emptyList(), content.metaParts)
-        assertEquals(DisplayRating("imdb", "IMDb", 84.0, "8.4"), content.rating)
+        assertEquals(listOf("IMDb 8.4"), content.metaText())
     }
 
     @Test
@@ -199,7 +200,7 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Row",
         )
 
-        assertEquals(listOf("2h 5m"), content.metaParts)
+        assertEquals(listOf("2h 5m"), content.metaText())
     }
 
     @Test
@@ -215,6 +216,15 @@ class TvFocusMarqueeModelTest {
             rowTitle = "Row",
         )
 
-        assertEquals(listOf("1h 56m"), content.metaParts)
+        assertEquals(listOf("1h 56m"), content.metaText())
+    }
+
+    private fun TvMarqueeContent.metaText(): List<String> = metaParts.map { token ->
+        when (token) {
+            is TvHeroFactToken.TextToken -> token.value
+            is TvHeroFactToken.ExternalRating -> "${token.rating.name} ${token.rating.display}"
+            is TvHeroFactToken.Rating -> token.value
+            is TvHeroFactToken.Chip -> token.value
+        }
     }
 }
