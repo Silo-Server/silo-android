@@ -47,6 +47,8 @@ class TvWorkerFactory : WorkerFactory() {
                     params = workerParameters,
                     sectionRepository = koin.get<SectionRepository>(),
                     repository = koin.get<WatchNextRepository>(),
+                    spoilerStore = koin.get(),
+                    catalogRepository = koin.get(),
                 )
             }
             SyncWorker::class.java.name -> {

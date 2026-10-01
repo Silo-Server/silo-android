@@ -567,6 +567,14 @@ fun TvAppNavigation(
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
     ProvideEpisodeSpoilerPrefs(store = episodeSpoilerStore, sessionKey = overlaySessionKey) {
+    val launcherSpoilerPrefs = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
+    LaunchedEffect(overlaySessionKey, launcherSpoilerPrefs.hideImages) {
+        if (overlaySessionKey != null && tokenManager.getProfileId() == overlaySessionKey) {
+            watchNextSeeder.clear()
+            watchNextSeeder.seedNow()
+            watchNextSeeder.enqueuePeriodic()
+        }
+    }
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,

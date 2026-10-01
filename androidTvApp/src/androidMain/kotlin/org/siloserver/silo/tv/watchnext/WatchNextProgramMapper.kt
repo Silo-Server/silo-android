@@ -2,6 +2,9 @@ package org.siloserver.silo.tv.watchnext
 
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import java.net.URLEncoder
 import java.time.Instant
 import java.time.format.DateTimeParseException
@@ -21,8 +24,19 @@ data class WatchNextProgramFields(
 
 object WatchNextProgramMapper {
 
-    fun map(item: SectionItem, sectionType: String): WatchNextProgramFields? {
-        val poster = item.backdropUrl ?: item.posterUrl ?: return null
+    fun map(
+        item: SectionItem,
+        sectionType: String,
+        spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE,
+        seriesArtwork: ItemDetail? = null,
+    ): WatchNextProgramFields? {
+        val protect = item.type.equals("episode", ignoreCase = true) &&
+            spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item))
+        val backdrop = item.backdropUrl?.takeIf { it.isNotBlank() && (!protect || item.backdropIsEpisodeStill == false) }
+        val portrait = item.posterUrl?.takeIf { it.isNotBlank() && (!protect || item.posterIsEpisodeStill == false) }
+        val seriesBackdrop = seriesArtwork?.takeIf { it.type == "series" }?.backdropUrl?.takeIf { it.isNotBlank() }
+        val seriesPoster = seriesArtwork?.takeIf { it.type == "series" }?.posterUrl?.takeIf { it.isNotBlank() }
+        val poster = backdrop ?: seriesBackdrop ?: portrait ?: seriesPoster ?: return null
         val watchNextType = when (sectionType) {
             "continue_watching" -> WATCH_NEXT_TYPE_CONTINUE
             "next_up" -> WATCH_NEXT_TYPE_NEXT
@@ -36,8 +50,12 @@ object WatchNextProgramMapper {
             isAudiobook -> PROGRAM_TYPE_ALBUM
             else -> PROGRAM_TYPE_TV_EPISODE
         }
-        // Audiobook cover art is square; video art stays 16:9.
-        val aspectRatio = if (isAudiobook) ASPECT_RATIO_1_1 else ASPECT_RATIO_16_9
+        // Safe parent posters keep their portrait aspect ratio.
+        val aspectRatio = when {
+            isAudiobook -> ASPECT_RATIO_1_1
+            protect && backdrop == null && seriesBackdrop == null -> ASPECT_RATIO_2_3
+            else -> ASPECT_RATIO_16_9
+        }
         val intentUri = when (watchNextType) {
             // Contract with the deep-link handler: tag the play intent with the
             // item type (URL-encoded) so it can route audiobooks to the audio
@@ -78,4 +96,6 @@ object WatchNextProgramMapper {
     const val PROGRAM_TYPE_ALBUM = 8
     const val ASPECT_RATIO_16_9 = 0
     const val ASPECT_RATIO_1_1 = 3
+    // Mirrors TvContractCompat.WatchNextPrograms.ASPECT_RATIO_2_3.
+    const val ASPECT_RATIO_2_3 = 4
 }

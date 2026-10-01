@@ -13,6 +13,8 @@ import org.siloserver.silo.network.*
 import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.network.apiv2.HomeSectionsV2Api
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import kotlin.test.*
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -27,11 +29,14 @@ class WatchNextHomeSyncTest {
     private var reads = 0
     private var applies = 0
     private var hook: () -> Unit = {}
+    private var episodeRows = false
     private suspend fun scenario(block: suspend (SectionRepository) -> Unit) {
         val client = HttpClient(MockEngine {
             assertEquals(owner, it.attributes[AuthScopeAttributeKey])
             val fallback = it.url.encodedPath.endsWith("/items")
-            val row = """{"id":"row","section_type":"continue_watching","title":"Row","items":[{"content_id":"movie:a","type":"movie","title":"A","backdrop_url":"/image"}]}"""
+            val row = if (episodeRows) {
+                """{"id":"row","section_type":"next_up","title":"Row","items":[{"content_id":"episode:a","type":"episode","title":"A","series_id":"series","backdrop_url":"/still-a","backdrop_is_episode_still":true},{"content_id":"episode:b","type":"episode","title":"B","series_id":"series","backdrop_url":"/still-b","backdrop_is_episode_still":true}]}"""
+            } else """{"id":"row","section_type":"continue_watching","title":"Row","items":[{"content_id":"movie:a","type":"movie","title":"A","backdrop_url":"/image"}]}"""
             val body = if (fallback) { reads++; row } else {
                 assertEquals("/api/v2/home/sections", it.url.encodedPath); hook()
                 if (empty) """{"sections":[]}"""
@@ -47,6 +52,37 @@ class WatchNextHomeSyncTest {
             assertEquals("continue_watching:movie:a", fields.single().externalId)
             assertEquals("silo://play/movie:a?type=movie", fields.single().intentUri)
         } }
+    }
+    @Test fun protectedEpisodesFetchSeriesArtOnceAndReplaceBothTiles() = runTest {
+        episodeRows = true
+        var artworkReads = 0
+        scenario { repo ->
+            assertTrue(syncWatchNextHome(repo, gate, { false },
+                spoilerPreferences = { EpisodeSpoilerPrefs(hideImages = true) },
+                seriesArtwork = { id ->
+                    assertEquals("series", id); artworkReads++
+                    ItemDetail(contentId = id, type = "series", title = "Series", backdropUrl = "/safe")
+                },
+            ) { fields, run, authority ->
+                gate.write(run, authority) {
+                    applies++
+                    assertEquals(listOf("/safe", "/safe"), fields.map { it.posterArtUri })
+                }
+            })
+        }
+        assertEquals(1, artworkReads)
+        assertEquals(1, applies)
+    }
+
+    @Test fun unknownPreferencesRetryWithoutPublishingAndChangedPreferencesFenceWrites() = runTest {
+        scenario { repo ->
+            assertFalse(syncWatchNextHome(repo, gate, { false }, spoilerPreferences = { null }) { _, _, _ -> applies++ })
+            assertEquals(0, applies)
+            var current = true
+            hook = { current = false }
+            assertTrue(syncWatchNextHome(repo, gate, { false }, preferencesCurrent = { current }) { _, _, _ -> applies++ })
+            assertEquals(0, applies)
+        }
     }
     @Test fun completeAndEmptySuccessMayReconcileButFailuresCannot() = runTest { scenario { repo ->
         assertTrue(sync(repo)); assertEquals(1, applies); assertEquals(0, reads)

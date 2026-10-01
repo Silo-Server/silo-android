@@ -4,28 +4,39 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 
 /** Actual worker read branch, with provider dispatch injected for synthetic tests. */
 internal suspend fun syncWatchNextHome(
     sections: SectionRepository,
     gate: WatchNextWriteGate,
     stopped: () -> Boolean,
+    spoilerPreferences: suspend () -> EpisodeSpoilerPrefs? = { EpisodeSpoilerPrefs.NONE },
+    preferencesCurrent: (EpisodeSpoilerPrefs) -> Boolean = { true },
+    seriesArtwork: suspend (String) -> ItemDetail? = { null },
     apply: suspend (List<WatchNextProgramFields>, Long, suspend () -> Boolean) -> Unit,
 ): Boolean {
     val run = gate.capture()
     val owner = sections.captureHomeAuthority() ?: return true
+    var prefs: EpisodeSpoilerPrefs? = null
     suspend fun authority(): Boolean {
         val valid = sections.isHomeAuthorityCurrent(owner)
         currentCoroutineContext().ensureActive()
-        return valid && !stopped()
+        return valid && !stopped() && (prefs?.let(preferencesCurrent) ?: true)
     }
     suspend fun current() = gate.allowed(run, ::authority)
+    if (!current()) return true
+    val resolvedPrefs = spoilerPreferences() ?: return false
+    prefs = resolvedPrefs
     if (!current()) return true
     val response = sections.getHomeSections(owner)
     if (!current()) return true
     if (response !is ApiResult.Success) return false
 
     val fields = mutableListOf<WatchNextProgramFields>()
+    val artworkBySeries = mutableMapOf<String, ItemDetail?>()
     for (section in response.data.sections.filter { it.sectionType in setOf("continue_watching", "next_up") }) {
         var items = section.items
         if (items.isEmpty() && section.totalCount > 0) {
@@ -35,7 +46,19 @@ internal suspend fun syncWatchNextHome(
             items = fallback.data.items
             if (items.isEmpty() && (fallback.data.section?.totalCount ?: 0) > 0) return false
         }
-        fields += items.mapNotNull { WatchNextProgramMapper.map(it, section.sectionType) }
+        for (item in items) {
+            var mapped = WatchNextProgramMapper.map(item, section.sectionType, resolvedPrefs)
+            if (mapped == null && item.type.equals("episode", ignoreCase = true) &&
+                resolvedPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item))) {
+                val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
+                if (seriesId != null) {
+                    if (seriesId !in artworkBySeries) artworkBySeries[seriesId] = seriesArtwork(seriesId)
+                    if (!current()) return true
+                    mapped = WatchNextProgramMapper.map(item, section.sectionType, resolvedPrefs, artworkBySeries[seriesId])
+                }
+            }
+            mapped?.let(fields::add)
+        }
     }
     if (!current()) return true
     apply(fields, run, ::authority)
