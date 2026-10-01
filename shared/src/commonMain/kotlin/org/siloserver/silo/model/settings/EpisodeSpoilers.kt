@@ -1,5 +1,6 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.section.SectionItem
 
@@ -47,6 +48,17 @@ object EpisodeSpoilers {
     fun isUnwatched(userData: LeafItemUserData?): Boolean =
         userData == null ||
             isUnwatched(userData.played, userData.isInProgress, userData.positionSeconds)
+
+    /** Browse cards use the live played flag returned by their action state. */
+    fun hidesBrowseArtwork(
+        item: BrowseItem, prefs: EpisodeSpoilerPrefs, played: Boolean? = item.userState?.played,
+        selectBackdrop: Boolean = false,
+    ): Boolean {
+        val provenance = if (selectBackdrop && !item.backdropUrl.isNullOrBlank()) item.backdropIsEpisodeStill
+            else item.posterIsEpisodeStill
+        return item.type.equals("episode", ignoreCase = true) &&
+            prefs.hidesImage(isUnwatched(played, isInProgress = null, positionSeconds = item.positionSeconds), provenance)
+    }
 
     /** Provenance follows the image selected for the wide card; null preserves older-server protection. */
     fun selectedImageIsStill(item: SectionItem): Boolean? =

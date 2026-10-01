@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.browse
 
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -166,7 +169,12 @@ fun CatalogGrid(
                 contentType = { item -> item.type },
             ) { item ->
                 val (actions, userState) = rememberBrowseItemCardActions(item)
+                val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played)
+                val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true)
                 MediaCard(
+                    hideArtwork = hideArtwork,
+                    hideDetailArtwork = hideDetailArtwork,
                     title = item.title,
                     posterUrl = item.posterUrl,
                     posterThumbhash = item.posterThumbhash,
@@ -175,8 +183,8 @@ fun CatalogGrid(
                     type = item.type,
                     userState = userState,
                     onClick = {
-                        heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
-                        heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
+                        heroHandoff?.pendingArtworkUrl = (item.backdropUrl ?: item.posterUrl).takeUnless { hideDetailArtwork }
+                        heroHandoff?.pendingArtworkThumbhash = if (hideDetailArtwork) null else item.backdropThumbhash ?: item.posterThumbhash
                         onItemClick(item.contentId)
                     },
                     width = cardWidth,

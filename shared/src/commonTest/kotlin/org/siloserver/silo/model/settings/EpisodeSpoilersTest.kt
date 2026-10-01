@@ -1,13 +1,37 @@
 package org.siloserver.silo.model.settings
 
+import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.SectionItem
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class EpisodeSpoilersTest {
+
+    @Test
+    fun browsePostersAndDetailHandoffsUseSelectedArtworkProvenance() {
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        val episode = BrowseItem("episode", "episode", "Episode", posterUrl = "still",
+            posterIsEpisodeStill = true, backdropUrl = "series", backdropIsEpisodeStill = false)
+        assertTrue(EpisodeSpoilers.hidesBrowseArtwork(episode, prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode, prefs, selectBackdrop = true))
+        assertTrue(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(backdropIsEpisodeStill = true), prefs, selectBackdrop = true))
+        assertTrue(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(posterIsEpisodeStill = null), prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(posterIsEpisodeStill = false), prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode, prefs, played = true))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(positionSeconds = 2.0), prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(type = "series"), prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode, EpisodeSpoilerPrefs.NONE))
+    }
+
+    @Test
+    fun browseWireProgressKeepsStartedEpisodeArtworkVisible() {
+        val item = Json.decodeFromString<BrowseItem>("""{"content_id":"episode","type":"episode","title":"Episode","position_seconds":5,"poster_is_episode_still":true}""")
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(item, EpisodeSpoilerPrefs(hideImages = true)))
+    }
 
     @Test
     fun missingWatchStateCountsAsUnwatched() {

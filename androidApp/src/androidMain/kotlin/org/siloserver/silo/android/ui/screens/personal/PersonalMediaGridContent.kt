@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.personal
 
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -63,7 +66,7 @@ import org.siloserver.silo.android.ui.components.WatchedBadge
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.overlays.CardOverlayVariant
 import org.siloserver.silo.common.overlays.CardOverlays
 import org.siloserver.silo.common.overlays.LocalCardOverlayUiState
@@ -393,6 +396,9 @@ fun MediaGridItem(
     isInWatchlist: Boolean = false,
 ) {
     val (actions, userState) = rememberBrowseItemCardActions(item)
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played)
+    val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true)
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
     val heroHandoff = LocalHeroSourceHandoff.current
@@ -400,8 +406,8 @@ fun MediaGridItem(
     androidx.compose.foundation.layout.Column(
         modifier = modifier.combinedClickable(
             onClick = {
-                heroHandoff?.pendingArtworkUrl = item.backdropUrl ?: item.posterUrl
-                heroHandoff?.pendingArtworkThumbhash = item.backdropThumbhash ?: item.posterThumbhash
+                heroHandoff?.pendingArtworkUrl = (item.backdropUrl ?: item.posterUrl).takeUnless { hideDetailArtwork }
+                heroHandoff?.pendingArtworkThumbhash = if (hideDetailArtwork) null else item.backdropThumbhash ?: item.posterThumbhash
                 onClick()
             },
             onLongClick = { menuExpanded = true },
@@ -414,7 +420,8 @@ fun MediaGridItem(
                 .aspectRatio(2f / 3.3f)
                 .clip(RoundedCornerShape(8.dp)),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
+                hidden = hideArtwork,
                 url = item.posterUrl,
                 thumbhash = item.posterThumbhash,
                 contentDescription = item.title,

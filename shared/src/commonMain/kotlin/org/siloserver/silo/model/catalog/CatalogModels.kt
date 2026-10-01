@@ -68,6 +68,7 @@ data class BrowseItem(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
+    @SerialName("position_seconds") val positionSeconds: Double? = null,
     @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null
 )
 
