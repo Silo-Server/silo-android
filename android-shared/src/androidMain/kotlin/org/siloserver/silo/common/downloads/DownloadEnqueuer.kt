@@ -105,6 +105,7 @@ class DownloadEnqueuer(
         episodeNumber: Int?,
         episodeTitle: String?,
         posterUrl: String? = null,
+        posterIsEpisodeStill: Boolean? = null,
         downloadQualityOverride: DownloadQuality? = null,
     ): ApiResult<Unit> {
         val authority = authorities?.snapshotDurableLoginAuthority()
@@ -139,6 +140,8 @@ class DownloadEnqueuer(
             title = seriesTitle,
             subtitle = listOfNotNull(episodeCode, shownEpisodeTitle).joinToString(" · ").ifEmpty { null },
             posterUrl = posterUrl,
+            posterIsEpisodeStill = posterIsEpisodeStill,
+            episodeUserData = episodeDetail?.userData,
             seriesTitle = seriesTitle,
             seriesContentId = seriesContentId,
             seasonNumber = seasonNumber,
@@ -213,6 +216,8 @@ class DownloadEnqueuer(
                 } ?: "Series episode",
                 posterUrl = posterUrl,
                 posterThumbhash = seriesDetail?.posterThumbhash,
+                posterIsEpisodeStill = false,
+                episodeUserData = episodeDetail?.userData,
                 seriesTitle = seriesTitle,
                 seriesContentId = seriesContentId,
                 seasonNumber = ep?.seasonNumber,
@@ -274,6 +279,7 @@ class DownloadEnqueuer(
                 episodeNumber = ep.episodeNumber,
                 episodeTitle = ep.title,
                 posterUrl = posterUrl,
+                posterIsEpisodeStill = false,
                 // Season batch is original-only (server rejects a non-original
                 // batch with 501 bulk_quality_unavailable). Force Original even
                 // though startEpisode itself honors quality for single episodes.
@@ -468,6 +474,8 @@ class DownloadEnqueuer(
             title = detail?.title ?: fallbackTitle,
             posterUrl = detail?.posterUrl,
             posterThumbhash = detail?.posterThumbhash,
+            posterIsEpisodeStill = detail?.posterIsEpisodeStill,
+            episodeUserData = detail?.userData.takeIf { detail?.type == "episode" },
             year = detail?.year?.takeIf { it > 0 },
             seriesTitle = detail?.seriesTitle,
             // Stable TV grouping key — present for episode detail downloads via the

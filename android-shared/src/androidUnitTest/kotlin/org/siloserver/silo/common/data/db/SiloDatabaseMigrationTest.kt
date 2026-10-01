@@ -11,6 +11,28 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SiloDatabaseMigrationTest {
+    @Test
+    fun migration13To14PreservesDownloadsWithUnknownArtworkState() {
+        val name = "migration-13-to-14"
+        migrationHelper.createDatabase(name, 13).use { database ->
+            database.execSQL(
+                "INSERT INTO downloads (serverId, profileId, mediaFileId, recordId, contentId, title, mediaType, status, kind, " +
+                    "fileSize, bytesSent, createdAt, updatedAtMs) VALUES ('s', 'p', 42, 'row', 'episode', 'Episode', 'tv', " +
+                    "'completed', 'queued', 1024, 1024, '2026-10-01T00:00:00Z', 123)",
+            )
+        }
+        migrationHelper.runMigrationsAndValidate(name, 14, true).use { database ->
+            database.query("SELECT recordId, status, posterIsEpisodeStill, episodeUserDataJson FROM downloads").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("row", cursor.getString(0))
+                assertEquals("completed", cursor.getString(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(true, cursor.isNull(3))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     @get:Rule
     val migrationHelper =
         MigrationTestHelper(

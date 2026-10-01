@@ -317,6 +317,8 @@ class ItemDetailViewModel(
                     episodeNumber = item.episodeNumber,
                     episodeTitle = item.title,
                     posterUrl = knownPoster ?: parent?.posterUrl ?: pageDetail?.posterUrl,
+                    posterIsEpisodeStill = if (knownPoster != null || parent?.posterUrl != null) false
+                        else pageDetail?.posterIsEpisodeStill,
                     downloadQualityOverride = downloadQuality,
                 )
             }

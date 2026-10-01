@@ -11,6 +11,7 @@ import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.download.DownloadMediaType
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
 import org.siloserver.silo.model.download.DownloadStatus
@@ -23,6 +24,8 @@ import org.siloserver.silo.repository.DownloadSubscriptionRepository
 import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.port.UserItemStatePort
+import org.siloserver.silo.repository.port.LocalContentState
+import org.siloserver.silo.repository.port.LocalPlaybackProgress
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +50,8 @@ data class DownloadItem(
     val subtitle: String? = null,
     val posterUrl: String? = null,
     val posterThumbhash: String? = null,
+    val posterIsEpisodeStill: Boolean? = null,
+    val episodeUserData: LeafItemUserData? = null,
     val fileSizeBytes: Long = 0,
     val progress: Float = 0f,
     val isComplete: Boolean = false,
@@ -114,6 +119,22 @@ internal fun downloadItemDisplayProgress(
 ): Float {
     if (status == DownloadStatus.Completed) return if (hasLocalMedia) 1f else 0f
     return rawProgress.coerceIn(0f, 1f)
+}
+
+internal fun overlayDownloadEpisodeUserData(
+    saved: LeafItemUserData?,
+    localState: LocalContentState?,
+    progress: LocalPlaybackProgress?,
+): LeafItemUserData {
+    val original = saved ?: LeafItemUserData()
+    // Watched mutations clear local resume state. Do not resurrect progress
+    // captured when the download started after the user marks it unwatched.
+    val resetProgress = localState?.watched != null && progress == null
+    return original.copy(
+        played = localState?.watched ?: original.played,
+        positionSeconds = progress?.positionSeconds ?: if (resetProgress) 0.0 else original.positionSeconds,
+        isInProgress = progress?.let { it.positionSeconds > 0 } ?: if (resetProgress) false else original.isInProgress,
+    )
 }
 
 /**
@@ -358,6 +379,15 @@ class DownloadsViewModel(
                     )
                 }
             }
+        }
+    }
+
+    fun refreshLocalUserState() {
+        viewModelScope.launch {
+            val sections = withContext(Dispatchers.IO) {
+                buildSections(repository.records.value.associateBy { it.id })
+            }
+            _uiState.update { it.copy(sections = sections) }
         }
     }
 
@@ -714,6 +744,8 @@ class DownloadsViewModel(
             subtitle = subtitle,
             posterUrl = posterUrl,
             posterThumbhash = posterThumbhash,
+            posterIsEpisodeStill = posterIsEpisodeStill,
+            episodeUserData = episodeUserData,
             fileSizeBytes = shownBytes,
             progress = displayProgress,
             isComplete = fileState.isComplete,
@@ -742,10 +774,22 @@ class DownloadsViewModel(
      * Top-level: build per-mediaType sections from the Room sidecars (source of
      * truth), in stable display order. [liveById] overlays in-flight progress.
      */
-    private fun buildSections(liveById: Map<String, DownloadRecord>): List<DownloadTypeSection> {
+    private suspend fun buildSections(liveById: Map<String, DownloadRecord>): List<DownloadTypeSection> {
         val sidecars = metadataByRecordId.values.toList()
         if (sidecars.isEmpty()) return emptyList()
-        val byType = sidecars.groupBy { it.resolveSidecarMediaType() }
+        val episodes = sidecars.filter { it.resolveSidecarMediaType() == DownloadMediaType.TvShow }
+        val ids = episodes.map { it.record.episodeId ?: it.record.contentId }
+        val states = userItemStatePort.localContentStates(ids)
+        val positions = userItemStatePort.localPlaybackProgressForContent(ids)
+        val episodeUserDataByRecordId = episodes.associate { sidecar ->
+            val id = sidecar.record.episodeId ?: sidecar.record.contentId
+            sidecar.record.id to overlayDownloadEpisodeUserData(sidecar.episodeUserData, states[id], positions[id])
+        }
+        val byType = sidecars.map { sidecar ->
+            if (sidecar.record.id in episodeUserDataByRecordId) {
+                sidecar.copy(episodeUserData = episodeUserDataByRecordId[sidecar.record.id])
+            } else sidecar
+        }.groupBy { it.resolveSidecarMediaType() }
         val sectionOrder = listOf(
             DownloadMediaType.Movie,
             DownloadMediaType.TvShow,

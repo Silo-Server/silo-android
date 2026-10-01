@@ -2,6 +2,7 @@ package org.siloserver.silo.common.downloads
 
 import org.siloserver.silo.common.data.db.entity.DownloadEntity
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
 import org.siloserver.silo.model.download.OfflineTrackInfo
@@ -34,6 +35,8 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         subtitle = subtitle,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
+        posterIsEpisodeStill = posterIsEpisodeStill,
+        episodeUserDataJson = episodeUserData?.let { mappingJson.encodeToString(it) },
         year = year,
         seriesTitle = seriesTitle,
         seriesContentId = seriesContentId,
@@ -84,6 +87,10 @@ fun DownloadEntity.toSidecar(): DownloadSidecar =
         subtitle = subtitle,
         posterUrl = posterUrl,
         posterThumbhash = posterThumbhash,
+        posterIsEpisodeStill = posterIsEpisodeStill,
+        episodeUserData = episodeUserDataJson?.let {
+            runCatching { mappingJson.decodeFromString<LeafItemUserData>(it) }.getOrNull()
+        },
         year = year,
         seriesTitle = seriesTitle,
         seriesContentId = seriesContentId,
