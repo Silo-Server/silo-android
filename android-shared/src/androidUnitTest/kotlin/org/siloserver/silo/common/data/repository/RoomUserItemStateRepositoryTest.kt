@@ -60,6 +60,49 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun ratingsAndTrackChangesDoNotPromoteStaleWatchState() = runTest {
+        var time = 1000L
+        val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { time })
+        val watched = repository.recordWatched("episode", true)
+        repository.resolve(watched, WriteOutcome.SYNCED)
+        repository.recordPosition("episode", 7, 30.0, 60.0)
+        db.dirtyOperationDao().dueBatch("s1", "p1", 1000L, 10).forEach {
+            repository.resolve(OutboxHandle(it.id), WriteOutcome.SYNCED)
+        }
+        time = 3000L
+        val rating = repository.recordRating("episode", 5)
+        repository.recordAudioTrackSelection("episode", 7, "audio")
+        assertEquals(emptySet(), repository.contentIdsWithPendingOrNewerUserState(listOf("episode"), 2000L))
+        repository.resolve(rating, WriteOutcome.SYNCED)
+        assertEquals(emptySet(), repository.contentIdsWithPendingOrNewerUserState(listOf("episode"), 2000L))
+        val reset = repository.recordWatched("episode", false)
+        repository.resolve(reset, WriteOutcome.SYNCED)
+        assertEquals(setOf("episode"), repository.contentIdsWithPendingOrNewerUserState(listOf("episode"), 2000L))
+    }
+
+    @Test
+    fun trackChoicesDoNotPreventWatchedResetsOrRejectedResetRecovery() = runTest {
+        var time = 1000L
+        val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { time })
+        repository.recordPosition("episode", 7, 30.0, 60.0)
+        time = 3000L
+        repository.recordAudioTrackSelection("episode", 7, "audio")
+        // A watched write admitted at 2000 must clear the older progress, even
+        // though an unrelated track choice updated the row afterward.
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 2000L, 4000L)
+        assertNull(repository.localPlaybackProgress("episode"))
+        time = 5000L
+        repository.recordSubtitleTrackSelection("episode", 7, "subtitle")
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 3000L, 1000L, 4000L)
+        val row = db.userItemStateDao().get("s1", "p1", "episode", 7)!!
+        assertEquals(30.0, row.positionSeconds)
+        assertEquals("audio", row.audioFingerprint)
+        assertEquals("subtitle", row.subtitleFingerprint)
+        assertEquals(5000L, row.clientUpdatedAtMs)
+        assertEquals(1000L, row.positionUpdatedAtMs)
+    }
+
+    @Test
     fun recordWatchedWritesProjectionAndContentScopedOutboxOp() = runTest {
         val handle = repo.recordWatched("c1", watched = true)
         assertTrue(handle.opId >= 0)

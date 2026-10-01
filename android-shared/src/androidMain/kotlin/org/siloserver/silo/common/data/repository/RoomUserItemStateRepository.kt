@@ -121,12 +121,13 @@ class RoomUserItemStateRepository(
                 current.watched == saved["previous_watched"]?.jsonPrimitive?.booleanOrNull &&
                 current.ratingValue == saved["previous_rating"]?.jsonPrimitive?.intOrNull
             if (unchanged) {
-                val previous = current ?: ContentItemStateEntity(row.serverId, row.profileId, row.targetContentId, null, null, null, now(), null)
+                val nowMs = now()
+                val previous = current ?: ContentItemStateEntity(row.serverId, row.profileId, row.targetContentId, null, null, null, nowMs, null)
                 val projected = when (val command = handle.command) {
-                    is PersonalWrite.Watched -> previous.copy(watched = command.watched)
+                    is PersonalWrite.Watched -> previous.copy(watched = command.watched, watchedUpdatedAtMs = nowMs)
                     is PersonalWrite.Rating -> previous.copy(ratingValue = command.rating)
                 }
-                contentDao.upsert(projected.copy(clientUpdatedAtMs = now()))
+                contentDao.upsert(projected.copy(clientUpdatedAtMs = nowMs))
                 if (handle.command is PersonalWrite.Watched)
                     userStateDao.clearPlaybackProgressBefore(row.serverId, row.profileId, row.targetContentId, row.createdAtMs, now())
             }
@@ -246,7 +247,7 @@ class RoomUserItemStateRepository(
                 clientUpdatedAtMs = nowMs,
                 serverUpdatedAtMs = null,
             )
-            userStateDao.upsert(row)
+            userStateDao.upsert(row.copy(positionUpdatedAtMs = nowMs))
 
             // V2 playback sends sequenced progress under its admitted session. Keep local resume,
             // but never coalesce a new position into a legacy queue with unknown authority.
@@ -570,7 +571,8 @@ class RoomUserItemStateRepository(
                     clientUpdatedAtMs = nowMs,
                     serverUpdatedAtMs = null,
                 )
-            contentDao.upsert(applyField(existing).copy(clientUpdatedAtMs = nowMs))
+            contentDao.upsert(applyField(existing).copy(clientUpdatedAtMs = nowMs,
+                watchedUpdatedAtMs = if (opKind == OutboxOperation.SET_WATCHED) nowMs else existing.watchedUpdatedAtMs))
 
             var operationPayload = payloadJson
             if (clearPlaybackProgress) {
@@ -590,6 +592,7 @@ class RoomUserItemStateRepository(
                             fileId = row.fileId,
                             positionSeconds = row.positionSeconds,
                             previousClientUpdatedAtMs = row.clientUpdatedAtMs,
+                            previousPositionUpdatedAtMs = row.positionUpdatedAtMs,
                             clearedAtMs = nowMs,
                         )
                     }

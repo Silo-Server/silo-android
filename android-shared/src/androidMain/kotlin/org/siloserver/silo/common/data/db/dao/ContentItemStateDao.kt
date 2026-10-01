@@ -38,7 +38,7 @@ interface ContentItemStateDao {
 
     // Revert a single optimistic field to "unknown" after its outbox op is dropped
     // (terminal server rejection) — the overlay then defers to server state.
-    @Query("UPDATE content_item_state SET watched = NULL WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
+    @Query("UPDATE content_item_state SET watched = NULL, watchedUpdatedAtMs = NULL WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")
     suspend fun clearWatched(serverId: String, profileId: String, contentId: String)
 
     @Query("UPDATE content_item_state SET favorite = NULL WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId")

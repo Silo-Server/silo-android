@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 14,
-    "identityHash": "137846d80befa363e030596f7533059e",
+    "identityHash": "06c59f58042d8a7af87df6dde6dae8dd",
     "entities": [
       {
         "tableName": "user_item_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `fileId` INTEGER NOT NULL, `positionSeconds` REAL NOT NULL, `durationSeconds` REAL, `audioFingerprint` TEXT, `subtitleFingerprint` TEXT, `cfi` TEXT, `readProgress` REAL, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`, `fileId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `fileId` INTEGER NOT NULL, `positionSeconds` REAL NOT NULL, `durationSeconds` REAL, `audioFingerprint` TEXT, `subtitleFingerprint` TEXT, `cfi` TEXT, `readProgress` REAL, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `positionUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`, `fileId`))",
         "fields": [
           {
             "fieldPath": "serverId",
@@ -73,6 +73,11 @@
             "fieldPath": "serverUpdatedAtMs",
             "columnName": "serverUpdatedAtMs",
             "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "positionUpdatedAtMs",
+            "columnName": "positionUpdatedAtMs",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -111,7 +116,7 @@
       },
       {
         "tableName": "content_item_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `watched` INTEGER, `ratingValue` INTEGER, `favorite` INTEGER, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `watched` INTEGER, `ratingValue` INTEGER, `favorite` INTEGER, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `watchedUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`))",
         "fields": [
           {
             "fieldPath": "serverId",
@@ -155,6 +160,11 @@
           {
             "fieldPath": "serverUpdatedAtMs",
             "columnName": "serverUpdatedAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "watchedUpdatedAtMs",
+            "columnName": "watchedUpdatedAtMs",
             "affinity": "INTEGER"
           }
         ],
@@ -993,7 +1003,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '137846d80befa363e030596f7533059e')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '06c59f58042d8a7af87df6dde6dae8dd')"
     ]
   }
 }

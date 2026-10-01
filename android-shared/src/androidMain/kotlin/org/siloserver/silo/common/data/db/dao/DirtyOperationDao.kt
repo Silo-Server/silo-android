@@ -26,11 +26,11 @@ interface DirtyOperationDao {
     suspend fun unresolvedPersonalCount(serverId: String, profileId: String, contentId: String): Int
 
     @Query("SELECT contentId FROM content_item_state WHERE serverId = :serverId AND profileId = :profileId " +
-        "AND contentId IN (:contentIds) AND clientUpdatedAtMs >= :sinceMs " +
+        "AND contentId IN (:contentIds) AND watchedUpdatedAtMs >= :sinceMs " +
         "UNION SELECT contentId FROM user_item_state WHERE serverId = :serverId AND profileId = :profileId " +
-        "AND contentId IN (:contentIds) AND clientUpdatedAtMs >= :sinceMs " +
+        "AND contentId IN (:contentIds) AND positionUpdatedAtMs >= :sinceMs " +
         "UNION SELECT targetContentId FROM dirty_operations WHERE serverId = :serverId AND profileId = :profileId " +
-        "AND targetContentId IN (:contentIds) AND opKind IN ('SET_WATCHED', 'SET_POSITION', 'PERSONAL_V2')")
+        "AND targetContentId IN (:contentIds) AND opKind IN ('SET_WATCHED', 'SET_POSITION')")
     suspend fun contentIdsWithPendingOrNewerUserState(
         serverId: String, profileId: String, contentIds: List<String>, sinceMs: Long,
     ): List<String>
