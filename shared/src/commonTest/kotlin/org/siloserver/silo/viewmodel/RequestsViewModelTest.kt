@@ -20,6 +20,7 @@ import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.repository.RequestsRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -245,10 +246,61 @@ class RequestsViewModelTest {
             ),
             api.createRequests.single(),
         )
+        // The create patched the user's list, so the re-read reuses it.
         assertEquals(
-            listOf("detail:movie:33", "mine", "detail:movie:33", "mine"),
+            listOf("detail:movie:33", "mine", "detail:movie:33"),
             api.calls,
         )
+    }
+
+    @Test
+    fun `an unconfirmed create stays held until a read shows the request`() = runTest(dispatcher) {
+        val requestable = RequestMediaDetail(
+            mediaType = RequestMediaType.Movie,
+            tmdbId = 33,
+            title = "Deep Archive",
+            request = RequestState(requestable = true),
+        )
+        val api = FakeRequestsApi(
+            // The first read, then the one right after the timeout: the server
+            // hasn't committed the create yet.
+            detailResults = ArrayDeque(listOf(ApiResult.Success(requestable), ApiResult.Success(requestable))),
+            createResult = ApiResult.NetworkError(IllegalStateException("timed out")),
+        )
+        val viewModel = RequestDetailViewModel(RequestsRepository(api), RequestMediaType.Movie, 33)
+
+        viewModel.submitRequest()
+        assertTrue(viewModel.uiState.value.isSubmissionUnconfirmed)
+        assertTrue(viewModel.uiState.value.primaryAction != RequestPrimaryAction.Request)
+        viewModel.submitRequest()
+        assertEquals(1, api.createRequests.size)
+
+        // The hold lapses on its own.
+        dispatcher.scheduler.advanceTimeBy(61_000)
+        assertFalse(viewModel.uiState.value.isSubmissionUnconfirmed)
+    }
+
+    @Test
+    fun `an approvals read sent before a decision does not bring the row back`() = runTest(dispatcher) {
+        val waiting = stubRequest(id = "r-1", tmdbId = 80, title = "Waiting")
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeRequestsApi(
+            adminHandler = { status, _ ->
+                gate.await()
+                ApiResult.Success(RequestsListResponse(if (status == RequestStatus.Pending) listOf(waiting) else emptyList()))
+            },
+            adminActionResult = ApiResult.Success(waiting.copy(status = RequestStatus.Approved)),
+        )
+        val viewModel = RequestApprovalsViewModel(RequestsRepository(api), loadOnInit = false)
+        viewModel.refresh()
+
+        viewModel.perform(AdminRequestAction.Approve, waiting)
+        dispatcher.scheduler.advanceTimeBy(1_000)
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.awaitingApproval.isEmpty())
+        assertEquals(listOf("r-1"), api.adminActionCalls)
     }
 
     @Test
@@ -366,12 +418,15 @@ private class FakeRequestsApi(
         limit: Int?,
         offset: Int?,
     ) -> ApiResult<RequestsListResponse>)? = null,
+    private val adminHandler: (suspend (status: String?, outcome: String?) -> ApiResult<RequestsListResponse>)? = null,
+    private val adminActionResult: ApiResult<MediaRequest> = ApiResult.Error(403, "forbidden", ""),
 ) : RequestsApi {
 
     val calls = mutableListOf<String>()
     val searchCalls = mutableListOf<SearchCall>()
     val createRequests = mutableListOf<CreateMediaRequest>()
     val cancelCalls = mutableListOf<String>()
+    val adminActionCalls = mutableListOf<String>()
 
     override suspend fun status(): ApiResult<RequestsFeatureStatus> {
         calls += "status"
@@ -432,10 +487,12 @@ private class FakeRequestsApi(
         outcome: String?,
         mediaType: String?,
         tmdbId: Int?,
-    ): ApiResult<RequestsListResponse> = ApiResult.Error(403, "forbidden", "")
+    ): ApiResult<RequestsListResponse> = adminHandler?.invoke(status, outcome) ?: ApiResult.Error(403, "forbidden", "")
 
-    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> =
-        ApiResult.Error(403, "forbidden", "")
+    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> {
+        adminActionCalls += id
+        return adminActionResult
+    }
 }
 
 private fun stubResult(

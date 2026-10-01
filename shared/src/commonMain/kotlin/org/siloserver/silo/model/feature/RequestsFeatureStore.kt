@@ -12,7 +12,9 @@ import org.siloserver.silo.repository.RequestsRepository
  * Matches the Apple clients: entry points start hidden, a successful
  * `/api/v2/requests/status` probe controls visibility, transient failures keep
  * the previous value, and reset hides the surface before a server/profile switch
- * can reuse stale capability state. The feature counts only when the server
+ * can reuse stale capability state. Reset also clears [RequestsRepository]'s
+ * session state, since both shells call it on sign-in, sign-out, and every
+ * server or profile switch. The feature counts only when the server
  * says this profile is `allowed` and the state is `available`.
  *
  * [canModerate] says whether the signed-in user can approve, decline, and retry
@@ -70,6 +72,7 @@ class RequestsFeatureStore(
 
     fun reset() {
         generation += 1
+        repository.reset()
         _isEnabled.value = false
         _canModerate.value = false
         _isResolved.value = false

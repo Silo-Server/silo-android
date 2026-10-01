@@ -78,6 +78,13 @@ interface RequestsApi {
         tmdbId: Int? = null,
     ): ApiResult<RequestsListResponse>
 
+    /**
+     * The first page of [adminRequests] and whether more follow: enough for a
+     * count badge without reading the whole queue.
+     */
+    suspend fun adminRequestsFirstPage(status: String? = null, outcome: String? = null): ApiResult<RequestsListResponse> =
+        adminRequests(status, outcome)
+
     /** Approve, decline, or retry someone's request. `non_retryable`: never resent after an uncertain outcome. */
     suspend fun adminAction(id: String, action: AdminRequestAction, reason: String? = null): ApiResult<MediaRequest>
 }
@@ -150,6 +157,18 @@ class DefaultRequestsApi(
             parameter("media_type", mediaType?.takeIf { it == RequestMediaType.Movie || it == RequestMediaType.Series })
             parameter("q", tmdbId?.toString())
         }
+
+    override suspend fun adminRequestsFirstPage(status: String?, outcome: String?): ApiResult<RequestsListResponse> {
+        val pinned = tokenManager?.snapshotCurrentScope()
+        return ownedV2Call<RequestsListResponse, RequestsListResponse>(gate, tokenManager, pinned, OwnerPolicy.PROFILE, null, { owner ->
+            client.get("/api/v2/admin/requests") {
+                owner?.let { authScope(it) }
+                parameter("status", status)
+                parameter("outcome", outcome)
+                parameter("limit", 50)
+            }
+        }) { it }
+    }
 
     /**
      * Follows `page.next_cursor` under one captured owner. A failed page, a

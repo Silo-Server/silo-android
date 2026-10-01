@@ -7,6 +7,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TestTimeSource
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.RequestDetailCache
 
 class RequestDisplayStateTest {
@@ -100,16 +101,24 @@ class RequestDisplayStateTest {
     }
 
     @Test
-    fun aModerationHoldEndsOnlyWhenTheRequestChangesLeavesOrLapses() {
+    fun aRequestActionHoldEndsOnlyWhenTheRequestChangesLeavesOrLapses() {
         val clock = TestTimeSource()
         val request = record(id = "r1", updatedAt = "2026-09-01T00:00:00Z")
-        val hold = ModerationHold(request, clock, lifetime = 60.seconds)
+        val hold = RequestActionHold(request, clock, lifetime = 60.seconds)
 
         assertFalse(hold.isSettled(request))
         assertTrue(hold.isSettled(request.copy(updatedAt = "2026-09-01T00:01:00Z")))
         assertTrue(hold.isSettled(null))
         clock += 60.seconds
         assertTrue(hold.isSettled(request))
+    }
+
+    @Test
+    fun aProxyGatewayErrorIsUncertainButTheServersOwnProblemIsNot() {
+        assertTrue(RequestMutationFailure.isUncertain(ApiResult.Error(504, "", "")))
+        assertTrue(RequestMutationFailure.isUncertain(ApiResult.Error(502, "", "")))
+        assertFalse(RequestMutationFailure.isUncertain(ApiResult.Error(503, "capability_unavailable", "Requests are unavailable.")))
+        assertFalse(RequestMutationFailure.isUncertain(ApiResult.Error(500, "", "")))
     }
 
     @Test

@@ -24,6 +24,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
@@ -32,6 +33,8 @@ import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.components.skeleton
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.requests.RequestColors
+import org.siloserver.silo.common.requests.RequestRouter
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestStatusTint
 import org.siloserver.silo.viewmodel.RequestsUiState
@@ -52,7 +55,7 @@ fun RequestsScreen(
     viewModel: RequestsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val router = rememberRequestRouter(onLibraryItemClick, onRequestDetailClick)
+    val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
 
     RequestsLargeTitlePage(
         title = "Requests",
@@ -107,10 +110,10 @@ private fun LazyListScope.discover(
                 }
                 if (state.pendingApprovals > 0) {
                     RequestSummaryCard(
-                        title = if (state.pendingApprovals == 1) {
-                            "1 request needs your approval"
-                        } else {
-                            "${state.pendingApprovals} requests need your approval"
+                        title = when {
+                            state.morePendingApprovals -> "${state.pendingApprovals}+ requests need your approval"
+                            state.pendingApprovals == 1 -> "1 request needs your approval"
+                            else -> "${state.pendingApprovals} requests need your approval"
                         },
                         leadingIcon = Icons.Outlined.HowToReg,
                         leadingTint = RequestColors.Amber,

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.RequestMediaResult
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.activity.compose.BackHandler
@@ -63,10 +64,8 @@ import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestStep
 import org.siloserver.silo.model.request.RequestTargetSummary
-import org.siloserver.silo.model.request.libraryItemToOpen
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestPosterUrl
-import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.tv.ui.components.PillKind
 import org.siloserver.silo.tv.ui.components.SquaredPillSurface
@@ -116,6 +115,7 @@ fun TvRequestDetailScreen(
     repository: RequestsRepository = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val router = rememberRequestRouter(repository, onOpenLibraryItem, onOpenRequestDetail)
     val loadingFocusRequester = remember { FocusRequester() }
     val primaryActionFocusRequester = remember { FocusRequester() }
     var pageHasFocus by remember { mutableStateOf(false) }
@@ -212,11 +212,7 @@ fun TvRequestDetailScreen(
                     if (action == AdminRequestAction.Decline) confirmingDecline = true else viewModel.moderate(action)
                 },
                 onCancel = viewModel::cancel,
-                onOpenRecommendation = { result ->
-                    repository.cache.seed(result)
-                    repository.cache.unpinModeration(RequestDetailCache.Key(result.mediaType, result.tmdbId))
-                    result.libraryItemToOpen()?.let(onOpenLibraryItem) ?: onOpenRequestDetail(result.mediaType, result.tmdbId)
-                },
+                onOpenRecommendation = router::openResult,
             )
             state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::load)
             else -> RequestDetailLoading(focusRequester = loadingFocusRequester)

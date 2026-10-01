@@ -19,12 +19,17 @@ import org.siloserver.silo.network.errorMessage
 object RequestMutationFailure {
     fun isUncertain(result: ApiResult<*>): Boolean = when (result) {
         is ApiResult.Success -> false
-        // A received answer this client couldn't read: the server acted.
-        is ApiResult.Error -> result.code == 0 && result.error == "invalid_response"
+        // A received answer this client couldn't read: the server acted. A
+        // gateway error without the server's own problem body came from a
+        // proxy, which may have forwarded the call before giving up on it.
+        is ApiResult.Error -> (result.code == 0 && result.error == "invalid_response") ||
+            (result.code in GatewayErrors && result.error.isEmpty())
         // Refused before a byte left the device, or never connected: nothing happened.
         is ApiResult.NetworkError -> generateSequence(result.exception) { it.cause?.takeIf { cause -> cause !== it } }
             .none { it::class.simpleName in NeverConnected }
     }
+
+    private val GatewayErrors = setOf(502, 503, 504)
 
     private val NeverConnected = setOf(
         "UnknownHostException",
@@ -57,14 +62,14 @@ object RequestActionCopy {
 }
 
 /**
- * An approve, decline, or retry sent without a usable answer. A timed-out call
- * can still be running on the server when the next read comes back, so an
+ * A cancel, approve, decline, or retry sent without a usable answer. A timed-out
+ * call can still be running on the server when the next read comes back, so an
  * unchanged request proves nothing: the hold lasts until the request changes or
- * leaves the queue. It lapses after [Lifetime], read or not, so a call that never
+ * leaves the list. It lapses after [Lifetime], read or not, so a call that never
  * arrived doesn't lock the row forever. Releasing it can't double an action: the
- * server applies each decision only from the state it expects.
+ * server applies each one only from the state it expects.
  */
-class ModerationHold(
+class RequestActionHold(
     val requestId: String,
     val updatedAt: String,
     private val since: TimeMark,

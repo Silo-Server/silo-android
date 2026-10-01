@@ -27,7 +27,8 @@ import org.siloserver.silo.network.ApiResult
  * Every page still refreshes from the server; this only decides the first frame.
  *
  * Main-thread confined, like the view models that read it. Profile-scoped:
- * [RequestsRepository.reset] clears it on sign-out and profile or server switches.
+ * [RequestsRepository.reset] clears it on sign-in, sign-out, and profile or
+ * server switches, and drops reads that answer after it.
  */
 class RequestDetailCache(
     /** Runs the shared prefetch queue; null disables prefetch (tests). */

@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.MediaRequest
-import org.siloserver.silo.model.request.ModerationHold
+import org.siloserver.silo.model.request.RequestActionHold
 import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMutationFailure
@@ -66,7 +66,7 @@ data class RequestApprovalsUiState(
  */
 class RequestApprovalsViewModel(
     private val repository: RequestsRepository,
-    private val holdLifetime: Duration = ModerationHold.Lifetime,
+    private val holdLifetime: Duration = RequestActionHold.Lifetime,
     private val timeSource: TimeSource = TimeSource.Monotonic,
     /** Loads on creation; the TV hub loads only once moderation is confirmed. */
     loadOnInit: Boolean = true,
@@ -75,7 +75,11 @@ class RequestApprovalsViewModel(
     private val _uiState = MutableStateFlow(RequestApprovalsUiState())
     val uiState: StateFlow<RequestApprovalsUiState> = _uiState.asStateFlow()
 
-    private val holds = mutableMapOf<String, ModerationHold>()
+    private val holds = mutableMapOf<String, RequestActionHold>()
+    private var loadGeneration = 0
+    /** Counts decisions; a read keeps out a request decided after it started. */
+    private var decisionCount = 0L
+    private val decidedAt = mutableMapOf<String, Long>()
 
     init {
         if (loadOnInit) load()
@@ -98,16 +102,23 @@ class RequestApprovalsViewModel(
         }
     }
 
+    /** Reads both queues; returns whether they read. A newer read, started meanwhile, wins. */
     suspend fun fetch(): Boolean {
+        val generation = ++loadGeneration
+        val startedAfter = decisionCount
         _uiState.update { it.copy(error = null) }
         val pending = viewModelScope.async {
             repository.adminRequests(status = RequestStatus.Pending, outcome = RequestOutcome.Active)
         }
         val broken = repository.adminRequests(outcome = RequestOutcome.Failed)
         val waiting = pending.await()
+        if (generation != loadGeneration) return false
         if (waiting is ApiResult.Success && broken is ApiResult.Success) {
-            val awaiting = waiting.data.sortedBy { it.createdAt.requestInstantKey() }
-            val failed = broken.data.sortedByDescending { it.updatedAt.requestInstantKey() }
+            // The server may have answered before a decision made while it ran.
+            fun undecided(request: MediaRequest): Boolean = (decidedAt[request.id] ?: Long.MIN_VALUE) <= startedAfter
+            decidedAt.values.removeAll { it <= startedAfter }
+            val awaiting = waiting.data.filter(::undecided).sortedBy { it.createdAt.requestInstantKey() }
+            val failed = broken.data.filter(::undecided).sortedByDescending { it.updatedAt.requestInstantKey() }
             val listed = awaiting + failed
             repository.cache.storeModerationRecords(listed)
             repository.prefetch(listed)
@@ -145,6 +156,7 @@ class RequestApprovalsViewModel(
             val result = repository.adminAction(request.id, action)
             when {
                 result is ApiResult.Success -> {
+                    recordDecision(request.id)
                     // Show the result on the row, then let the row leave.
                     _uiState.update {
                         it.copy(
@@ -192,7 +204,7 @@ class RequestApprovalsViewModel(
      * its own clock.
      */
     private fun hold(request: MediaRequest) {
-        val hold = ModerationHold(request, timeSource, holdLifetime)
+        val hold = RequestActionHold(request, timeSource, holdLifetime)
         holds[request.id] = hold
         _uiState.update { it.copy(heldIds = holds.keys.toSet()) }
         viewModelScope.launch {
@@ -210,10 +222,15 @@ class RequestApprovalsViewModel(
     private fun RequestApprovalsUiState.clearingUnconfirmedMessageIfSettled(): RequestApprovalsUiState =
         if (heldIds.isEmpty() && actionErrorMessage == RequestActionCopy.UnconfirmedModeration) copy(actionErrorMessage = null) else this
 
+    private fun recordDecision(id: String) {
+        decidedAt[id] = ++decisionCount
+    }
+
     private fun applyModeration(record: MediaRequest) {
         // This list's own action removes its row after the result shows.
         if (record.id in _uiState.value.phases) return
         val pendingNow = RequestDisplayState.of(record) == RequestDisplayState.Pending
+        if (!pendingNow) recordDecision(record.id)
         _uiState.update {
             it.copy(
                 awaitingApproval = it.awaitingApproval.filterNot { r -> r.id == record.id && !pendingNow },

@@ -10,6 +10,10 @@ import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,15 +25,31 @@ import kotlinx.coroutines.flow.update
  */
 data class RequestEvent(val record: MediaRequest, val sequence: Long)
 
+/**
+ * Profile-scoped request state: the user's own list, the mutation broadcasts,
+ * and [cache]. [reset] starts a new session; a read or mutation that began
+ * before it answers without writing anything back, so the previous profile's
+ * records never seed the next one's pages.
+ *
+ * Main-thread confined, like [RequestDetailCache].
+ */
 class RequestsRepository(
     private val api: RequestsApi,
     val cache: RequestDetailCache = RequestDetailCache(),
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) {
 
     private val _mine = MutableStateFlow<List<MediaRequest>>(emptyList())
     val mine: StateFlow<List<MediaRequest>> = _mine.asStateFlow()
 
     private var eventSequence = 0L
+
+    /** Bumped by [reset]: anything still running from the previous session drops its result. */
+    @kotlin.concurrent.Volatile
+    private var generation = 0
+
+    /** When [mine] last held a complete, unfiltered read; null until one lands in this session. */
+    private var mineReadAt: TimeMark? = null
 
     private val _lastUpdate = MutableStateFlow<RequestEvent?>(null)
     /** The most recent create or cancel of the signed-in user's own request. */
@@ -57,7 +77,7 @@ class RequestsRepository(
     ): ApiResult<RequestMediaPage> = api.search(query, mediaType, page)
 
     suspend fun detail(mediaType: String, tmdbId: Int): ApiResult<RequestMediaDetail> =
-        api.detail(mediaType, tmdbId).also { if (it is ApiResult.Success) cache.store(it.data) }
+        read({ api.detail(mediaType, tmdbId) }) { cache.store(it) }
 
     suspend fun get(id: String): ApiResult<MediaRequest> = api.get(id)
 
@@ -66,21 +86,40 @@ class RequestsRepository(
         outcome: String? = null,
         limit: Int? = null,
         offset: Int? = null,
-    ): ApiResult<Unit> = when (val result = api.mine(status, outcome, limit, offset)) {
-        is ApiResult.Success -> {
-            _mine.value = result.data.requests
-            if (status == null && outcome == null) cache.storeOwnRecords(result.data.requests)
-            ApiResult.Success(Unit)
+    ): ApiResult<Unit> {
+        val result = read({ api.mine(status, outcome, limit, offset) }) { response ->
+            _mine.value = response.requests
+            if (status == null && outcome == null) {
+                cache.storeOwnRecords(response.requests)
+                mineReadAt = timeSource.markNow()
+            } else {
+                mineReadAt = null
+            }
         }
-        is ApiResult.Error -> ApiResult.Error(result.code, result.error, result.message)
-        is ApiResult.NetworkError -> ApiResult.NetworkError(result.exception)
+        return when (result) {
+            is ApiResult.Success -> ApiResult.Success(Unit)
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+    }
+
+    /**
+     * [mine] as of no more than [maxAge] ago, reading only when it's older.
+     * This client's own creates and cancels patch [mine] as they land, so a
+     * recent read stays current for them; anything that must see another
+     * device's change reads with a zero [maxAge].
+     */
+    suspend fun ensureMine(maxAge: Duration = MineFreshness): ApiResult<Unit> {
+        val readAt = mineReadAt
+        if (readAt != null && readAt.elapsedNow() < maxAge) return ApiResult.Success(Unit)
+        return refreshMine()
     }
 
     suspend fun create(request: CreateMediaRequest): ApiResult<MediaRequest> =
-        api.create(request).also { if (it is ApiResult.Success) publish(it.data) }
+        mutate({ api.create(request) }, ::publish)
 
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
-        api.cancel(id).also { if (it is ApiResult.Success) publish(it.data) }
+        mutate({ api.cancel(id) }, ::publish)
 
     suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> = api.adminCapabilities()
 
@@ -89,14 +128,22 @@ class RequestsRepository(
         outcome: String? = null,
         mediaType: String? = null,
         tmdbId: Int? = null,
-    ): ApiResult<List<MediaRequest>> = when (val result = api.adminRequests(status, outcome, mediaType, tmdbId)) {
+    ): ApiResult<List<MediaRequest>> = when (val result = read({ api.adminRequests(status, outcome, mediaType, tmdbId) })) {
         is ApiResult.Success -> ApiResult.Success(result.data.requests)
         is ApiResult.Error -> result
         is ApiResult.NetworkError -> result
     }
 
+    /** How many requests match, up to one page, and whether more follow. */
+    suspend fun adminRequestCount(status: String? = null, outcome: String? = null): ApiResult<AdminRequestCount> =
+        when (val result = read({ api.adminRequestsFirstPage(status, outcome) })) {
+            is ApiResult.Success -> ApiResult.Success(AdminRequestCount(result.data.requests.size, result.data.page.hasMore))
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
+
     suspend fun adminAction(id: String, action: AdminRequestAction, reason: String? = null): ApiResult<MediaRequest> =
-        api.adminAction(id, action, reason).also { if (it is ApiResult.Success) publishModeration(it.data) }
+        mutate({ api.adminAction(id, action, reason) }, ::publishModeration)
 
     /** Warms the first rows' details so opening them lands on a finished page. */
     fun prefetch(records: List<MediaRequest>) {
@@ -104,10 +151,37 @@ class RequestsRepository(
     }
 
     fun reset() {
+        generation++
+        mineReadAt = null
         _mine.value = emptyList()
         _lastUpdate.value = null
         _lastModeration.value = null
         cache.clear()
+    }
+
+    /**
+     * A read for the current session. When a [reset] lands while it runs, the
+     * answer belongs to the previous profile or server: nothing is stored and
+     * the caller gets a failure instead of the stale data.
+     */
+    private suspend fun <T> read(call: suspend () -> ApiResult<T>, store: (T) -> Unit = {}): ApiResult<T> {
+        val session = generation
+        val result = call()
+        if (session != generation) return SessionChanged
+        if (result is ApiResult.Success) store(result.data)
+        return result
+    }
+
+    /**
+     * A mutation for the current session. The server acted either way, so the
+     * caller gets the real result, but one that finishes after a [reset] isn't
+     * broadcast into the next session.
+     */
+    private suspend fun <T> mutate(call: suspend () -> ApiResult<T>, publish: (T) -> Unit): ApiResult<T> {
+        val session = generation
+        val result = call()
+        if (session == generation && result is ApiResult.Success) publish(result.data)
+        return result
     }
 
     private fun publish(request: MediaRequest) {
@@ -129,4 +203,14 @@ class RequestsRepository(
             if (replaced.any { it.id == request.id }) replaced else replaced + request
         }
     }
+
+    companion object {
+        /** How long a complete read of [mine] answers for a page that only needs one title's record. */
+        val MineFreshness: Duration = 30.seconds
+
+        private val SessionChanged = ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
+    }
 }
+
+/** A count of admin requests, read one page deep: [hasMore] means there are more than [count]. */
+data class AdminRequestCount(val count: Int, val hasMore: Boolean)

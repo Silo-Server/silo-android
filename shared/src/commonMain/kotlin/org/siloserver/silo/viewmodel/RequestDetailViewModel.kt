@@ -18,7 +18,7 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
-import org.siloserver.silo.model.request.ModerationHold
+import org.siloserver.silo.model.request.RequestActionHold
 import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestAttention
 import org.siloserver.silo.model.request.RequestDisplayState
@@ -68,10 +68,10 @@ data class RequestDetailUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val isSubmitting: Boolean = false,
-    /** A create was sent but its outcome is unknown; the action stays held until a fresh read. */
+    /** A create was sent but its outcome is unknown; the action stays held until a read shows a request, or the hold lapses. */
     val isSubmissionUnconfirmed: Boolean = false,
     val isCancelling: Boolean = false,
-    /** A cancel was sent without a usable answer; Cancel stays hidden until a fresh read of the user's requests. */
+    /** A cancel was sent without a usable answer; Cancel stays hidden until the request changes, or the hold lapses. */
     val isCancelUnconfirmed: Boolean = false,
     val isModerating: Boolean = false,
     /** A decision was sent without a usable answer; the buttons stay hidden until it settles. */
@@ -235,7 +235,7 @@ class RequestDetailViewModel(
     private val mediaType: String,
     private val tmdbId: Int,
     private val featureStore: RequestsFeatureStore? = null,
-    private val holdLifetime: Duration = ModerationHold.Lifetime,
+    private val holdLifetime: Duration = RequestActionHold.Lifetime,
     private val timeSource: TimeSource = TimeSource.Monotonic,
 ) : ViewModel() {
 
@@ -247,15 +247,20 @@ class RequestDetailViewModel(
 
     /** The one request this page decides on, once chosen, so a refresh never moves the buttons to another requester. */
     private var selectedModerationId: String?
-    private var moderationHold: ModerationHold? = null
+    private var moderationHold: RequestActionHold? = null
+    private var cancelHold: RequestActionHold? = null
+    /** The lapse timer of an unconfirmed create; null when none is held. */
+    private var submissionHold: Job? = null
     private var reloadJob: Job? = null
 
     init {
         // First frame from what the app already knows: the finished page when
         // this title was read before, the tapped card or record otherwise, and
         // the status from the user's own records. load() refreshes all of it.
-        val pinned = cache.pinnedModerationRecord(key)
-        val moderation = pinned ?: cache.moderationRecord(key)
+        // Admin records seed the page only for a user who can still act on them.
+        val moderates = featureStore?.canModerate?.value == true
+        val pinned = cache.pinnedModerationRecord(key)?.takeIf { moderates }
+        val moderation = pinned ?: cache.moderationRecord(key)?.takeIf { moderates }
         val detail = cache.firstFrameDetail(key)
         _uiState = MutableStateFlow(
             RequestDetailUiState(
@@ -277,7 +282,9 @@ class RequestDetailViewModel(
             repository.lastUpdate.drop(1).filterNotNull().collect { event ->
                 val record = event.record
                 val state = _uiState.value
-                if (record.mediaType != mediaType || record.tmdbId != tmdbId || state.isSubmitting || state.isCancelling) return@collect
+                if (record.mediaType != mediaType || record.tmdbId != tmdbId) return@collect
+                // This page's own action re-reads when it finishes.
+                if (state.isSubmitting || state.isCancelling || state.isModerating) return@collect
                 reloadJob?.cancel()
                 reloadJob = viewModelScope.launch { fetch() }
             }
@@ -288,7 +295,12 @@ class RequestDetailViewModel(
         viewModelScope.launch { fetch() }
     }
 
-    private suspend fun fetch() {
+    /**
+     * Reads the title, then the user's and the admin's records for it. [ownMaxAge]
+     * lets a recent read of the user's requests stand in; settling an uncertain
+     * action passes zero so it sees the server's latest.
+     */
+    private suspend fun fetch(ownMaxAge: Duration = RequestsRepository.MineFreshness) {
         _uiState.update { it.copy(isLoading = it.detail == null, error = null) }
         when (val fresh = repository.detail(mediaType, tmdbId)) {
             is ApiResult.Success -> {
@@ -296,10 +308,21 @@ class RequestDetailViewModel(
                 // Supporting reads run side by side after the title; each keeps
                 // its previous value on failure, so a slow list never blocks the page.
                 val moderationLookup = viewModelScope.async { loadModerationRecord() }
-                val own = loadOwnRecord()
+                val own = loadOwnRecords(ownMaxAge)
                 val moderation = moderationLookup.await()
                 _uiState.update { state ->
-                    var next = state.copy(record = own)
+                    var next = state
+                    if (own != null) {
+                        next = next.copy(record = RequestDetailCache.currentRecord(own))
+                        // A timed-out cancel can still land after this read;
+                        // only a changed or missing request settles it.
+                        cancelHold?.let { hold ->
+                            if (hold.isSettled(own.firstOrNull { it.id == hold.requestId })) {
+                                cancelHold = null
+                                next = next.releasingCancelHold()
+                            }
+                        }
+                    }
                     if (moderation != null) {
                         next = next.copy(moderationRecord = moderation.record)
                         // An unchanged request doesn't show what a lost call did.
@@ -308,8 +331,14 @@ class RequestDetailViewModel(
                             next = next.releasingModerationHold()
                         }
                     }
-                    // The server's answer now decides the action; release the hold.
-                    if (next.isSubmissionUnconfirmed) next = next.copy(isSubmissionUnconfirmed = false, actionErrorMessage = null)
+                    // A create still being processed reads as no request at all:
+                    // the hold ends only when the page no longer offers Request.
+                    val released = next.releasingSubmissionHold()
+                    if (next.isSubmissionUnconfirmed && released.primaryAction != RequestPrimaryAction.Request) {
+                        submissionHold?.cancel()
+                        submissionHold = null
+                        next = released
+                    }
                     next.copy(isLoading = false)
                 }
             }
@@ -322,17 +351,14 @@ class RequestDetailViewModel(
         }
     }
 
-    /** The user's current request for this title; a failed read keeps what the page has. */
-    private suspend fun loadOwnRecord(): MediaRequest? {
-        if (repository.refreshMine() !is ApiResult.Success) return _uiState.value.record
-        // The list now shows what the held cancel did.
-        _uiState.update {
-            if (!it.isCancelUnconfirmed) it else it.copy(
-                isCancelUnconfirmed = false,
-                actionErrorMessage = it.actionErrorMessage.takeUnless { m -> m == RequestActionCopy.UnconfirmedCancel },
-            )
-        }
-        return RequestDetailCache.currentRecord(repository.mine.value.filter { it.mediaType == mediaType && it.tmdbId == tmdbId })
+    /**
+     * The user's requests for this title, from a read of their list no older
+     * than [maxAge]; null when the read fails, so the page keeps what it has.
+     * The list has no per-title filter, so a recent read stands in for a new one.
+     */
+    private suspend fun loadOwnRecords(maxAge: Duration): List<MediaRequest>? {
+        if (repository.ensureMine(maxAge) !is ApiResult.Success) return null
+        return repository.mine.value.filter { it.mediaType == mediaType && it.tmdbId == tmdbId }
     }
 
     private class ModerationLookup(val record: MediaRequest?)
@@ -374,13 +400,13 @@ class RequestDetailViewModel(
                     _uiState.update { it.copy(isSubmitting = false) }
                 }
                 RequestMutationFailure.isUncertain(result) -> {
-                    // Never resend: hold the action and let a fresh read show
-                    // whether the server created the request.
-                    _uiState.update { it.copy(isSubmitting = false, isSubmissionUnconfirmed = true) }
-                    fetch()
-                    if (_uiState.value.isSubmissionUnconfirmed) {
-                        _uiState.update { it.copy(actionErrorMessage = RequestActionCopy.UnconfirmedSubmit) }
+                    // Never resend: hold the action until a read shows the
+                    // request, or the hold lapses.
+                    holdSubmission()
+                    _uiState.update {
+                        it.copy(isSubmitting = false, isSubmissionUnconfirmed = true, actionErrorMessage = RequestActionCopy.UnconfirmedSubmit)
                     }
+                    fetch(ownMaxAge = Duration.ZERO)
                 }
                 else -> _uiState.update {
                     it.copy(isSubmitting = false, actionErrorMessage = RequestActionCopy.failure(result, "Failed to submit request"))
@@ -402,11 +428,12 @@ class RequestDetailViewModel(
                     _uiState.update { it.copy(isCancelling = false) }
                 }
                 RequestMutationFailure.isUncertain(result) -> {
-                    // Never resend: hold Cancel until a fresh read shows the result.
+                    // Never resend: hold Cancel until the request changes, or the hold lapses.
+                    holdCancel(record)
                     _uiState.update {
                         it.copy(isCancelling = false, isCancelUnconfirmed = true, actionErrorMessage = RequestActionCopy.UnconfirmedCancel)
                     }
-                    fetch()
+                    fetch(ownMaxAge = Duration.ZERO)
                 }
                 else -> _uiState.update {
                     it.copy(isCancelling = false, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
@@ -436,7 +463,7 @@ class RequestDetailViewModel(
                     _uiState.update {
                         it.copy(isModerating = false, isModerationUnconfirmed = true, actionErrorMessage = RequestActionCopy.UnconfirmedModeration)
                     }
-                    fetch()
+                    fetch(ownMaxAge = Duration.ZERO)
                 }
                 else -> _uiState.update {
                     it.copy(isModerating = false, actionErrorMessage = RequestActionCopy.failure(result, "Something went wrong"))
@@ -447,20 +474,52 @@ class RequestDetailViewModel(
 
     /** Ends the hold when its lifetime runs out even if no read settles it; a newer hold keeps its own clock. */
     private fun holdModeration(request: MediaRequest) {
-        val hold = ModerationHold(request, timeSource, holdLifetime)
+        val hold = RequestActionHold(request, timeSource, holdLifetime)
         moderationHold = hold
         viewModelScope.launch {
             delay(holdLifetime)
             if (moderationHold !== hold) return@launch
             moderationHold = null
             _uiState.update { it.releasingModerationHold() }
-            fetch()
+            fetch(ownMaxAge = Duration.ZERO)
+        }
+    }
+
+    private fun holdCancel(request: MediaRequest) {
+        val hold = RequestActionHold(request, timeSource, holdLifetime)
+        cancelHold = hold
+        viewModelScope.launch {
+            delay(holdLifetime)
+            if (cancelHold !== hold) return@launch
+            cancelHold = null
+            _uiState.update { it.releasingCancelHold() }
+            fetch(ownMaxAge = Duration.ZERO)
+        }
+    }
+
+    private fun holdSubmission() {
+        submissionHold?.cancel()
+        submissionHold = viewModelScope.launch {
+            delay(holdLifetime)
+            submissionHold = null
+            _uiState.update { it.releasingSubmissionHold() }
+            fetch(ownMaxAge = Duration.ZERO)
         }
     }
 
     private fun RequestDetailUiState.releasingModerationHold(): RequestDetailUiState = copy(
         isModerationUnconfirmed = false,
         actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionCopy.UnconfirmedModeration },
+    )
+
+    private fun RequestDetailUiState.releasingCancelHold(): RequestDetailUiState = copy(
+        isCancelUnconfirmed = false,
+        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionCopy.UnconfirmedCancel },
+    )
+
+    private fun RequestDetailUiState.releasingSubmissionHold(): RequestDetailUiState = copy(
+        isSubmissionUnconfirmed = false,
+        actionErrorMessage = actionErrorMessage.takeUnless { it == RequestActionCopy.UnconfirmedSubmit },
     )
 
     private fun RequestMediaDetail.toCreateMediaRequest(): CreateMediaRequest = CreateMediaRequest(

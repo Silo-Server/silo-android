@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.snapshotFlow
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.tv.ui.focus.TvReturnTarget
 import org.siloserver.silo.tv.ui.focus.TvReturnTargetSaver
 import org.siloserver.silo.tv.ui.focus.TvReturnRelocation
@@ -86,7 +87,6 @@ import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestCard
-import org.siloserver.silo.model.request.libraryItemToOpen
 import org.siloserver.silo.tv.ui.screens.requests.filterTvRequestResults
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.ElevatedSurface
@@ -802,7 +802,7 @@ private fun TvRequestSearchSection(
     onOpenRequestDetail: (mediaType: String, tmdbId: Int) -> Unit,
     onOpenLibraryItem: (contentId: String) -> Unit,
 ) {
-    val requestsRepository: org.siloserver.silo.repository.RequestsRepository = org.koin.compose.koinInject()
+    val router = rememberRequestRouter(org.koin.compose.koinInject(), onOpenLibraryItem, onOpenRequestDetail)
     if (!requestsEnabled || query.trim().length < 2 || !shouldShow) return
 
     // This section is a full-span footer item inside TvCatalogGrid, so the
@@ -847,10 +847,7 @@ private fun TvRequestSearchSection(
                             result = item,
                             onClick = {
                                 onItemClicked(item, index)
-                                // Seeded so the request page is complete on its first frame.
-                                requestsRepository.cache.seed(item)
-                                item.libraryItemToOpen()?.let(onOpenLibraryItem)
-                                    ?: onOpenRequestDetail(item.mediaType, item.tmdbId)
+                                router.openResult(item)
                             },
                             // The restore target wins the slot when it is this
                             // card: index zero can be both, and two requesters

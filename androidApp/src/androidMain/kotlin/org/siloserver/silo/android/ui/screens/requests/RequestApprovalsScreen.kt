@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.android.ui.components.EmptyStateView
@@ -30,6 +31,7 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.common.requests.RequestColors
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.viewmodel.RequestApprovalsViewModel
@@ -48,7 +50,7 @@ fun RequestApprovalsScreen(
     viewModel: RequestApprovalsViewModel = koinViewModel(key = "approvals") { parametersOf(true) },
 ) {
     val state by viewModel.uiState.collectAsState()
-    val router = rememberRequestRouter(onLibraryItemClick, onRequestDetailClick)
+    val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
     var pendingDecline by remember { mutableStateOf<MediaRequest?>(null) }
     val view = LocalView.current
 

@@ -38,7 +38,6 @@ import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
 import org.siloserver.silo.model.feature.RequestsFeatureStore
-import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.koin.compose.koinInject
@@ -57,7 +56,7 @@ import org.koin.compose.koinInject
 fun SearchScreen(
     onItemClick: (String) -> Unit,
     onPersonClick: (Long) -> Unit,
-    onRequestMediaClick: (RequestMediaResult) -> Unit,
+    onRequestMediaClick: (mediaType: String, tmdbId: Int) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
     onBackClick: (() -> Unit)? = null,
     viewModel: SearchViewModel,

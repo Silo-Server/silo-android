@@ -6,6 +6,7 @@ import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.MyRequestsBucket
 import org.siloserver.silo.model.request.RequestActionCopy
+import org.siloserver.silo.model.request.RequestActionHold
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
@@ -17,6 +18,8 @@ import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.RequestsRepository
+import kotlin.time.Duration
+import kotlin.time.TimeSource
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -38,6 +41,8 @@ data class RequestsUiState(
     val myRequests: List<MediaRequest> = emptyList(),
     /** Requests waiting on this admin's decision; zero for everyone else. */
     val pendingApprovals: Int = 0,
+    /** More requests wait than [pendingApprovals]: the count reads one page. */
+    val morePendingApprovals: Boolean = false,
     val error: String? = null,
     val query: String = "",
     val searchResults: List<RequestMediaResult> = emptyList(),
@@ -151,11 +156,13 @@ class RequestsViewModel(
     /** The hub's approvals card is a nudge, not a list: a failed read hides it. */
     private suspend fun loadPendingApprovals() {
         if (!countsPendingApprovals || featureStore?.canModerate?.value != true) {
-            _uiState.update { it.copy(pendingApprovals = 0) }
+            _uiState.update { it.copy(pendingApprovals = 0, morePendingApprovals = false) }
             return
         }
-        val pending = repository.adminRequests(status = RequestStatus.Pending, outcome = RequestOutcome.Active)
-        _uiState.update { it.copy(pendingApprovals = (pending as? ApiResult.Success)?.data?.size ?: 0) }
+        // One page answers the card; it doesn't need the whole queue.
+        val result = repository.adminRequestCount(status = RequestStatus.Pending, outcome = RequestOutcome.Active)
+        val pending = (result as? ApiResult.Success)?.data
+        _uiState.update { it.copy(pendingApprovals = pending?.count ?: 0, morePendingApprovals = pending?.hasMore == true) }
     }
 
     /** Debounced TMDB search (300 ms), as the Apple hub does. */
@@ -370,7 +377,7 @@ data class MyRequestsUiState(
     val buckets: List<Pair<MyRequestsBucket, List<MediaRequest>>> = emptyList(),
     /** The request being cancelled; its row dims and takes no taps. */
     val cancellingId: String? = null,
-    /** Requests whose cancel was sent without a usable answer; held until a fresh read. */
+    /** Requests whose cancel was sent without a usable answer; held until the request changes, or the hold lapses. */
     val unconfirmedCancelIds: Set<String> = emptySet(),
     /** Inline message for a failed cancel; cleared on the next action. */
     val actionErrorMessage: String? = null,
@@ -388,9 +395,12 @@ class MyRequestsViewModel(
     private val repository: RequestsRepository,
     /** Loads on creation; the TV page only uses this model to cancel. */
     loadOnInit: Boolean = true,
+    private val holdLifetime: Duration = RequestActionHold.Lifetime,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
 ) : ViewModel() {
 
     private var loadGeneration = 0
+    private val cancelHolds = mutableMapOf<String, RequestActionHold>()
     private val _uiState = MutableStateFlow(MyRequestsUiState())
     val uiState: StateFlow<MyRequestsUiState> = _uiState.asStateFlow()
     private var reloadJob: Job? = null
@@ -430,17 +440,14 @@ class MyRequestsViewModel(
             is ApiResult.Success -> {
                 val buckets = MyRequestsBucket.bucket(repository.mine.value)
                 _uiState.update {
-                    // The server's list now shows each held cancel's result.
-                    val releasesHolds = it.unconfirmedCancelIds.isNotEmpty()
                     it.copy(
                         isLoading = false,
                         hasLoaded = true,
                         buckets = buckets,
                         error = null,
-                        unconfirmedCancelIds = emptySet(),
-                        actionErrorMessage = if (releasesHolds) null else it.actionErrorMessage,
                     )
                 }
+                settleCancelHolds()
                 repository.prefetch(buckets.flatMap { it.second })
                 true
             }
@@ -473,21 +480,58 @@ class MyRequestsViewModel(
                     if (refresh == null) fetch()
                 }
                 RequestMutationFailure.isUncertain(result) -> {
-                    // Never resend: hold Cancel until a fresh read shows the result.
-                    _uiState.update { it.copy(cancellingId = null, unconfirmedCancelIds = it.unconfirmedCancelIds + record.id) }
-                    if (refresh != null) {
-                        if (refresh()) _uiState.update { it.copy(unconfirmedCancelIds = emptySet()) }
-                    } else {
-                        fetch()
+                    // Never resend: hold Cancel until the request changes, or the hold lapses.
+                    val reread: suspend () -> Unit = {
+                        if (refresh == null) {
+                            fetch()
+                        } else if (refresh()) {
+                            settleCancelHolds()
+                        }
                     }
-                    if (_uiState.value.unconfirmedCancelIds.isNotEmpty()) {
-                        _uiState.update { it.copy(actionErrorMessage = RequestActionCopy.UnconfirmedCancel) }
-                    }
+                    holdCancel(record, reread)
+                    _uiState.update { it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.UnconfirmedCancel) }
+                    reread()
                 }
                 else -> _uiState.update {
                     it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
                 }
             }
+        }
+    }
+
+    /**
+     * Holds Cancel on [record], and ends the hold when its lifetime runs out
+     * even if no read settles it. A newer hold for the same request keeps its own clock.
+     */
+    private fun holdCancel(record: MediaRequest, reread: suspend () -> Unit) {
+        val hold = RequestActionHold(record, timeSource, holdLifetime)
+        cancelHolds[record.id] = hold
+        _uiState.update { it.copy(unconfirmedCancelIds = cancelHolds.keys.toSet()) }
+        viewModelScope.launch {
+            delay(holdLifetime)
+            if (cancelHolds[record.id] !== hold) return@launch
+            cancelHolds.remove(record.id)
+            publishCancelHolds()
+            reread()
+        }
+    }
+
+    /** Releases the holds the last read of the user's requests settles; an unchanged request keeps its hold. */
+    private fun settleCancelHolds() {
+        if (cancelHolds.isEmpty()) return
+        val records = repository.mine.value
+        cancelHolds.entries.removeAll { (id, hold) -> hold.isSettled(records.firstOrNull { it.id == id }) }
+        publishCancelHolds()
+    }
+
+    private fun publishCancelHolds() {
+        _uiState.update {
+            it.copy(
+                unconfirmedCancelIds = cancelHolds.keys.toSet(),
+                actionErrorMessage = it.actionErrorMessage.takeUnless { m ->
+                    cancelHolds.isEmpty() && m == RequestActionCopy.UnconfirmedCancel
+                },
+            )
         }
     }
 }

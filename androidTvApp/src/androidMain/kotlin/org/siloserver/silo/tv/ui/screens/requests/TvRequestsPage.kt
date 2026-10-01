@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
 import androidx.compose.runtime.rememberCoroutineScope
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.viewmodel.RequestApprovalsUiState
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import androidx.compose.ui.text.font.FontWeight
@@ -74,13 +75,10 @@ import org.siloserver.silo.model.request.RequestAttention
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
-import org.siloserver.silo.model.request.libraryItemToOpen
 import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
-import org.siloserver.silo.repository.cacheKey
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFocusMarquee
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
@@ -176,40 +174,39 @@ fun TvRequestsPage(
     }
     val actionMessage = approvalsState.actionErrorMessage ?: transientMessage
 
+    val router = rememberRequestRouter(repository, onOpenLibraryItem, onOpenRequestDetail)
     fun open(item: TvRequestItem) {
         when (item) {
-            is TvRequestItem.Record -> {
-                repository.cache.unpinModeration(item.record.cacheKey())
-                item.record.libraryItemToOpen()?.let(onOpenLibraryItem)
-                    ?: onOpenRequestDetail(item.record.mediaType, item.record.tmdbId)
-            }
-            is TvRequestItem.Approval -> {
-                repository.cache.pinModeration(item.record)
-                onOpenRequestDetail(item.record.mediaType, item.record.tmdbId)
-            }
-            is TvRequestItem.Result -> {
-                repository.cache.seed(item.result)
-                repository.cache.unpinModeration(RequestDetailCache.Key(item.result.mediaType, item.result.tmdbId))
-                item.result.libraryItemToOpen()?.let(onOpenLibraryItem)
-                    ?: onOpenRequestDetail(item.result.mediaType, item.result.tmdbId)
-            }
+            is TvRequestItem.Record -> router.openRecord(item.record)
+            is TvRequestItem.Approval -> router.openModerationRecord(item.record)
+            is TvRequestItem.Result -> router.openResult(item.result)
         }
     }
 
-    actionTarget?.let { item ->
+    fun actionsFor(item: TvRequestItem): List<TvRequestAction> =
+        item.actions(canCancel = mineState::canCancel, canAct = approvalsState::canAct)
+
+    val target = actionTarget
+    val targetActions = target?.let(::actionsFor).orEmpty()
+    // A card's actions can lapse while its dialog is up (an action on it
+    // started elsewhere); the dialog closes rather than offer nothing.
+    LaunchedEffect(target, targetActions.isEmpty()) {
+        if (target != null && targetActions.isEmpty()) actionTarget = null
+    }
+    if (target != null && targetActions.isNotEmpty()) {
         TvRequestActionDialog(
-            item = item,
-            canCancel = (item as? TvRequestItem.Record)?.record?.let { mineState.canCancel(it) } == true,
-            canAct = (item as? TvRequestItem.Approval)?.record?.let { approvalsState.canAct(it) } == true,
+            item = target,
+            actions = targetActions,
             onDismiss = { actionTarget = null },
-            onCancel = { record ->
+            onAction = { action, record ->
                 actionTarget = null
-                // The hub's list shows the row; it settles an uncertain cancel.
-                mine.cancel(record, refresh = { hub.fetch() })
-            },
-            onModerate = { action, record ->
-                actionTarget = null
-                approvals.perform(action, record)
+                when (action) {
+                    // The hub's list shows the row; it settles an uncertain cancel.
+                    TvRequestAction.Cancel -> mine.cancel(record, refresh = { hub.fetch() })
+                    TvRequestAction.Approve -> approvals.perform(AdminRequestAction.Approve, record)
+                    TvRequestAction.Decline -> approvals.perform(AdminRequestAction.Decline, record)
+                    TvRequestAction.Retry -> approvals.perform(AdminRequestAction.Retry, record)
+                }
             },
         )
     }
@@ -232,7 +229,8 @@ fun TvRequestsPage(
                 rows = rows,
                 focusRequest = focusRequest,
                 onOpen = ::open,
-                onLongPress = { actionTarget = it },
+                // A card with nothing to offer ignores the long-press.
+                onLongPress = { item -> if (actionsFor(item).isNotEmpty()) actionTarget = item },
                 onInitialContentFocus = onInitialContentFocus,
                 onFocusHandoffFailed = onFocusHandoffFailed,
             )
@@ -730,40 +728,46 @@ private fun TvRequestsLoadingView() {
 
 // ── Long-press actions ───────────────────────────────────────
 
+internal enum class TvRequestAction(val label: String) {
+    Cancel("Cancel Request"),
+    Approve("Approve"),
+    Decline("Decline"),
+    Retry("Retry"),
+}
+
+/** The long-press actions a card offers right now; empty when it has none. */
+internal fun TvRequestItem.actions(
+    canCancel: (MediaRequest) -> Boolean,
+    canAct: (MediaRequest) -> Boolean,
+): List<TvRequestAction> = when (this) {
+    is TvRequestItem.Record -> if (canCancel(record)) listOf(TvRequestAction.Cancel) else emptyList()
+    is TvRequestItem.Approval -> if (!canAct(record)) {
+        emptyList()
+    } else {
+        when (val display = RequestDisplayState.of(record)) {
+            RequestDisplayState.Pending -> listOf(TvRequestAction.Approve, TvRequestAction.Decline)
+            is RequestDisplayState.NeedsAttention ->
+                if (display.attention == RequestAttention.Failed) listOf(TvRequestAction.Retry) else emptyList()
+            else -> emptyList()
+        }
+    }
+    is TvRequestItem.Result -> emptyList()
+}
+
+/** [actions] is non-empty and [item] is a request card; the caller decides both. */
 @Composable
 private fun TvRequestActionDialog(
     item: TvRequestItem,
-    canCancel: Boolean,
-    canAct: Boolean,
+    actions: List<TvRequestAction>,
     onDismiss: () -> Unit,
-    onCancel: (MediaRequest) -> Unit,
-    onModerate: (AdminRequestAction, MediaRequest) -> Unit,
+    onAction: (TvRequestAction, MediaRequest) -> Unit,
 ) {
     val record = when (item) {
         is TvRequestItem.Record -> item.record
         is TvRequestItem.Approval -> item.record
-        is TvRequestItem.Result -> null
-    } ?: return onDismiss()
-    var confirmingDecline by remember(item) { mutableStateOf(false) }
-    val actions: List<Pair<String, () -> Unit>> = buildList {
-        when (item) {
-            is TvRequestItem.Record -> if (canCancel) add("Cancel Request" to { onCancel(record) })
-            is TvRequestItem.Approval -> if (canAct) {
-                when (val display = RequestDisplayState.of(record)) {
-                    RequestDisplayState.Pending -> {
-                        add("Approve" to { onModerate(AdminRequestAction.Approve, record) })
-                        add("Decline" to { confirmingDecline = true })
-                    }
-                    is RequestDisplayState.NeedsAttention -> if (display.attention == RequestAttention.Failed) {
-                        add("Retry" to { onModerate(AdminRequestAction.Retry, record) })
-                    }
-                    else -> Unit
-                }
-            }
-            is TvRequestItem.Result -> Unit
-        }
+        is TvRequestItem.Result -> return
     }
-    if (actions.isEmpty()) return onDismiss()
+    var confirmingDecline by remember(item) { mutableStateOf(false) }
     if (confirmingDecline) {
         AlertDialog(
             onDismissRequest = onDismiss,
@@ -781,7 +785,7 @@ private fun TvRequestActionDialog(
                 // Keep first, so a stray press doesn't decide on someone's request.
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Button(onClick = onDismiss) { Text("Keep") }
-                    Button(onClick = { onModerate(AdminRequestAction.Decline, record) }) { Text("Decline") }
+                    Button(onClick = { onAction(TvRequestAction.Decline, record) }) { Text("Decline") }
                 }
             },
         )
@@ -803,7 +807,14 @@ private fun TvRequestActionDialog(
             // Close first, so a stray press doesn't send a non-retryable action.
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = onDismiss) { Text("Close") }
-                actions.forEach { (label, action) -> Button(onClick = action) { Text(label) } }
+                actions.forEach { action ->
+                    Button(
+                        onClick = {
+                            // Decline asks first.
+                            if (action == TvRequestAction.Decline) confirmingDecline = true else onAction(action, record)
+                        },
+                    ) { Text(action.label) }
+                }
             }
         },
     )

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.MediaRequest
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.background
@@ -72,7 +73,7 @@ fun MyRequestsScreen(
     val state by viewModel.uiState.collectAsState()
     val canModerate by featureStore.canModerate.collectAsState()
     val approvalsState by approvals.uiState.collectAsState()
-    val router = rememberRequestRouter(onLibraryItemClick, onRequestDetailClick)
+    val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
     var filter by remember { mutableStateOf<MyRequestsBucket?>(null) }
 
     // For the approvals card; a failed read just hides it.

@@ -3,6 +3,7 @@ package org.siloserver.silo.model.feature
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.AdminRequestCapabilities
@@ -10,11 +11,14 @@ import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaPage
+import org.siloserver.silo.model.request.RequestMediaResult
+import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestsDiscoverResponse
 import org.siloserver.silo.model.request.RequestsFeatureStatus
 import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
+import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 
 class RequestsFeatureStoreTest {
@@ -82,18 +86,22 @@ class RequestsFeatureStoreTest {
 
     @Test
     fun resetHidesRequestsBeforeNextProbe() = runTest {
-        val store = RequestsFeatureStore(
-            RequestsRepository(
-                FakeRequestsApi(
-                    ApiResult.Success(available()),
-                ),
+        val repository = RequestsRepository(
+            FakeRequestsApi(
+                ApiResult.Success(available()),
             ),
         )
+        val store = RequestsFeatureStore(repository)
+        val seen = RequestMediaResult(mediaType = RequestMediaType.Movie, tmdbId = 7, title = "Seen")
+        repository.cache.seed(seen)
 
         store.refresh()
         store.reset()
 
         assertFalse(store.isEnabled.value)
+        // Sign-out and server or profile switches all reset here, so the
+        // previous session's request pages go with it.
+        assertNull(repository.cache.firstFrameDetail(RequestDetailCache.Key(RequestMediaType.Movie, 7)))
     }
 }
 

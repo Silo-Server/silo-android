@@ -24,11 +24,10 @@ import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.requests.RequestMediaCard
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
-import org.siloserver.silo.model.request.libraryItemToOpen
-import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 
 @Composable
@@ -36,13 +35,13 @@ fun RequestSearchSection(
     query: String,
     selectedMediaType: MobileSearchMediaType,
     requestsEnabled: Boolean,
-    onRequestMediaClick: (RequestMediaResult) -> Unit,
+    onRequestMediaClick: (mediaType: String, tmdbId: Int) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val repository: RequestsRepository = koinInject()
+    val router = rememberRequestRouter(koinInject(), onRequestLibraryItemClick, onRequestMediaClick)
     val trimmedQuery = query.trim()
     val requestMediaType = selectedMediaType.toRequestMediaType()
     val visibleResults = state.results.filter { result ->
@@ -96,11 +95,7 @@ fun RequestSearchSection(
                     ) { item ->
                         RequestMediaCard(
                             item = item,
-                            onClick = {
-                                // Seeded so the request page is complete on its first frame.
-                                repository.cache.seed(item)
-                                item.libraryItemToOpen()?.let(onRequestLibraryItemClick) ?: onRequestMediaClick(item)
-                            },
+                            onClick = { router.openResult(item) },
                         )
                     }
                 }

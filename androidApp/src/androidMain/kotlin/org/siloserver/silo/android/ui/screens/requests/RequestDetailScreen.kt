@@ -69,7 +69,9 @@ import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.util.rememberDominantColor
 import org.siloserver.silo.common.requests.RequestColors
+import org.siloserver.silo.common.requests.RequestRouter
 import org.siloserver.silo.common.requests.RequestRowCopy
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -107,7 +109,7 @@ fun RequestDetailScreen(
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val router = rememberRequestRouter(onLibraryItemClick, onRequestDetailClick)
+    val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
     val scroll = remember { DetailScrollState() }
     var confirmingDecline by remember { mutableStateOf(false) }
     val view = LocalView.current
