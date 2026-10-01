@@ -63,6 +63,12 @@ class SiloAuthConfig {
     var deviceMetadataProvider: DeviceMetadataProvider? = null
     var diagnosticsObserver: NetworkDiagnosticsObserver? = null
     var cleartextOriginConsent: CleartextOriginConsent? = null
+
+    /**
+     * Receives stale-profile refusals the v2 error decoder sees on this
+     * client. Null leaves them as ordinary errors.
+     */
+    var accessChangeSignals: AccessChangeSignals? = null
 }
 
 /**
@@ -86,6 +92,7 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
     val deviceMetadataProvider = pluginConfig.deviceMetadataProvider
     val diagnosticsObserver = pluginConfig.diagnosticsObserver
     val cleartextOriginConsent = pluginConfig.cleartextOriginConsent
+    pluginConfig.accessChangeSignals?.let { client.attributes.put(AccessChangeSignalsKey, it) }
 
     val refreshMutex = Mutex()
 

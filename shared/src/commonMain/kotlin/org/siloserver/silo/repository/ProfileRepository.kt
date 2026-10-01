@@ -10,7 +10,9 @@ import org.siloserver.silo.network.DefaultIdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.IdentityTransitionKind
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.StaleProfileReport
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.network.isSameHttpOrigin
 import org.siloserver.silo.network.api.ProfileApi
 import org.siloserver.silo.network.map
 
@@ -235,6 +237,59 @@ open class ProfileRepository(
             else -> return null
         }
         return profiles.firstOrNull { it.id == activeId }
+    }
+
+    /**
+     * Clears the active profile when [report] proves its proof is stale.
+     *
+     * Acts only when the refused request presented exactly the profile id and
+     * token that are active now, on the active server: a report for a profile
+     * the user has since switched away from, re-verified, or already cleared is
+     * ignored, so repeated refusals cannot loop. A remote-playback overlay owns
+     * identity while it exists and is never touched. The account session is
+     * left alone; only the profile selection goes.
+     *
+     * @return true when the profile selection was cleared.
+     */
+    suspend fun clearStaleProfile(report: StaleProfileReport): Boolean {
+        // Checked before entering the transition so an ignored report does not
+        // fire identity gates, then again inside it in case the identity moved.
+        // `changing` bumps the generation before its block runs (see
+        // [identityScopeStillHolds]), so the inner check allows exactly that one.
+        val generationBeforeTransition = identityTransitions.generation.value
+        if (!staleProfileStillActive(report, transitionsSinceCheck = 0)) return false
+        var cleared = false
+        identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+            if (identityTransitions.generation.value != generationBeforeTransition + 1) return@changing
+            if (!staleProfileStillActive(report, transitionsSinceCheck = 1)) return@changing
+            val activeServerId = tokenManager.getCurrentServerId()
+            tokenManager.setProfileIdentity(null, null)
+            if (activeServerId != null) {
+                serverRegistry?.setProfileId(activeServerId, null)
+            }
+            notificationsRepository?.reset()
+            requestsRepository?.reset()
+            cleared = true
+        }
+        return cleared
+    }
+
+    private suspend fun staleProfileStillActive(report: StaleProfileReport, transitionsSinceCheck: Long): Boolean {
+        if (tokenManager.hasTemporaryScope()) return false
+        val identity = tokenManager.getProfileIdentity()
+        if (identity.profileId != report.profileId || identity.profileToken != report.profileToken) return false
+        val current = tokenManager.snapshotCurrentScope()
+        if (!isSameHttpOrigin(current?.serverUrl ?: tokenManager.getServerUrl(), report.requestUrl)) return false
+        val pinned = report.pinnedScope ?: return true
+        // A pinned request belongs to the identity it captured; a scope-less
+        // manager cannot prove that is still the active one. The profile id and
+        // token already matched above, so the generation is what proves no
+        // sign-in, server switch, or profile pick happened in between. The
+        // credential epoch is left out on purpose: an access-token refresh
+        // says nothing about whether the profile token is stale.
+        return current != null &&
+            current.serverId == pinned.serverId &&
+            current.identityGeneration == pinned.identityGeneration + transitionsSinceCheck
     }
 
     /** Clears the active profile selection and its token. */

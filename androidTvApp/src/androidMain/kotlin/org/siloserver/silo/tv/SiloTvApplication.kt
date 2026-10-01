@@ -41,6 +41,14 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
         )
+        // Profile-verification recovery: clears a profile whose PIN token the
+        // server stopped accepting (after an access change), including when
+        // background work hits it first. Guarded — never load-bearing.
+        runCatching {
+            koinApp.koin.get<org.siloserver.silo.repository.ProfileVerificationRecovery>()
+        }.onFailure {
+            android.util.Log.w("SiloTvApplication", "Profile verification recovery init failed", it)
+        }
         // Live-home socket (Apple realtime-updates spec). Guarded — a dead
         // socket just means Home refreshes on open only.
         runCatching {

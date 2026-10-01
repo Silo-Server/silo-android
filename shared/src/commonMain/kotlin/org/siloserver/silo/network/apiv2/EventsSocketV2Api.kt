@@ -1,6 +1,7 @@
 package org.siloserver.silo.network.apiv2
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.*
 import io.ktor.http.*
@@ -8,6 +9,7 @@ import io.ktor.websocket.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import org.siloserver.silo.model.notifications.WsFrameEnvelope
 import org.siloserver.silo.model.notifications.WsSubscribe
 import org.siloserver.silo.model.notifications.WsTicketResponse
 import org.siloserver.silo.network.*
@@ -18,6 +20,8 @@ class EventsSocketV2Api(
     private val client: HttpClient,
     private val tokens: TokenManager,
     private val gate: ApiV2Gate,
+    /** Told when the server reports that this viewer's access changed. */
+    private val accessChanges: AccessChangeSignals? = null,
 ) {
     internal suspend fun current(scope: AuthScopeSnapshot): Boolean = scope.stillOwns(tokens, OwnerPolicy.FULL)
 
@@ -59,12 +63,30 @@ class EventsSocketV2Api(
                         }
                     }
                 }
+                // The server announces an access change with a frame and then a
+                // 4001 close; one connection reports it once. The caller's
+                // reconnect then mints a fresh ticket under the new policy.
+                var accessChangeReported = false
+                suspend fun reportAccessChange() {
+                    if (accessChangeReported || !current(scope)) return
+                    accessChangeReported = true
+                    accessChanges?.reportAccessChanged()
+                }
                 try {
                     send(Frame.Text(SiloJson.encodeToString(WsSubscribe.serializer(),WsSubscribe(channels = channels))))
+                    var identityLost = false
                     for (frame in incoming) {
-                        if (!current(scope)) break
-                        if (frame is Frame.Text) this@flow.emit(frame.readText())
+                        if (!current(scope)) {
+                            identityLost = true
+                            break
+                        }
+                        if (frame is Frame.Text) {
+                            val text = frame.readText()
+                            if (isAccessChangedFrame(text)) reportAccessChange()
+                            this@flow.emit(text)
+                        }
                     }
+                    if (!identityLost && isAccessChangedClose(closeReasonIfClosed())) reportAccessChange()
                 } finally { authorityWatcher.cancel() }
             }
         }
@@ -72,6 +94,32 @@ class EventsSocketV2Api(
 }
 
 internal class EventsTicketFailure(val code: Int) : Exception("Realtime ticket unavailable")
+
+/** Whether [raw] is the server's `{"type":"access_changed"}` notice. */
+internal fun isAccessChangedFrame(raw: String): Boolean = try {
+    SiloJson.decodeFromString(WsFrameEnvelope.serializer(), raw).type == AccessChangeSignals.ACCESS_CHANGED_FRAME_TYPE
+} catch (_: Exception) {
+    false
+}
+
+/** Whether the server closed the socket because the viewer's access changed. */
+internal fun isAccessChangedClose(reason: CloseReason?): Boolean =
+    reason?.code == AccessChangeSignals.ACCESS_CHANGED_CLOSE_CODE
+
+/**
+ * The close reason once the incoming channel has ended. A peer that drops the
+ * connection without a close frame leaves none, which reads as null here.
+ */
+private suspend fun DefaultClientWebSocketSession.closeReasonIfClosed(): CloseReason? =
+    try {
+        withTimeoutOrNull(CLOSE_REASON_WAIT_MS) { closeReason.await() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
+
+private const val CLOSE_REASON_WAIT_MS = 1_000L
 
 internal const val EVENTS_PROTOCOL = "silo.events.v2"
 

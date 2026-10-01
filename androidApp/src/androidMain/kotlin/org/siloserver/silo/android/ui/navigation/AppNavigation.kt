@@ -103,6 +103,8 @@ import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.network.TokenManager
+import org.siloserver.silo.repository.ProfilePromptAction
+import org.siloserver.silo.repository.ProfileVerificationRecovery
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
@@ -111,6 +113,32 @@ import org.koin.compose.viewmodel.koinViewModel
  * from the route's own `contentId` argument.
  */
 private const val DisplayedDetailContentIdKey = "displayedDetailContentId"
+
+/** The profile picker and its screens, where a prompt has nothing to add. */
+private val ProfilePromptPickerRoutes: Set<String> = setOf(
+    Route.ProfileSelection.route,
+    Route.CreateProfile.route,
+    Route.EditProfile.ROUTE,
+)
+
+/**
+ * Destinations a profile-verification prompt waits behind: playback and reading
+ * keep going on the session they started with, and the sign-in and server
+ * screens have no profile in use.
+ */
+private val ProfilePromptDeferredRoutes: Set<String> = setOf(
+    Route.Player.ROUTE,
+    Route.AudiobookPlayer.ROUTE,
+    Route.BookReader.ROUTE,
+    Route.SiloCastRemote.route,
+    Route.Login.route,
+    Route.ServerSetup.route,
+    Route.ServerList.route,
+    Route.Setup.route,
+    Route.Signup.route,
+    Route.PairDevice.ROUTE,
+    Route.InviteClaim.ROUTE,
+)
 
 /** Page-to-page cross-fade duration (ms). Snappier than Compose Nav's 700ms default. */
 private const val PageFadeDurationMs = 200
@@ -178,6 +206,52 @@ fun AppNavigation(
                 launchSingleTop = true
             }
         }
+    }
+
+    // The server stopped accepting the active profile's PIN proof (an admin
+    // changed the account's access). The recovery has already cleared the
+    // stale profile selection, but not the sign-in; send the user to the
+    // profile picker to choose a profile and enter its PIN again. Playback and
+    // the sign-in screens are not interrupted: the prompt waits until the user
+    // leaves them (or a remote-playback overlay ends), and is dropped after a
+    // sign-out, a server switch, or a profile pick.
+    val profileVerificationRecovery: ProfileVerificationRecovery = koinInject()
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.flow.combine(
+            profileVerificationRecovery.pending,
+            navController.currentBackStackEntryFlow,
+        ) { prompt, entry -> prompt to entry.destination.route }
+            .collect { (prompt, route) ->
+                if (prompt == null) return@collect
+                when (
+                    profileVerificationRecovery.actionFor(
+                        prompt = prompt,
+                        currentRoute = route,
+                        deferRoutes = ProfilePromptDeferredRoutes,
+                        pickerRoutes = ProfilePromptPickerRoutes,
+                    )
+                ) {
+                    ProfilePromptAction.Defer -> Unit
+                    // Already on the picker: it reloads itself, and a PIN
+                    // being typed is kept.
+                    ProfilePromptAction.AlreadyThere,
+                    ProfilePromptAction.Drop,
+                    -> profileVerificationRecovery.consume(prompt)
+                    ProfilePromptAction.Navigate -> {
+                        profileVerificationRecovery.consume(prompt)
+                        navController.navigate(Route.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                        // Same per-profile teardown as Switch Profile, after
+                        // leaving the shell so it does not repaint first.
+                        overlayPrefsStore.clear()
+                        activeProfileStore.reset()
+                        cardPresentationStore.clear()
+                        seekIntervalStore.clear()
+                    }
+                }
+            }
     }
 
     // Keyed on request identity, not route text, so delivering the same deep

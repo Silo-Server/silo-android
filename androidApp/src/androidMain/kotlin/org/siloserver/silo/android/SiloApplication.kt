@@ -46,6 +46,14 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         koinApp.koin.get<org.siloserver.silo.repository.ImageCapabilitiesSession>().start(
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
         )
+        // Profile-verification recovery: clears a profile whose PIN token the
+        // server stopped accepting (after an access change), including when
+        // background work hits it first. Guarded — never load-bearing.
+        runCatching {
+            koinApp.koin.get<org.siloserver.silo.repository.ProfileVerificationRecovery>()
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "Profile verification recovery init failed", it)
+        }
         // Drive notifications realtime off the app foreground lifecycle. Guarded:
         // it's a foreground accelerator, never load-bearing for cold start.
         runCatching {

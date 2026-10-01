@@ -401,7 +401,7 @@ class NotificationsRepositoryTest {
         assertFalse(NotificationRealtimeEvent.Read("x").isAuthClose())
     }
 
-    // ---- connectRealtime: auth close stops loop and sets realtimeFatal -------
+    // ---- connectRealtime: auth close parks the loop until the identity changes ----
 
     @Test
     fun `connectRealtime stops reconnecting and sets realtimeFatal on auth Closed`() =
@@ -420,19 +420,85 @@ class NotificationsRepositoryTest {
             }
             val repo = NotificationsRepository(api, realtimeFactory = { realtime })
             val job = repo.connectRealtime(this)
-            // Give the loop a chance to run. Because reconnect uses delay, and
-            // testScheduler advances time, we advance past the initial backoff.
-            testScheduler.advanceTimeBy(2_000L)
+            // Well past every backoff step: a parked loop must not retry the
+            // identity that was just refused.
+            testScheduler.advanceTimeBy(120_000L)
             kotlinx.coroutines.yield()
-            job.cancel()
 
-            // connect() must have been called exactly once — the loop must not
-            // have retried after an auth-class Closed.
             assertEquals(1, connectCount,
                 "Auth-close must stop the reconnect loop (connectCount=$connectCount)")
             assertTrue(repo.realtimeFatal.value,
                 "realtimeFatal must be true after an auth-class Closed")
+            assertTrue(job.isActive, "the loop parks rather than ending")
+            job.cancel()
         }
+
+    @Test
+    fun `connectRealtime resumes after a stale-profile refusal once the profile is re-verified`() =
+        kotlinx.coroutines.test.runTest {
+            val api = FakeNotificationsApi()
+            var connectCount = 0
+            val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+                override fun connect(): kotlinx.coroutines.flow.Flow<NotificationRealtimeEvent> {
+                    connectCount++
+                    return if (connectCount == 1) {
+                        // The ticket mint was refused: the profile token is stale.
+                        kotlinx.coroutines.flow.flowOf(NotificationRealtimeEvent.Closed("ticket_error_403"))
+                    } else {
+                        kotlinx.coroutines.flow.flow { awaitCancellation() }
+                    }
+                }
+            }
+            val repo = NotificationsRepository(api, realtimeFactory = { realtime })
+            val job = repo.connectRealtime(this)
+            testScheduler.advanceTimeBy(60_000L)
+            kotlinx.coroutines.yield()
+            assertEquals(1, connectCount)
+            assertTrue(repo.realtimeFatal.value)
+
+            // Re-entering the PIN (or picking another profile) resets the
+            // repository, which is the identity change the loop waits for.
+            repo.reset()
+            testScheduler.runCurrent()
+
+            assertEquals(2, connectCount, "the loop must reconnect with a fresh ticket")
+            assertFalse(repo.realtimeFatal.value)
+            job.cancel()
+        }
+
+    @Test
+    fun `connectRealtime treats an access-changed close as an ordinary reconnect`() =
+        kotlinx.coroutines.test.runTest {
+            val api = FakeNotificationsApi()
+            var connectCount = 0
+            val realtime = object : org.siloserver.silo.network.NotificationsRealtimeClient {
+                override fun connect(): kotlinx.coroutines.flow.Flow<NotificationRealtimeEvent> {
+                    connectCount++
+                    return if (connectCount == 1) {
+                        // The server's 4001 close ends the socket cleanly.
+                        kotlinx.coroutines.flow.flowOf(
+                            NotificationRealtimeEvent.Snapshot(emptyList()),
+                            NotificationRealtimeEvent.Closed(),
+                        )
+                    } else {
+                        kotlinx.coroutines.flow.flow { awaitCancellation() }
+                    }
+                }
+            }
+            val repo = NotificationsRepository(api, realtimeFactory = { realtime })
+            val job = repo.connectRealtime(this)
+            testScheduler.advanceTimeBy(1_100L)
+            kotlinx.coroutines.yield()
+
+            assertEquals(2, connectCount, "a clean close reconnects after the initial backoff")
+            assertFalse(repo.realtimeFatal.value)
+            job.cancel()
+        }
+
+    @Test
+    fun `access_changed close reasons are not auth closes`() {
+        assertFalse(NotificationRealtimeEvent.Closed("access_changed").isAuthClose())
+    }
 
     // ---- connectRealtime: backoff resets on first event of each connect ------
 

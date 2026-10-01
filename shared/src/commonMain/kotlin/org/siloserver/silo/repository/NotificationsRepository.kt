@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 
@@ -124,7 +126,9 @@ class NotificationsRepository(
     private val checkpoints: NotificationSyncStore? = null,
     private val identityTransitions: IdentityTransitionBarrier? = null,
 ) {
-    private var epoch = 0L
+    // Observable so a parked realtime loop can wait for the next identity.
+    private val epochState = MutableStateFlow(0L)
+    private val epoch: Long get() = epochState.value
     private var readCutoff: String? = null
     private var cutoffViewer: AuthScopeSnapshot? = null
     private val refreshMutex = Mutex()
@@ -153,7 +157,7 @@ class NotificationsRepository(
     private val _preferences = MutableStateFlow<NotificationPreferences?>(null)
     private val _capability = MutableStateFlow<NotificationCapability?>(null)
 
-    /** True once [connectRealtime] gives up permanently due to an auth-class [NotificationRealtimeEvent.Closed]. */
+    /** True while [connectRealtime] is parked after an auth-class [NotificationRealtimeEvent.Closed]. */
     private val _realtimeFatal = MutableStateFlow(false)
 
     val unreadCount: StateFlow<Int> = _unreadCount.asStateFlow()
@@ -163,9 +167,10 @@ class NotificationsRepository(
     val capability: StateFlow<NotificationCapability?> = _capability.asStateFlow()
 
     /**
-     * Becomes true if [connectRealtime] receives an auth-class [NotificationRealtimeEvent.Closed]
-     * (401/403/auth reason). When true the realtime loop has permanently stopped; callers should
-     * surface an appropriate error state rather than attempting to reconnect.
+     * True while [connectRealtime] is parked after an auth-class [NotificationRealtimeEvent.Closed]
+     * (401/403/auth reason). The loop stops retrying the same identity and resumes on the next
+     * [reset] — a profile re-verification, a profile switch, or an account or server change —
+     * which also clears this flag.
      */
     val realtimeFatal: StateFlow<Boolean> = _realtimeFatal.asStateFlow()
 
@@ -331,7 +336,8 @@ class NotificationsRepository(
      * [tryEmit] into the buffered flow never suspends.
      */
     fun reset() {
-        epoch++
+        epochState.update { it + 1 }
+        _realtimeFatal.value = false
         _error.value = null
         readCutoff = null
         cutoffViewer = null
@@ -382,7 +388,16 @@ class NotificationsRepository(
             } catch (_: Throwable) {
                 // fall through to backoff-reconnect
             }
-            if (authFailed) return@launch
+            if (authFailed) {
+                // Retrying the same identity would be refused again (a stale
+                // profile token stays stale). Park until the identity changes —
+                // the user re-enters the PIN, picks another profile, or the
+                // account changes — then reconnect with a fresh ticket.
+                epochState.first { it != connectionViewer.epoch }
+                _realtimeFatal.value = false
+                backoffMs = INITIAL_BACKOFF_MS
+                continue
+            }
             delay(backoffMs)
             backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }

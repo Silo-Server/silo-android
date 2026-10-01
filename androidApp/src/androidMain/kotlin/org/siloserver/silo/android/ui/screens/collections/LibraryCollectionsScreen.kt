@@ -56,7 +56,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * One named or anonymous section as it should appear on screen, in the
@@ -199,6 +202,7 @@ fun LibraryCollectionsScreen(
     viewModel: LibraryCollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refresh() }
 
     androidx.compose.material3.Scaffold(
         topBar = {

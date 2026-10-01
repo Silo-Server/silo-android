@@ -28,7 +28,9 @@ import androidx.navigation.navArgument
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.repository.ProfilePromptAction
 import org.siloserver.silo.repository.ProfileRepository
+import org.siloserver.silo.repository.ProfileVerificationRecovery
 import org.siloserver.silo.tv.MainTvActivity
 import org.siloserver.silo.tv.ui.components.TvSelectToShowImeHost
 import org.siloserver.silo.tv.ui.shell.TvMainShell
@@ -327,6 +329,29 @@ private val preMainAuthRoutes: Set<String> = setOf(
     TvRoute.EditProfile.ROUTE,
 )
 
+/** The profile picker and its screens, where a prompt has nothing to add. */
+private val TvProfilePromptPickerRoutes: Set<String> = setOf(
+    TvRoute.ProfileSelection.route,
+    TvRoute.CreateProfile.route,
+    TvRoute.EditProfile.ROUTE,
+)
+
+/**
+ * Destinations a profile-verification prompt waits behind: playback keeps
+ * going on the session it started with, and the sign-in and server screens
+ * have no profile in use.
+ */
+private val TvProfilePromptDeferredRoutes: Set<String> = setOf(
+    TvRoute.Player.ROUTE,
+    TvRoute.AudiobookPlayer.ROUTE,
+    TvRoute.ServerSetup.route,
+    TvRoute.Setup.route,
+    TvRoute.Signup.route,
+    TvRoute.Login.ROUTE,
+    TvRoute.ServerList.route,
+    TvRoute.PairDevice.ROUTE,
+)
+
 /**
  * Page-to-page cross-fade duration (ms). A middle ground between Compose Nav's
  * sluggish 700ms default and a phone-snappy 200ms — a touch more deliberate for
@@ -545,6 +570,53 @@ fun TvAppNavigation(
                 launchSingleTop = true
             }
         }
+    }
+
+    // The server stopped accepting the active profile's PIN proof (an admin
+    // changed the account's access). The recovery has already cleared the
+    // stale profile selection, but not the sign-in; send the viewer to the
+    // profile picker to choose a profile and enter its PIN again. Playback and
+    // the sign-in screens are not interrupted: the prompt waits until the
+    // viewer leaves them (or a remote-playback overlay ends), and is dropped
+    // after a sign-out, a server switch, or a profile pick.
+    val profileVerificationRecovery: ProfileVerificationRecovery = koinInject()
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.flow.combine(
+            profileVerificationRecovery.pending,
+            navController.currentBackStackEntryFlow,
+        ) { prompt, entry -> prompt to entry.destination.route }
+            .collect { (prompt, route) ->
+                if (prompt == null) return@collect
+                when (
+                    profileVerificationRecovery.actionFor(
+                        prompt = prompt,
+                        currentRoute = route,
+                        deferRoutes = TvProfilePromptDeferredRoutes,
+                        pickerRoutes = TvProfilePromptPickerRoutes,
+                    )
+                ) {
+                    ProfilePromptAction.Defer -> Unit
+                    // Already on the picker: it reloads itself, and a PIN
+                    // being typed is kept.
+                    ProfilePromptAction.AlreadyThere,
+                    ProfilePromptAction.Drop,
+                    -> profileVerificationRecovery.consume(prompt)
+                    ProfilePromptAction.Navigate -> {
+                        profileVerificationRecovery.consume(prompt)
+                        navController.navigate(TvRoute.ProfileSelection.route) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                        // Same per-profile teardown as Switch Profile; the
+                        // picked profile re-seeds Watch Next on selection.
+                        libraryPlaybackPrefsStore.clear()
+                        overlayPrefsStore.clear()
+                        cardPresentationStore.clear()
+                        seekIntervalStore.clear()
+                        watchNextSeeder.clear()
+                    }
+                }
+            }
     }
 
     // Re-read the authenticated profile id whenever the destination changes

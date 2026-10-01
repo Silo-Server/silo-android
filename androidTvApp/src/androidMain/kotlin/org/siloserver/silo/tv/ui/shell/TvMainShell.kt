@@ -160,6 +160,8 @@ import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.HomeViewModel
@@ -253,9 +255,13 @@ fun TvMainShell(
     // `visibleRoots` is only Home + Calendar, so a restored/deep-linked
     // `main/movies` route must NOT be treated as "type has no libraries" yet.
     var librariesLoaded by remember { mutableStateOf(false) }
+    // An access change can add or remove whole libraries, so the tab set is
+    // re-derived under the new policy (the previous list stays until then).
+    val viewerAccessKey = rememberViewerAccessKey(koinInject<AccessChangeSignals>())
     val libraries by produceState(
         initialValue = emptyList<UserLibrary>(),
         personalDataRepository,
+        viewerAccessKey,
     ) {
         when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success ->

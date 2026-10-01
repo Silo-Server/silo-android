@@ -86,6 +86,9 @@ import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * Main scaffold that hosts the bottom navigation bar and tab content.
@@ -171,6 +174,13 @@ fun MainScreen(
     LaunchedEffect(activeEntry?.id, activeEntry?.profileId) {
         headerViewModel.refresh()
     }
+    // An access change can add or remove whole libraries: re-derive the tabs
+    // and reload the Libraries hub under the new policy.
+    val accessChangeSignals: AccessChangeSignals = koinInject()
+    val viewerAccessKey = rememberViewerAccessKey(accessChangeSignals)
+    librariesViewModel?.let { viewModel ->
+        OnViewerAccessChanged(accessChangeSignals) { viewModel.refresh() }
+    }
     val mediaCapabilities by produceState(
         initialValue = MediaModeCapabilities(
             listOf(
@@ -180,6 +190,7 @@ fun MainScreen(
             ),
         ),
         personalDataRepository,
+        viewerAccessKey,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success -> result.data.mobileMediaModeCapabilities()

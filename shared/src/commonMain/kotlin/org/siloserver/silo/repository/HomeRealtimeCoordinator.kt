@@ -8,7 +8,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.network.HomeRealtimeClient
 import org.siloserver.silo.network.HomeRealtimeEvent
 import org.siloserver.silo.network.TokenManager
@@ -28,12 +30,20 @@ import org.siloserver.silo.network.homeRefreshTrigger
 class HomeRealtimeCoordinator(
     private val client: HomeRealtimeClient,
     private val tokenManager: TokenManager,
+    /**
+     * Server-reported access changes. Either events socket may be the one that
+     * sees the change (each runs its own access check), so Home listens here
+     * rather than only to its own frames. The socket's 4001 close then makes
+     * [connect] reconnect with a freshly minted ticket.
+     */
+    private val accessChanges: AccessChangeSignals? = null,
 ) {
     private val triggers = MutableSharedFlow<Unit>(extraBufferCapacity = 16)
 
     /** Debounced refetch signal — collect and call the Home refresh. */
     @OptIn(FlowPreview::class)
-    val refreshSignals: Flow<Unit> = triggers.debounce(DEBOUNCE_MS)
+    val refreshSignals: Flow<Unit> = (accessChanges?.let { merge(triggers, it.changes) } ?: triggers)
+        .debounce(DEBOUNCE_MS)
 
     fun connect(scope: CoroutineScope): Job = scope.launch {
         var backoffMs = INITIAL_BACKOFF_MS

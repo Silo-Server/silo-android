@@ -11,7 +11,10 @@ import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailScreen
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 
 @Composable
 fun TvLibrariesScreen(
@@ -29,6 +32,7 @@ fun TvLibrariesScreen(
     viewModel: TvLibrariesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.load() }
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
         ?: state.libraries.firstOrNull()
 

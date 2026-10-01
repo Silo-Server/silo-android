@@ -94,6 +94,8 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 import org.koin.compose.viewmodel.koinViewModel
 
 internal fun shouldFocusSearchField(
@@ -116,6 +118,7 @@ fun TvSearchScreen(
     requestSearchViewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>()) { viewModel.refreshForAccessChange() }
     val requestState by requestSearchViewModel.uiState.collectAsState()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()

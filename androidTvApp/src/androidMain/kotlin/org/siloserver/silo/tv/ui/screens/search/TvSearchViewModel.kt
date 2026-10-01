@@ -184,6 +184,15 @@ class TvSearchViewModel(
         }
     }
 
+    /**
+     * The server reported an access change: libraries (and so the media-type
+     * chips) and the titles a query can match may differ under the new policy.
+     */
+    fun refreshForAccessChange() {
+        loadAvailableMediaTypes()
+        if (_uiState.value.query.isNotBlank()) submitSearch()
+    }
+
     fun submitSearch() {
         // Bump the generation (mirroring onQueryChanged) so a cancelled in-flight
         // load-more's response fails the stale-generation guard instead of
