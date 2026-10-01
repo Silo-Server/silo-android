@@ -47,6 +47,19 @@ class RoomUserItemStateRepositoryTest {
     fun tearDown() = db.close()
 
     @Test
+    fun remoteWatchReadsDeferOnlyToPendingOrNewerLocalWrites() = runTest {
+        val watched = repo.recordWatched("c1", true)
+        assertEquals(setOf("c1"), repo.contentIdsWithPendingOrNewerUserState(listOf("c1"), 2000L))
+        repo.resolve(watched, WriteOutcome.SYNCED)
+        assertEquals(emptySet(), repo.contentIdsWithPendingOrNewerUserState(listOf("c1"), 2000L))
+        assertEquals(setOf("c1"), repo.contentIdsWithPendingOrNewerUserState(listOf("c1"), 500L))
+        repo.recordPosition("c2", 7, 5.0, 60.0)
+        assertEquals(setOf("c2"), repo.contentIdsWithPendingOrNewerUserState(listOf("c1", "c2"), 2000L))
+        currentSnapshot = AuthScopeSnapshot("s1", "p2", "https://s1.example", "pt2")
+        assertEquals(emptySet(), repo.contentIdsWithPendingOrNewerUserState(listOf("c1", "c2"), 0L))
+    }
+
+    @Test
     fun recordWatchedWritesProjectionAndContentScopedOutboxOp() = runTest {
         val handle = repo.recordWatched("c1", watched = true)
         assertTrue(handle.opId >= 0)

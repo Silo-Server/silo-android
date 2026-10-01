@@ -534,6 +534,15 @@ class RoomUserItemStateRepository(
             .associate { it.contentId to LocalContentState(watched = it.watched, favorite = null) }
     }
 
+    override suspend fun contentIdsWithPendingOrNewerUserState(contentIds: List<String>, sinceMs: Long): Set<String> {
+        val snapshot = snapshotProvider() ?: return emptySet()
+        val profileId = snapshot.profileId ?: return emptySet()
+        // The UNION binds the ID list three times; stay below SQLite's older 999-variable limit.
+        return contentIds.distinct().chunked(MAX_IN_LIST_IDS / 3).flatMap {
+            outboxDao.contentIdsWithPendingOrNewerUserState(snapshot.serverId, profileId, it, sinceMs)
+        }.toSet()
+    }
+
     private suspend fun record(
         contentId: String,
         opKind: String,
