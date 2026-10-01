@@ -9,7 +9,7 @@ A detailed inventory of what the Android **phone** and **TV** clients do today. 
 
 File pointers are repository-relative.
 
-> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. The admin stats dashboard is live for acting admins via Settings. The richer admin screens (users/sessions/logs/scans) and Watch Together remain inaccessible.
+> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and from a top-bar tab and search on TV — matching the Apple clients. Admins who can moderate approve, decline, and retry requests there. The admin stats dashboard is live for acting admins via Settings. The richer admin screens (users/sessions/logs/scans) and Watch Together remain inaccessible.
 
 ---
 
@@ -82,7 +82,7 @@ File pointers are repository-relative.
 | Release calendar | ✅ | ✅ | Top-level mobile tab and TV top-menu tab |
 | Live home refresh (events websocket) | ✅ | ✅ | `HomeRealtimeCoordinator`: user_state/catalog channels, 2s debounce; TV also refreshes on resume |
 | System "Watch Next" row integration | ➖ | ✅ | `WatchNextRepository` (tvprovider) |
-| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; profile menu + search entry points |
+| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; admin approve/decline/retry |
 
 ## Reading (ebooks)
 
@@ -128,7 +128,7 @@ File pointers are repository-relative.
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |
 | Ratings | ✅ | ✅ | |
 | Watch history | ✅ | ✅ | |
-| Content requests (browse/search TMDB, status tracking) | 🚧 | 🚧 | Not currently accessible in either Android app |
+| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests, admin approvals; see Requests above |
 | Release calendar | ✅ | ✅ | |
 | Notifications inbox (paginated, realtime updates, mark-read) | ✅ | ✅ | REST + WebSocket |
 

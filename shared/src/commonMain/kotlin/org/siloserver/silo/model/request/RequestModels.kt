@@ -29,7 +29,7 @@ object RequestOutcome {
 
 /**
  * Values of [RequestState.reason]: why a title cannot be requested. They are
- * codes for deciding what to offer, not text; show [reasonMessage] instead.
+ * codes for deciding what to offer, not text; show [requestReasonCopy] instead.
  */
 object RequestReason {
     const val AlreadyRequested = "already_requested"
@@ -44,9 +44,30 @@ object RequestAvailability {
     const val Available = "available"
 }
 
+/**
+ * Values of the server's `state`: the one state to show a user for a request,
+ * derived from its status, outcome, servers and library presence. It says what
+ * `status` and `outcome` cannot: a finished download the library has not
+ * picked up yet is `processing`, not `available`. Older servers omit it, and a
+ * value this client does not know falls back to `status` and `outcome`.
+ */
+object RequestUserState {
+    const val Pending = "pending"
+    const val Approved = "approved"
+    const val Processing = "processing"
+    /** Some of a season request's seasons are in the library, not all. */
+    const val PartiallyAvailable = "partially_available"
+    const val Available = "available"
+    const val Declined = "declined"
+    const val Cancelled = "cancelled"
+    const val Failed = "failed"
+}
+
 @Serializable
 data class RequestState(
     val status: String? = null,
+    /** The active request's user-facing [RequestUserState]; absent on older servers. */
+    val state: String? = null,
     val requestable: Boolean = false,
     val reason: String = "",
     @SerialName("request_id") val requestId: String? = null,
@@ -181,6 +202,8 @@ data class MediaRequest(
     @SerialName("backdrop_path") val backdropPath: String? = null,
     val status: String,
     val outcome: String,
+    /** What to show the user ([RequestUserState]); absent on older servers. */
+    val state: String? = null,
     @SerialName("requested_by_user_id") val requestedByUserId: String? = null,
     @SerialName("requested_by_profile_id") val requestedByProfileId: String = "",
     @SerialName("integration_kind") val integrationKind: String = "",
@@ -189,7 +212,10 @@ data class MediaRequest(
     @SerialName("external_id") val externalId: String = "",
     @SerialName("external_status") val externalStatus: String = "",
     @SerialName("library_content_id") val libraryContentId: String? = null,
+    /** Admins only: why the last submission to a download server failed. */
     @SerialName("last_error") val lastError: String = "",
+    /** Why the request was declined or withdrawn, when a reason was given. */
+    @SerialName("outcome_reason") val outcomeReason: String = "",
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String,
     @SerialName("approved_at") val approvedAt: String? = null,
@@ -204,7 +230,35 @@ data class RequestsListResponse(
     @kotlinx.serialization.Required val page: org.siloserver.silo.network.apiv2.PageInfo = org.siloserver.silo.network.apiv2.PageInfo(hasMore = false),
 )
 
+/**
+ * `GET /api/v2/requests/status`. The contract requires `allowed` and `state`;
+ * they decode as optional so a response without them fails closed.
+ */
 @Serializable
 data class RequestsFeatureStatus(
     @SerialName("requests_enabled") val requestsEnabled: Boolean,
+    val allowed: Boolean? = null,
+    val state: String? = null,
+) {
+    /** The feature is on and this profile may use it; a blocked account sees `allowed: false`. */
+    val isAvailable: Boolean
+        get() = requestsEnabled && allowed == true && state == "available"
+}
+
+/** `GET /api/v2/admin/requests/capabilities`: whether the request integration is configured. */
+@Serializable
+data class AdminRequestCapabilities(
+    val available: Boolean = false,
+)
+
+/** Moderation actions an admin can take on someone's request (`POST /api/v2/admin/requests/{id}/…`). */
+enum class AdminRequestAction(val path: String) {
+    Approve("approve"),
+    Decline("decline"),
+    Retry("retry"),
+}
+
+@Serializable
+data class AdminRequestActionBody(
+    val reason: String? = null,
 )

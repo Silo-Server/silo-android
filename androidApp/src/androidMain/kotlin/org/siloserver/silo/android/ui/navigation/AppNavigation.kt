@@ -83,6 +83,7 @@ import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
+import org.siloserver.silo.android.ui.screens.requests.RequestApprovalsScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestsScreen
 import org.siloserver.silo.android.ui.screens.search.MobileSearchMediaType
@@ -813,26 +814,34 @@ fun AppNavigation(
         }
 
         // ---- Requests ----
+        val openRequestDetail: (String, Int) -> Unit = { mediaType, tmdbId ->
+            navController.navigate(Route.RequestDetail(mediaType, tmdbId).route)
+        }
+        val openRequestLibraryItem: (String) -> Unit = { contentId ->
+            navController.navigate(Route.ItemDetail(contentId).route)
+        }
         composable(Route.Requests.route) {
             RequestsScreen(
                 onBackClick = { navController.popBackStack() },
                 onMyRequestsClick = { navController.navigate(Route.MyRequests.route) },
-                onMediaClick = { item ->
-                    navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
-                },
-                onLibraryItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
-                },
+                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(Route.MyRequests.route) {
             MyRequestsScreen(
                 onBackClick = { navController.popBackStack() },
-                onRequestClick = { request ->
-                    request.libraryContentId?.takeIf { it.isNotBlank() }?.let { contentId ->
-                        navController.navigate(Route.ItemDetail(contentId).route)
-                    } ?: navController.navigate(Route.RequestDetail(request.mediaType, request.tmdbId).route)
-                },
+                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
+            )
+        }
+        composable(Route.RequestApprovals.route) {
+            RequestApprovalsScreen(
+                onBackClick = { navController.popBackStack() },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(
@@ -848,12 +857,8 @@ fun AppNavigation(
                 mediaType = mediaType,
                 tmdbId = tmdbId,
                 onBackClick = { navController.popBackStack() },
-                onMediaClick = { item ->
-                    navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
-                },
-                onLibraryItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
-                },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
 

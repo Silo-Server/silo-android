@@ -1026,152 +1026,69 @@ fun ItemDetailScreen(
         }
         }
 
-        // Pinned header. The strip fades in first so the controls gain a
-        // backing as the artwork leaves, then the title arrives once the hero
-        // is mostly gone — the two ranges and the smoothstep are iOS's.
-        val headerTitle = state.detail?.title.orEmpty()
-        val barAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderBarFadeFromDp,
-            HeaderBarFadeToDp,
-        )
-        val titleAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderTitleFadeFromDp,
-            HeaderTitleFadeToDp,
-        )
-        if (barAlpha > 0f) {
-            // Runs from the very top of the window, not from below the status
-            // bar: the page is edge to edge, so insetting the strip left the
-            // status-bar band uncovered above it.
-            val statusBarHeight = WindowInsets.statusBars
-                .asPaddingValues()
-                .calculateTopPadding()
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(statusBarHeight + DetailHeaderBarHeight)
-                    .graphicsLayer { alpha = barAlpha }
-                    .background(SiloPageBackground)
-                    .drawBehind {
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.10f),
-                            topLeft = Offset(0f, size.height - 1f),
-                            size = Size(size.width, 1f),
-                        )
-                    },
-            )
-        }
-        if (titleAlpha > 0f && headerTitle.isNotBlank()) {
-            Text(
-                text = headerTitle,
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .height(DetailHeaderBarHeight)
-                    .fillMaxWidth()
-                    // Clear of the back and remote controls on either side,
-                    // and centred on them: both sit in the same strip.
-                    .padding(horizontal = 72.dp)
-                    .wrapContentHeight(Alignment.CenterVertically)
-                    .graphicsLayer { alpha = titleAlpha },
-            )
-        }
-
-        // These two glyphs sit on hero artwork that can be any colour, so they
-        // keep a disc — the bottom-nav pill, made translucent. A dark disc
-        // holds a white glyph over a pale poster and still lets the artwork
-        // through, which the previous white-tinted wash could not.
-        IconButton(
-            onClick = onBackClick,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                // Same geometry as the Home header's actions: a 40dp target
-                // 16dp from the edge, sitting directly below the status bar,
-                // so the controls do not jump when moving between the two.
-                .padding(horizontal = 16.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(SiloOverlayPillSurface)
-                .border(1.dp, SiloNavPillBorder, CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp),
-        ) {
-            IconButton(
-                onClick = {
-                    if (siloCastState.hasActiveSession) {
-                        remoteMenuExpanded = true
-                    } else {
-                        showRemoteTargetPicker = true
-                    }
-                },
-                // Solid pill while a cast session is live, translucent at
-                // rest, so the fill still reports state.
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
+        DetailTopChrome(
+            title = state.detail?.title.orEmpty(),
+            scroll = detailScroll,
+            onBackClick = onBackClick,
+            trailing = {
+                IconButton(
+                    onClick = {
                         if (siloCastState.hasActiveSession) {
-                            SiloNavPillSurface
+                            remoteMenuExpanded = true
                         } else {
-                            SiloOverlayPillSurface
+                            showRemoteTargetPicker = true
+                        }
+                    },
+                    // Solid pill while a cast session is live, translucent at
+                    // rest, so the fill still reports state.
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (siloCastState.hasActiveSession) {
+                                SiloNavPillSurface
+                            } else {
+                                SiloOverlayPillSurface
+                            },
+                        )
+                        .border(1.dp, SiloNavPillBorder, CircleShape),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.SettingsRemote,
+                        contentDescription = "Remote Control",
+                        tint = Color.White,
+                    )
+                }
+                DropdownMenu(
+                    expanded = remoteMenuExpanded,
+                    onDismissRequest = { remoteMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Remote Control") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            onOpenCastRemote()
                         },
                     )
-                    .border(1.dp, SiloNavPillBorder, CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.SettingsRemote,
-                    contentDescription = "Remote Control",
-                    tint = Color.White,
-                )
-            }
-            DropdownMenu(
-                expanded = remoteMenuExpanded,
-                onDismissRequest = { remoteMenuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Remote Control") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        onOpenCastRemote()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Choose TV") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        showRemoteTargetPicker = true
-                    },
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = {
-                        Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
-                    },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        siloCastController.disconnect()
-                    },
-                )
-            }
-        }
+                    DropdownMenuItem(
+                        text = { Text("Choose TV") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            showRemoteTargetPicker = true
+                        },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = {
+                            Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            siloCastController.disconnect()
+                        },
+                    )
+                }
+            },
+        )
     }
 }

@@ -21,11 +21,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.screens.requests.RequestMediaCard
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.libraryItemToOpen
+import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 
 @Composable
@@ -39,6 +42,7 @@ fun RequestSearchSection(
     viewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val repository: RequestsRepository = koinInject()
     val trimmedQuery = query.trim()
     val requestMediaType = selectedMediaType.toRequestMediaType()
     val visibleResults = state.results.filter { result ->
@@ -93,12 +97,9 @@ fun RequestSearchSection(
                         RequestMediaCard(
                             item = item,
                             onClick = {
-                                val libraryId = item.libraryContentId?.takeIf { it.isNotBlank() }
-                                if (libraryId != null) {
-                                    onRequestLibraryItemClick(libraryId)
-                                } else {
-                                    onRequestMediaClick(item)
-                                }
+                                // Seeded so the request page is complete on its first frame.
+                                repository.cache.seed(item)
+                                item.libraryItemToOpen()?.let(onRequestLibraryItemClick) ?: onRequestMediaClick(item)
                             },
                         )
                     }

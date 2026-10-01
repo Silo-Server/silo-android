@@ -4,6 +4,8 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.siloserver.silo.model.request.AdminRequestAction
+import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -18,11 +20,41 @@ import org.siloserver.silo.repository.RequestsRepository
 class RequestsFeatureStoreTest {
 
     @Test
+    fun aBlockedProfileKeepsRequestsHidden() = runTest {
+        val store = RequestsFeatureStore(RequestsRepository(FakeRequestsApi(ApiResult.Success(available(allowed = false)))))
+
+        store.refresh()
+
+        assertFalse(store.isEnabled.value)
+    }
+
+    @Test
+    fun moderationFollowsTheAdminCapabilityProbe() = runTest {
+        val admin = RequestsFeatureStore(
+            RequestsRepository(
+                FakeRequestsApi(
+                    ApiResult.Success(available()),
+                    capabilities = ApiResult.Success(AdminRequestCapabilities(available = true)),
+                ),
+            ),
+        )
+        val member = RequestsFeatureStore(RequestsRepository(FakeRequestsApi(ApiResult.Success(available()))))
+
+        admin.refresh()
+        member.refresh()
+
+        assertTrue(admin.canModerate.value)
+        assertFalse(member.canModerate.value)
+        admin.reset()
+        assertFalse(admin.canModerate.value)
+    }
+
+    @Test
     fun startsHiddenAndFollowsSuccessfulStatusProbe() = runTest {
         val store = RequestsFeatureStore(
             RequestsRepository(
                 FakeRequestsApi(
-                    ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true)),
+                    ApiResult.Success(available()),
                 ),
             ),
         )
@@ -37,7 +69,7 @@ class RequestsFeatureStoreTest {
     @Test
     fun transientFailureKeepsPreviousCapabilityValue() = runTest {
         val api = FakeRequestsApi(
-            ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true)),
+            ApiResult.Success(available()),
             ApiResult.NetworkError(IllegalStateException("offline")),
         )
         val store = RequestsFeatureStore(RequestsRepository(api))
@@ -53,7 +85,7 @@ class RequestsFeatureStoreTest {
         val store = RequestsFeatureStore(
             RequestsRepository(
                 FakeRequestsApi(
-                    ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true)),
+                    ApiResult.Success(available()),
                 ),
             ),
         )
@@ -65,8 +97,12 @@ class RequestsFeatureStoreTest {
     }
 }
 
+private fun available(allowed: Boolean = true) =
+    RequestsFeatureStatus(requestsEnabled = true, allowed = allowed, state = "available")
+
 private class FakeRequestsApi(
     vararg statusResults: ApiResult<RequestsFeatureStatus>,
+    private val capabilities: ApiResult<AdminRequestCapabilities> = ApiResult.Error(403, "forbidden", ""),
 ) : RequestsApi {
     private val statusResults = statusResults.toMutableList()
 
@@ -106,5 +142,17 @@ private class FakeRequestsApi(
         ApiResult.NetworkError(IllegalStateException("not used"))
 
     override suspend fun cancel(id: String): ApiResult<MediaRequest> =
+        ApiResult.NetworkError(IllegalStateException("not used"))
+
+    override suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> = capabilities
+
+    override suspend fun adminRequests(
+        status: String?,
+        outcome: String?,
+        mediaType: String?,
+        tmdbId: Int?,
+    ): ApiResult<RequestsListResponse> = ApiResult.NetworkError(IllegalStateException("not used"))
+
+    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> =
         ApiResult.NetworkError(IllegalStateException("not used"))
 }

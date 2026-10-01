@@ -60,6 +60,9 @@ fun TvFocusMarquee(
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
     bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
     animateTransition: Boolean = true,
+    /** An extra line under the block for pages that preview more than catalog
+     *  items (the Requests page's status and stage track). */
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -100,12 +103,13 @@ fun TvFocusMarquee(
                         TvMarqueeBlock(
                             content = value,
                             detailLine = detailLine.takeIf { value.id == content?.id },
+                            footer = footer,
                         )
                     }
                 }
             }
         } else if (content != null) {
-            TvMarqueeBlock(content = content, detailLine = detailLine)
+            TvMarqueeBlock(content = content, detailLine = detailLine, footer = footer)
         }
     }
 }
@@ -114,6 +118,7 @@ fun TvFocusMarquee(
 private fun TvMarqueeBlock(
     content: TvMarqueeContent,
     detailLine: String?,
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     // tvOS parity (TVFocusMarquee): when the text-fallback title wraps to two
     // lines the synopsis drops to one, keeping the bottom-anchored block's
@@ -269,6 +274,8 @@ private fun TvMarqueeBlock(
                     badges.forEach { badge -> MarqueeBadge(badge.uppercase()) }
                 }
             }
+
+        footer?.invoke(content)
     }
 }
 

@@ -112,6 +112,7 @@ sealed class Route(val route: String) {
     // --- Requests ---
     data object Requests : Route("requests")
     data object MyRequests : Route("requests/mine")
+    data object RequestApprovals : Route("requests/approvals")
     data class RequestDetail(
         val mediaType: String,
         val tmdbId: Int,

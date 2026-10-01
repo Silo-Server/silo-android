@@ -307,7 +307,6 @@ sealed class TvMainRoute(val route: String) {
     data object Music : TvMainRoute("main/music")
     data object Audiobooks : TvMainRoute("main/audiobooks")
     data object Requests : TvMainRoute("main/requests")
-    data object MyRequests : TvMainRoute("main/requests/mine")
     data object Settings : TvMainRoute("main/settings")
 
     data object Collections : TvMainRoute("main/collections")

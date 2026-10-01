@@ -19,6 +19,7 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.PushRegistrationRepository
 import org.siloserver.silo.repository.RecommendationRepository
+import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.SettingsRepository
@@ -94,7 +95,16 @@ val repositoryModule = module {
         )
     }
     single { RecommendationRepository(get()) }
-    single { RequestsRepository(get()) }
+    single {
+        RequestsRepository(
+            api = get(),
+            cache = RequestDetailCache(
+                prefetchScope = kotlinx.coroutines.CoroutineScope(
+                    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+                ),
+            ),
+        )
+    }
     single { RequestsFeatureStore(get()) }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
@@ -80,11 +81,14 @@ internal fun TvDetailHero(
     // Optional description-translation affordance (Apple tvOS parity),
     // rendered as its own focus stop directly under the synopsis.
     translation: (@Composable () -> Unit)? = null,
+    /** Grows the hero, not the artwork, for a taller summary strip (request
+     *  detail's status and stage track) so the actions stay inside its clip. */
+    extraHeight: Dp = 0.dp,
 ) {
     // tvOS 690pt on a 1080pt canvas. Android TV's 1920×1080 emulator reports
     // a 960×540dp layout canvas, so the same fraction produces 345dp.
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION
+    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight
 
     BoxWithConstraints(
         modifier = modifier

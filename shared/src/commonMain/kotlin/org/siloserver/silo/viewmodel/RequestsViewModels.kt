@@ -2,108 +2,231 @@ package org.siloserver.silo.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import org.siloserver.silo.model.request.CreateMediaRequest
+import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.MediaRequest
+import org.siloserver.silo.model.request.MyRequestsBucket
+import org.siloserver.silo.model.request.RequestActionCopy
 import org.siloserver.silo.model.request.RequestDiscoverySection
-import org.siloserver.silo.model.request.RequestMediaDetail
+import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.RequestMutationFailure
+import org.siloserver.silo.model.request.RequestOutcome
+import org.siloserver.silo.model.request.RequestStatus
+import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.RequestsRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class RequestsUiState(
+    /** The first load, with nothing to show yet. */
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val isEnabled: Boolean = false,
+    val hasLoaded: Boolean = false,
     val sections: List<RequestDiscoverySection> = emptyList(),
+    /** The signed-in user's requests, needs-attention first, newest first within each group. */
+    val myRequests: List<MediaRequest> = emptyList(),
+    /** Requests waiting on this admin's decision; zero for everyone else. */
+    val pendingApprovals: Int = 0,
     val error: String? = null,
-)
+    val query: String = "",
+    val searchResults: List<RequestMediaResult> = emptyList(),
+    /** TMDB's total for the query, for the "N results" line. */
+    val searchTotal: Int = 0,
+    val isSearching: Boolean = false,
+    val hasSearched: Boolean = false,
+) {
+    /** True while the hub shows discover content (no active query). */
+    val isShowingDiscover: Boolean get() = query.isBlank()
 
+    /** Requests still moving, for the summary card. */
+    val inProgressCount: Int
+        get() = myRequests.count { MyRequestsBucket.of(RequestDisplayState.of(it)) == MyRequestsBucket.InMotion }
+
+    /** Requests that need the user, for the summary card. */
+    val needsAttentionCount: Int
+        get() = myRequests.count { MyRequestsBucket.of(RequestDisplayState.of(it)) == MyRequestsBucket.NeedsAttention }
+
+    val onTheWayCount: Int get() = myRequests.count { RequestDisplayState.of(it) == RequestDisplayState.OnTheWay }
+    val pendingCount: Int get() = myRequests.count { RequestDisplayState.of(it) == RequestDisplayState.Pending }
+}
+
+/**
+ * The Requests hub: TMDB search, the user's own requests strip, a status
+ * summary, and the discover carousels. Fetches fresh on every visit: request
+ * state changes server-side, and a stale "Pending" is worse than a placeholder.
+ */
 class RequestsViewModel(
     private val repository: RequestsRepository,
+    private val featureStore: RequestsFeatureStore? = null,
+    /** False where the page reads the full approval queue itself (TV), so the hub doesn't read it twice. */
+    private val countsPendingApprovals: Boolean = true,
+    /** Loads on creation; the TV page loads when it composes. */
+    loadOnInit: Boolean = true,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RequestsUiState())
     val uiState: StateFlow<RequestsUiState> = _uiState.asStateFlow()
 
+    private var searchJob: Job? = null
+    private var loadGeneration = 0
+
     init {
-        load()
+        if (loadOnInit) load()
+        viewModelScope.launch {
+            repository.lastUpdate.drop(1).filterNotNull().collect { applyRequestUpdate(it.record) }
+        }
+        viewModelScope.launch {
+            repository.lastModeration.drop(1).filterNotNull().collect { loadPendingApprovals() }
+        }
+        featureStore?.let { store ->
+            // Moderation can be confirmed after the hub's first load.
+            viewModelScope.launch { store.canModerate.drop(1).collect { loadPendingApprovals() } }
+        }
     }
 
     fun load() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            fetchRequestsHome()
-        }
+        viewModelScope.launch { fetch() }
     }
 
     fun refresh() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, error = null) }
-            fetchRequestsHome()
+            _uiState.update { it.copy(isRefreshing = true) }
+            fetch()
             _uiState.update { it.copy(isRefreshing = false) }
         }
     }
 
-    private suspend fun fetchRequestsHome() {
-        when (val status = repository.status()) {
-            is ApiResult.Success -> {
-                if (!status.data.requestsEnabled) {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            isEnabled = false,
-                            sections = emptyList(),
-                            error = "Requests are not enabled on this server.",
-                        )
-                    }
-                    return
-                }
-                fetchDiscover()
+    /** Loads discover and the user's requests; returns whether both read. */
+    suspend fun fetch(): Boolean {
+        val generation = ++loadGeneration
+        _uiState.update { it.copy(isLoading = it.sections.isEmpty() && it.myRequests.isEmpty(), error = null) }
+        // The admin queue can take many pages; it fills its card when it lands.
+        val approvals = viewModelScope.launch { loadPendingApprovals() }
+        val discover = viewModelScope.async { repository.discover() }
+        val mine = repository.refreshMine()
+        val sections = discover.await()
+        if (generation != loadGeneration) return false
+        val succeeded = sections is ApiResult.Success && mine is ApiResult.Success
+        if (succeeded) {
+            val records = repository.mine.value
+            val ordered = MyRequestsBucket.bucket(records).flatMap { it.second }
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    hasLoaded = true,
+                    sections = mergeDiscoverCarousels((sections as ApiResult.Success).data.sections),
+                    myRequests = ordered,
+                    error = null,
+                )
             }
-            is ApiResult.Error, is ApiResult.NetworkError -> {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        isEnabled = false,
-                        error = status.errorMessage("Failed to load request status"),
+            repository.prefetch(ordered)
+        } else {
+            val failure: ApiResult<*> = if (sections is ApiResult.Success) mine else sections
+            _uiState.update {
+                // Keep prior content on a transient failure; only surface the
+                // error when there is nothing to show instead.
+                it.copy(
+                    isLoading = false,
+                    hasLoaded = true,
+                    error = failure.errorMessage("Failed to load requests")
+                        .takeIf { _ -> it.sections.isEmpty() && it.myRequests.isEmpty() },
+                )
+            }
+        }
+        approvals.join()
+        return succeeded
+    }
+
+    /** The hub's approvals card is a nudge, not a list: a failed read hides it. */
+    private suspend fun loadPendingApprovals() {
+        if (!countsPendingApprovals || featureStore?.canModerate?.value != true) {
+            _uiState.update { it.copy(pendingApprovals = 0) }
+            return
+        }
+        val pending = repository.adminRequests(status = RequestStatus.Pending, outcome = RequestOutcome.Active)
+        _uiState.update { it.copy(pendingApprovals = (pending as? ApiResult.Success)?.data?.size ?: 0) }
+    }
+
+    /** Debounced TMDB search (300 ms), as the Apple hub does. */
+    fun onQueryChanged(value: String) {
+        searchJob?.cancel()
+        _uiState.update { it.copy(query = value) }
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(searchResults = emptyList(), searchTotal = 0, isSearching = false, hasSearched = false) }
+            return
+        }
+        searchJob = viewModelScope.launch {
+            delay(300)
+            search(trimmed)
+        }
+    }
+
+    /** Runs the current query now (the keyboard's search action). */
+    fun submitSearch() {
+        val trimmed = _uiState.value.query.trim()
+        if (trimmed.isEmpty()) return
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch { search(trimmed) }
+    }
+
+    private suspend fun search(query: String) {
+        _uiState.update { it.copy(isSearching = true) }
+        val result = repository.search(query = query)
+        // A replacement search owns the state now.
+        if (_uiState.value.query.trim() != query) return
+        _uiState.update { state ->
+            when (result) {
+                is ApiResult.Success -> {
+                    val results = result.data.results.filter { it.mediaType.isRequestableVideo() }
+                    state.copy(
+                        isSearching = false,
+                        hasSearched = true,
+                        searchResults = results,
+                        searchTotal = maxOf(result.data.totalResults, results.size),
                     )
                 }
+                else -> state.copy(isSearching = false, hasSearched = true, searchResults = emptyList(), searchTotal = 0)
             }
         }
     }
 
-    private suspend fun fetchDiscover() {
-        when (val discover = repository.discover()) {
-            is ApiResult.Success -> {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        isEnabled = true,
-                        sections = mergeDiscoverCarousels(discover.data.sections),
-                        error = null,
-                    )
-                }
+    /** Patches every visible surface in place after a mutation anywhere in the app. */
+    private fun applyRequestUpdate(record: MediaRequest) {
+        _uiState.update { state ->
+            val index = state.myRequests.indexOfFirst { it.id == record.id }
+            val mine = when {
+                index >= 0 && record.outcome == RequestOutcome.Cancelled -> state.myRequests.filterNot { it.id == record.id }
+                index >= 0 -> state.myRequests.toMutableList().also { it[index] = record }
+                record.outcome == RequestOutcome.Active -> listOf(record) + state.myRequests
+                else -> state.myRequests
             }
-            is ApiResult.Error, is ApiResult.NetworkError -> {
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        isEnabled = true,
-                        error = discover.errorMessage("Failed to load requests"),
-                    )
-                }
-            }
+            state.copy(
+                searchResults = state.searchResults.applyingRequestUpdate(record),
+                sections = state.sections.map { it.copy(results = it.results.applyingRequestUpdate(record)) },
+                myRequests = mine,
+            )
         }
     }
+
+    override fun onCleared() {
+        searchJob?.cancel()
+        super.onCleared()
+    }
 }
+
+private fun String.isRequestableVideo(): Boolean = this == RequestMediaType.Movie || this == RequestMediaType.Series
 
 data class RequestSearchUiState(
     val query: String = "",
@@ -120,6 +243,7 @@ data class RequestSearchUiState(
         get() = submittedQuery.isNotBlank() && query.trim() == submittedQuery
 }
 
+/** The "Available to request" section of the app's global search. */
 class RequestSearchViewModel(
     private val repository: RequestsRepository,
 ) : ViewModel() {
@@ -128,6 +252,14 @@ class RequestSearchViewModel(
     val uiState: StateFlow<RequestSearchUiState> = _uiState.asStateFlow()
 
     private var searchJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            repository.lastUpdate.drop(1).filterNotNull().collect { event ->
+                _uiState.update { it.copy(results = it.results.applyingRequestUpdate(event.record)) }
+            }
+        }
+    }
 
     fun onQueryChanged(value: String) {
         _uiState.update { current ->
@@ -230,191 +362,130 @@ class RequestSearchViewModel(
     }
 }
 
-data class RequestDetailUiState(
-    val isLoading: Boolean = true,
-    val isSubmitting: Boolean = false,
-    val detail: RequestMediaDetail? = null,
-    val error: String? = null,
-    val notice: String? = null,
-)
-
-class RequestDetailViewModel(
-    private val repository: RequestsRepository,
-    private val mediaType: String,
-    private val tmdbId: Int,
-) : ViewModel() {
-
-    private val _uiState = MutableStateFlow(RequestDetailUiState())
-    val uiState: StateFlow<RequestDetailUiState> = _uiState.asStateFlow()
-
-    init {
-        load()
-    }
-
-    fun load() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null, notice = null) }
-            when (val result = repository.detail(mediaType, tmdbId)) {
-                is ApiResult.Success -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            detail = result.data,
-                            error = null,
-                        )
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoading = false,
-                            detail = null,
-                            error = result.errorMessage("Failed to load request details"),
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    fun submitRequest() {
-        val detail = _uiState.value.detail
-        if (detail == null) {
-            _uiState.update { it.copy(error = "Request details are not loaded.") }
-            return
-        }
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isSubmitting = true, error = null, notice = null) }
-            when (val result = repository.create(detail.toCreateMediaRequest())) {
-                is ApiResult.Success -> {
-                    val refreshedDetail = when (val detailResult = repository.detail(mediaType, tmdbId)) {
-                        is ApiResult.Success -> detailResult.data
-                        else -> detail.copy(
-                            request = detail.request.copy(
-                                status = result.data.status,
-                                requestable = false,
-                                requestId = result.data.id,
-                            ),
-                        )
-                    }
-                    _uiState.update {
-                        it.copy(
-                            isSubmitting = false,
-                            detail = refreshedDetail,
-                            error = null,
-                            notice = "Request submitted.",
-                        )
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isSubmitting = false,
-                            error = result.errorMessage("Failed to submit request"),
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private fun RequestMediaDetail.toCreateMediaRequest(): CreateMediaRequest = CreateMediaRequest(
-        mediaType = mediaType,
-        tmdbId = tmdbId,
-        tvdbId = tvdbId,
-        imdbId = imdbId,
-        title = title,
-        year = year,
-        overview = overview,
-        posterPath = posterPath,
-        backdropPath = backdropPath,
-    )
-}
-
 data class MyRequestsUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
-    val requests: List<MediaRequest> = emptyList(),
-    val actionInFlightId: String? = null,
+    val hasLoaded: Boolean = false,
+    /** Ordered, non-empty buckets, newest first within each. */
+    val buckets: List<Pair<MyRequestsBucket, List<MediaRequest>>> = emptyList(),
+    /** The request being cancelled; its row dims and takes no taps. */
+    val cancellingId: String? = null,
+    /** Requests whose cancel was sent without a usable answer; held until a fresh read. */
+    val unconfirmedCancelIds: Set<String> = emptySet(),
+    /** Inline message for a failed cancel; cleared on the next action. */
+    val actionErrorMessage: String? = null,
     val error: String? = null,
-)
+) {
+    val requests: List<MediaRequest> get() = buckets.flatMap { it.second }
+    val isEmpty: Boolean get() = hasLoaded && buckets.isEmpty()
+
+    /** Whether [record] may offer Cancel: pending, and no cancel of it held. */
+    fun canCancel(record: MediaRequest): Boolean =
+        RequestDisplayState.of(record).isCancelable && record.id !in unconfirmedCancelIds && cancellingId == null
+}
 
 class MyRequestsViewModel(
     private val repository: RequestsRepository,
+    /** Loads on creation; the TV page only uses this model to cancel. */
+    loadOnInit: Boolean = true,
 ) : ViewModel() {
 
     private var loadGeneration = 0
     private val _uiState = MutableStateFlow(MyRequestsUiState())
     val uiState: StateFlow<MyRequestsUiState> = _uiState.asStateFlow()
+    private var reloadJob: Job? = null
 
     init {
-        load()
+        if (loadOnInit) load()
+        viewModelScope.launch {
+            // A mutation elsewhere (detail submit) while this list is mounted:
+            // the list is short, so a full refetch is the simplest correct answer.
+            repository.lastUpdate.drop(1).filterNotNull().collect {
+                if (!_uiState.value.hasLoaded || _uiState.value.cancellingId != null) return@collect
+                reloadJob?.cancel()
+                reloadJob = viewModelScope.launch { fetch() }
+            }
+        }
     }
 
     fun load() {
-        val generation = ++loadGeneration
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            refreshMine(generation)
-        }
+        viewModelScope.launch { fetch() }
     }
 
     fun refresh() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRefreshing = true) }
+            fetch()
+            _uiState.update { it.copy(isRefreshing = false) }
+        }
+    }
+
+    /** Reads the list; returns whether the read succeeded. */
+    suspend fun fetch(): Boolean {
         val generation = ++loadGeneration
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true, error = null) }
-            refreshMine(generation)
-            if (generation == loadGeneration) {
-                _uiState.update { it.copy(isRefreshing = false) }
-            }
-        }
-    }
-
-    fun cancel(id: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(actionInFlightId = id, error = null) }
-            when (val result = repository.cancel(id)) {
-                is ApiResult.Success -> {
-                    _uiState.update {
-                        it.copy(
-                            requests = repository.mine.value,
-                            actionInFlightId = null,
-                            error = null,
-                        )
-                    }
-                }
-                is ApiResult.Error, is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            actionInFlightId = null,
-                            error = result.errorMessage("Failed to cancel request"),
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private suspend fun refreshMine(generation: Int) {
+        _uiState.update { it.copy(isLoading = it.buckets.isEmpty(), error = null) }
         val result = repository.refreshMine()
-        if (generation != loadGeneration) return
-        when (result) {
+        if (generation != loadGeneration) return false
+        return when (result) {
             is ApiResult.Success -> {
+                val buckets = MyRequestsBucket.bucket(repository.mine.value)
                 _uiState.update {
+                    // The server's list now shows each held cancel's result.
+                    val releasesHolds = it.unconfirmedCancelIds.isNotEmpty()
                     it.copy(
                         isLoading = false,
-                        requests = repository.mine.value,
+                        hasLoaded = true,
+                        buckets = buckets,
                         error = null,
+                        unconfirmedCancelIds = emptySet(),
+                        actionErrorMessage = if (releasesHolds) null else it.actionErrorMessage,
                     )
                 }
+                repository.prefetch(buckets.flatMap { it.second })
+                true
             }
             is ApiResult.Error, is ApiResult.NetworkError -> {
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        error = result.errorMessage("Failed to load your requests"),
+                        error = result.errorMessage("Failed to load your requests").takeIf { _ -> it.buckets.isEmpty() },
                     )
+                }
+                false
+            }
+        }
+    }
+
+    /**
+     * Cancels one of the user's requests. [refresh] re-reads the list that shows
+     * the row when it isn't this model's (the TV hub) and returns whether the
+     * read succeeded; it runs only to settle an uncertain cancel.
+     */
+    fun cancel(record: MediaRequest, refresh: (suspend () -> Boolean)? = null) {
+        val state = _uiState.value
+        if (state.cancellingId != null || record.id in state.unconfirmedCancelIds) return
+        _uiState.update { it.copy(cancellingId = record.id, actionErrorMessage = null) }
+        viewModelScope.launch {
+            val result = repository.cancel(record.id)
+            when {
+                result is ApiResult.Success -> {
+                    _uiState.update { it.copy(cancellingId = null) }
+                    if (refresh == null) fetch()
+                }
+                RequestMutationFailure.isUncertain(result) -> {
+                    // Never resend: hold Cancel until a fresh read shows the result.
+                    _uiState.update { it.copy(cancellingId = null, unconfirmedCancelIds = it.unconfirmedCancelIds + record.id) }
+                    if (refresh != null) {
+                        if (refresh()) _uiState.update { it.copy(unconfirmedCancelIds = emptySet()) }
+                    } else {
+                        fetch()
+                    }
+                    if (_uiState.value.unconfirmedCancelIds.isNotEmpty()) {
+                        _uiState.update { it.copy(actionErrorMessage = RequestActionCopy.UnconfirmedCancel) }
+                    }
+                }
+                else -> _uiState.update {
+                    it.copy(cancellingId = null, actionErrorMessage = RequestActionCopy.failure(result, "Couldn't cancel the request"))
                 }
             }
         }

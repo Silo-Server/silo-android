@@ -18,6 +18,12 @@ sealed class TvRootDestination {
     /** Personal recommendations ("For You") — tvOS `.recommendations`. */
     data object ForYou : TvRootDestination()
 
-    /** Upcoming releases by week. Always the last tab. */
+    /** Upcoming releases by week. */
     data object Calendar : TvRootDestination()
+
+    /**
+     * Media requests, tvOS `.requests`. Present only while the server has
+     * requests enabled for this profile; it trails the content tabs.
+     */
+    data object Requests : TvRootDestination()
 }

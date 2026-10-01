@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.model.request.AdminRequestAction
+import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -77,6 +79,19 @@ private class FakeRequestsApi(
         ApiResult.NetworkError(IllegalStateException("no fake"))
 
     override suspend fun cancel(id: String): ApiResult<MediaRequest> = cancelResult
+
+    override suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> =
+        ApiResult.NetworkError(IllegalStateException("no fake"))
+
+    override suspend fun adminRequests(
+        status: String?,
+        outcome: String?,
+        mediaType: String?,
+        tmdbId: Int?,
+    ): ApiResult<RequestsListResponse> = ApiResult.NetworkError(IllegalStateException("no fake"))
+
+    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> =
+        ApiResult.NetworkError(IllegalStateException("no fake"))
 }
 
 class RequestsRepositoryTest {
