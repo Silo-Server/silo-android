@@ -40,6 +40,7 @@ data class OutboxOperation(
         val positionSeconds: Double,
         val previousClientUpdatedAtMs: Long,
         val clearedAtMs: Long,
+        val previousPositionUpdatedAtMs: Long? = null,
     )
 
     /**

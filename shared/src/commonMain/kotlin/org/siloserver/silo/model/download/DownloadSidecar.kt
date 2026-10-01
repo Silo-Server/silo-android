@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.download
 
 import org.siloserver.silo.model.catalog.VersionChapter
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import kotlinx.serialization.Serializable
 
 /**
@@ -29,6 +30,9 @@ data class DownloadSidecar(
     val subtitle: String? = null,
     val posterUrl: String? = null,
     val posterThumbhash: String? = null,
+    /** Null on older downloads; episode artwork is protected conservatively. */
+    val posterIsEpisodeStill: Boolean? = null,
+    val episodeUserData: LeafItemUserData? = null,
     val year: Int? = null,
     val seriesTitle: String? = null,
     /** Stable parent series/show content id — the rename-safe grouping key for the

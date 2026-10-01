@@ -86,4 +86,6 @@ data class DownloadEntity(
      *  downloaded file's audio tracks and the local subtitle sidecars. Null for
      *  downloads completed before offline track data was captured. */
     val offlineTracksJson: String? = null,
+    val posterIsEpisodeStill: Boolean? = null,
+    val episodeUserDataJson: String? = null,
 )

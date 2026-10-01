@@ -24,8 +24,12 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 14
+    const val REVISION = 16
 
+    /** Blur unwatched episode images */
+    const val CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES = "catalog.hide_unwatched_episode_images"
+    /** Hide unwatched episode descriptions */
+    const val CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS = "catalog.hide_unwatched_episode_overviews"
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
     /** Metadata language exceptions */
@@ -110,6 +114,8 @@ object SettingKeys {
     const val PLAYER_VIDEO_SKIP_BACK_SECONDS = "player.video_skip_back_seconds"
     /** Video fast-forward interval */
     const val PLAYER_VIDEO_SKIP_FORWARD_SECONDS = "player.video_skip_forward_seconds"
+    /** Request titles I add to my watchlist */
+    const val REQUESTS_WATCHLIST_AUTO_REQUEST = "requests.watchlist_auto_request"
     /** Search scope */
     const val SEARCH_MEDIA_SCOPE = "search.media_scope"
     /** Match device caption settings */
@@ -159,6 +165,8 @@ object SettingKeys {
 
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
+        CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES,
+        CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS,
         CATALOG_METADATA_LANGUAGE,
         CATALOG_METADATA_LANGUAGE_OVERRIDES,
         CATALOG_SHOW_ADVISORY_AGE,
@@ -194,6 +202,7 @@ object SettingKeys {
         PLAYER_VIDEO_GRAVITY,
         PLAYER_VIDEO_SKIP_BACK_SECONDS,
         PLAYER_VIDEO_SKIP_FORWARD_SECONDS,
+        REQUESTS_WATCHLIST_AUTO_REQUEST,
         SEARCH_MEDIA_SCOPE,
         UI_CARD_OVERLAYS,
         UI_CARD_OVERLAYS_ENABLED,
@@ -241,6 +250,8 @@ object SettingKeys {
     )
 
     val BOOLEAN_KEYS: Set<String> = setOf(
+        CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES,
+        CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS,
         CATALOG_SHOW_ADVISORY_AGE,
         HOME_HIDE_WATCHED_ITEMS,
         PLAYBACK_AUTO_PLAY_NEXT,
@@ -254,6 +265,7 @@ object SettingKeys {
         PLAYER_HDR_ENABLED,
         PLAYER_MATCH_FRAME_RATE,
         PLAYER_SEEK_CACHE_ENABLED,
+        REQUESTS_WATCHLIST_AUTO_REQUEST,
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_HIGH_CONTRAST,

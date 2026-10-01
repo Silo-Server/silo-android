@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.tv.material3.MaterialTheme
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.SectionItem
 
@@ -245,8 +246,9 @@ fun TvRootHeroBackdrop(
     item: SectionItem?,
     modifier: Modifier = Modifier,
 ) {
-    val content = remember(item?.contentId) {
-        item?.let { TvMarqueeContent.from(it, rowTitle = "") }
+    val spoilers = LocalEpisodeSpoilerPrefs.current
+    val content = remember(item?.contentId, spoilers) {
+        item?.let { TvMarqueeContent.from(it, rowTitle = "", spoilers = spoilers) }
     }
     TvRootHeroBackdrop(content = content, modifier = modifier)
 }

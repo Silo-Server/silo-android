@@ -76,10 +76,13 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -500,6 +503,10 @@ fun DetailHero(
         DetailHeroArtwork(
             artworkUrl = detail.backdropUrl ?: detail.posterUrl,
             artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
+            hidden = detail.type.equals("episode", ignoreCase = true) && detail.backdropUrl.isNullOrBlank() &&
+                LocalEpisodeSpoilerPrefs.current.hidesImage(
+                    EpisodeSpoilers.isUnwatched(detail.userData), detail.posterIsEpisodeStill,
+                ),
             contentDescription = detail.title,
         ) {
             HeroTitle(detail = detail)
@@ -542,6 +549,7 @@ internal fun DetailHeroArtwork(
     artworkUrl: String?,
     artworkThumbhash: String?,
     contentDescription: String? = null,
+    hidden: Boolean = false,
     title: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -588,9 +596,10 @@ internal fun DetailHeroArtwork(
                         )
                     },
             ) {
-                ThumbhashImage(
+                SpoilerImage(
                     url = artworkUrl,
                     thumbhash = artworkThumbhash,
+                    hidden = hidden,
                     contentDescription = contentDescription,
                     contentScale = ContentScale.Crop,
                     crossfadeMillis = DetailArtworkCrossfadeMs,

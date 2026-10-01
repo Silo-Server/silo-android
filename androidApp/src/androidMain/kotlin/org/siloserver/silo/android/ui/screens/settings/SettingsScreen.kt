@@ -274,6 +274,17 @@ fun SettingsScreen(
                 )
             }
 
+            if (state.episodeSpoilers.isSupported) {
+                item {
+                    EpisodeSpoilerSettings(
+                        hideImages = state.episodeSpoilers.hideImages,
+                        hideOverviews = state.episodeSpoilers.hideOverviews,
+                        onHideImagesChanged = viewModel::setHideUnwatchedEpisodeImages,
+                        onHideOverviewsChanged = viewModel::setHideUnwatchedEpisodeOverviews,
+                    )
+                }
+            }
+
             item {
                 SettingsSection(title = "Library") {
                     SettingsNavigationRow(

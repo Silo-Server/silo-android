@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
+import org.siloserver.silo.common.settings.EpisodeSpoilerSupport
+import org.siloserver.silo.network.ApiResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -21,10 +25,22 @@ class WatchNextSyncWorker(
     params: WorkerParameters,
     private val sectionRepository: SectionRepository,
     private val repository: WatchNextRepository,
+    private val spoilerStore: EpisodeSpoilerStore,
+    private val catalogRepository: CatalogRepository,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
-        val completed = syncWatchNextHome(sectionRepository, repository.writeGate, { isStopped }) { fields, run, authority ->
+        val completed = syncWatchNextHome(
+            sectionRepository, repository.writeGate, { isStopped },
+            spoilerPreferences = {
+                spoilerStore.refresh()
+                spoilerStore.state.value.takeUnless { it.support == EpisodeSpoilerSupport.Unknown }?.prefs
+            },
+            preferencesCurrent = { prefs ->
+                spoilerStore.state.value.let { it.support != EpisodeSpoilerSupport.Unknown && it.prefs == prefs }
+            },
+            seriesArtwork = { id -> (catalogRepository.getItemDetail(id) as? ApiResult.Success)?.data },
+        ) { fields, run, authority ->
             repository.diffAndApply(fields, run, authority)
         }
         if (completed) Result.success() else Result.retry()

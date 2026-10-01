@@ -28,11 +28,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.trailerRailEntries
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -105,9 +107,20 @@ fun SeriesDetailContent(
     val loadedSelectedEpisodeDetail = selectedEpisodeDetail
         ?.takeIf { it.contentId == selectedEpisodeContentId }
     val usesEpisodeEditorial = selectedEpisode != null || selectedEpisodeContentId != null
-    val selectedEpisodeOverview = loadedSelectedEpisodeDetail?.overview
-        ?.takeIf { it.isNotBlank() }
-        ?: selectedEpisode?.overview?.takeIf { it.isNotBlank() }
+    // Spoiler protection: the rail row's watch state is the one the long-press
+    // "Mark as Watched" updates, so it wins over the loaded episode detail.
+    val selectedEpisodeUnwatched = EpisodeSpoilers.isUnwatched(
+        selectedEpisode?.userData ?: loadedSelectedEpisodeDetail?.userData,
+    )
+    val hidesSelectedEpisodeOverview =
+        LocalEpisodeSpoilerPrefs.current.hidesOverview(selectedEpisodeUnwatched)
+    val selectedEpisodeOverview = if (hidesSelectedEpisodeOverview) {
+        null
+    } else {
+        loadedSelectedEpisodeDetail?.overview
+            ?.takeIf { it.isNotBlank() }
+            ?: selectedEpisode?.overview?.takeIf { it.isNotBlank() }
+    }
     // iOS keeps the series cast credit stable while the selected episode's
     // overview and playback options change. Reusing the series credit avoids
     // replacing it with a skeleton (and repainting different names) on every
@@ -257,7 +270,10 @@ fun SeriesDetailContent(
                 } else {
                     detail.overview
                 },
-                reserveOverviewSpace = !isExpandedDetailLayout && usesEpisodeEditorial,
+                // A hidden (spoiler) overview collapses instead of leaving
+                // the reserved block empty between the actions and the credit.
+                reserveOverviewSpace = !isExpandedDetailLayout && usesEpisodeEditorial &&
+                    !hidesSelectedEpisodeOverview,
                 directorText = fixedSeriesCredit,
                 isCreditLoading = false,
                 reserveCreditSpace = !isExpandedDetailLayout && usesEpisodeEditorial,

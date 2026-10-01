@@ -1,11 +1,38 @@
 package org.siloserver.silo.tv.watchnext
 
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.catalog.MediaItemUserState
+import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class WatchNextProgramMapperTest {
+    @Test
+    fun `protected episode uses explicit series artwork and never publishes the still`() {
+        val episode = sectionItem(type = "episode").copy(backdropIsEpisodeStill = true, posterIsEpisodeStill = false)
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        assertEquals(episode.posterUrl, WatchNextProgramMapper.map(episode, "next_up", prefs)?.posterArtUri)
+        assertEquals(WatchNextProgramMapper.ASPECT_RATIO_2_3,
+            WatchNextProgramMapper.map(episode, "next_up", prefs)?.posterArtAspectRatio)
+        val noSafeSlot = episode.copy(posterIsEpisodeStill = true)
+        assertNull(WatchNextProgramMapper.map(noSafeSlot, "next_up", prefs))
+        val series = ItemDetail(contentId = "series", type = "series", title = "Series", backdropUrl = "safe-series")
+        assertEquals("safe-series", WatchNextProgramMapper.map(noSafeSlot, "next_up", prefs, series)?.posterArtUri)
+        assertNull(WatchNextProgramMapper.map(noSafeSlot, "next_up", prefs, series.copy(type = "episode")))
+    }
+
+    @Test
+    fun `legacy protected artwork is replaced but watched and in progress stills remain`() {
+        val episode = sectionItem(type = "episode")
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        assertNull(WatchNextProgramMapper.map(episode, "next_up", prefs))
+        assertEquals(episode.backdropUrl,
+            WatchNextProgramMapper.map(episode.copy(userState = MediaItemUserState(played = true)), "next_up", prefs)?.posterArtUri)
+        assertEquals(episode.backdropUrl,
+            WatchNextProgramMapper.map(episode.copy(positionSeconds = 1.0), "continue_watching", prefs)?.posterArtUri)
+    }
 
     private fun sectionItem(
         id: String = "tt1234",

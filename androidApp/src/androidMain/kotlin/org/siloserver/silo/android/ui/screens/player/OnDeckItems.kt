@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 
 /** Existing On Deck projection: ordered, bounded cards with usable landscape art. */
 internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: String?): List<PlayerViewModel.OnDeckItem> {
@@ -33,6 +34,9 @@ internal fun List<ResolvedSection>.toOnDeckItems(contentId: String, seriesId: St
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,
+                imageIsEpisodeStill = item.backdropIsEpisodeStill,
+                isUnwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
+                    EpisodeSpoilers.isUnwatched(item),
             )
         }
 }

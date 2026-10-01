@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
+import org.siloserver.silo.model.catalog.LeafItemUserData
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -59,6 +60,18 @@ class DownloadMetadataStoreTest {
         val read = store.readSidecar("srv1", "profA", 7)
         assertNotNull(read)
         assertEquals(sidecar, read)
+    }
+
+    @Test
+    fun `episode artwork provenance and watch state survive Room storage`() = runTest {
+        for (isStill in listOf(true, false, null)) {
+            val sidecar = stubSidecar(7).copy(
+                posterIsEpisodeStill = isStill,
+                episodeUserData = LeafItemUserData(played = false, isInProgress = true, positionSeconds = 42.0),
+            )
+            store.writeSidecar("srv1", "profA", sidecar)
+            assertEquals(sidecar, store.readSidecar("srv1", "profA", 7))
+        }
     }
 
     @Test

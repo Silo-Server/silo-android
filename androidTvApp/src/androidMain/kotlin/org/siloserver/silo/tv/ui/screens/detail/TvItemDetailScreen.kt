@@ -97,6 +97,7 @@ import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.common.ui.openYoutubeTrailer
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -115,6 +116,8 @@ import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
@@ -616,9 +619,26 @@ private fun TvDetailContent(
             ?: episode.title
             ?: "Episode ${episode.episodeNumber}"
     } ?: detail.title
-    val heroOverview = activeSeriesEpisode?.let { episode ->
-        activeSeriesPlaybackDetail?.overview ?: episode.overview
-    } ?: detail.overview
+    // Spoiler protection: the focused episode's (or an episode page's)
+    // description stays hidden until the profile starts it. The rail row's
+    // watch state is the one "Mark as Watched" updates, so it wins.
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val hidesHeroOverview = when {
+        activeSeriesEpisode != null -> spoilerPrefs.hidesOverview(
+            EpisodeSpoilers.isUnwatched(
+                activeSeriesEpisode.userData ?: activeSeriesPlaybackDetail?.userData,
+            ),
+        )
+        detail.type == "episode" -> spoilerPrefs.hidesOverview(EpisodeSpoilers.isUnwatched(detail.userData))
+        else -> false
+    }
+    val heroOverview = if (hidesHeroOverview) {
+        null
+    } else {
+        activeSeriesEpisode?.let { episode ->
+            activeSeriesPlaybackDetail?.overview ?: episode.overview
+        } ?: detail.overview
+    }
     // Always derive the Series credit from the Show itself. Episode focus can
     // replace the synopsis and playback target, but must never make Starring or
     // the controls underneath it jump to a different position.
@@ -650,7 +670,7 @@ private fun TvDetailContent(
         selectedFileId = heroSelectedFileId,
         includePlaybackFormats = false,
     )
-    val heroArtwork = resolveTvDetailHeroArtwork(detail, state.nextUpEpisode)
+    val heroArtwork = resolveTvDetailHeroArtwork(detail, state.nextUpEpisode, spoilerPrefs)
     val detailPageTint = rememberAmbientBackdropTintState()
     LaunchedEffect(heroArtwork.url) {
         detailPageTint.set(item = null, url = heroArtwork.url)
@@ -818,7 +838,9 @@ private fun TvDetailContent(
                             tagline = detail.tagline.takeIf { activeSeriesEpisode == null },
                             factsLine = heroFactsLine,
                             directorText = heroCreditText,
-                            translation = translationSlot.takeIf { activeSeriesEpisode == null },
+                            translation = translationSlot.takeIf {
+                                activeSeriesEpisode == null && !hidesHeroOverview
+                            },
                             compactSeries = isSeriesDetail,
                             playbackSummary = {
                                 TvDetailPlaybackSelectionSummary(
@@ -2555,21 +2577,32 @@ internal data class TvDetailHeroArtwork(
  * Item detail responses can legitimately omit series/season artwork even
  * though their loaded episode rows carry landscape stills. Prefer the real
  * backdrop, then an episodic landscape still; never stretch a portrait poster
- * across a movie/series hero.
+ * across a movie/series hero. A still that spoiler protection hides is never
+ * shown full-size here: only its ThumbHash colour field is used.
  */
 internal fun resolveTvDetailHeroArtwork(
     detail: ItemDetail,
     nextUpEpisode: EpisodeListItem?,
+    spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE,
 ): TvDetailHeroArtwork {
     if (!detail.backdropUrl.isNullOrBlank() || !detail.backdropThumbhash.isNullOrBlank()) {
         return TvDetailHeroArtwork(detail.backdropUrl, detail.backdropThumbhash)
     }
     return when (detail.type.lowercase()) {
-        "series", "season" -> TvDetailHeroArtwork(
-            nextUpEpisode?.stillUrl,
-            nextUpEpisode?.stillThumbhash,
+        "series", "season" -> {
+            val hidesStill = nextUpEpisode != null &&
+                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(nextUpEpisode.userData), nextUpEpisode.stillIsEpisodeStill)
+            TvDetailHeroArtwork(
+                nextUpEpisode?.stillUrl.takeUnless { hidesStill },
+                nextUpEpisode?.stillThumbhash,
+            )
+        }
+        "episode" -> TvDetailHeroArtwork(
+            detail.posterUrl.takeUnless {
+                spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData), detail.posterIsEpisodeStill)
+            },
+            detail.posterThumbhash,
         )
-        "episode" -> TvDetailHeroArtwork(detail.posterUrl, detail.posterThumbhash)
         else -> TvDetailHeroArtwork(null, null)
     }
 }

@@ -3,13 +3,18 @@ package org.siloserver.silo.tv.ui.components
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.OverlaySummary
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -81,12 +86,20 @@ data class TvMarqueeContent(
     }
 
     companion object {
+        /**
+         * [spoilers] applies spoiler protection to an episode the profile has
+         * not started: no synopsis, and no still as the backdrop. The still's
+         * ThumbHash stays as a colour field until enrichment swaps in the
+         * series backdrop.
+         */
         fun from(
             item: SectionItem,
             rowTitle: String,
             rowIdentity: String = rowTitle,
+            spoilers: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE,
         ): TvMarqueeContent {
             val isEpisode = item.type.equals("episode", ignoreCase = true)
+            val unwatchedEpisode = isEpisode && EpisodeSpoilers.isUnwatched(item)
 
             val meta = mutableListOf<String>()
             if (isEpisode) {
@@ -105,6 +118,8 @@ data class TvMarqueeContent(
                 ?.let(::listOf)
                 .orEmpty()
 
+            val hidesBackdrop = spoilers.hidesImage(unwatchedEpisode, item.backdropIsEpisodeStill)
+            val hidesPoster = spoilers.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill)
             val sectionBackdropUrl = item.backdropUrl?.takeIf { it.isNotBlank() }
             val sectionPosterUrl = item.posterUrl?.takeIf { it.isNotBlank() }
             return TvMarqueeContent(
@@ -113,20 +128,22 @@ data class TvMarqueeContent(
                 logoUrl = item.logoUrl?.takeIf { it.isNotBlank() },
                 badges = badges,
                 metaParts = meta,
-                synopsis = item.overview?.takeIf { it.isNotBlank() },
+                synopsis = item.overview
+                    ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatchedEpisode) },
                 detailLine = null,
                 specLine = specLine(item.overlaySummary),
                 // Match tvOS: a section backdrop (or poster fallback) is always
                 // available for the first rested frame. Episode enrichment may
-                // replace it with series art later.
-                backdropUrl = sectionBackdropUrl ?: sectionPosterUrl,
-                backdropThumbhash = if (sectionBackdropUrl != null) {
+                // replace it with series art later. Hidden stills also drop
+                // their ThumbHash so the placeholder cannot reveal them.
+                backdropUrl = (if (hidesBackdrop) null else sectionBackdropUrl) ?: (if (hidesPoster) null else sectionPosterUrl),
+                backdropThumbhash = if (!hidesBackdrop && sectionBackdropUrl != null) {
                     item.backdropThumbhash
-                } else {
+                } else if (!hidesPoster) {
                     item.posterThumbhash
-                },
-                posterUrl = sectionPosterUrl,
-                posterThumbhash = item.posterThumbhash,
+                } else null,
+                posterUrl = if (hidesPoster) null else sectionPosterUrl,
+                posterThumbhash = if (hidesPoster) null else item.posterThumbhash,
                 isEpisode = isEpisode,
                 source = item,
             )
@@ -295,9 +312,33 @@ class TvFocusMarqueeState internal constructor() {
     private val enrichmentCache = mutableMapOf<String, TvMarqueeEnrichment>()
     private val enrichmentRequests = mutableSetOf<String>()
 
+    /** The profile's spoiler protection, kept current by [rememberTvFocusMarqueeState]. */
+    internal var spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE
+        set(value) {
+            if (field == value) return
+            field = value
+            content = content?.withCurrentSpoilers()
+            candidate = candidate?.withCurrentSpoilers()
+        }
+
+    private fun TvMarqueeContent.withCurrentSpoilers(): TvMarqueeContent =
+        TvMarqueeContent.from(source, rowTitle = "", spoilers = spoilerPrefs).copy(id = id)
+
+    /** Refresh retained watch state without another focus event or a new detail fetch. */
+    internal fun refreshSources(rows: List<ResolvedSection>) {
+        fun TvMarqueeContent.refreshed(): TvMarqueeContent {
+            val row = rows.firstOrNull { "${it.id}#$contentId" == id } ?: return this
+            val item = row.items.firstOrNull { it.contentId == contentId } ?: return this
+            if (item == source) return this
+            return TvMarqueeContent.from(item, row.title, row.id, spoilerPrefs)
+        }
+        content = content?.refreshed()
+        candidate = candidate?.refreshed()
+    }
+
     /** Report card focus. The displayed content swaps on the next composition turn. */
     fun preview(item: SectionItem, rowTitle: String, rowIdentity: String = rowTitle) {
-        val next = TvMarqueeContent.from(item, rowTitle, rowIdentity)
+        val next = TvMarqueeContent.from(item, rowTitle, rowIdentity, spoilerPrefs)
         focusedMarqueeId = next.id
         // Focus is back on the already-displayed card: cancel any pending swap
         // so a brief A→B→A scrub within the debounce window can't commit a
@@ -316,7 +357,7 @@ class TvFocusMarqueeState internal constructor() {
      */
     fun seedInitialPreview(item: SectionItem, rowTitle: String, rowIdentity: String = rowTitle) {
         if (focusedMarqueeId != null) return
-        val next = TvMarqueeContent.from(item, rowTitle, rowIdentity)
+        val next = TvMarqueeContent.from(item, rowTitle, rowIdentity, spoilerPrefs)
         if (candidate?.id == next.id || content?.id == next.id) return
         candidate = next
     }
@@ -325,7 +366,7 @@ class TvFocusMarqueeState internal constructor() {
         // Apply cached enrichment in the same snapshot as the base-content swap,
         // so revisiting an item presents one complete frame without a refetch.
         enrichment = value?.contentId?.let(enrichmentCache::get)
-        content = value
+        content = value?.withCurrentSpoilers()
     }
 
     /** True if detail for [contentId] is already cached (skip the fetch). */
@@ -369,12 +410,14 @@ fun rememberTvFocusMarqueeState(
     fetchDetail: (suspend (String) -> ItemDetail?)? = null,
 ): TvFocusMarqueeState {
     val state = remember { TvFocusMarqueeState() }
-    LaunchedEffect(state.candidate?.id) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    SideEffect { state.spoilerPrefs = spoilerPrefs }
+    LaunchedEffect(state.candidate) {
         val candidate = state.candidate ?: return@LaunchedEffect
         // Page-entry seed stays immediate so the hero never opens blank. Only
         // subsequent D-pad focus moves wait for the focus-rest interval.
         if (state.content != null) delay(TvMarqueeFocusRestMillis)
-        if (state.candidate?.id == candidate.id) state.commit(candidate)
+        if (state.candidate == candidate) state.commit(candidate)
     }
 
     // Populate the cache and enrich the active hero when identity still

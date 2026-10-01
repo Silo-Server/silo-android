@@ -143,6 +143,9 @@ class SettingsViewModelOfflinePreferencesTest {
                 "getState" to MutableStateFlow(SeekIntervalState()),
                 "getLastError" to MutableStateFlow<String?>(null),
             )),
+            episodeSpoilerStore = idleStore(mapOf(
+                "getState" to MutableStateFlow(org.siloserver.silo.common.settings.EpisodeSpoilerState()),
+            )),
             audiobookSettingsStore = AudiobookSettingsStore(RuntimeEnvironment.getApplication(), { null }),
         )
         try {

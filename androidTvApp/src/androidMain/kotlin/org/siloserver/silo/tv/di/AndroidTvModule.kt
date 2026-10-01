@@ -541,6 +541,7 @@ val androidTvModule = module {
             profileSettings = get(),
             tvLibraryScopeStore = getOrNull(),
             seekIntervalStore = get(),
+            episodeSpoilerStore = get(),
             audiobookSettingsStore = get(),
         )
     }

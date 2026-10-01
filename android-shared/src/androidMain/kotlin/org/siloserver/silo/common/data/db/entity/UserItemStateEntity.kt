@@ -47,4 +47,6 @@ data class UserItemStateEntity(
     val readProgress: Double?,
     val clientUpdatedAtMs: Long,
     val serverUpdatedAtMs: Long?,
+    /** Timestamp of the watch/progress mutation, excluding ratings and track choices. */
+    val positionUpdatedAtMs: Long? = null,
 )

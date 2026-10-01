@@ -2,6 +2,9 @@ package org.siloserver.silo.android.ui.screens.downloads
 
 import org.siloserver.silo.android.ui.util.formatBytes
 import android.content.Context
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -87,6 +90,15 @@ fun DownloadsScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(viewModel) { viewModel.refreshLocalUserState() }
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshLocalUserState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Multi-select delete (mirrors iOS's edit-mode selection). Selection unit
     // is a top-level entry — selecting a series selects all its episodes.

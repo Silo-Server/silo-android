@@ -41,6 +41,17 @@ class WatchNextSeeder(
     // AFTER the seed and erase the fresh rows it just inserted.
     private var clearJob: Job? = null
 
+    private val protectionPrefs = context.getSharedPreferences("silo_watch_next_protection", Context.MODE_PRIVATE)
+
+    /** Clear exposed tiles only when known image protection changes from off to on. */
+    fun updateImageProtection(enabled: Boolean) {
+        val wasEnabled = protectionPrefs.getBoolean("hide_images", false)
+        if (enabled && !wasEnabled) clear()
+        protectionPrefs.edit().putBoolean("hide_images", enabled).apply()
+        seedNow()
+        enqueuePeriodic()
+    }
+
     fun seedNow() {
         val pending = clearJob
         scope.launch {
