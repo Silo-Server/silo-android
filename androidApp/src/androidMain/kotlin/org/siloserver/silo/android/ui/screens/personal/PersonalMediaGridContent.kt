@@ -395,10 +395,10 @@ fun MediaGridItem(
     onWatchlistToggle: (() -> Unit)? = null,
     isInWatchlist: Boolean = false,
 ) {
-    val (actions, userState) = rememberBrowseItemCardActions(item)
+    val (actions, userState, positionSeconds) = rememberBrowseItemCardActions(item)
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-    val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played)
-    val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true)
+    val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
+    val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true, positionSeconds = positionSeconds)
     val overlayState = LocalCardOverlayUiState.current
     var menuExpanded by remember { mutableStateOf(false) }
     val heroHandoff = LocalHeroSourceHandoff.current

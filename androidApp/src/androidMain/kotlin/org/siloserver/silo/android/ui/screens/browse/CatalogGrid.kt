@@ -168,10 +168,10 @@ fun CatalogGrid(
                 key = { it.contentId },
                 contentType = { item -> item.type },
             ) { item ->
-                val (actions, userState) = rememberBrowseItemCardActions(item)
+                val (actions, userState, positionSeconds) = rememberBrowseItemCardActions(item)
                 val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played)
-                val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true)
+                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
+                val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true, positionSeconds = positionSeconds)
                 MediaCard(
                     hideArtwork = hideArtwork,
                     hideDetailArtwork = hideDetailArtwork,

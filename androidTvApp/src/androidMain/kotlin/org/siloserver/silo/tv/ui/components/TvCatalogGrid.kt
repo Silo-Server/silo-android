@@ -268,9 +268,9 @@ fun TvCatalogGrid(
                 key = { _, item -> item.contentId },
                 contentType = { _, item -> item.type },
             ) { index, item ->
-                val (actions, userState) = rememberTvBrowseItemCardActions(item)
+                val (actions, userState, positionSeconds) = rememberTvBrowseItemCardActions(item)
                 val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played)
+                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
                 val isRestoreTarget =
                     restoreItemFocusRequester != null && index == resolvedRestoreItemIndex
                 if (isRestoreTarget) {

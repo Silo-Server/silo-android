@@ -1,6 +1,7 @@
 package org.siloserver.silo.model.settings
 
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.model.catalog.LeafItemUserData
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.section.SectionItem
@@ -25,6 +26,21 @@ class EpisodeSpoilersTest {
         assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(positionSeconds = 2.0), prefs))
         assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode.copy(type = "series"), prefs))
         assertFalse(EpisodeSpoilers.hidesBrowseArtwork(episode, EpisodeSpoilerPrefs.NONE))
+    }
+
+    @Test
+    fun optimisticUnwatchedResetProtectsStartedBrowseArtwork() {
+        val prefs = EpisodeSpoilerPrefs(hideImages = true)
+        val original = BrowseItem("episode", "episode", "Episode", posterIsEpisodeStill = true,
+            backdropUrl = "still", backdropIsEpisodeStill = true, positionSeconds = 20.0)
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(original, prefs))
+        val reset = original.withWatched(false)
+        assertTrue(EpisodeSpoilers.hidesBrowseArtwork(original, prefs, played = reset.userState?.played,
+            positionSeconds = reset.positionSeconds))
+        assertTrue(EpisodeSpoilers.hidesBrowseArtwork(original, prefs, played = reset.userState?.played,
+            selectBackdrop = true, positionSeconds = reset.positionSeconds))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(original, prefs))
+        assertFalse(EpisodeSpoilers.hidesBrowseArtwork(original.withWatched(true), prefs))
     }
 
     @Test

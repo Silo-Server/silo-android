@@ -39,6 +39,12 @@ data class OverlaySummary(
     @SerialName("multi_sub") val multiSub: Boolean? = null
 )
 
+/** A watched mutation clears resume progress, including optimistic unwatched resets. */
+fun BrowseItem.withWatched(watched: Boolean): BrowseItem = copy(
+    userState = (userState ?: MediaItemUserState()).copy(played = watched),
+    positionSeconds = 0.0,
+)
+
 @Serializable
 data class BrowseItem(
     @SerialName("content_id") val contentId: String,

@@ -52,12 +52,12 @@ object EpisodeSpoilers {
     /** Browse cards use the live played flag returned by their action state. */
     fun hidesBrowseArtwork(
         item: BrowseItem, prefs: EpisodeSpoilerPrefs, played: Boolean? = item.userState?.played,
-        selectBackdrop: Boolean = false,
+        selectBackdrop: Boolean = false, positionSeconds: Double? = item.positionSeconds,
     ): Boolean {
         val provenance = if (selectBackdrop && !item.backdropUrl.isNullOrBlank()) item.backdropIsEpisodeStill
             else item.posterIsEpisodeStill
         return item.type.equals("episode", ignoreCase = true) &&
-            prefs.hidesImage(isUnwatched(played, isInProgress = null, positionSeconds = item.positionSeconds), provenance)
+            prefs.hidesImage(isUnwatched(played, isInProgress = null, positionSeconds = positionSeconds), provenance)
     }
 
     /** Provenance follows the image selected for the wide card; null preserves older-server protection. */
