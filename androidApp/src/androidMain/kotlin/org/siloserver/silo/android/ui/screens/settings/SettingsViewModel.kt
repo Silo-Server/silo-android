@@ -15,6 +15,7 @@ import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
@@ -26,6 +27,7 @@ import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +58,10 @@ data class SettingsUiState(
     // Account
     val user: User? = null,
     val serverUrl: String = "",
+    // The account card shows the active profile's name and avatar, and the
+    // Server row the server's display name, as the Apple apps do.
+    val activeProfile: Profile? = null,
+    val serverName: String = "",
     val isLoadingUser: Boolean = false,
     val loggedOut: Boolean = false,
 
@@ -140,6 +146,7 @@ class SettingsViewModel(
     private val seekIntervalStore: SeekIntervalStore,
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
+    private val serverRegistry: ServerRegistry? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -157,12 +164,24 @@ class SettingsViewModel(
 
     init {
         loadUserInfo()
+        observeAccountCard()
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
         observeCardPresentation()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
+    }
+
+    private fun observeAccountCard() {
+        activeProfileStore.activeProfile.onEach { profile ->
+            _uiState.update { it.copy(activeProfile = profile) }
+        }.launchIn(viewModelScope)
+        serverRegistry?.activeEntry?.onEach { entry ->
+            _uiState.update { it.copy(serverName = entry?.displayName.orEmpty()) }
+        }?.launchIn(viewModelScope)
+        // Cached after the first fetch, so this is cheap on every later visit.
+        viewModelScope.launch { activeProfileStore.refresh() }
     }
 
     private fun loadUserInfo() {

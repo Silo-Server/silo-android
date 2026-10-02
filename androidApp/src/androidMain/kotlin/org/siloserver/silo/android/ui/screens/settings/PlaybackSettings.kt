@@ -16,8 +16,8 @@ import org.siloserver.silo.model.settings.SettingKeys
 // uncapped). The preset table is shared with the TV app and mirrors the web
 // client's, so the same choice reads back with the same label everywhere.
 
-// Discrete choices for the two behavior settings (0 = off). Dropdown idiom
-// matches the rest of this section; the label↔value maps below convert.
+// Discrete choices for the two behavior settings (0 = off). The label↔value
+// maps below convert.
 private val resumeRewindOptions = listOf(0, 3, 5, 7, 10, 15, 20, 30)
 private val passOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors TV/tvOS.
@@ -32,37 +32,26 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
 }
 
 /**
- * Playback settings section with quality preference, audio language,
- * and auto-skip toggles.
+ * Playback → Streaming (Apple `PlaybackSettingsView` "Streaming"): quality,
+ * audio language, Dolby Vision, and — where the Apple list ends with
+ * Background Playback — Android's picture-in-picture. The footer describes the
+ * chosen quality preset.
  */
 @Composable
-fun PlaybackSettings(
+fun PlaybackStreamingSection(
     qualityResolution: String,
     maxBitrateKbps: Int?,
     audioLanguage: String,
-    audioLanguageSuggestions: List<String> = emptyList(),
-    introSkipMode: IntroSkipMode,
-    autoSkipCredits: Boolean,
-    pictureInPictureEnabled: Boolean,
+    audioLanguageSuggestions: List<String>,
     dolbyVisionEnabled: Boolean,
     dvProfile7HDR10Fallback: Boolean,
-    autoPlayNext: Boolean,
-    nextUpPromptSeconds: Int,
-    resumeRewindSeconds: Int,
-    passOutThreshold: Int,
+    pictureInPictureEnabled: Boolean,
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
-    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
-    onAutoSkipCreditsChanged: (Boolean) -> Unit,
-    onPictureInPictureEnabledChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
-    onAutoPlayNextChanged: (Boolean) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
-    onResumeRewindSecondsChanged: (Int) -> Unit,
-    onPassOutThresholdChanged: (Int) -> Unit,
-    onResetPlaybackOverrides: () -> Unit,
+    onPictureInPictureEnabledChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val audioLanguageOptions = remember(audioLanguage, audioLanguageSuggestions) {
@@ -72,15 +61,16 @@ fun PlaybackSettings(
             runtimeValues = audioLanguageSuggestions,
         )
     }
-    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
-    SettingsSection(title = "Playback", modifier = modifier) {
-        // A pair no preset covers (set through the API, or left by a legacy
-        // compound value) still gets a truthful label rather than a picker
-        // silently showing the wrong entry.
+    // A pair no preset covers (set through the API, or left by a legacy
+    // compound value) still gets a truthful label rather than a picker
+    // silently showing the wrong entry.
+    val qualityLabel = QualityPresets.describe(qualityResolution, maxBitrateKbps)
+    val qualityFooter = QualityPresets.presetFor(qualityResolution, maxBitrateKbps)?.description
+        ?: "$qualityLabel."
+    SettingsSection(title = "Streaming", footer = qualityFooter, modifier = modifier) {
         SettingsDropdownRow(
-            label = "Preferred quality",
-            description = "The quality Silo requests when playback starts.",
-            value = QualityPresets.describe(qualityResolution, maxBitrateKbps),
+            label = "Quality",
+            value = qualityLabel,
             options = QualityPresets.ALL.map { it.label },
             onOptionSelected = { label ->
                 QualityPresets.ALL.firstOrNull { it.label == label }
@@ -89,8 +79,7 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Audio language",
-            description = "Choose which spoken language Silo should prefer first.",
+            label = "Audio Language",
             value = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE),
             options = audioLanguageOptions.map { it.second },
             onOptionSelected = { label ->
@@ -98,12 +87,75 @@ fun PlaybackSettings(
             },
         )
 
-        // Three-way, not a switch: the boolean this replaced could not say
-        // "never". Labels and semantics are fixed by the contract.
+        // Dolby Vision (off plays the HDR10 base layer) with the Profile 7
+        // fallback under it — the P7 row only shows while Dolby Vision is on.
+        SettingsSwitchRow(
+            label = "Dolby Vision",
+            checked = dolbyVisionEnabled,
+            onCheckedChange = onDolbyVisionEnabledChanged,
+        )
+        if (dolbyVisionEnabled) {
+            SettingsSwitchRow(
+                label = "Profile 7 HDR10 Fallback",
+                checked = dvProfile7HDR10Fallback,
+                onCheckedChange = onDvProfile7HDR10FallbackChanged,
+            )
+        }
+
+        SettingsSwitchRow(
+            label = "Picture-in-Picture",
+            checked = pictureInPictureEnabled,
+            onCheckedChange = onPictureInPictureEnabledChanged,
+        )
+    }
+}
+
+/**
+ * Playback → Episodes (Apple "Episodes"), plus Android's two resume and
+ * auto-play limits at the end, explained in the footer.
+ */
+@Composable
+fun PlaybackEpisodesSection(
+    autoPlayNext: Boolean,
+    nextUpPromptSeconds: Int,
+    introSkipMode: IntroSkipMode,
+    autoSkipCredits: Boolean,
+    resumeRewindSeconds: Int,
+    passOutThreshold: Int,
+    onAutoPlayNextChanged: (Boolean) -> Unit,
+    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
+    onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onResumeRewindSecondsChanged: (Int) -> Unit,
+    onPassOutThresholdChanged: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
+    SettingsSection(
+        title = "Episodes",
+        footer = "Rewind on Resume skips back when you return to a partly watched title. Still Watching " +
+            "Prompt sets how many episodes play in a row before Silo asks whether you're still watching.",
+        modifier = modifier,
+    ) {
+        SettingsSwitchRow(
+            label = "Auto-Play Next Episode",
+            checked = autoPlayNext,
+            onCheckedChange = onAutoPlayNextChanged,
+        )
+
         SettingsDropdownRow(
-            label = stringResource(R.string.settings_intro_skip_title),
-            description = "What happens when a detected intro starts: leave it alone, " +
-                "offer a Skip Intro button, or skip it and offer an undo.",
+            label = "Show Next Up",
+            value = nextUpPromptLabel(nextUpPromptSeconds),
+            options = nextUpPromptOptions.map(::nextUpPromptLabel),
+            onOptionSelected = { label ->
+                onNextUpPromptSecondsChanged(nextUpPromptOptions.first { nextUpPromptLabel(it) == label })
+            },
+        )
+
+        // Three-way, not a switch: the boolean this replaced could not say
+        // "never". Option labels and semantics are fixed by the contract.
+        SettingsDropdownRow(
+            label = "Skip Intros",
             value = stringResource(introSkipModeLabel(introSkipMode)),
             options = introSkipOptions.map { it.second },
             onOptionSelected = { label ->
@@ -112,57 +164,13 @@ fun PlaybackSettings(
         )
 
         SettingsSwitchRow(
-            label = "Auto-skip credits",
-            description = "Move through end credits automatically when a skip is available.",
+            label = "Skip Credits",
             checked = autoSkipCredits,
             onCheckedChange = onAutoSkipCreditsChanged,
         )
 
-        // iOS PlaybackSettingsView parity: Dolby Vision (off plays the HDR10
-        // base layer) with the Profile 7 fallback nested under it — the P7 row
-        // only shows while Dolby Vision is on.
-        SettingsSwitchRow(
-            label = "Dolby Vision",
-            description = "Allow Dolby Vision output on this device.",
-            checked = dolbyVisionEnabled,
-            onCheckedChange = onDolbyVisionEnabledChanged,
-        )
-        if (dolbyVisionEnabled) {
-            SettingsSwitchRow(
-                label = "Profile 7 HDR10 fallback",
-                description = "Play Profile 7 sources as HDR10 when this device cannot decode them natively.",
-                checked = dvProfile7HDR10Fallback,
-                onCheckedChange = onDvProfile7HDR10FallbackChanged,
-            )
-        }
-
-        SettingsSwitchRow(
-            label = "Picture-in-picture",
-            description = "Keep playing in a floating window when you leave the player.",
-            checked = pictureInPictureEnabled,
-            onCheckedChange = onPictureInPictureEnabledChanged,
-        )
-
-        SettingsSwitchRow(
-            label = "Auto-play next episode",
-            description = "Continue to the next episode automatically.",
-            checked = autoPlayNext,
-            onCheckedChange = onAutoPlayNextChanged,
-        )
-
         SettingsDropdownRow(
-            label = "Next up prompt",
-            description = "How long before the end of an episode the next-up prompt appears.",
-            value = nextUpPromptLabel(nextUpPromptSeconds),
-            options = nextUpPromptOptions.map(::nextUpPromptLabel),
-            onOptionSelected = { label ->
-                onNextUpPromptSecondsChanged(nextUpPromptOptions.first { nextUpPromptLabel(it) == label })
-            },
-        )
-
-        SettingsDropdownRow(
-            label = "Rewind on resume",
-            description = "Skip back this far when resuming a partly watched item.",
+            label = "Rewind on Resume",
             value = resumeRewindLabel(resumeRewindSeconds),
             options = resumeRewindOptions.map(::resumeRewindLabel),
             onOptionSelected = { label ->
@@ -171,18 +179,26 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Still watching prompt",
-            description = "How many episodes auto-play before Silo asks whether you are still watching.",
+            label = "Still Watching Prompt",
             value = passOutThresholdLabel(passOutThreshold),
             options = passOutThresholdOptions.map(::passOutThresholdLabel),
             onOptionSelected = { label ->
                 onPassOutThresholdChanged(passOutThresholdOptions.first { passOutThresholdLabel(it) == label })
             },
         )
+    }
+}
 
+/** Playback → reset, the Apple page's last group. */
+@Composable
+fun PlaybackResetSection(onResetPlaybackOverrides: () -> Unit, modifier: Modifier = Modifier) {
+    SettingsSection(
+        title = null,
+        footer = "Resets playback choices for this device and profile back to the server fallback.",
+        modifier = modifier,
+    ) {
         SettingsDestructiveRow(
-            label = "Reset playback settings",
-            description = "Return this device's playback settings to their defaults.",
+            label = "Reset Playback Overrides",
             onClick = onResetPlaybackOverrides,
         )
     }

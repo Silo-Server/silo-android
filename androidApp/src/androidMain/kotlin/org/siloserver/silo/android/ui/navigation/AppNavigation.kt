@@ -34,6 +34,8 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import androidx.lifecycle.DEFAULT_ARGS_KEY
 import androidx.lifecycle.viewmodel.MutableCreationExtras
@@ -91,7 +93,12 @@ import org.siloserver.silo.android.ui.screens.search.SearchScreen
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.servers.ServerListScreen
 import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
+import org.siloserver.silo.android.ui.screens.settings.SettingsDownloadsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsInterfaceScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsNotificationsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsPlaybackScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsSubtitlesScreen
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsPromptDialog
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsReportScreen
@@ -730,6 +737,11 @@ fun AppNavigation(
         }
         composable(Route.Settings.route) {
             SettingsScreen(
+                onOpenInterface = { navController.navigate(Route.SettingsInterface.route) },
+                onOpenPlayback = { navController.navigate(Route.SettingsPlayback.route) },
+                onOpenSubtitles = { navController.navigate(Route.SettingsSubtitles.route) },
+                onOpenDownloads = { navController.navigate(Route.SettingsDownloads.route) },
+                onOpenNotifications = { navController.navigate(Route.SettingsNotifications.route) },
                 onNavigateToServers = {
                     navController.navigate(Route.ServerList.route)
                 },
@@ -757,7 +769,39 @@ fun AppNavigation(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                showTopBar = true,
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        // Settings sub-pages share the overview's view model, so the value a
+        // page changes is the value its overview row shows on the way back.
+        composable(Route.SettingsInterface.route) { entry ->
+            SettingsInterfaceScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsPlayback.route) { entry ->
+            SettingsPlaybackScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsSubtitles.route) { entry ->
+            SettingsSubtitlesScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsDownloads.route) { entry ->
+            SettingsDownloadsScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                downloadsViewModel = koinViewModel(),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsNotifications.route) { entry ->
+            SettingsNotificationsScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
                 onBackClick = { navController.popBackStack() },
             )
         }
@@ -1410,3 +1454,14 @@ private suspend fun pairingAuthRouteOrNull(
     val profileId = activeEntryProfileId ?: tokenManager.getProfileId()
     return if (profileId.isNullOrBlank()) Route.ProfileSelection.route else null
 }
+
+/**
+ * The Settings overview's back-stack entry, which owns the SettingsViewModel
+ * its sub-pages share. Falls back to the page's own entry should the overview
+ * ever be missing from the stack, so the page still renders.
+ */
+@Composable
+private fun settingsOwner(navController: NavHostController, entry: NavBackStackEntry): ViewModelStoreOwner =
+    remember(entry) {
+        runCatching { navController.getBackStackEntry(Route.Settings.route) }.getOrNull() ?: entry
+    }

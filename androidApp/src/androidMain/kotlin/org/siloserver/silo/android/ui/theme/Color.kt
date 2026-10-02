@@ -52,8 +52,34 @@ val SiloOpaqueControlBorder = Color.White.copy(alpha = 0.46f)
 // settings values, and they fill M3's `surfaceContainer*` ladder — which
 // `darkColorScheme` otherwise leaves on its purple-tinted baseline.
 
-/** Lifted page ground for form-shaped screens. Web `--background`. */
-val SiloSettingsBackground = Color(0xFF141417)
+/**
+ * Settings page ground. Pure black, like the Apple apps' Settings backdrop
+ * (`siloBackground`), so the grouped cells read as an inset list.
+ */
+val SiloSettingsBackground = Color(0xFF000000)
+
+// --- Settings grouped list (Apple Settings parity) ---
+//
+// The Apple apps draw Settings as a native inset-grouped list in Apple's
+// dark-mode grouped palette (silo-apple `Colors.swift`). Settings uses these
+// rather than the web card values above so both phones show the same list;
+// its text uses the chrome's `SiloOnSurface` / `SiloSecondaryText`, which are
+// already Apple's `siloOnSurface` / `siloSecondaryText`.
+
+/** Grouped row background. Apple `siloGroupedCell`. */
+val SiloGroupedCell = Color(0xFF1C1C1E)
+
+/** Graphite tile behind an overview row's glyph. Apple `siloIconTile`. */
+val SiloIconTile = Color(0xFF3A3A3C)
+
+/** Switch track while on. Apple `siloSwitchOn`, the system dark-mode green. */
+val SiloSwitchOn = Color(0xFF30D158)
+
+/** Switch track while off, Apple's dark grouped-cell switch fill. */
+val SiloSwitchOff = Color(0xFF39393D)
+
+/** Hairline between grouped rows, Apple's dark-mode separator. */
+val SiloGroupedSeparator = Color(0xFF38383A)
 
 /** Grouped card surface. Web `--card`. */
 val SiloSurfaceContainer = Color(0xFF1C1C20)

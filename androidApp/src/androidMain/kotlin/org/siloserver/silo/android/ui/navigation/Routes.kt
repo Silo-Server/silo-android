@@ -91,6 +91,14 @@ sealed class Route(val route: String) {
         }
     }
     data object Settings : Route("settings")
+
+    // Settings sub-pages, pushed from the overview as on the Apple apps. They
+    // share the overview's SettingsViewModel through its back-stack entry.
+    data object SettingsInterface : Route("settings/interface")
+    data object SettingsPlayback : Route("settings/playback")
+    data object SettingsSubtitles : Route("settings/subtitles")
+    data object SettingsDownloads : Route("settings/downloads")
+    data object SettingsNotifications : Route("settings/notifications")
     data object Diagnostics : Route("settings/diagnostics")
     data class DiagnosticsReport(val reportId: String) :
         Route("settings/diagnostics/report/${Uri.encode(reportId)}") {
