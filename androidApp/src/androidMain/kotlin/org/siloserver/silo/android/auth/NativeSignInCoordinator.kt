@@ -106,6 +106,13 @@ class NativeSignInCoordinator(
     private val mutex = Mutex()
     private val _result = MutableStateFlow<NativeSignInResult?>(null)
 
+    /**
+     * Moves when a flow is started or discarded, under [mutex]. A redemption
+     * publishes only while it is unchanged, so a flow superseded meanwhile
+     * (a new one began, a sign-in or sign-out discarded it) reports nothing.
+     */
+    private var flowGeneration = 0L
+
     /** The latest flow's outcome until the screen that started it [consume]s it. */
     val result: StateFlow<NativeSignInResult?> = _result.asStateFlow()
 
@@ -189,6 +196,7 @@ class NativeSignInCoordinator(
             return NativeSignInStart.Refused("login_failed", NativeSignInMessages.forReason("login_failed", providerName))
         }
         return mutex.withLock {
+            flowGeneration++
             store.save(
                 PendingNativeSignIn(
                     purpose = purpose,
@@ -221,15 +229,20 @@ class NativeSignInCoordinator(
 
     /**
      * Another sign-in or a sign-out happened: the pending flow, if any, no
-     * longer speaks for the session, so its redirect is ignored.
+     * longer speaks for the session, so its redirect is ignored, a
+     * redemption under way reports nothing, and an unshown result goes.
      */
     suspend fun discardPending() {
-        mutex.withLock { store.clear() }
+        mutex.withLock {
+            flowGeneration++
+            store.clear()
+            _result.value = null
+        }
     }
 
     /** [handleCallback]'s work, run inline. Returns whether the callback answered the pending flow. */
     suspend fun finish(callback: NativeSignInCallback): Boolean {
-        val pending = mutex.withLock {
+        val (pending, generation) = mutex.withLock {
             val pending = store.load() ?: return false
             if (clock() - pending.startedAtEpochMs !in 0..NativeSignInProtocol.FLOW_LIFETIME_MS) {
                 store.clear()
@@ -238,7 +251,7 @@ class NativeSignInCoordinator(
             if (!constantTimeEquals(callback.state, pending.appState)) return false
             // The flow is spent from here on, whatever the outcome.
             store.clear()
-            pending
+            pending to flowGeneration
         }
         val failure = when {
             // RFC 9207: the server names where the native start first arrived,
@@ -254,11 +267,11 @@ class NativeSignInCoordinator(
             else -> null
         }
         if (failure != null) {
-            publish(failed(pending, failure))
+            publishFor(generation, failed(pending, failure))
             return true
         }
         val code = checkNotNull(callback.code)
-        publish(NativeSignInResult.Finishing(pending.purpose, pending.serverEntryId, pending.providerName))
+        publishFor(generation, NativeSignInResult.Finishing(pending.purpose, pending.serverEntryId, pending.providerName))
         val outcome = try {
             when (pending.purpose) {
                 NativeSignInPurpose.SignIn -> when (val signedIn = completer.signIn(pending, code)) {
@@ -280,7 +293,7 @@ class NativeSignInCoordinator(
         } catch (_: Exception) {
             failed(pending, "login_failed")
         }
-        publish(outcome)
+        publishFor(generation, outcome)
         return true
     }
 
@@ -289,8 +302,9 @@ class NativeSignInCoordinator(
         _result.update { if (it == result) null else it }
     }
 
-    private fun publish(result: NativeSignInResult) {
-        _result.value = result
+    /** Publishes [result] only while the flow claimed at [generation] is still the latest. */
+    private suspend fun publishFor(generation: Long, result: NativeSignInResult) {
+        mutex.withLock { if (flowGeneration == generation) _result.value = result }
     }
 
     private fun failed(pending: PendingNativeSignIn, reason: String) = NativeSignInResult.Failed(

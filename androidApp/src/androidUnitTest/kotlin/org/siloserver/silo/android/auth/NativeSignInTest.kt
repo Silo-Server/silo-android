@@ -286,6 +286,24 @@ class NativeSignInCoordinatorTest {
         assertNull(store.load(), "the flow is spent")
     }
 
+    /** A sign-out while the code is being redeemed: the superseded flow reports nothing, not even Finishing. */
+    @Test
+    fun aFlowDiscardedDuringRedemptionPublishesNothing() = runTest {
+        lateinit var coordinator: NativeSignInCoordinator
+        val completer = object : NativeSignInCompleter {
+            override suspend fun signIn(pending: PendingNativeSignIn, code: String): ApiResult<User> {
+                coordinator.discardPending()
+                return ApiResult.Error(0, "identity_changed", "The account or server changed.")
+            }
+            override suspend fun link(pending: PendingNativeSignIn, code: String): ApiResult<Unit> = ApiResult.Success(Unit)
+        }
+        coordinator = coordinator(InMemoryPendingNativeSignInStore(), completer, this)
+
+        assertTrue(coordinator.finish(callback(state = coordinator.start())))
+
+        assertNull(coordinator.result.value)
+    }
+
     @Test
     fun aRedirectWithoutAnIssuerIsDiscarded() = runTest {
         val completer = FakeCompleter()

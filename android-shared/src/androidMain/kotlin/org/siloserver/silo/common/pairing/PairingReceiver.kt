@@ -381,17 +381,20 @@ class PairingReceiver(
                 preserveTerminalStatus = true
             }
         } finally {
-            pushJob?.cancel()
-            pushJob = null
-            pendingPush = null
-            sessionScope = null
-            alternateDecision?.cancel()
-            alternateDecision = null
+            // A newer connection may own the receiver already (the advertiser
+            // restarted while this one unwound): its session, push and status
+            // are not this run's to clear.
             if (activeTransport === transport) {
+                pushJob?.cancel()
+                pushJob = null
+                pendingPush = null
+                sessionScope = null
+                alternateDecision?.cancel()
+                alternateDecision = null
                 activeTransport = null
-            }
-            if (!preserveTerminalStatus) {
-                _status.value = PairingReceiverStatus.Idle
+                if (!preserveTerminalStatus) {
+                    _status.value = PairingReceiverStatus.Idle
+                }
             }
             transport.close()
         }
