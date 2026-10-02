@@ -580,7 +580,13 @@ val SiloAuthPlugin = createClientPlugin("SiloAuthPlugin", ::SiloAuthConfig) {
                             request.removeSiloCredentialHeaders()
                             throw SiloAuthUnavailableException(SiloAuthUnavailableException.PROVIDER_UNAVAILABLE)
                         }
-                    PinnedRefresh.Failed -> Unit
+                    // The scope may have been signed out or replaced meanwhile:
+                    // send the captured bearer only while the scope still holds it.
+                    PinnedRefresh.Failed ->
+                        if (tokenManager.getAccessTokenForScope(pinnedScope)?.let { "Bearer $it" } != sentAuth) {
+                            request.removeSiloCredentialHeaders()
+                            throw SiloAuthUnavailableException(SiloAuthUnavailableException.CREDENTIALS_REPUDIATED)
+                        }
                 }
             }
             // Exactly one request: a single-attempt call never replays after a 401.

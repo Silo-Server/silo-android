@@ -170,6 +170,38 @@ class SiloAuthPluginFreshPinnedRefreshTest {
         assertEquals(listOf("/api/v2/auth/refresh", "/api/v2/auth/device/approve"), calls.map { it.path })
     }
 
+    /**
+     * The scope is signed out while its refresh is in flight, and the refresh
+     * fails: the approval isn't sent with the bearer captured before, which
+     * may still be valid for the account that left.
+     */
+    @Test
+    fun aScopeSignedOutDuringItsRefreshSendsNothing() = runTest {
+        val tokens = ScopeTokens(expiring = true)
+        val calls = mutableListOf<Recorded>()
+        val client = HttpClient(
+            MockEngine { request ->
+                calls += Recorded(request.url.encodedPath, request.headers[HttpHeaders.Authorization])
+                if (request.url.encodedPath.endsWith("/auth/refresh")) {
+                    tokens.access = null
+                    respond("bad gateway", HttpStatusCode.BadGateway)
+                } else {
+                    respond("{}", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = tokens }
+        }
+        assertFailsWith<SiloAuthUnavailableException> {
+            client.post("/api/v2/auth/device/approve") {
+                authScope(scope)
+                freshSiloAuth()
+            }
+        }
+        assertEquals(listOf("/api/v2/auth/refresh"), calls.map { it.path }, "the approval never went out")
+    }
+
     @Test
     fun unmarkedPinnedRequestsStayReactive() = runTest {
         val tokens = ScopeTokens(expiring = true)
@@ -180,13 +212,13 @@ class SiloAuthPluginFreshPinnedRefreshTest {
 
     /** One saved, non-active server ("cabin") whose token is or isn't expiring. */
     private class ScopeTokens(private val expiring: Boolean) : TokenManager {
-        var access = "stale"
+        var access: String? = "stale"
         var refresh = "refresh-1"
         var activeWrites = 0
 
         override suspend fun accessTokenExpiresWithin(scope: AuthScopeSnapshot, marginMs: Long) =
             expiring && access == "stale"
-        override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot): String = access
+        override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot): String? = access
         override suspend fun getRefreshTokenForScope(scope: AuthScopeSnapshot): String = refresh
         override suspend fun saveTokensForScope(
             scope: AuthScopeSnapshot,

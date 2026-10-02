@@ -77,11 +77,21 @@ class TvPairingAdvertiser(
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { this.scope = it }
 
         scope.launch {
-            val socket = ServerSocket(0).also { serverSocket = it }
-            val port = socket.localPort
-            registerService(port, identity)
-            Log.i(TAG, "started pairing listener on port $port")
-            receiver.setAdvertising()
+            val socket = ServerSocket(0)
+            // A later start() or stop() may have run while the socket opened:
+            // then this startup publishes nothing and closes its socket.
+            val published = synchronized(this@TvPairingAdvertiser) {
+                if (token != owner || !running.get()) return@synchronized false
+                serverSocket = socket
+                registerService(socket.localPort, identity)
+                receiver.setAdvertising()
+                true
+            }
+            if (!published) {
+                runCatching { socket.close() }
+                return@launch
+            }
+            Log.i(TAG, "started pairing listener on port ${socket.localPort}")
             acceptLoop(socket, token)
         }
         return token
