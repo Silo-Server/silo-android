@@ -307,6 +307,8 @@ class SignInSettingsViewModel(
 
     private suspend fun onNativeResult(result: NativeSignInResult) {
         if (result.purpose != NativeSignInPurpose.Link) return
+        // A link finished for another saved server belongs to that server's settings.
+        if (result.serverEntryId != serverRegistry.activeServerId.value) return
         when (result) {
             is NativeSignInResult.Finishing -> _uiState.update { it.copy(busy = true, error = null, message = null) }
             is NativeSignInResult.Linked -> {
