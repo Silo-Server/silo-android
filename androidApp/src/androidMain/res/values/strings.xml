@@ -40,4 +40,101 @@
 
     <!-- Placeholder -->
     <string name="coming_soon">Coming soon</string>
+
+    <!-- Sign in a TV (phone approves a TV's device sign-in). One content
+         model with the web /activate page and the iPhone app. -->
+    <string name="sign_in_tv_settings_label">Sign in a TV</string>
+    <string name="sign_in_tv_title">Sign in a TV</string>
+    <string name="sign_in_tv_subtitle">Enter the code on your TV\'s sign-in screen.</string>
+    <string name="sign_in_tv_code_label">Code on your TV</string>
+    <string name="sign_in_tv_server_label">Server</string>
+    <string name="sign_in_tv_server_hint">Your TV shows the server name it\'s signing in to.</string>
+    <string name="sign_in_tv_continue">Continue</string>
+    <string name="sign_in_tv_try_server">Try %1$s</string>
+    <string name="sign_in_tv_card_title">Sign in %1$s?</string>
+    <string name="sign_in_tv_card_title_generic">Sign in this TV?</string>
+    <string name="sign_in_tv_check_code">Check that your TV shows</string>
+    <string name="sign_in_tv_server_account">You\'ll sign it in to %1$s as %2$s.</string>
+    <string name="sign_in_tv_server_only">You\'ll sign it in to %1$s with your account.</string>
+    <string name="sign_in_tv_server_with_host">%1$s (%2$s)</string>
+    <string name="sign_in_tv_switch_account">Not you? Switch account</string>
+    <string name="sign_in_tv_switch_title">Switch account?</string>
+    <string name="sign_in_tv_switch_body">You\'ll be signed out of %1$s on this device, then asked which account to sign in with. The TV\'s code stays ready to approve.</string>
+    <string name="sign_in_tv_switch_this_server">this server</string>
+    <string name="sign_in_tv_switch_confirm">Sign out and switch</string>
+    <string name="sign_in_tv_sign_out_account">Not you? Sign out</string>
+    <string name="sign_in_tv_sign_out_title">Sign out?</string>
+    <string name="sign_in_tv_sign_out_body">You\'ll be signed out of %1$s on this device. Sign in with the account the TV should use, then approve it. The TV\'s code stays ready to approve.</string>
+    <string name="sign_in_tv_sign_out_confirm">Sign out</string>
+    <string name="sign_in_tv_account_unconfirmed">Couldn\'t confirm the account on %1$s.</string>
+    <string name="sign_in_tv_account_retry">Try again</string>
+    <string name="sign_in_tv_profiles_note">Anyone using this TV can pick from your profiles. Profiles with a PIN stay locked.</string>
+    <string name="sign_in_tv_warning">Only approve a TV that\'s in front of you right now.</string>
+    <string name="sign_in_tv_network">Requested from %1$s</string>
+    <string name="sign_in_tv_platform_requested">%1$s · requested %2$s</string>
+    <string name="sign_in_tv_requested">Requested %1$s</string>
+    <string name="sign_in_tv_requested_just_now">just now</string>
+    <string name="sign_in_tv_approve">Sign in TV</string>
+    <string name="sign_in_tv_not_now">Not now</string>
+    <string name="sign_in_tv_signing_in">Done. Your TV is signing in.</string>
+    <string name="sign_in_tv_signed_in">Your TV is signed in.</string>
+    <string name="sign_in_tv_follow_canceled">The TV stopped this sign-in.</string>
+    <string name="sign_in_tv_follow_expired">This code expired before the TV signed in.</string>
+    <string name="sign_in_tv_follow_denied">This sign-in was declined.</string>
+    <string name="sign_in_tv_follow_timed_out">Approved. Check your TV to see that it signed in.</string>
+    <string name="sign_in_tv_declined">Sign-in declined. The TV was not signed in.</string>
+    <string name="sign_in_tv_done">Done</string>
+    <string name="sign_in_tv_sign_in_first">Sign in</string>
+    <string name="sign_in_tv_error_enter_code">Enter the code shown on your TV.</string>
+    <string name="sign_in_tv_error_sign_in_first">Sign in before approving this TV.</string>
+    <string name="sign_in_tv_error_not_found">We couldn\'t find that code. Check the code on your TV.</string>
+    <string name="sign_in_tv_error_not_found_on">We couldn\'t find that code on %1$s. Check the code on your TV, or try another server.</string>
+    <string name="sign_in_tv_error_expired">This code expired. Your TV is showing a new one; scan it again.</string>
+    <string name="sign_in_tv_error_already_signed_in">That TV is already signed in.</string>
+    <string name="sign_in_tv_error_declined">This sign-in was declined.</string>
+    <string name="sign_in_tv_error_canceled">The TV stopped this sign-in. Check the code on your TV.</string>
+    <string name="sign_in_tv_error_network">Network error. Check your connection.</string>
+    <string name="sign_in_tv_error_provider_unavailable">The sign-in provider can\'t be reached right now, so this device couldn\'t confirm your account. You\'re still signed in. Try again in a moment.</string>
+    <string name="sign_in_tv_error_generic">Couldn\'t sign in the TV. Try again.</string>
+    <string name="platform_android_tv">Android TV</string>
+    <string name="platform_apple_tv">Apple TV</string>
+
+    <!-- Nearby TV offer (LAN companion pairing) -->
+    <string name="companion_offer_setup_title">Set up %1$s</string>
+    <string name="companion_offer_setup_body">Sign %1$s in to your servers from this phone.</string>
+    <string name="companion_offer_setup_action">Set up</string>
+    <string name="companion_offer_signin_title">Sign in %1$s to %2$s?</string>
+    <!-- Unauthenticated discovery: the name and state are the TV's claim,
+         checked against its code on the next step. -->
+    <string name="companion_offer_signin_body">A TV nearby named “%1$s” says it\'s on its sign-in screen. You\'ll check its code before approving.</string>
+    <string name="companion_offer_signin_action">Sign in</string>
+    <string name="companion_offer_not_now">Not now</string>
+    <string name="companion_confirm_check">Check that %1$s shows</string>
+    <string name="companion_confirm_yes">Yes, this matches</string>
+    <string name="companion_confirm_no">Doesn\'t match</string>
+    <string name="companion_signin_progress_title">Signing in…</string>
+    <string name="companion_signin_progress_allow">Continue on %1$s — allow this sign-in.</string>
+    <string name="companion_signin_done_title">%1$s is signed in</string>
+    <string name="companion_signin_done_body">Signed in to %1$s.</string>
+    <string name="companion_signin_failed_title">Sign-in didn\'t finish</string>
+    <string name="companion_confirm_older_tv">Older TV apps show %1$s instead.</string>
+    <string name="companion_pane_title">Nearby TV</string>
+    <string name="companion_setup_done_title">Set up %1$s</string>
+    <string name="companion_setup_done_title_generic">TV setup complete</string>
+    <string name="companion_setup_done_body">%1$s is ready.</string>
+    <string name="companion_setup_failed_title">Setup didn\'t finish</string>
+    <string name="companion_setup_progress_title">Setting up…</string>
+    <string name="companion_setup_progress_allow">Continue on %1$s — allow this phone to set it up.</string>
+    <string name="companion_connecting">Connecting…</string>
+    <string name="companion_progress_waiting_code">Waiting for %1$s to show its code.</string>
+    <string name="companion_progress_approving">Approving %1$s on %2$s.</string>
+    <string name="companion_progress_signed_in">%1$s signed in.</string>
+    <string name="companion_progress_wait">Please wait.</string>
+    <string name="companion_choose_servers_title">Choose servers</string>
+    <string name="companion_choose_servers_body">Sign %1$s in to…</string>
+    <string name="companion_continue">Continue</string>
+    <string name="companion_cancel">Cancel</string>
+    <string name="companion_close">Close</string>
+    <string name="companion_done">Done</string>
+    <string name="companion_try_again">Try again</string>
 </resources>

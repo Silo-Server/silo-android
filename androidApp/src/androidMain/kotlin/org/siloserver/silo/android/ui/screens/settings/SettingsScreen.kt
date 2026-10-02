@@ -40,11 +40,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.BuildConfig
+import org.siloserver.silo.android.R
 import org.siloserver.silo.android.ui.components.SignOutConfirmDialog
 import org.siloserver.silo.android.ui.components.SiloTopBar
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
@@ -72,8 +74,10 @@ internal const val SILO_PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
  *
  * Android adds what the Apple apps keep elsewhere: Notifications, the Library
  * shortcuts (Watchlist, Favorites, History, Collections — reachable only from
- * here on the phone), Pair Device, and playback-stop recovery. Each sits in the
- * group it belongs to rather than in a group of its own.
+ * here on the phone), Sign in a TV, and playback-stop recovery. Each sits in
+ * the group it belongs to rather than in a group of its own. The Sign-in group
+ * (the server's external sign-in providers) appears only on servers that
+ * offer one.
  */
 @Composable
 fun SettingsScreen(
@@ -94,9 +98,11 @@ fun SettingsScreen(
     onNavigateToDiagnostics: () -> Unit = {},
     viewModel: SettingsViewModel = koinViewModel(),
     diagnosticsViewModel: DiagnosticsViewModel = koinViewModel(),
+    signInViewModel: SignInSettingsViewModel = koinViewModel(),
 ) {
     val recovery = rememberPlaybackRecoverySettings(koinInject())
     val state by viewModel.uiState.collectAsState()
+    val signInState by signInViewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
     val uriHandler = LocalUriHandler.current
     var query by rememberSaveable { mutableStateOf("") }
@@ -141,7 +147,10 @@ fun SettingsScreen(
     val matchesHistory = search.matches("library", "history", "watch history")
     val matchesCollections = search.matches("library", "collections")
     val matchesServer = search.matches("server", "connection", serverLabel)
-    val matchesPairDevice = search.matches("connection", "pair", "device", "tv", "link")
+    val matchesPairDevice = search.matches("connection", "pair", "device", "tv", "link", "sign in")
+    // External sign-in (OIDC/LDAP): shown only on servers that have it.
+    val matchesSignIn = signInState.visible &&
+        search.matches("sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso")
     val matchesExperimental = search.matches("experimental", "beta", "testing", "audiobooks", "navigation")
     val matchesAbout = search.matches("about", "version", versionLabel, "privacy", "policy", "information")
     val matchesSignOut = search.matches("sign out", "account")
@@ -149,7 +158,7 @@ fun SettingsScreen(
     val hasResults = matchesInterface || matchesNotifications || matchesPlayback || matchesSubtitles ||
         matchesDownloads || matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections ||
         showDiagnostics || showRecovery || matchesServer || matchesPairDevice || matchesExperimental ||
-        matchesAbout || matchesSignOut
+        matchesAbout || matchesSignOut || matchesSignIn
 
     Scaffold(
         topBar = {
@@ -338,12 +347,18 @@ fun SettingsScreen(
                         }
                         if (matchesPairDevice) {
                             SettingsNavigationRow(
-                                label = "Pair Device",
+                                label = stringResource(R.string.sign_in_tv_settings_label),
                                 icon = Icons.Filled.ConnectedTv,
                                 onClick = onPairDevice,
                             )
                         }
                     }
+                }
+            }
+
+            if (matchesSignIn) {
+                item(key = "sign-in") {
+                    SignInSection(viewModel = signInViewModel)
                 }
             }
 

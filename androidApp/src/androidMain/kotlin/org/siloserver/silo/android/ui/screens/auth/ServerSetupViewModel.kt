@@ -73,14 +73,24 @@ class ServerSetupViewModel(
     val uiState: StateFlow<ServerSetupUiState> = _uiState.asStateFlow()
     private var pendingCleartextConnection: PendingCleartextConnection? = null
 
+    /** Set by [prefill]: the saved URL must not replace an address the caller supplied. */
+    private var prefilled = false
+
     init {
         // Pre-populate with previously saved server URL, if any.
         viewModelScope.launch {
             val saved = authRepository.getServerUrl()
-            if (saved.isNotBlank()) {
+            if (saved.isNotBlank() && !prefilled) {
                 _uiState.update { it.copy(serverUrl = saved) }
             }
         }
+    }
+
+    /** Start from [url] (an app link's server) instead of the saved address. */
+    fun prefill(url: String) {
+        if (prefilled) return
+        prefilled = true
+        _uiState.update { it.copy(serverUrl = url, error = null) }
     }
 
     fun onServerUrlChanged(url: String) {

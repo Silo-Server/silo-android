@@ -64,6 +64,24 @@ data class AuthScopeSnapshot(
             current.identityGeneration == identityGeneration &&
             current.credentialEpoch == credentialEpoch
 
+    companion object {
+        /**
+         * The account scope, with no profile, for a call to a saved server that
+         * need not be the active one (approving a TV, reading its connections).
+         * Such a scope can't carry the token manager's live persistent-credential
+         * epoch, so the request is pinned to [identityGeneration] instead: a late
+         * refresh can't overwrite a same-server account replacement.
+         */
+        fun profileless(serverId: String, serverUrl: String, identityGeneration: Long) = AuthScopeSnapshot(
+            serverId = serverId,
+            serverUrl = serverUrl,
+            profileId = null,
+            profileToken = null,
+            identityGeneration = identityGeneration,
+            isIdentityGenerationStamped = true,
+        )
+    }
+
     override fun toString(): String =
         "AuthScopeSnapshot(" +
             "serverId=<redacted>, profileId=<redacted>, serverUrl=<redacted>, " +
@@ -106,6 +124,21 @@ internal fun HttpRequestBuilder.requireSiloAuth() {
 fun HttpRequestBuilder.skipSiloAuth() {
     attributes.put(SkipSiloAuthAttributeKey, true)
 }
+
+/**
+ * Marks a request that must go out on a fresh bearer. Pinned ([authScope]):
+ * when the scope's access token has expired or is about to, [SiloAuthPlugin]
+ * refreshes it first rather than waiting for a 401. Both pinned and on the
+ * active session: when that refresh is refused with 503
+ * `provider_unavailable` and the token has already expired, the request
+ * isn't sent and fails with [SiloAuthUnavailableException.PROVIDER_UNAVAILABLE].
+ * Used where the TV sign-in spec has the approver refresh before approving
+ * or declining a TV (and reading the account the card names), and for the
+ * account's linking operations: the link ticket, a link's confirmation and
+ * linking with directory credentials.
+ */
+internal val FreshSiloAuthAttributeKey: AttributeKey<Boolean> = AttributeKey("SiloFreshAuth")
+internal fun HttpRequestBuilder.freshSiloAuth() { attributes.put(FreshSiloAuthAttributeKey, true) }
 
 /** A nonretryable mutation must not be replayed by the auth-refresh interceptor. */
 internal val SingleAttemptAttributeKey = AttributeKey<Boolean>("SiloSingleAttempt")

@@ -162,6 +162,7 @@ fun AppNavigation(
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val titleArtStore: TitleArtStore = koinInject()
+    val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
@@ -360,6 +361,24 @@ fun AppNavigation(
                 },
             )
         }
+        composable(
+            route = Route.ServerSetupPrefilled.ROUTE,
+            arguments = listOf(navArgument("url") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            ServerSetupScreen(
+                prefillUrl = backStackEntry.arguments?.getString("url"),
+                onNavigateToSetup = {
+                    navController.navigate(Route.Setup.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
+                    }
+                },
+                onNavigateToLogin = { _ ->
+                    navController.navigate(Route.Login.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
+                    }
+                },
+            )
+        }
         composable(Route.Login.route) {
             LoginScreen(
                 onNavigateToSignup = {
@@ -454,6 +473,16 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("serverId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("serverUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
             // Deliberately NO navDeepLink registrations. While they existed,
             // Navigation matched the Activity's launch Intent itself when the
@@ -466,78 +495,164 @@ fun AppNavigation(
             val token = backStackEntry.arguments?.getString("token")
             val code = backStackEntry.arguments?.getString("code")
             val requiredOrigin = backStackEntry.arguments?.getString("serverOrigin")
+            val requiredServerId = backStackEntry.arguments?.getString("serverId")
+            val linkServerUrl = backStackEntry.arguments?.getString("serverUrl")
             val knownServers by serverRegistry.entries.collectAsState()
             val activeServer by serverRegistry.activeEntry.collectAsState()
-            val match = remember(requiredOrigin, activeServer, knownServers) {
-                deviceLoginServerMatch(
-                    requiredOrigin = requiredOrigin,
-                    activeServerUrl = activeServer?.url,
-                    entries = knownServers,
-                )
+            val serverIdentities: org.siloserver.silo.repository.ServerIdentityRepository = koinInject()
+            // A `silo://device?server=` link names its server by deployment
+            // identity; matching it may need a probe, so it resolves async.
+            // Origin-scoped and unscoped links resolve at once, as before.
+            val match by produceState<DeviceLoginServerMatch?>(
+                initialValue = if (requiredServerId == null) {
+                    deviceLoginServerMatch(requiredOrigin, activeServer?.url, knownServers)
+                } else {
+                    null
+                },
+                requiredServerId, requiredOrigin, activeServer?.id, knownServers.map { it.id to it.url },
+            ) {
+                value = if (requiredServerId == null) {
+                    deviceLoginServerMatch(requiredOrigin, activeServer?.url, knownServers)
+                } else {
+                    deviceLoginServerMatchByIdentity(
+                        requiredServerId = requiredServerId,
+                        linkUrl = linkServerUrl,
+                        activeEntry = activeServer,
+                        entries = knownServers,
+                        identityOf = { entry -> serverIdentities.identityOf(entry) },
+                        entriesWithIdentity = serverIdentities::entriesFor,
+                    )
+                }
             }
+            /** This request again, with [pendingCode] as its code: for re-queueing it. */
+            fun pairDeviceRoute(pendingCode: String?) = Route.PairDevice(
+                token = token,
+                code = pendingCode,
+                serverOrigin = requiredOrigin,
+                serverId = requiredServerId,
+                serverUrl = linkServerUrl,
+            ).route
+            val requeueRoute = pairDeviceRoute(code)
             val pairingScope = rememberCoroutineScope()
+            val pairingDone: () -> Unit = {
+                if (!navController.popBackStack()) {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
+            /**
+             * Sign in on [serverId]'s server (the active one when null), then
+             * come back to [pendingCode]: signing in ends at profile selection,
+             * whose popUpTo(0) wipes this destination, so the request is
+             * re-queued. [signOutFirst] is "Not you? Switch account": sign out
+             * of that server's account so a different one can sign in, and
+             * have its next provider sign-in ask the provider to offer
+             * another account (`prompt=select_account`); [startSignIn] (a
+             * provider that takes it) has the login screen start that
+             * sign-in by itself, as on silo-apple. Sign-in
+             * runs on the active server, so a different server becomes active.
+             * Runs in the nav host's scope: it outlives this destination.
+             */
+            fun signInThenReturn(serverId: String?, pendingCode: String?, signOutFirst: Boolean, startSignIn: Boolean = false) {
+                navScope.launch {
+                    val switchTo = serverId?.takeIf { it != serverRegistry.activeServerId.value }
+                    // Settings still waiting to sync go to the server they were
+                    // made on, before the switch.
+                    if (signOutFirst) signOutTeardown.flushPendingSettings()
+                    if (switchTo != null) authRepository.switchToServer(switchTo)
+                    val switching = switchTo != null
+                    // Same teardown as every other sign-out, which also has
+                    // the next provider sign-in offer another account.
+                    if (signOutFirst) signOutTeardown.signOut(flushFirst = false, startSignIn = startSignIn)
+                    onRequeueExternalRoute(pairDeviceRoute(pendingCode ?: code))
+                    navController.navigate(Route.Login.route) {
+                        if (switching || signOutFirst) popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
             when (val resolved = match) {
-                is DeviceLoginServerMatch.SwitchRequired ->
-                    DevicePairingWrongServerScreen(
-                        serverName = resolved.entry.displayName,
-                        onSwitch = {
-                            pairingScope.launch {
-                                authRepository.switchToServer(resolved.entry.id)
-                                // Re-queue ONLY if the target server will send
-                                // the user through auth: that flow ends at
-                                // profile selection, whose popUpTo(0) wipes this
-                                // destination and the code would have to be
-                                // scanned again. Re-queueing unconditionally was
-                                // worse — with no sign-in needed the request just
-                                // waited for this screen to close and then
-                                // reopened it.
-                                val authRoute = pairingAuthRouteOrNull(
-                                    tokenManager = tokenManager,
-                                    activeEntryProfileId = serverRegistry.activeEntry.value
-                                        ?.profileId,
-                                )
-                                if (authRoute != null) {
-                                    onRequeueExternalRoute(
-                                        Route.PairDevice(
-                                            token = token,
-                                            code = code,
-                                            serverOrigin = requiredOrigin,
-                                        ).route,
+                null -> org.siloserver.silo.android.ui.screens.auth.AuthStage {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center),
+                    )
+                }
+                is DeviceLoginServerMatch.SwitchRequired -> {
+                    val inPlace = resolved.inPlaceApprovalServer(token, code)
+                    if (inPlace != null) {
+                        // The link's code is approved on the saved server it
+                        // names, with that server's own credentials: the phone
+                        // stays on its active server (silo-apple parity).
+                        DevicePairingScreen(
+                            token = null,
+                            code = code,
+                            serverId = inPlace.id,
+                            lockServer = true,
+                            onDone = pairingDone,
+                            onSignIn = { selectedServerId, typedCode ->
+                                signInThenReturn(selectedServerId ?: inPlace.id, typedCode, signOutFirst = false)
+                            },
+                            onSwitchAccount = { selectedServerId, typedCode, startSignIn ->
+                                signInThenReturn(selectedServerId ?: inPlace.id, typedCode, signOutFirst = true, startSignIn)
+                            },
+                        )
+                    } else {
+                        // A `token` link: only the active server's lookup takes it.
+                        DevicePairingWrongServerScreen(
+                            serverName = resolved.entry.displayName,
+                            onSwitch = {
+                                pairingScope.launch {
+                                    authRepository.switchToServer(resolved.entry.id)
+                                    // Re-queue ONLY if the target server will send
+                                    // the user through auth: that flow ends at
+                                    // profile selection, whose popUpTo(0) wipes this
+                                    // destination and the code would have to be
+                                    // scanned again. Re-queueing unconditionally was
+                                    // worse — with no sign-in needed the request just
+                                    // waited for this screen to close and then
+                                    // reopened it.
+                                    val authRoute = pairingAuthRouteOrNull(
+                                        tokenManager = tokenManager,
+                                        activeEntryProfileId = serverRegistry.activeEntry.value
+                                            ?.profileId,
                                     )
-                                    // Requeueing alone left the user sitting on
-                                    // a pairing screen for a server they are not
-                                    // signed in to; the queued request only
-                                    // fires once something else takes them
-                                    // somewhere authenticated. Send them.
-                                    navController.navigate(authRoute) {
+                                    if (authRoute != null) {
+                                        onRequeueExternalRoute(requeueRoute)
+                                        // Requeueing alone left the user sitting on
+                                        // a pairing screen for a server they are not
+                                        // signed in to; the queued request only
+                                        // fires once something else takes them
+                                        // somewhere authenticated. Send them.
+                                        navController.navigate(authRoute) {
+                                            popUpTo(0) { inclusive = true }
+                                        }
+                                    }
+                                }
+                            },
+                            onCancel = {
+                                if (!navController.popBackStack()) {
+                                    navController.navigate(Route.Home.route) {
                                         popUpTo(0) { inclusive = true }
                                     }
                                 }
-                            }
-                        },
-                        onCancel = {
-                            if (!navController.popBackStack()) {
-                                navController.navigate(Route.Home.route) {
-                                    popUpTo(0) { inclusive = true }
-                                }
-                            }
-                        },
-                    )
+                            },
+                        )
+                    }
+                }
                 is DeviceLoginServerMatch.UnknownServer ->
                     DevicePairingUnknownServerScreen(
                         origin = resolved.origin,
                         onAddServer = {
                             // Adding a server always runs setup and login, which
                             // clear this destination — so this one always
-                            // re-queues.
-                            onRequeueExternalRoute(
-                                Route.PairDevice(
-                                    token = token,
-                                    code = code,
-                                    serverOrigin = requiredOrigin,
-                                ).route,
+                            // re-queues. The link's address is filled in.
+                            onRequeueExternalRoute(requeueRoute)
+                            val linkOrigin = resolved.origin.takeIf {
+                                it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+                            }
+                            navController.navigate(
+                                linkOrigin?.let { Route.ServerSetupPrefilled(it).route } ?: Route.ServerSetup.route,
                             )
-                            navController.navigate(Route.ServerSetup.route)
                         },
                         onCancel = {
                             if (!navController.popBackStack()) {
@@ -550,26 +665,19 @@ fun AppNavigation(
                 DeviceLoginServerMatch.Active -> DevicePairingScreen(
                     token = token,
                     code = code,
-                    onDone = {
-                        if (!navController.popBackStack()) {
-                            navController.navigate(Route.Home.route) {
-                                popUpTo(0) { inclusive = true }
-                            }
-                        }
+                    serverId = activeServer?.id,
+                    // A link that names this server keeps the code on it.
+                    lockServer = requiredServerId != null || requiredOrigin != null,
+                    onDone = pairingDone,
+                    // "Sign in" after a 401 on the chosen server: sign in there
+                    // (it becomes active) and come back to the typed code.
+                    onSignIn = { selectedServerId, typedCode ->
+                        signInThenReturn(selectedServerId, typedCode, signOutFirst = false)
                     },
-                    onSignIn = {
-                        // Same preservation as the switch path: signing in ends
-                        // at profile selection, whose popUpTo(0) wipes this
-                        // destination, and the code would have to be scanned
-                        // again.
-                        onRequeueExternalRoute(
-                            Route.PairDevice(
-                                token = token,
-                                code = code,
-                                serverOrigin = requiredOrigin,
-                            ).route,
-                        )
-                        navController.navigate(Route.Login.route)
+                    onSwitchAccount = { selectedServerId, typedCode, startSignIn ->
+                        // "Not you? Switch account": sign out of the server the
+                        // card names, then sign in again and come back to this code.
+                        signInThenReturn(selectedServerId, typedCode, signOutFirst = true, startSignIn)
                     },
                 )
             }
@@ -1416,6 +1524,26 @@ fun AppNavigation(
                     .padding(bottom = if (currentRoute in tabRoutes) 80.dp else 0.dp),
             )
         }
+
+        // Nearby-TV offer, app-wide once signed in (iOS parity). Not over the
+        // sign-in chain, where the phone has no session to approve with, nor
+        // over playback.
+        val companionHiddenRoutes = setOf(
+            Route.Login.route,
+            Route.ServerSetup.route,
+            Route.ServerSetupPrefilled.ROUTE,
+            Route.Setup.route,
+            Route.Signup.route,
+            Route.ProfileSelection.route,
+            Route.CreateProfile.route,
+            Route.InviteClaim.ROUTE,
+            Route.PairDevice.ROUTE,
+            Route.Player.ROUTE,
+            Route.SiloCastRemote.route,
+        )
+        org.siloserver.silo.android.ui.screens.pairing.CompanionPairingHost(
+            enabled = currentRoute != null && currentRoute !in companionHiddenRoutes,
+        )
     }
     }
     }

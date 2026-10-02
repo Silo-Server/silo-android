@@ -564,6 +564,36 @@ class EncryptedTokenManagerImpl(
         )
     }
 
+    /**
+     * Answers for a saved account's slot only, active or not. A temporary
+     * overlay's scope answers false: its deadline lives with the overlay and
+     * [accessTokenExpiresWithin] already covers it.
+     */
+    override suspend fun accessTokenExpiresWithin(scope: AuthScopeSnapshot, marginMs: Long): Boolean {
+        if (scope.credentialGenerationId != null) return false
+        return mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            val serverId = scope.serverId
+            if (persistentAccessToken(serverId) == null) return@withLock false
+            val expiry: Long?
+            val lifetime: Long?
+            if (serverId == activeServerId) {
+                expiry = tokenExpiryEpochMs
+                lifetime = tokenLifetimeMs
+            } else {
+                val expiryKey = serverScopedKey(serverId, KEY_TOKEN_EXPIRY)
+                val lifetimeKey = serverScopedKey(serverId, KEY_TOKEN_LIFETIME)
+                expiry = if (prefs.contains(expiryKey)) prefs.getLong(expiryKey, 0L) else null
+                lifetime = if (prefs.contains(lifetimeKey)) prefs.getLong(lifetimeKey, 0L) else null
+            }
+            shouldRefreshProactively(
+                remainingMs = (expiry ?: return@withLock false) - System.currentTimeMillis(),
+                lifetimeMs = lifetime,
+                marginMs = marginMs,
+            )
+        }
+    }
+
     override suspend fun getAccessTokenForScope(serverId: String): String? = mutex.withLock {
         if (serverId == activeServerId) accessToken
         else prefs.getString(serverScopedKey(serverId, KEY_ACCESS_TOKEN), null)

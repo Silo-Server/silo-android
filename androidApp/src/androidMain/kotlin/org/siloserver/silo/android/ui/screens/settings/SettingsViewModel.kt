@@ -3,11 +3,10 @@ package org.siloserver.silo.android.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
-import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
-import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -144,13 +143,12 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val authRepository: AuthRepository,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
-    private val overlayPrefsStore: OverlayPrefsStore,
     private val activeProfileStore: ActiveProfileStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
+    private val signOutTeardown: SignOutTeardown,
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
     private val serverRegistry: ServerRegistry? = null,
@@ -488,16 +486,9 @@ class SettingsViewModel(
 
     fun logout() {
         viewModelScope.launch {
-            // Push any in-flight settings before tearing down the session.
-            playerSettingsStore.flushPendingDeviceSettings()
-            authRepository.logout()
-            // Drop per-profile cached prefs so the next user doesn't see
-            // stale rows flash before the fresh fetch lands.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
+            // Pushes in-flight settings, then drops per-profile cached prefs so
+            // the next user doesn't see stale rows flash before the fresh fetch.
+            signOutTeardown.signOut()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }

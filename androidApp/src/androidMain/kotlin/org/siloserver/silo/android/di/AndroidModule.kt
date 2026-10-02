@@ -110,6 +110,21 @@ val androidModule = module {
     // passes on cold start.
     single<SharedPreferences> { createSecureSharedPrefs(androidContext()) }
 
+    // External sign-in (OIDC): the one native flow the phone may have in
+    // flight. Its own scope, so redeeming a code outlives the activity that
+    // received the redirect.
+    single<org.siloserver.silo.android.auth.PendingNativeSignInStore> {
+        org.siloserver.silo.android.auth.SharedPrefsPendingNativeSignInStore(get())
+    }
+    single {
+        org.siloserver.silo.android.auth.NativeSignInCoordinator(
+            store = get(),
+            completer = org.siloserver.silo.android.auth.RepositoryNativeSignInCompleter(get(), get(), get()),
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+            accountChoices = org.siloserver.silo.android.auth.SharedPrefsAccountChoiceStore(get()),
+        )
+    }
+
     // Multi-server registry. Loaded synchronously in init so MainActivity's
     // `runBlocking { resolveStartDestination() }` reads consistent state.
     single<ServerRegistry> { AndroidServerRegistry(get(), get()) }
@@ -203,7 +218,20 @@ val androidModule = module {
             TlsPskPairingClientTransport.connect(target.host, target.port)
         }
     }
-    single { CompanionPairingCoordinator(get(), get(), get()) }
+    single {
+        CompanionPairingCoordinator(
+            serverStore = get(),
+            deviceLoginApprover = get(),
+            transportFactory = get(),
+            // serverIdentity + endpoints in pushServer, and st=login matching.
+            identitySource = org.siloserver.silo.common.pairing.RegistryCompanionServerIdentitySource(
+                registry = get(),
+                identities = get(),
+                identityApi = get(),
+                identityTransitions = get(),
+            ),
+        )
+    }
     single<SiloCastLastTargetStore> { SharedPrefsSiloCastLastTargetStore(androidContext()) }
     single {
         SiloCastController(
@@ -467,12 +495,18 @@ val androidModule = module {
             featureStore = get(),
         )
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single {
+        org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }
+    viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get(), get()) }
     viewModel { ServerSetupViewModel(get(), get()) }
-    viewModel { LoginViewModel(get()) }
+    viewModel { LoginViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel {
+        org.siloserver.silo.android.ui.screens.settings.SignInSettingsViewModel(get(), get(), get(), get(), get())
+    }
     viewModel { SetupViewModel(get()) }
     viewModel { SignupViewModel(get()) }
     viewModel { InviteClaimViewModel(get(), get()) }
@@ -483,10 +517,36 @@ val androidModule = module {
     viewModel { ServerListViewModel(get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
+        val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
         DevicePairingViewModel(
             repository = get(),
             initialToken = args.first,
             initialCode = args.second,
+            // "Sign in a TV" approves on a chosen saved server (active one
+            // preselected) through that server's own account scope.
+            servers = org.siloserver.silo.viewmodel.RegistryDeviceApprovalServers(
+                registry = get(),
+                tokenManager = get(),
+                identityTransitions = get(),
+                // Each server's account, read through that server's own scope
+                // (renewing its access token first when it is expiring).
+                accountNameOf = { scope ->
+                    when (val me = authRepository.getCurrentUser(scope)) {
+                        is org.siloserver.silo.network.ApiResult.Success -> me.data.username
+                        // The provider couldn't re-check the session: the card says so.
+                        is org.siloserver.silo.network.ApiResult.NetworkError ->
+                            if (org.siloserver.silo.network.SiloAuthUnavailableException.isProviderUnavailable(me.exception)) {
+                                throw me.exception
+                            } else {
+                                null
+                            }
+                        is org.siloserver.silo.network.ApiResult.Error -> null
+                    }
+                },
+            ),
+            initialServerId = params.getOrNull<String>(),
+            // A link named the server: approve there without switching.
+            lockServer = params.getOrNull<Boolean>() ?: false,
         )
     }
 

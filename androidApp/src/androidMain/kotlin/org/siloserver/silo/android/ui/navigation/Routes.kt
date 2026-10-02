@@ -18,6 +18,17 @@ sealed class Route(val route: String) {
 
     // --- Auth flow (no bottom nav) ---
     data object ServerSetup : Route("server_setup")
+
+    /**
+     * Server setup with the address field prefilled, for an app link naming a
+     * server this phone hasn't saved. A separate destination so the plain
+     * [ServerSetup] route (a start destination) keeps its exact route string.
+     */
+    data class ServerSetupPrefilled(val url: String) : Route("server_setup_prefilled?url=${Uri.encode(url)}") {
+        companion object {
+            const val ROUTE = "server_setup_prefilled?url={url}"
+        }
+    }
     data object ServerList : Route("server_list")
     data object Login : Route("login")
     data object Setup : Route("setup")
@@ -47,6 +58,10 @@ sealed class Route(val route: String) {
          * than looking the code up against whichever server is active.
          */
         val serverOrigin: String? = null,
+        /** Deployment identity from a `silo://device?server=` link, matched by verified identity. */
+        val serverId: String? = null,
+        /** The link's server origin, to add the server from when it isn't saved. */
+        val serverUrl: String? = null,
     ) : Route(
         buildString {
             append("pair_device")
@@ -55,6 +70,8 @@ sealed class Route(val route: String) {
                 code?.takeIf { it.isNotBlank() }?.let { "code=${Uri.encode(it)}" },
                 serverOrigin?.takeIf { it.isNotBlank() }
                     ?.let { "serverOrigin=${Uri.encode(it)}" },
+                serverId?.takeIf { it.isNotBlank() }?.let { "serverId=${Uri.encode(it)}" },
+                serverUrl?.takeIf { it.isNotBlank() }?.let { "serverUrl=${Uri.encode(it)}" },
             )
             if (params.isNotEmpty()) {
                 append("?")
@@ -63,7 +80,8 @@ sealed class Route(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "pair_device?token={token}&code={code}&serverOrigin={serverOrigin}"
+            const val ROUTE =
+                "pair_device?token={token}&code={code}&serverOrigin={serverOrigin}&serverId={serverId}&serverUrl={serverUrl}"
         }
     }
 

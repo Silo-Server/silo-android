@@ -66,9 +66,15 @@ import org.koin.compose.viewmodel.koinViewModel
 fun ServerSetupScreen(
     onNavigateToSetup: () -> Unit,
     onNavigateToLogin: (signupEnabled: Boolean) -> Unit,
+    /** An address to start from, such as the server an app link named. */
+    prefillUrl: String? = null,
     viewModel: ServerSetupViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(prefillUrl) {
+        prefillUrl?.takeIf { it.isNotBlank() }?.let(viewModel::prefill)
+    }
 
     // React to navigation events produced by the ViewModel.
     LaunchedEffect(state.navigateTo) {

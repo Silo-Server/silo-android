@@ -25,15 +25,17 @@ import java.util.concurrent.atomic.AtomicBoolean
  * wiring.
  *
  * TXT record carries: v (protocol version), name (device name), id (stable
- * device id), sid (fresh nonce per [start]), st (receiver state).
+ * device id), sid (fresh nonce per [start]), st (receiver state) and, for a
+ * signed-out TV (`st=login`), srv (the deployment identity of the server it
+ * wants, from `GET /api/v2/system/identity`). Phones offer a `login` TV only
+ * when they hold a saved server with that verified identity.
  *
- * UI (a later step) observes [PairingReceiver.status]. This class owns only the
+ * The UI observes [PairingReceiver.status]. This class owns only the
  * networking lifecycle.
  */
 class TvPairingAdvertiser(
     private val context: Context,
     private val receiver: PairingReceiver,
-    private val receiverStateProvider: () -> PairingReceiverState,
 ) {
     private companion object {
         private const val TAG = "TvPairingAdvertiser"
@@ -52,10 +54,24 @@ class TvPairingAdvertiser(
     /** True between [start] and [stop]; gates restoring Advertising after a connection. */
     private val running = AtomicBoolean(false)
 
-    /** Start advertising and accepting pairing connections. Idempotent restart. */
+    /**
+     * Which [start] call owns the advertiser. Two screens use it (server setup
+     * and sign-in) and navigation composes both during a transition, so the
+     * leaving screen's [stop] must not tear down what the arriving one started.
+     */
+    private var owner = 0L
+
+    /**
+     * Start advertising [advertisement] and accepting pairing connections.
+     * Idempotent restart: the server-setup screen advertises
+     * [PairingAdvertisement.Setup]; the sign-in screen advertises
+     * [PairingAdvertisement.login] once it knows its server's identity.
+     */
     @Synchronized
-    fun start() {
+    fun start(advertisement: PairingAdvertisement = PairingAdvertisement.Setup): Long {
         stop()
+        val token = ++owner
+        receiver.advertisement = advertisement
         running.set(true)
         val identity = currentIdentity()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { this.scope = it }
@@ -68,6 +84,13 @@ class TvPairingAdvertiser(
             receiver.setAdvertising()
             acceptLoop(socket)
         }
+        return token
+    }
+
+    /** Stop only if the [start] that returned [token] still owns the advertiser. */
+    @Synchronized
+    fun stop(token: Long) {
+        if (token == owner) stop()
     }
 
     /** Stop advertising, close the listening socket, and release any session. */
@@ -121,8 +144,11 @@ class TvPairingAdvertiser(
                     // the NSD + socket are down, so leave the receiver Idle rather
                     // than falsely claiming Advertising. Completed is a terminal
                     // UI dwell state; the setup screen advances after showing it.
+                    // A lone Failed stays on screen with its explanation until
+                    // the person closes it (PairingReceiver.cancelActiveSession).
                     busy.set(false)
-                    if (receiver.status.value is PairingReceiverStatus.Completed) {
+                    val ended = receiver.status.value
+                    if (ended is PairingReceiverStatus.Completed) {
                         running.set(false)
                         runCatching { socket.close() }
                         if (serverSocket === socket) {
@@ -132,7 +158,7 @@ class TvPairingAdvertiser(
                             runCatching { nsdManager.unregisterService(listener) }
                         }
                         registrationListener = null
-                    } else if (running.get()) {
+                    } else if (running.get() && resumesAdvertisingAfterConnection(ended)) {
                         receiver.setAdvertising()
                     }
                 }
@@ -150,7 +176,11 @@ class TvPairingAdvertiser(
             setAttribute("name", identity.name)
             setAttribute("id", identity.deviceId)
             setAttribute("sid", sid)
-            setAttribute("st", receiverStateProvider().wire)
+            val advertisement = receiver.advertisement
+            setAttribute("st", advertisement.state.wire)
+            if (advertisement.state == PairingReceiverState.Login) {
+                advertisement.serverIdentity?.let { setAttribute("srv", it) }
+            }
         }
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(info: NsdServiceInfo) {}
@@ -173,3 +203,11 @@ class TvPairingAdvertiser(
         return PairingDeviceIdentity(name = name, deviceId = PairingDeviceId.stable(context))
     }
 }
+
+/**
+ * Whether the receiver goes back to Advertising when a connection ends with
+ * [ended]. Completed dwells and then leaves the screen; a lone Failed keeps
+ * its explanation on screen until the person closes it.
+ */
+internal fun resumesAdvertisingAfterConnection(ended: PairingReceiverStatus): Boolean =
+    ended !is PairingReceiverStatus.Completed && ended !is PairingReceiverStatus.Failed

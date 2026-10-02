@@ -5,7 +5,8 @@
 # Usage: scripts/sync-apiv2-fixtures.sh /path/to/silo-server
 #
 # Only the fixtures the Android client consumes are copied (the four pilot
-# operations, the probe's system-info body, and the generic problem bodies)
+# operations, the probe's system-info body, the device sign-in and server
+# identity bodies, the external sign-in bodies, and the generic problem bodies)
 # plus fixtures.schema.json and an index.json filtered to the vendored
 # entries. The full OpenAPI document is never vendored. SOURCE records the
 # exact server commit in the repository's key=value convention.
@@ -32,6 +33,25 @@ SELECTED=(
   rate_limited
   profile_verification_required
   not_acceptable
+  start_device_login_ok
+  poll_device_login_ok
+  poll_device_login_opened
+  cancel_device_login_ok
+  get_device_login_ok
+  get_device_login_capability_ok
+  server_identity_ok
+  server_connections_ok
+  list_auth_providers_ok
+  get_oauth_handshake_capabilities_ok
+  get_external_sign_in_capabilities_ok
+  complete_oauth_login_native_ok
+  complete_oauth_login_invalid_grant
+  list_account_identities_ok
+  create_account_identity_link_ticket_ok
+  create_account_identity_link_ticket_wrong_password
+  complete_account_identity_link_invalid_grant
+  delete_account_identity_last_sign_in_method
+  refresh_session_provider_unavailable
 )
 
 [ -d "$SRC" ] || { echo "no fixtures at $SRC" >&2; exit 1; }
@@ -62,12 +82,25 @@ PY
 
 COMMIT="$(git -C "$SERVER_DIR" rev-parse HEAD)"
 REF="$(git -C "$SERVER_DIR" rev-parse --abbrev-ref HEAD)"
+# A checkout whose fixtures differ from its HEAD is a local snapshot: the
+# commit named below does not contain these bodies, so SOURCE says so.
+SNAPSHOT=committed
+if [ -n "$(git -C "$SERVER_DIR" status --porcelain -- contracts/api/v2/fixtures contracts/api/v2/fixtures.schema.json)" ]; then
+  SNAPSHOT=uncommitted
+  echo "warning: $SRC has uncommitted changes; SOURCE records a local snapshot" >&2
+fi
 cat > "$DEST/SOURCE" <<EOS
 repository=https://github.com/Silo-Server/silo-server
 path=contracts/api/v2/fixtures
 commit=$COMMIT
 ref=$REF
+snapshot=$SNAPSHOT
 api_major=2
+
+snapshot=uncommitted means the bodies were copied from a server checkout with
+uncommitted fixture changes on top of that commit, so the commit alone does
+not reproduce them. Re-vendor from a server commit that contains them before
+relying on this record.
 
 Byte-identical copies of a subset of the server's native API v2 contract
 fixtures; do not hand-edit any of them. The server generates them through its

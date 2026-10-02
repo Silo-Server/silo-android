@@ -541,7 +541,7 @@ fun TvAppNavigation(
     // preserved so they don't have to re-enter the URL).
     LaunchedEffect(Unit) {
         tokenManager.sessionExpired.collect {
-            navController.navigate(TvRoute.Login().route) {
+            navController.navigate(TvRoute.Login(sessionExpired = true).route) {
                 // Clear the entire back stack so the user can't press Back
                 // to return to a screen that has no credentials to render.
                 popUpTo(0) { inclusive = true }
@@ -678,12 +678,18 @@ fun TvAppNavigation(
                     type = NavType.BoolType
                     defaultValue = false
                 },
+                navArgument(TvRoute.Login.ARG_SESSION_EXPIRED) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
             ),
         ) { backStack ->
             val signupEnabled = backStack.arguments?.getBoolean(TvRoute.Login.ARG_SIGNUP_ENABLED) ?: false
+            val sessionExpired = backStack.arguments?.getBoolean(TvRoute.Login.ARG_SESSION_EXPIRED) ?: false
             TvSelectToShowImeHost {
                 TvLoginScreen(
                     signupEnabled = signupEnabled,
+                    sessionExpired = sessionExpired,
                     onCreateAccount = { navController.navigate(TvRoute.Signup.route) },
                     // Point this TV at a different server — drop Login so Back from
                     // setup can't return to a credential form with no server bound.
