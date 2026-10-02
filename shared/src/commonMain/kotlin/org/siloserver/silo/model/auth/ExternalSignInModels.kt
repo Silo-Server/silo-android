@@ -21,8 +21,32 @@ data class SignInProvider(
      * listed it with.
      */
     val nativeStartPath: String?,
+    /**
+     * `signInWithNetworkIdentity` relative to the server base
+     * (`/api/v2/auth/network/{id}/sign-in`); network providers only. Apps
+     * POST `{}` to it on their own saved base URL, like [nativeStartPath].
+     */
+    val networkSignInPath: String? = null,
+    /** Who the network provider says owns this device; network providers only. It authorizes nothing. */
+    val networkIdentity: NetworkIdentity? = null,
 ) {
-    enum class Mode { Credentials, OAuth, Unknown }
+    /**
+     * How the provider signs people in: [Network] providers (such as the
+     * Tailscale plugin) are listed only to a request that came through their
+     * own network, and sign in the owner of the device with no password and
+     * no browser.
+     */
+    enum class Mode { Credentials, OAuth, Network, Unknown }
+}
+
+/** A network provider's `network_identity`: the person who owns the device that asked. */
+data class NetworkIdentity(
+    val displayName: String,
+    val username: String,
+) {
+    /** The name for "Continue as": the display name, else the username; null when the provider gave neither. */
+    val label: String?
+        get() = displayName.trim().ifEmpty { username.trim() }.ifEmpty { null }
 }
 
 /** `listAuthProviders`: the providers plus whether any of them takes a password. */
@@ -40,6 +64,8 @@ data class OAuthHandshakeCapabilities(
     val linking: Boolean,
     /** Sign-in starts take `prompt=select_account` ("Use a different account", "Not you? Switch account"). */
     val selectAccount: Boolean = false,
+    /** A network provider (such as Tailscale) that signs in this device's owner, with its sign-in path. */
+    val networkProvider: SignInProvider? = null,
 ) {
     companion object {
         val None = OAuthHandshakeCapabilities(available = false, native = false, linking = false)
@@ -56,6 +82,12 @@ data class ExternalSignInCapabilities(
      * Directory linking needs no OAuth handshake, so this document reports it.
      */
     val credentialsLinking: Boolean = false,
+    /**
+     * `signInWithNetworkIdentity` and `linkAccountIdentityWithNetwork` are
+     * served. Whether this device may use them is answered by provider
+     * discovery, which lists a network provider only through its own network.
+     */
+    val networkSignIn: Boolean = false,
 )
 
 /**
@@ -68,6 +100,9 @@ data class ExternalSignInCapabilities(
  *   provider takes a password (the local one, or a directory such as LDAP,
  *   which the server reaches without a provider field) and hidden only when
  *   the server says no provider does.
+ * - [networkProvider]: "Continue as <owner>" above everything else. The
+ *   server lists a network provider only when this request came through that
+ *   provider's network; it never changes what else is offered.
  */
 data class SignInOptions(
     val oauthProviders: List<SignInProvider>,
@@ -76,6 +111,8 @@ data class SignInOptions(
     val directoryProvider: SignInProvider?,
     /** A provider sign-in may ask the provider to offer another account (`prompt=select_account`). */
     val selectAccount: Boolean = false,
+    /** A network provider (such as Tailscale) that signs in this device's owner, with its sign-in path. */
+    val networkProvider: SignInProvider? = null,
 ) {
     companion object {
         /** A server that predates provider discovery: the password form alone. */
@@ -100,6 +137,9 @@ data class SignInOptions(
                 showPasswordForm = providers.passwordLogin || credentials.isNotEmpty(),
                 directoryProvider = credentials.firstOrNull { it.id != LOCAL_PROVIDER_ID },
                 selectAccount = oauth.isNotEmpty() && handshake.selectAccount,
+                networkProvider = providers.providers.firstOrNull {
+                    it.mode == SignInProvider.Mode.Network && !it.networkSignInPath.isNullOrBlank()
+                },
             )
         }
 
@@ -195,6 +235,59 @@ enum class PasswordLoginFailure {
             problem == "rate_limited" || code == 429 -> RateLimited
             code == 401 -> InvalidCredentials
             code == 403 -> AccountDisabled
+            code == 503 -> ProviderUnavailable
+            else -> Other
+        }
+    }
+}
+
+/**
+ * Why a network identity sign-in (`signInWithNetworkIdentity`) was refused,
+ * from the problem code first and the status second (silo-server
+ * `docs/auth-api.md`, "External sign-in"). Phone and TV map each to their own copy.
+ */
+enum class NetworkSignInFailure {
+    /**
+     * The request didn't come through the provider's network
+     * (`network_identity_required`): the app uses another address for the
+     * server, or the device left that network.
+     */
+    NetworkIdentityRequired,
+
+    /** The provider refuses this device (`not_permitted`): a tagged device, or one its policy leaves out. */
+    NotPermitted,
+
+    /** No account matches and the server doesn't create one (`account_required`). */
+    AccountRequired,
+
+    /** The account is disabled (`permission_denied`). */
+    AccountDisabled,
+
+    /** A first sign-in found another account with the same email (409): link from that account instead. */
+    EmailInUse,
+
+    /** The network identity is linked to another account (409). */
+    IdentityLinkedElsewhere,
+
+    /** Not an enabled network provider any more (404). */
+    NotFound,
+    ProviderUnavailable,
+
+    /** Too many attempts (429). */
+    RateLimited,
+    Other;
+
+    companion object {
+        fun of(code: Int, problem: String): NetworkSignInFailure = when {
+            problem == "network_identity_required" -> NetworkIdentityRequired
+            problem == "not_permitted" -> NotPermitted
+            problem == "account_required" -> AccountRequired
+            problem == "permission_denied" -> AccountDisabled
+            problem == "email_in_use" -> EmailInUse
+            problem == "identity_linked_elsewhere" -> IdentityLinkedElsewhere
+            problem == "provider_unavailable" -> ProviderUnavailable
+            problem == "rate_limited" || code == 429 -> RateLimited
+            problem == "not_found" || code == 404 -> NotFound
             code == 503 -> ProviderUnavailable
             else -> Other
         }

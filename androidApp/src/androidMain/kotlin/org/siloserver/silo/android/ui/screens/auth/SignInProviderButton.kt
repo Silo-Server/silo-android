@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -40,6 +41,17 @@ import org.siloserver.silo.model.auth.SignInProvider
 fun signInWithLabel(provider: SignInProvider): String = "Sign in with ${provider.displayName}"
 
 /**
+ * A network provider's button: "Continue as <owner>" when the provider named
+ * who owns this device, "Continue with <provider>" when it named nobody.
+ */
+fun continueAsLabel(provider: SignInProvider): String =
+    provider.networkIdentity?.label?.let { "Continue as $it" } ?: "Continue with ${provider.displayName}"
+
+/** The line under "Continue as <owner>" naming the provider; none when the label already names it. */
+fun continueViaLabel(provider: SignInProvider): String? =
+    provider.networkIdentity?.label?.let { "via ${provider.displayName}" }
+
+/**
  * The account-choice link under the provider buttons. It picks another
  * account at the provider, not another way into Silo, so it names the
  * provider when there is one; with several, a chooser follows.
@@ -49,9 +61,10 @@ fun differentAccountLabel(providers: List<SignInProvider>): String =
 
 /**
  * One external sign-in provider's button: its icon (SVG or bitmap from the
- * plugin, a generic sign-in glyph when it has none or it can't be drawn) and
- * [label]. Glass-outlined so the cream password button stays the primary
- * action when both are offered.
+ * plugin, a generic sign-in glyph when it has none or it can't be drawn),
+ * [label] and, when given, a smaller [supportingText] line under it.
+ * Glass-outlined so the cream password button stays the primary action when
+ * both are offered. The button reads as one element, both lines together.
  */
 @Composable
 fun SignInProviderButton(
@@ -61,6 +74,7 @@ fun SignInProviderButton(
     modifier: Modifier = Modifier,
     busy: Boolean = false,
     enabled: Boolean = true,
+    supportingText: String? = null,
 ) {
     val shape = RoundedCornerShape(14.dp)
     val active = enabled && !busy
@@ -86,12 +100,21 @@ fun SignInProviderButton(
             } else {
                 ProviderIcon(provider)
             }
-            Text(
-                text = label,
-                color = AuroraInk.copy(alpha = if (active) 1f else 0.6f),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp,
-            )
+            Column {
+                Text(
+                    text = label,
+                    color = AuroraInk.copy(alpha = if (active) 1f else 0.6f),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                )
+                if (supportingText != null) {
+                    Text(
+                        text = supportingText,
+                        color = AuroraInk.copy(alpha = if (active) 0.68f else 0.42f),
+                        fontSize = 13.sp,
+                    )
+                }
+            }
         }
     }
 }

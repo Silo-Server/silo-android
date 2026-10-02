@@ -10,6 +10,9 @@ import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
+import org.siloserver.silo.model.auth.LoginResponse
+import org.siloserver.silo.model.auth.NetworkSignInFailure
+import org.siloserver.silo.model.auth.SignInProvider
 import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.AccountSessionExpectation
 import org.siloserver.silo.network.ApiResult
@@ -58,7 +61,28 @@ internal fun tvLoginError(result: ApiResult.Error): TvLoginError = when {
     }
 }
 
-/** Why the password form can't proceed; the screen maps each to `strings.xml`. */
+/** The error for a refused network identity sign-in ("Continue as …"). */
+internal fun tvNetworkSignInError(result: ApiResult.Error): TvLoginError = when {
+    // AuthRepository's code for a sign-in whose account or server changed underneath it.
+    result.error == "identity_changed" -> TvLoginError.IdentityChanged
+    else -> when (NetworkSignInFailure.of(result.code, result.error)) {
+        NetworkSignInFailure.NetworkIdentityRequired -> TvLoginError.NetworkIdentityRequired
+        NetworkSignInFailure.NotPermitted -> TvLoginError.NetworkNotPermitted
+        NetworkSignInFailure.EmailInUse -> TvLoginError.NetworkEmailInUse
+        NetworkSignInFailure.NotFound -> TvLoginError.NetworkProviderGone
+        NetworkSignInFailure.AccountRequired -> TvLoginError.AccountRequired
+        NetworkSignInFailure.AccountDisabled -> TvLoginError.AccountDisabled
+        NetworkSignInFailure.IdentityLinkedElsewhere -> TvLoginError.IdentityLinkedElsewhere
+        NetworkSignInFailure.ProviderUnavailable -> TvLoginError.ProviderUnavailable
+        NetworkSignInFailure.RateLimited -> TvLoginError.RateLimited
+        NetworkSignInFailure.Other -> TvLoginError.Server(result.message.takeIf { it.isNotBlank() })
+    }
+}
+
+/**
+ * Why a sign-in on this screen (the password form, or "Continue as …") can't
+ * proceed; the screen maps each to `strings.xml`.
+ */
 sealed interface TvLoginError {
     data object UsernameRequired : TvLoginError
     data object PasswordRequired : TvLoginError
@@ -90,6 +114,18 @@ sealed interface TvLoginError {
     data object IdentityChanged : TvLoginError
     data object SaveFailed : TvLoginError
     data object CleanupIncomplete : TvLoginError
+
+    /** A network sign-in that didn't come through the provider's network (`network_identity_required`). */
+    data object NetworkIdentityRequired : TvLoginError
+
+    /** The network provider refuses this TV (`not_permitted`): a tagged device, or one its policy leaves out. */
+    data object NetworkNotPermitted : TvLoginError
+
+    /** A first network sign-in found another account with the same email: connect from that account instead. */
+    data object NetworkEmailInUse : TvLoginError
+
+    /** The network provider is no longer enabled on the server (404). */
+    data object NetworkProviderGone : TvLoginError
 
     /** The server's own explanation, or null for a generic failure. */
     data class Server(val message: String?) : TvLoginError
@@ -123,6 +159,16 @@ data class TvLoginUiState(
     val providerName: String? = null,
     /** The directory (LDAP) provider the password form also reaches, when enabled. */
     val directoryName: String? = null,
+    /**
+     * The network provider (such as Tailscale) the server listed for this
+     * TV, which it does only when the TV reached it through that provider's
+     * network: "Continue as <owner>" signs in with no code and no password.
+     */
+    val networkProvider: SignInProvider? = null,
+    /** "Continue as …" is waiting for the server. */
+    val networkBusy: Boolean = false,
+    /** Why the last "Continue as …" was refused; shown with that button. */
+    val networkError: TvLoginError? = null,
 ) {
     /**
      * A password was refused because password sign-in is off, and the form
@@ -172,7 +218,9 @@ data class TvDeviceSignInUi(
 /**
  * Two parallel sign-in flows share this ViewModel:
  *
- *  1. **Credential** — [AuthRepository.loginForTokens] then an atomic
+ *  1. **Credential** — [AuthRepository.loginForTokens] (or, for "Continue as
+ *     <owner>" through a network provider such as Tailscale, the network
+ *     identity sign-in, which answers the same token pair) then an atomic
  *     [TokenManager.replaceAccountSession].
  *  2. **Device code (QR)** — a [DeviceSignInMachine] shows a code, renews it
  *     while the screen is visible, pauses after about an hour, and names
@@ -254,7 +302,7 @@ class TvLoginViewModel(
     /** [onStop] ran since the last [onStart]: the next start re-reads the sign-in options. */
     private var lastDeviceCode: String? = null
 
-    /** A device approval that arrived while a password save held the sign-in. */
+    /** A device approval that arrived while a password (or network) save held the sign-in. */
     private var heldApproval: Pair<DeviceLoginPollResponse, AccountSessionExpectation>? = null
 
     /** The code on screen now, for a nearby phone; null while none is live. */
@@ -269,7 +317,7 @@ class TvLoginViewModel(
     fun onPasswordChanged(v: String) = _uiState.update { it.copy(password = v, error = null) }
 
     fun onLoginClick() {
-        if (_uiState.value.isLoading) return
+        if (_uiState.value.isLoading || _uiState.value.networkBusy) return
         val s = _uiState.value
         if (s.username.isBlank()) {
             _uiState.update { it.copy(error = TvLoginError.UsernameRequired) }
@@ -281,17 +329,58 @@ class TvLoginViewModel(
         }
 
         _uiState.update { it.copy(isLoading = true, error = null) }
+        signInWithTokens(TokenSignIn.Password) { expected -> authRepository.loginForTokens(s.username, s.password, expected) }
+    }
+
+    /**
+     * "Continue as <owner>": sign in as whoever the server's network provider
+     * (such as Tailscale) says owns this TV, with no code and no password.
+     * The session is saved exactly like a password sign-in's, and the code on
+     * screen is withdrawn once it is.
+     */
+    fun onNetworkSignInClick() {
+        val s = _uiState.value
+        val discovery = externalSignIn ?: return
+        val path = s.networkProvider?.networkSignInPath ?: return
+        if (s.isLoading || s.networkBusy) return
+        _uiState.update { it.copy(networkBusy = true, networkError = null) }
+        signInWithTokens(TokenSignIn.Network) { expected ->
+            authRepository.tokensFor(expected) { serverUrl -> discovery.signInWithNetworkIdentity(serverUrl, path) }
+        }
+    }
+
+    /** Which button started a [signInWithTokens]: its busy state and errors show there. */
+    private enum class TokenSignIn { Password, Network }
+
+    /**
+     * [attempt]'s button is free again, with [error], when given, shown where
+     * it was pressed. The device code's own handoff uses the form's slot.
+     */
+    private fun TvLoginUiState.settled(attempt: TokenSignIn, error: TvLoginError? = null): TvLoginUiState = when (attempt) {
+        TokenSignIn.Password -> copy(isLoading = false, error = error ?: this.error)
+        TokenSignIn.Network -> copy(networkBusy = false, networkError = error ?: networkError)
+    }
+
+    /**
+     * A sign-in whose [fetch] answers `login`'s token pair (a password, or the
+     * network identity): it races the device code for the sign-in, and its
+     * session is committed atomically, or not at all.
+     */
+    private fun signInWithTokens(
+        attempt: TokenSignIn,
+        fetch: suspend (AccountSessionExpectation) -> ApiResult<LoginResponse>,
+    ) {
         credentialLoginJob?.cancel()
         credentialLoginJob = viewModelScope.launch {
             val expected = captureExpectation()
             if (expected == null) {
-                _uiState.update { it.copy(isLoading = false, error = TvLoginError.IdentityChanged) }
+                _uiState.update { it.settled(attempt, TvLoginError.IdentityChanged) }
                 return@launch
             }
-            when (val result = authRepository.loginForTokens(s.username, s.password, expected)) {
+            when (val result = fetch(expected)) {
                 is ApiResult.Success -> {
                     if (!tryCompleteAuth()) {
-                        _uiState.update { it.copy(isLoading = false) }
+                        _uiState.update { it.settled(attempt) }
                         return@launch
                     }
                     // Polling carries on until the password session commits: if
@@ -306,13 +395,14 @@ class TvLoginViewModel(
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: AccountSessionChangedException) {
-                        handleIdentityChanged()
+                        handleIdentityChanged(attempt)
                         resumeDeviceSignIn()
                         return@launch
                     } catch (_: Throwable) {
                         handleSessionPersistenceFailure(
                             accessToken = result.data.accessToken,
                             refreshToken = result.data.refreshToken,
+                            attempt = attempt,
                         )
                         if (!authCompleted) {
                             // This screen's own save moved the generation without
@@ -321,7 +411,7 @@ class TvLoginViewModel(
                             if (machineExpectation?.serverUrl == expected.serverUrl) machineExpectation = captureExpectation()
                             resumeDeviceSignIn()
                         } else {
-                            passwordWon()
+                            tokenSignInWon()
                         }
                         return@launch
                     }
@@ -329,30 +419,33 @@ class TvLoginViewModel(
                     // server's v2 contract verdict the same way every other sign-in does.
                     authRepository.onSessionCommitted()
                     if (tokenManager.captureAccountSessionExpectation()?.generation != expected.generation + 1) {
-                        handleIdentityChanged()
+                        handleIdentityChanged(attempt)
                         resumeDeviceSignIn()
                         return@launch
                     }
-                    passwordWon()
-                    _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+                    tokenSignInWon()
+                    _uiState.update { it.settled(attempt).copy(loginSuccess = true) }
                 }
                 is ApiResult.Error -> {
                     if (authCompleted) {
-                        _uiState.update { it.copy(isLoading = false) }
+                        _uiState.update { it.settled(attempt) }
                         return@launch
                     }
-                    val error = tvLoginError(result)
-                    _uiState.update { it.copy(isLoading = false, error = error) }
+                    val error = when (attempt) {
+                        TokenSignIn.Password -> tvLoginError(result)
+                        TokenSignIn.Network -> tvNetworkSignInError(result)
+                    }
+                    _uiState.update { it.settled(attempt, error) }
                     // The server refused passwords: re-read what it offers, so
                     // the form goes away once password sign-in is off.
-                    if (error == TvLoginError.LocalLoginDisabled) refreshSignInOptions()
+                    if (attempt == TokenSignIn.Password && error == TvLoginError.LocalLoginDisabled) refreshSignInOptions()
                 }
                 is ApiResult.NetworkError -> {
                     if (authCompleted) {
-                        _uiState.update { it.copy(isLoading = false) }
+                        _uiState.update { it.settled(attempt) }
                         return@launch
                     }
-                    _uiState.update { it.copy(isLoading = false, error = TvLoginError.Network) }
+                    _uiState.update { it.settled(attempt, TvLoginError.Network) }
                 }
             }
         }
@@ -610,17 +703,18 @@ class TvLoginViewModel(
         _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
     }
 
-    private fun handleIdentityChanged() {
+    private fun handleIdentityChanged(attempt: TokenSignIn = TokenSignIn.Password) {
         // Only release this screen's attempt. Credentials now belong to the new identity.
         authCompleted = false
         _uiState.update {
-            it.copy(isLoading = false, loginSuccess = false, error = TvLoginError.IdentityChanged)
+            it.settled(attempt, TvLoginError.IdentityChanged).copy(loginSuccess = false)
         }
     }
 
     private suspend fun handleSessionPersistenceFailure(
         accessToken: String,
         refreshToken: String,
+        attempt: TokenSignIn = TokenSignIn.Password,
     ) {
         val committed = runCatching {
             tokenManager.getAccessToken() == accessToken &&
@@ -629,16 +723,16 @@ class TvLoginViewModel(
         if (committed) authRepository.onSessionCommitted()
         authCompleted = committed
         _uiState.update {
-            it.copy(
-                isLoading = false,
-                loginSuccess = committed,
-                error = if (committed) TvLoginError.CleanupIncomplete else TvLoginError.SaveFailed,
-            )
+            it.settled(attempt, if (committed) TvLoginError.CleanupIncomplete else TvLoginError.SaveFailed)
+                .copy(loginSuccess = committed)
         }
     }
 
-    /** The password session committed: the code on screen must not be approvable any more. */
-    private fun passwordWon() {
+    /**
+     * The password or network session committed: the code on screen must not
+     * be approvable any more.
+     */
+    private fun tokenSignInWon() {
         heldApproval = null
         abandonDeviceCode()
     }
@@ -763,6 +857,9 @@ class TvLoginViewModel(
                     },
                     providerName = options.oauthProviders.firstOrNull()?.displayName,
                     directoryName = options.directoryProvider?.displayName,
+                    networkProvider = options.networkProvider,
+                    // A refusal belongs to its button; it goes once the button does.
+                    networkError = it.networkError.takeIf { options.networkProvider != null },
                 )
             }
         }

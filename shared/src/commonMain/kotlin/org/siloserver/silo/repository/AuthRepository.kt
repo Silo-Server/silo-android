@@ -136,6 +136,16 @@ class AuthRepository(
     }
 
     /**
+     * Signs in with another operation that answers `login`'s token pair, such
+     * as the network identity sign-in (silo-server `docs/auth-api.md`,
+     * "External sign-in"). [exchange] runs against the active server's saved
+     * base URL it is given, and the session lands exactly like a password
+     * sign-in's.
+     */
+    suspend fun signInWith(exchange: suspend (serverUrl: String) -> ApiResult<LoginResponse>): ApiResult<User> =
+        authenticate { exchange(it.serverUrl) }
+
+    /**
      * Signs in with the one-time code a native OAuth flow returned to the app
      * (silo-server `docs/auth-api.md`, "OAuth sign-in flows"). The flow must
      * still belong to [serverId], the saved server the app started it for and
@@ -151,9 +161,21 @@ class AuthRepository(
         if ((expected.serverId ?: serverRegistry?.activeServerId?.value) != serverId) staleSession() else redeem(expected.serverUrl)
     }
 
-    suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> {
+    suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> =
+        tokensFor(expected) { serverUrl -> authApi.login(LoginRequest(username, password), serverUrl) }
+
+    /**
+     * [loginForTokens] for another operation that answers `login`'s token
+     * pair: the tokens, not yet saved, from [exchange] run against the saved
+     * base URL of the sign-in context [expected] (the current one when null),
+     * and only while that context still holds.
+     */
+    suspend fun tokensFor(
+        expected: AccountSessionExpectation? = null,
+        exchange: suspend (serverUrl: String) -> ApiResult<LoginResponse>,
+    ): ApiResult<LoginResponse> {
         val captured = expected ?: tokenManager.captureAccountSessionExpectation() ?: return staleSession()
-        val result = authApi.login(LoginRequest(username, password), captured.serverUrl)
+        val result = exchange(captured.serverUrl)
         return if (captured.isSameSession(tokenManager.captureAccountSessionExpectation())) result else staleSession()
     }
 

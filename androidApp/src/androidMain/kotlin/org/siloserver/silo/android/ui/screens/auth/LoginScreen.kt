@@ -56,7 +56,9 @@ import org.koin.compose.viewmodel.koinViewModel
 
 /**
  * Sign-in. Mirrors silo-apple iOS phone `LoginView` (Aurora): wordmark,
- * "Step 02 — Sign in" eyebrow + "Welcome back", then a glass card with a
+ * "Step 02 — Sign in" eyebrow + "Welcome back", then a glass card with
+ * "Continue as <owner>" first when the server lists a network provider for
+ * this device (such as Tailscale: no browser, no password), a
  * "Sign in with <provider>" button per external provider the server lists
  * (OIDC, run in a Custom Tab), "Use a different account" when the server
  * takes `prompt=select_account`, Username + Password fields and the cream
@@ -154,6 +156,16 @@ fun LoginScreen(
                     Text(text = "Loading sign-in options…", color = AuroraInkTertiary, fontSize = 14.sp)
                 }
             }
+            state.networkProvider?.let { provider ->
+                SignInProviderButton(
+                    provider = provider,
+                    label = continueAsLabel(provider),
+                    supportingText = continueViaLabel(provider),
+                    onClick = viewModel::onNetworkSignIn,
+                    busy = state.providerBusy == provider.id,
+                    enabled = !state.isLoading && state.providerBusy == null,
+                )
+            }
             state.providers.forEach { provider ->
                 SignInProviderButton(
                     provider = provider,
@@ -187,11 +199,11 @@ fun LoginScreen(
                     AuroraGhostButton(label = "Retry", onClick = viewModel::loadOptions)
                 }
             }
-            if (state.providers.isNotEmpty() && state.showPasswordForm) {
+            if ((state.providers.isNotEmpty() || state.networkProvider != null) && state.showPasswordForm) {
                 OrDivider()
             }
             if (!state.showPasswordForm) {
-                if (state.options != null && state.providers.isEmpty()) {
+                if (state.options != null && state.providers.isEmpty() && state.networkProvider == null) {
                     // Password sign-in is off and the provider can't run in this app.
                     AuroraErrorLabel("This server doesn't offer a sign-in this app can use. Sign in on the web, or ask the server's admin.")
                 }
@@ -244,6 +256,7 @@ fun LoginScreen(
                     label = if (state.isLoading) "Signing in…" else "Sign in",
                     onClick = viewModel::onLoginClick,
                     isLoading = state.isLoading,
+                    enabled = !state.networkSignInBusy,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

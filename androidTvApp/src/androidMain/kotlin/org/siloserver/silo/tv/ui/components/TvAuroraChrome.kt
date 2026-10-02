@@ -221,7 +221,11 @@ fun Modifier.auroraPanel(cornerRadius: Dp = 20.dp): Modifier {
         )
 }
 
-/** Warm cream pill with a gold focus glow — the Aurora primary action. */
+/**
+ * Warm cream pill with a gold focus glow — the Aurora primary action.
+ * [supportingText], when given, is a smaller second line under [label]
+ * ("Continue as Alice" / "via Tailscale"); both read as one control.
+ */
 @Composable
 fun AuroraPrimaryButton(
     label: String,
@@ -233,6 +237,7 @@ fun AuroraPrimaryButton(
     filledAtRest: Boolean = true,
     neutralFocusFill: Boolean = false,
     enabled: Boolean = true,
+    supportingText: String? = null,
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(14.dp)
@@ -297,12 +302,22 @@ fun AuroraPrimaryButton(
                     modifier = Modifier.size(24.dp),
                 )
             }
-            Text(
-                text = label,
-                color = contentColor.copy(alpha = enabledAlpha),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 24.sp,
-            )
+            Column {
+                Text(
+                    text = label,
+                    color = contentColor.copy(alpha = enabledAlpha),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 24.sp,
+                )
+                if (supportingText != null) {
+                    Text(
+                        text = supportingText,
+                        color = contentColor.copy(alpha = enabledAlpha * 0.72f),
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 16.sp,
+                    )
+                }
+            }
         }
     }
 }

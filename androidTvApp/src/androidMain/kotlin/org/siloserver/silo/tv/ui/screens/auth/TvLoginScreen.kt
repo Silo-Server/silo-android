@@ -86,6 +86,7 @@ import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
 import org.siloserver.silo.model.auth.DeviceCodeFormat
+import org.siloserver.silo.model.auth.SignInProvider
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.AuroraEyebrow
 import org.siloserver.silo.tv.ui.components.AuroraGhostButton
@@ -111,7 +112,9 @@ import org.siloserver.silo.tv.ui.theme.Spacing
  * `<host>/activate` and the code, or open Silo on a nearby phone — with the
  * password one click away. One copy deck with Apple TV (server spec "TV
  * device sign-in UX"). The code renews itself while the screen is visible;
- * there is no countdown.
+ * there is no countdown. When the TV reached the server through a network
+ * provider such as Tailscale, "Continue as <owner>" leads and takes focus:
+ * one press signs in, and every other way in stays.
  *
  * TOP-anchored so the username/password fields stay above the on-screen IME:
  * on Android TV the soft keyboard eats the lower half of the viewport.
@@ -141,6 +144,7 @@ fun TvLoginScreen(
     val createAccountFocus = remember { FocusRequester() }
     val backToPhoneFocus = remember { FocusRequester() }
     val formChangeServerFocus = remember { FocusRequester() }
+    val networkFocus = remember { FocusRequester() }
     val formScrollState = rememberTvImeAwareFormScrollState()
 
     // Phone-first IA (mirrors tvOS TVLoginView): the device code leads, and the
@@ -219,13 +223,15 @@ fun TvLoginScreen(
     BackHandler(enabled = passwordFormVisible && !device.passwordOnly && !isActivePairing, onBack = backToPhone)
     BackHandler(enabled = isActivePairing, onBack = pairingReceiver::cancelActiveSession)
 
-    // Focus moves to the state's action when the code needs the person
-    // ("Try again" / "Show a new code"), to "Change server" when only that
-    // helps, otherwise to the one local action, "Sign in with a password".
-    // "Can't reach" and "Too many requests" keep retrying by themselves, so
-    // their "Try again" doesn't take focus (Apple TV parity).
+    // "Continue as …" takes focus whenever the server offers it: it is the
+    // one-press way in. Otherwise focus moves to the state's action when the
+    // code needs the person ("Try again" / "Show a new code"), to "Change
+    // server" when only that helps, otherwise to the one local action, "Sign
+    // in with a password". "Can't reach" and "Too many requests" keep retrying
+    // by themselves, so their "Try again" doesn't take focus (Apple TV parity).
     val focusTarget = when {
         passwordFormVisible -> "username"
+        state.networkProvider != null -> "network"
         device.status.actionTakesFocus() -> "action"
         device.status == TvSignInStatus.UpdateRequired -> "changeServer"
         device.status == TvSignInStatus.Unreachable || device.status == TvSignInStatus.TooManyRequests -> null
@@ -252,6 +258,7 @@ fun TvLoginScreen(
         }
         val target = when (focusTarget) {
             "username" -> usernameFocus
+            "network" -> networkFocus
             "action" -> actionFocus
             "changeServer" -> changeServerFocus
             else -> usePasswordFocus
@@ -376,6 +383,7 @@ fun TvLoginScreen(
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
+                    val networkName = state.networkProvider?.displayName
                     SignInHero(
                         serverName = serverName,
                         activateText = device.code?.activateText ?: state.serverActivateText.orEmpty(),
@@ -386,6 +394,20 @@ fun TvLoginScreen(
                         onUsePassword = { showPasswordForm = true },
                         onChangeServer = changeServer,
                         showPasswordAction = state.passwordAvailable,
+                        network = state.networkProvider?.let { provider ->
+                            NetworkSignInAction(
+                                provider = provider,
+                                busy = state.networkBusy,
+                                focusRequester = networkFocus,
+                                focusTracking = trackFocus("network"),
+                                onClick = viewModel::onNetworkSignInClick,
+                            )
+                        },
+                        networkError = state.networkError?.message(
+                            providerName = null,
+                            directoryName = networkName,
+                            networkName = networkName,
+                        ),
                         modifier = Modifier.weight(1f),
                     )
                     DeviceCodePanel(
@@ -443,9 +465,19 @@ private fun StatusBanner(text: String) {
     )
 }
 
+/** "Continue as <owner>" through a network provider, for [SignInHero]. */
+private class NetworkSignInAction(
+    val provider: SignInProvider,
+    val busy: Boolean,
+    val focusRequester: FocusRequester,
+    val focusTracking: Modifier,
+    val onClick: () -> Unit,
+)
+
 /**
- * Left column: title, the three ways in, the nearby-phone hint, and the two
- * local actions. Mirrors tvOS `TVLoginView.heroColumn`.
+ * Left column: title, "Continue as <owner>" when a network provider offers
+ * it, the three ways in, the nearby-phone hint, and the two local actions.
+ * Mirrors tvOS `TVLoginView.heroColumn`.
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
@@ -460,6 +492,8 @@ private fun SignInHero(
     onChangeServer: () -> Unit,
     modifier: Modifier = Modifier,
     showPasswordAction: Boolean = true,
+    network: NetworkSignInAction? = null,
+    networkError: String? = null,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -471,6 +505,21 @@ private fun SignInHero(
             style = TvLoginTextStyles.Hero,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (network != null) {
+            NetworkSignInButton(
+                action = network,
+                // The steps between hold nothing focusable: name the way down.
+                below = if (showPasswordAction) usePasswordFocus else changeServerFocus,
+            )
+        }
+        networkError?.let { error ->
+            Text(
+                text = error,
+                style = TvLoginTextStyles.Error,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+            )
+        }
         AuroraStepRow(number = 1, text = stringResource(R.string.tv_signin_step_scan))
         AuroraStepRow(number = 2, text = stringResource(R.string.tv_signin_step_url, activateText))
         AuroraStepRow(number = 3, text = stringResource(R.string.tv_signin_step_approve))
@@ -490,7 +539,10 @@ private fun SignInHero(
                     modifier = Modifier
                         .then(usePasswordTracking)
                         .focusRequester(usePasswordFocus)
-                        .focusProperties { right = changeServerFocus },
+                        .focusProperties {
+                            right = changeServerFocus
+                            if (network != null) up = network.focusRequester
+                        },
                 )
             }
             AuroraGhostButton(
@@ -502,10 +554,38 @@ private fun SignInHero(
                 modifier = Modifier
                     .then(changeServerTracking)
                     .focusRequester(changeServerFocus)
-                    .focusProperties { if (showPasswordAction) left = usePasswordFocus },
+                    .focusProperties {
+                        if (showPasswordAction) left = usePasswordFocus
+                        if (network != null) up = network.focusRequester
+                    },
             )
         }
     }
+}
+
+/**
+ * "Continue as <owner>" with "via <provider>" under it, or "Continue with
+ * <provider>" when the provider named nobody: the screen's primary action
+ * when offered. It stays focusable while signing in so focus doesn't jump;
+ * the view model ignores a second press.
+ */
+@Composable
+private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequester) {
+    val providerName = action.provider.displayName
+    val owner = action.provider.networkIdentity?.label
+    AuroraPrimaryButton(
+        label = when {
+            action.busy -> stringResource(R.string.tv_signin_form_submitting)
+            owner != null -> stringResource(R.string.tv_signin_network_continue_as, owner)
+            else -> stringResource(R.string.tv_signin_network_continue_with, providerName)
+        },
+        supportingText = owner?.let { stringResource(R.string.tv_signin_network_via, providerName) },
+        onClick = action.onClick,
+        focusRequester = action.focusRequester,
+        modifier = Modifier
+            .then(action.focusTracking)
+            .focusProperties { down = below },
+    )
 }
 
 /**
@@ -673,10 +753,12 @@ private fun BrandHeader() {
 /**
  * [providerName] is the server's browser sign-in provider: an account that
  * signs in with it has no password here, so a refused password points to the
- * phone. [directoryName] names the directory (LDAP) the form also reaches.
+ * phone. [directoryName] names the provider whose first sign-in met the email
+ * or identity refusals (the directory the form also reaches, or the network
+ * provider), and [networkName] the network provider behind "Continue as …".
  */
 @Composable
-private fun TvLoginError.message(providerName: String?, directoryName: String?): String = when (this) {
+private fun TvLoginError.message(providerName: String?, directoryName: String?, networkName: String? = null): String = when (this) {
     TvLoginError.UsernameRequired -> stringResource(R.string.tv_signin_error_username_required)
     TvLoginError.PasswordRequired -> stringResource(R.string.tv_signin_error_password_required)
     TvLoginError.InvalidCredentials -> if (providerName != null) {
@@ -703,6 +785,22 @@ private fun TvLoginError.message(providerName: String?, directoryName: String?):
     TvLoginError.IdentityChanged -> stringResource(R.string.tv_signin_error_identity_changed)
     TvLoginError.SaveFailed -> stringResource(R.string.tv_signin_error_save_failed)
     TvLoginError.CleanupIncomplete -> stringResource(R.string.tv_signin_error_cleanup_incomplete)
+    TvLoginError.NetworkIdentityRequired -> stringResource(
+        R.string.tv_signin_error_network_identity_required,
+        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
+    )
+    TvLoginError.NetworkNotPermitted -> stringResource(
+        R.string.tv_signin_error_network_not_permitted,
+        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
+    )
+    TvLoginError.NetworkEmailInUse -> stringResource(
+        R.string.tv_signin_error_network_email_in_use,
+        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
+    )
+    TvLoginError.NetworkProviderGone -> stringResource(
+        R.string.tv_signin_error_network_provider_gone,
+        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
+    )
     is TvLoginError.Server -> message ?: stringResource(R.string.tv_signin_error_login_failed)
 }
 
