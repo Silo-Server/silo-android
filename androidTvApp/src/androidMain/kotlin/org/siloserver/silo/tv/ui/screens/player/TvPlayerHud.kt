@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.playback.StoredSubtitleTimingActions
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
@@ -209,6 +210,9 @@ internal fun TvPlayerHud(
     onSubtitlesPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
+    subtitleTiming: StoredSubtitleTimingActions? = null,
+    onSyncSubtitle: (Int) -> Unit = {},
+    onResetSubtitleTiming: (Int) -> Unit = {},
     hdrEnabled: Boolean,
     onHdrEnabledChanged: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
@@ -552,6 +556,9 @@ internal fun TvPlayerHud(
                         onPaneShown = onSubtitlesPaneShown,
                         onSearchSubtitles = onSearchSubtitles,
                         onTranslateWithAi = onTranslateWithAi,
+                        timing = subtitleTiming,
+                        onSyncSubtitle = onSyncSubtitle,
+                        onResetTiming = onResetSubtitleTiming,
                         entryFocusRequester = paneEntryFocus,
                         enabled = activePicker == null,
                         onPresentPicker = presentPicker,
@@ -1489,6 +1496,9 @@ private fun HudSubtitlesPane(
     onPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
+    timing: StoredSubtitleTimingActions?,
+    onSyncSubtitle: (Int) -> Unit,
+    onResetTiming: (Int) -> Unit,
     entryFocusRequester: FocusRequester,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
@@ -1586,6 +1596,35 @@ private fun HudSubtitlesPane(
                         )
                     },
                 )
+
+                if (timing != null) {
+                    HudFocusedSettingRow(
+                        label = "Timing",
+                        value = subtitleTimingValue(timing),
+                        enabled = enabled && !timing.forbidden && timing.actionsEnabled &&
+                            (timing.canSync || timing.canReset),
+                        rightFocusRequester = subtitleTextColorFocus,
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Subtitle Timing",
+                                    options = listOfNotNull(
+                                        HudPickerOption(TIMING_SYNC, "Sync subtitle").takeIf { timing.canSync },
+                                        HudPickerOption(TIMING_RESET, "Reset timing").takeIf { timing.canReset },
+                                    ),
+                                    selectedId = "",
+                                    focusedId = if (timing.canSync) TIMING_SYNC else TIMING_RESET,
+                                    onSelect = { id ->
+                                        when (id) {
+                                            TIMING_SYNC -> onSyncSubtitle(timing.subtitleId)
+                                            TIMING_RESET -> onResetTiming(timing.subtitleId)
+                                        }
+                                    },
+                                ),
+                            )
+                        },
+                    )
+                }
 
                 HudFocusedSettingRow(
                     label = "Size",
@@ -2244,6 +2283,20 @@ internal data class HudPickerPresentation(
     val onSelect: (String) -> Unit,
 )
 
+private const val TIMING_SYNC = "sync"
+private const val TIMING_RESET = "reset"
+
+/**
+ * The Timing row's value: the refusal or failure when there is one, else the
+ * sync state. The refusal is shortened to fit the row; the phone sheet says it
+ * in full.
+ */
+private fun subtitleTimingValue(timing: StoredSubtitleTimingActions): String = when {
+    timing.forbidden -> "Only the uploader or an admin"
+    timing.busy -> "Working…"
+    else -> timing.error ?: timing.statusLabel ?: "Not synced"
+}
+
 private fun delayPicker(
     title: String,
     current: Int,
@@ -2406,11 +2459,11 @@ internal fun HudPickerDialog(
     modifier: Modifier = Modifier,
 ) {
     val options = presentation.options
+    // An action menu has no current choice, so nothing is marked selected.
     val selectedIndex = options.indexOfFirst { it.id == presentation.selectedId }
-        .coerceAtLeast(0)
     val focusedIndex = options.indexOfFirst { it.id == presentation.focusedId }
         .takeIf { it >= 0 }
-        ?: selectedIndex
+        ?: selectedIndex.coerceAtLeast(0)
     val focusRequester = remember { FocusRequester() }
 
     // Auto-focus the selected option on appear. Because every option is in the

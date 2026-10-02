@@ -52,6 +52,8 @@ import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
+import org.siloserver.silo.playback.storedSubtitleId
+import org.siloserver.silo.playback.timingActionsFor
 
 /**
  * Full-screen overlay composable that layers gesture handling, transport controls,
@@ -164,6 +166,7 @@ fun PlayerOverlay(
     val notice by viewModel.notice.collectAsState()
     val sessionState by viewModel.sessionState.collectAsState()
     val subtitleTools by viewModel.subtitleTools.collectAsState()
+    val storedSubtitleSync by viewModel.storedSubtitleSyncState.collectAsState()
     // Pinch-to-scale (iOS parity): pinch-out steps Fit -> Fill -> Stretch,
     // pinch-in steps back, clamped at both ends. No-op steps (already at an
     // end) skip the toast so a clamped pinch stays quiet.
@@ -536,6 +539,14 @@ fun PlayerOverlay(
             tracksSheetVisible = false
             aiTranslateVisible = true
         },
+        subtitleStatus = { subtitle ->
+            subtitle.storedSubtitleId()?.let { storedSubtitleSync.entries[it]?.statusLabel }
+        },
+        timingActions = storedSubtitleSync.timingActionsFor(
+            state.subtitleTracks.getOrNull(state.selectedSubtitleIndex)?.storedSubtitleId(),
+        ),
+        onSyncSubtitle = viewModel::requestSubtitleSync,
+        onResetTiming = viewModel::resetSubtitleTiming,
         tabletopPaneHeight = tabletopPaneHeight,
     )
 

@@ -117,7 +117,7 @@ val repositoryModule = module {
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
     single { EbookReaderRepository(get(), get()) }
-    single { SubtitlesRepository(get(), get()) }
+    single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }
 
     // REST-backed inbox state plus a realtime factory that builds the default

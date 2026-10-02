@@ -56,6 +56,7 @@ val networkModule = module {
     single { SubtitleDownloadV2Api(get(), get(), get()) }
     single { SubtitleReadsV2Api(get(), get(), get()) }
     single { SubtitleAiCreateV2Api(get(), get(), get()) }
+    single { SubtitleSyncV2Api(get(), get(), get()) }
     single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get()) }
     single<NotificationsApi> { NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get(), get(), get()) }

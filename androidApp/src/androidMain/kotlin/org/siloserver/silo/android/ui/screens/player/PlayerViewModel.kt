@@ -77,6 +77,8 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.StoredSubtitleSyncController
+import org.siloserver.silo.playback.StoredSubtitleSyncState
 import org.siloserver.silo.playback.affects
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
@@ -821,6 +823,14 @@ class PlayerViewModel(
     private val _subtitleTools = MutableStateFlow(SubtitleToolsUiState())
     val subtitleTools: StateFlow<SubtitleToolsUiState> = _subtitleTools.asStateFlow()
 
+    // Timing and sync state of the playing file's stored subtitles.
+    private val storedSubtitleSync = StoredSubtitleSyncController(subtitlesRepository, viewModelScope)
+    val storedSubtitleSyncState: StateFlow<StoredSubtitleSyncState> = storedSubtitleSync.state
+
+    fun requestSubtitleSync(subtitleId: Int) = storedSubtitleSync.requestSync(subtitleId)
+
+    fun resetSubtitleTiming(subtitleId: Int) = storedSubtitleSync.resetTiming(subtitleId)
+
     private var aiStatusFetched = false
     private var searchJob: Job? = null
     private var aiJobHandle: Job? = null
@@ -871,6 +881,14 @@ class PlayerViewModel(
                 .map { it.mediaFileId }
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
+        }
+        // Stored-subtitle sync applies to server playback only; offline and
+        // local files have no stored subtitles to retime.
+        viewModelScope.launch {
+            _uiState
+                .map { state -> state.mediaFileId?.takeIf { state.sessionId != null } }
+                .distinctUntilChanged()
+                .collect(storedSubtitleSync::bind)
         }
         // Mirror the screen error into the adb test hook — screen-level
         // failures (terminal server plans) never reach the Media3 player, so
@@ -3671,6 +3689,8 @@ class PlayerViewModel(
      * "Translate with AI…" row is hidden (no error surfaced).
      */
     fun onTracksSheetOpened() {
+        // Opening re-reads sync state so a job that finished meanwhile shows.
+        storedSubtitleSync.reload()
         if (aiStatusFetched) return
         aiStatusFetched = true
         viewModelScope.launch {
@@ -3739,6 +3759,7 @@ class PlayerViewModel(
             if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
             when (r) {
                 is ApiResult.Success -> {
+                    storedSubtitleSync.reload()
                     doRefreshSubtitles(autoSelectSubtitleId = r.data.subtitle.id)
                     if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleTools.update { it.copy(downloadingKey = null, downloadCompleted = true) }
@@ -3812,6 +3833,7 @@ class PlayerViewModel(
         val sessionId = state.sessionId ?: return
         if (update.sessionId != null && update.sessionId != sessionId) return
         if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        update.subtitleId?.let(storedSubtitleSync::timingChanged)
         val mounted = subtitlesForVideoMediaMount(
             subtitles = state.subtitleTracks,
             playbackPlan = state.playbackPlan,
