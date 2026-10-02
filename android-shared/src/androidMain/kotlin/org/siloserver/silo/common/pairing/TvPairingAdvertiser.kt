@@ -82,7 +82,7 @@ class TvPairingAdvertiser(
             registerService(port, identity)
             Log.i(TAG, "started pairing listener on port $port")
             receiver.setAdvertising()
-            acceptLoop(socket)
+            acceptLoop(socket, token)
         }
         return token
     }
@@ -109,7 +109,7 @@ class TvPairingAdvertiser(
         receiver.setIdle()
     }
 
-    private suspend fun acceptLoop(socket: ServerSocket) {
+    private suspend fun acceptLoop(socket: ServerSocket, token: Long) {
         while (true) {
             val client: Socket = try {
                 withContext(Dispatchers.IO) { socket.accept() }
@@ -139,30 +139,42 @@ class TvPairingAdvertiser(
                     Log.w(TAG, "pairing connection failed", t)
                     runCatching { client.close() }
                 } finally {
-                    // Release for the next peer and resume advertising state —
-                    // but only if we're still running. After stop()/cancellation
-                    // the NSD + socket are down, so leave the receiver Idle rather
-                    // than falsely claiming Advertising. Completed is a terminal
-                    // UI dwell state; the setup screen advances after showing it.
-                    // A lone Failed stays on screen with its explanation until
-                    // the person closes it (PairingReceiver.cancelActiveSession).
-                    busy.set(false)
-                    val ended = receiver.status.value
-                    if (ended is PairingReceiverStatus.Completed) {
-                        running.set(false)
-                        runCatching { socket.close() }
-                        if (serverSocket === socket) {
-                            serverSocket = null
-                        }
-                        registrationListener?.let { listener ->
-                            runCatching { nsdManager.unregisterService(listener) }
-                        }
-                        registrationListener = null
-                    } else if (running.get() && resumesAdvertisingAfterConnection(ended)) {
-                        receiver.setAdvertising()
-                    }
+                    finishConnection(socket, token)
                 }
             }
+        }
+    }
+
+    /**
+     * Release for the next peer and resume advertising state, but only if
+     * we're still running. After stop()/cancellation the NSD + socket are
+     * down, so leave the receiver Idle rather than falsely claiming
+     * Advertising. Completed is a terminal UI dwell state; the setup screen
+     * advances after showing it. A lone Failed stays on screen with its
+     * explanation until the person closes it
+     * (PairingReceiver.cancelActiveSession).
+     *
+     * A connection whose [start] no longer owns the advertiser touches
+     * nothing: a later [start] already reset it, and the listener, busy flag
+     * and receiver state are that owner's now.
+     */
+    @Synchronized
+    private fun finishConnection(socket: ServerSocket, token: Long) {
+        if (token != owner) return
+        busy.set(false)
+        val ended = receiver.status.value
+        if (ended is PairingReceiverStatus.Completed) {
+            running.set(false)
+            runCatching { socket.close() }
+            if (serverSocket === socket) {
+                serverSocket = null
+            }
+            registrationListener?.let { listener ->
+                runCatching { nsdManager.unregisterService(listener) }
+            }
+            registrationListener = null
+        } else if (running.get() && resumesAdvertisingAfterConnection(ended)) {
+            receiver.setAdvertising()
         }
     }
 

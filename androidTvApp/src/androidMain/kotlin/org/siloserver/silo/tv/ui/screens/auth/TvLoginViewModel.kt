@@ -539,10 +539,19 @@ class TvLoginViewModel(
             _deviceSignIn.value = TvDeviceSignInUi(status = TvSignInStatus.CouldntFinish)
             return
         }
+        val current = runCatching { tokenManager.captureAccountSessionExpectation() }.getOrNull()
         if (!tryCompleteAuth()) {
             // A password save holds the sign-in. The server won't hand these
             // tokens out again, so keep them in case that save fails.
             heldApproval = response to expected
+            return
+        }
+        // An approval for a sign-in context that has since changed can't be
+        // saved: release the claim before it cancels a password attempt made
+        // in the new context. Nothing suspends between this check and the claim.
+        if (!expected.isSameSession(current)) {
+            authCompleted = false
+            _deviceSignIn.value = TvDeviceSignInUi(status = TvSignInStatus.CouldntFinish)
             return
         }
         credentialLoginJob?.cancel()

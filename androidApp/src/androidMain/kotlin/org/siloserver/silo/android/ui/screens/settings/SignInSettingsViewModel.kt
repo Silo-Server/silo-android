@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -75,6 +76,9 @@ class SignInSettingsViewModel(
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SignInSettingsUiState())
+
+    /** The password prompt's ticket request and flow start, until the browser opens. */
+    private var connectJob: Job? = null
     val uiState: StateFlow<SignInSettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -88,8 +92,14 @@ class SignInSettingsViewModel(
         viewModelScope.launch { load() }
     }
 
+    /**
+     * Reads the section for the signed-in account. Identities belong to the
+     * account, so an answer is shown only while the same login is still
+     * signed in on the same server; otherwise the section is read again.
+     */
     private suspend fun load() {
         val scope = tokenManager.snapshotCurrentScope()
+        val loginSessionId = scope?.let { tokenManager.loginSessionId(it.serverId) }
         if (scope == null) {
             _uiState.update {
                 it.copy(loading = false, identities = emptyList(), canUnlink = null, connectable = emptyList(), directory = null)
@@ -111,6 +121,11 @@ class SignInSettingsViewModel(
                 credentialsLinking = served?.credentialsLinking == true,
                 canUnlink = listed?.canUnlink,
             )
+        }
+        val now = tokenManager.snapshotCurrentScope()
+        if (now?.serverId != scope.serverId || tokenManager.loginSessionId(scope.serverId) != loginSessionId) {
+            load()
+            return
         }
         _uiState.update {
             it.copy(
@@ -177,8 +192,12 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(passwordPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
+    /** Cancel also stops a ticket or identity check still under way, so no browser opens once the prompt is gone. */
     fun onDismissPasswordPrompt() {
-        _uiState.update { it.copy(passwordPrompt = null, passwordError = null) }
+        val stopped = connectJob?.isActive == true
+        connectJob?.cancel()
+        connectJob = null
+        _uiState.update { it.copy(passwordPrompt = null, passwordError = null, busy = it.busy && !stopped) }
     }
 
     /**
@@ -195,7 +214,7 @@ class SignInSettingsViewModel(
             return
         }
         _uiState.update { it.copy(busy = true, passwordError = null) }
-        viewModelScope.launch {
+        connectJob = viewModelScope.launch {
             val scope = tokenManager.snapshotCurrentScope()
             val entry = serverRegistry.activeEntry.value
             val loginSessionId = scope?.let { tokenManager.loginSessionId(it.serverId) }

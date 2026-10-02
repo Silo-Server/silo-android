@@ -92,11 +92,15 @@ fun CompanionPairingHost(
     val serverChoices by viewModel.serverChoices.collectAsState()
     var presented by remember { mutableStateOf<CompanionOffer?>(null) }
     LaunchedEffect(offers, status, enabled) {
+        // A route that hides the offer hides it mid-pairing too; the view
+        // model cancels that pairing (setActive).
+        if (!enabled) {
+            presented = null
+            return@LaunchedEffect
+        }
         if (status !is CompanionPairingStatus.Idle) return@LaunchedEffect
         val current = presented
-        presented = if (!enabled) {
-            null
-        } else if (current == null) {
+        presented = if (current == null) {
             offers.firstOrNull()
         } else {
             // Android NSD can resolve the same TV again with a new listener

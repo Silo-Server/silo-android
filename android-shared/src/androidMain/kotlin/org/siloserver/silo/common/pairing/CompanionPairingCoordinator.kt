@@ -411,9 +411,20 @@ class CompanionPairingCoordinator(
             ),
         )
 
-        val started = inbox.receiveFirst<PairingMessage.DeviceStarted>(
-            timeoutMs = deviceStartedTimeoutMs(requireUserConfirmation),
-        ) { it.serverURL == server.url }
+        // A TV can refuse the push before it starts a sign-in (a different
+        // server at that address, an expired code): it answers with the
+        // failed result instead, and the phone reports it at once.
+        val started = when (
+            val first = inbox.receiveFirst<PairingMessage>(timeoutMs = deviceStartedTimeoutMs(requireUserConfirmation)) {
+                (it is PairingMessage.DeviceStarted && it.serverURL == server.url) ||
+                    (it is PairingMessage.ServerResult && it.serverURL == server.url)
+            }
+        ) {
+            is PairingMessage.DeviceStarted -> first
+            is PairingMessage.ServerResult ->
+                error(PairingFailureCode.fromWire(first.error).phoneMessage(target.name, server.displayName))
+            else -> error("Unexpected TV setup message.")
+        }
         val lookup = when (val result = deviceLoginApprover.lookup(server, started.userCode)) {
             is ApiResult.Success -> result.data
             is ApiResult.Error -> error(approverFailure(result, "Unable to verify TV setup code."))

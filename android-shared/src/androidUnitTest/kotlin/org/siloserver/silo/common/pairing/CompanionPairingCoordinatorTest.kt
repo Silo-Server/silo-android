@@ -348,6 +348,18 @@ class CompanionPairingCoordinatorTest {
         )
     }
 
+    /** A TV that refuses the push before starting a sign-in fails the pairing at once, with its reason. */
+    @Test
+    fun tvRefusingThePushBeforeStartingFailsAtOnceWithItsReason() = runTest {
+        val result = pairWithTvThat { inbound, push ->
+            inbound.send(PairingMessage.ServerResult(push.serverURL, PairingServerStatus.Failed, "identity_mismatch"))
+        }
+        assertEquals(
+            CompanionPairingResult.Failed("Den TV reached a different server at that address. Nothing was signed in."),
+            result,
+        )
+    }
+
     @Test
     fun tvDecliningThePushFailsAtOnceInsteadOfSpinning() = runTest {
         // The TV user picks "Don't allow": the TV sends `cancel` and hangs up.

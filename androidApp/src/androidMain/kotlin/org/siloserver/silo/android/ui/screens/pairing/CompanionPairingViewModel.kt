@@ -84,12 +84,18 @@ class CompanionPairingViewModel(
     /**
      * Discover nearby TVs only while the offer can be shown: not over the
      * sign-in chain or playback, where the host hides it, so those routes run
-     * no multicast discovery or identity probes.
+     * no multicast discovery or identity probes. A pairing in progress when
+     * the offer is hidden (a sign-out, an expired session) is cancelled.
      */
     fun setActive(enabled: Boolean) {
         if (enabled == active) return
         active = enabled
-        if (enabled) browser.start() else browser.stop()
+        if (enabled) {
+            browser.start()
+        } else {
+            dismissPairing()
+            browser.stop()
+        }
     }
 
     fun pair(offer: CompanionOffer) {
