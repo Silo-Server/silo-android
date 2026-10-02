@@ -33,17 +33,15 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -69,6 +67,7 @@ import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSwitchOff
 import org.siloserver.silo.android.ui.theme.SiloSwitchOn
+import kotlin.math.ceil
 
 // --- Shared Settings UI Components ---
 //
@@ -84,41 +83,6 @@ private const val ChevronAlpha = 0.35f
 
 /** Opacity of a menu row's up/down indicator, a little stronger than a chevron. */
 private const val MenuIndicatorAlpha = 0.55f
-
-/**
- * Per-card row counter backing the "no divider above the first row" rule.
- *
- * Rows claim a slot on first composition and remember it, so the index is
- * stable across recomposition and follows source order within the card. A card
- * whose *first* row is conditional needs [SettingsRow]'s `showDivider`
- * override.
- */
-@Stable
-internal class SettingsSectionSlots {
-    private var next = 0
-
-    fun claim(): Int = next++
-}
-
-internal val LocalSettingsSectionSlots = staticCompositionLocalOf<SettingsSectionSlots?> { null }
-
-/** True for the first row composed into the enclosing [SettingsSectionCard]. */
-@Composable
-private fun isFirstSettingsRow(): Boolean {
-    val slots = LocalSettingsSectionSlots.current ?: return true
-    return remember(slots) { slots.claim() } == 0
-}
-
-/**
- * Claims a row slot for a card child that is not a [SettingsRow] — the account
- * header, a prose pane — and reports whether it should draw a hairline above
- * itself. A custom child that skips this is invisible to the divider rule, and
- * the row after it would wrongly believe it is the card's first.
- *
- * Pair with [settingsRowDivider].
- */
-@Composable
-fun settingsRowDividerVisible(): Boolean = !isFirstSettingsRow()
 
 /**
  * Draws the grouped-list hairline along this element's top edge, inset from
@@ -167,23 +131,32 @@ fun SettingsSection(
 }
 
 /**
- * Grouped rows, and the owner of the row dividers.
+ * Grouped rows.
+ *
+ * Every row draws a hairline along its top edge, and the card paints over its
+ * own top edge, so whichever row is first right now — after search filters the
+ * list or a row swaps in place — never shows one. Counting rows instead goes
+ * stale as soon as the first row changes while the card stays composed.
  */
 @Composable
 fun SettingsSectionCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val slots = remember { SettingsSectionSlots() }
-    CompositionLocalProvider(LocalSettingsSectionSlots provides slots) {
-        Column(
-            modifier = modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(SettingsDimens.groupRadius))
-                .background(SiloGroupedCell),
-            content = content,
-        )
-    }
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(SettingsDimens.groupRadius))
+            .background(SiloGroupedCell)
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    color = SiloGroupedCell,
+                    size = Size(size.width, ceil(SettingsDimens.separatorThickness.toPx())),
+                )
+            },
+        content = content,
+    )
 }
 
 /** Section header: title case, semibold, secondary, aligned with the row text. */
@@ -257,8 +230,9 @@ fun SettingsRowChevron(enabled: Boolean = true) {
  * @param description A second line under the label. The Apple lists put this
  *   in the group footer instead; it remains for rows whose explanation is
  *   per-item (a diagnostics report's date and size).
- * @param showDivider Overrides the automatic first-row rule. Only needed in a
- *   group whose opening row is conditional.
+ * @param showDivider Draws the hairline above the row. The group hides it on
+ *   whichever row is first, so only a row that must never have one sets it
+ *   false.
  */
 @Composable
 fun SettingsRow(
@@ -270,11 +244,10 @@ fun SettingsRow(
     labelColor: Color = SiloOnSurface,
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
-    showDivider: Boolean? = null,
+    showDivider: Boolean = true,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val contentAlpha = if (enabled) 1f else SettingsDimens.disabledAlpha
-    val divider = showDivider ?: !isFirstSettingsRow()
     val dividerStart = if (icon != null) {
         SettingsDimens.rowHorizontalPadding + SettingsDimens.iconTileSize + SettingsDimens.iconTileGap
     } else {
@@ -284,7 +257,7 @@ fun SettingsRow(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = if (icon != null) SettingsDimens.overviewRowMinHeight else SettingsDimens.rowMinHeight)
-            .settingsRowDivider(divider, startInset = dividerStart)
+            .settingsRowDivider(showDivider, startInset = dividerStart)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(enabled = enabled, onClick = onClick)
@@ -401,12 +374,11 @@ fun SettingsButtonRow(
     labelColor: Color = SiloDestructive,
     enabled: Boolean = true,
 ) {
-    val divider = !isFirstSettingsRow()
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = SettingsDimens.rowMinHeight)
-            .settingsRowDivider(divider)
+            .settingsRowDivider(show = true)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = SettingsDimens.rowHorizontalPadding),
         contentAlignment = Alignment.Center,
@@ -627,7 +599,7 @@ private fun SettingsMenuItem(label: String, selected: Boolean, onClick: () -> Un
 
 /**
  * A prose block inside a group, for the notices that are explanation rather
- * than setting. Carries the same divider rule as a row.
+ * than setting. Carries a row's hairline.
  */
 @Composable
 fun SettingsProse(
@@ -635,11 +607,10 @@ fun SettingsProse(
     modifier: Modifier = Modifier,
     title: String? = null,
 ) {
-    val divider = !isFirstSettingsRow()
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .settingsRowDivider(divider)
+            .settingsRowDivider(show = true)
             .padding(
                 horizontal = SettingsDimens.proseHorizontalPadding,
                 vertical = SettingsDimens.proseVerticalPadding,

@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.toColorInt
 import org.siloserver.silo.android.ui.theme.SettingsDimens
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.SettingKeys
@@ -365,7 +366,7 @@ private fun SubtitleAppearancePreview(appearance: SubtitleAppearance) {
 }
 
 private fun previewColor(hex: String): Color =
-    runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(Color.White)
+    runCatching { Color(hex.toColorInt()) }.getOrDefault(Color.White)
 
 /**
  * Option labels for the Text / Background / Layout groups, in the Apple apps'

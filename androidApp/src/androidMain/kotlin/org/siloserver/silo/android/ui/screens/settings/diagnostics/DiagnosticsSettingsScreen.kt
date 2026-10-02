@@ -21,12 +21,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.util.Date
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.SiloTopBar
+import org.siloserver.silo.android.ui.screens.settings.SILO_PRIVACY_POLICY_URL
 import org.siloserver.silo.android.ui.screens.settings.SettingsDestructiveRow
 import org.siloserver.silo.android.ui.screens.settings.SettingsDropdownRow
 import org.siloserver.silo.android.ui.screens.settings.SettingsNavigationRow
@@ -92,6 +94,7 @@ internal fun DiagnosticsSettingsContent(
 ) {
     var confirmAlways by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
+    val uriHandler = LocalUriHandler.current
     val model = diagnosticsPhoneScreenModel(state)
     val hosted = state.destinationKind == DiagnosticsDestinationKind.HOSTED
     val effectiveConsent = if (
@@ -155,6 +158,12 @@ internal fun DiagnosticsSettingsContent(
                             }
                         }
                     },
+                )
+                // The policy behind the consent above, one tap away where the
+                // choice is made (Settings → About links it too).
+                SettingsNavigationRow(
+                    label = "Privacy Policy",
+                    onClick = { uriHandler.openUri(SILO_PRIVACY_POLICY_URL) },
                 )
             }
         }
