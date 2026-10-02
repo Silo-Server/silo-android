@@ -57,6 +57,7 @@ class SignOutTeardown(
         if (flushFirst) flushPendingSettings()
         val signedOutOf = serverRegistry.activeServerId.value
         authRepository.logout()
+        nativeSignIn.discardPending()
         if (signedOutOf != null) nativeSignIn.requestAccountChoice(signedOutOf, autoStart = startSignIn)
         libraryPlaybackPrefsStore.clear()
         overlayPrefsStore.clear()

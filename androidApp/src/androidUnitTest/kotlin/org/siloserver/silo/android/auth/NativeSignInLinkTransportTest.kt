@@ -29,6 +29,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 /**
  * A server saved at its LAN address signs in and links there, through the
@@ -69,7 +70,7 @@ class NativeSignInLinkTransportTest {
         val prefs = RuntimeEnvironment.getApplication()
             .getSharedPreferences("native-sign-in-link-transport", Context.MODE_PRIVATE)
             .also { it.edit().clear().commit() }
-        val registry = AndroidServerRegistry(prefs)
+        var registry = AndroidServerRegistry(prefs)
         lateinit var tokens: EncryptedTokenManagerImpl
         lateinit var lanId: String
         lateinit var completer: RepositoryNativeSignInCompleter
@@ -78,9 +79,20 @@ class NativeSignInLinkTransportTest {
             lanId = registry.addOrUpdate(LAN)
             registry.setVerifiedServerId(lanId, "srv-1")
             registry.switchTo(lanId)
-            tokens = EncryptedTokenManagerImpl(prefs, registry)
+            build()
             tokens.switchActiveServer(lanId)
             if (signedIn) tokens.saveTokens("lan-access", "lan-refresh", 3600)
+            return tokens.snapshotCurrentScope()
+        }
+
+        /** A new process: a new registry and token manager over the same saved state. */
+        fun recreate() {
+            registry = AndroidServerRegistry(prefs)
+            build()
+        }
+
+        private fun build() {
+            tokens = EncryptedTokenManagerImpl(prefs, registry)
             val client = http.config {
                 install(ContentNegotiation) { json(SiloJson) }
                 install(SiloAuthPlugin) { tokenManager = tokens }
@@ -90,10 +102,9 @@ class NativeSignInLinkTransportTest {
                 api = DefaultExternalSignInApi(client, ApiV2Gate.Unrestricted),
                 tokenManager = tokens,
             )
-            return tokens.snapshotCurrentScope()
         }
 
-        fun flow(purpose: NativeSignInPurpose, scope: AuthScopeSnapshot? = null) = PendingNativeSignIn(
+        fun flow(purpose: NativeSignInPurpose, loginSessionId: String? = null) = PendingNativeSignIn(
             purpose = purpose,
             serverEntryId = lanId,
             verifiedServerId = "srv-1",
@@ -102,8 +113,7 @@ class NativeSignInLinkTransportTest {
             codeVerifier = "verifier",
             providerName = "Keycloak",
             startedAtEpochMs = 0L,
-            identityGeneration = scope?.identityGeneration,
-            credentialEpoch = scope?.credentialEpoch,
+            loginSessionId = loginSessionId,
         )
     }
 
@@ -125,9 +135,9 @@ class NativeSignInLinkTransportTest {
     @Test
     fun linkingConfirmsAtTheLanAddressWithTheAccountsBearer() = runTest {
         val f = Fixture()
-        val scope = requireNotNull(f.savedAtLan(signedIn = true))
+        requireNotNull(f.savedAtLan(signedIn = true))
 
-        assertIs<ApiResult.Success<Unit>>(f.completer.link(f.flow(NativeSignInPurpose.Link, scope), "code-1"))
+        assertIs<ApiResult.Success<Unit>>(f.completer.link(f.flow(NativeSignInPurpose.Link, f.tokens.loginSessionId(f.lanId)), "code-1"))
 
         val confirmation = sent.single()
         assertEquals("$LAN/api/v2/account/identities/link-complete", confirmation.url)
@@ -139,14 +149,48 @@ class NativeSignInLinkTransportTest {
     @Test
     fun aRefusedLinkChangesNothing() = runTest {
         val f = Fixture()
-        val scope = requireNotNull(f.savedAtLan(signedIn = true))
+        requireNotNull(f.savedAtLan(signedIn = true))
         linkStatus = HttpStatusCode.BadRequest
 
-        val refused = assertIs<ApiResult.Error>(f.completer.link(f.flow(NativeSignInPurpose.Link, scope), "code-1"))
+        val refused = assertIs<ApiResult.Error>(
+            f.completer.link(f.flow(NativeSignInPurpose.Link, f.tokens.loginSessionId(f.lanId)), "code-1"),
+        )
 
         assertEquals("state_invalid", NativeSignInCoordinator.completionReason(refused))
         assertEquals(LAN, f.registry.entries.value.single().url)
         assertEquals("lan-access", f.tokens.getAccessToken())
+    }
+
+    /**
+     * The system killed the app while the browser was open: a new token
+     * manager over the same saved credentials still confirms the link, since
+     * the login it began with is still signed in.
+     */
+    @Test
+    fun aLinkFinishesAfterTheProcessIsRecreated() = runTest {
+        val f = Fixture()
+        requireNotNull(f.savedAtLan(signedIn = true))
+        val linking = f.flow(NativeSignInPurpose.Link, requireNotNull(f.tokens.loginSessionId(f.lanId)))
+
+        f.recreate()
+
+        assertIs<ApiResult.Success<Unit>>(f.completer.link(linking, "code-1"))
+        assertEquals("$LAN/api/v2/account/identities/link-complete", sent.single().url)
+    }
+
+    /** A password sign-in while the browser was open supersedes the provider flow. */
+    @Test
+    fun aSignInSinceTheFlowBeganInstallsNothing() = runTest {
+        val f = Fixture()
+        f.savedAtLan(signedIn = false)
+        val flow = f.flow(NativeSignInPurpose.SignIn, f.tokens.loginSessionId(f.lanId))
+        f.tokens.replaceAccountSession(serverId = f.lanId, accessToken = "pw-access", refreshToken = "pw-refresh", expiresIn = 3600)
+
+        val refused = assertIs<ApiResult.Error>(f.completer.signIn(flow, "code-1"))
+
+        assertEquals(NativeSignInMessages.ACCOUNT_CHANGED, NativeSignInCoordinator.completionReason(refused))
+        assertTrue(sent.isEmpty())
+        assertEquals("pw-access", f.tokens.getAccessToken())
     }
 
     private companion object {

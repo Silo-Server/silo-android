@@ -160,7 +160,8 @@ class NativeSignInCoordinator(
      * base-relative path from the provider listing, never an origin. The flow
      * is bound to the saved origin. [prompt] (a sign-in's `select_account`)
      * is never sent on a linking flow, which asks the provider for a fresh
-     * sign-in itself.
+     * sign-in itself. [loginSessionId] is the saved server's login the flow
+     * belongs to ([PendingNativeSignIn.loginSessionId]).
      */
     suspend fun begin(
         purpose: NativeSignInPurpose,
@@ -170,8 +171,7 @@ class NativeSignInCoordinator(
         providerName: String,
         nativeStartPath: String,
         linkTicket: String? = null,
-        identityGeneration: Long? = null,
-        credentialEpoch: Long? = null,
+        loginSessionId: String? = null,
         prompt: String? = null,
     ): NativeSignInStart {
         val serverOrigin = NativeSignInProtocol.origin(serverUrl)
@@ -199,8 +199,7 @@ class NativeSignInCoordinator(
                     codeVerifier = codeVerifier,
                     providerName = providerName,
                     startedAtEpochMs = clock(),
-                    identityGeneration = identityGeneration,
-                    credentialEpoch = credentialEpoch,
+                    loginSessionId = loginSessionId,
                 ),
             )
             _result.value = null
@@ -218,6 +217,14 @@ class NativeSignInCoordinator(
     fun handleCallback(uri: String?): Job? {
         val callback = NativeSignInCallback.parse(uri) ?: return null
         return scope.launch { finish(callback) }
+    }
+
+    /**
+     * Another sign-in or a sign-out happened: the pending flow, if any, no
+     * longer speaks for the session, so its redirect is ignored.
+     */
+    suspend fun discardPending() {
+        mutex.withLock { store.clear() }
     }
 
     /** [handleCallback]'s work, run inline. Returns whether the callback answered the pending flow. */

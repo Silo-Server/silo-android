@@ -198,7 +198,8 @@ class SignInSettingsViewModel(
         viewModelScope.launch {
             val scope = tokenManager.snapshotCurrentScope()
             val entry = serverRegistry.activeEntry.value
-            if (scope == null || entry == null || entry.id != scope.serverId) {
+            val loginSessionId = scope?.let { tokenManager.loginSessionId(it.serverId) }
+            if (scope == null || entry == null || entry.id != scope.serverId || loginSessionId == null) {
                 _uiState.update { it.copy(busy = false, passwordPrompt = null, error = ACCOUNT_CHANGED) }
                 return@launch
             }
@@ -235,8 +236,7 @@ class SignInSettingsViewModel(
                 providerName = provider.displayName,
                 nativeStartPath = startPath,
                 linkTicket = ticket.ticket,
-                identityGeneration = scope.identityGeneration,
-                credentialEpoch = scope.credentialEpoch,
+                loginSessionId = loginSessionId,
             )
             when (start) {
                 is NativeSignInStart.Open -> _uiState.update { it.copy(passwordPrompt = null, browserLaunch = start.url) }

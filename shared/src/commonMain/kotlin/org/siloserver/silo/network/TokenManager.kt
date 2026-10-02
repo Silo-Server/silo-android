@@ -249,6 +249,14 @@ interface TokenManager {
     suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
 
     /**
+     * The durable id of the login whose credentials [serverId]'s saved slot
+     * holds: new on every sign-in there, gone on sign-out, and unchanged
+     * across process restarts, refreshes and profile switches. Null when that
+     * server has no saved credentials, or the implementation keeps no such id.
+     */
+    suspend fun loginSessionId(serverId: String): String? = null
+
+    /**
      * Read a specific server's latest access token (handles rotation). Default
      * delegates to the active-scope [getAccessToken] for single-scope impls.
      */

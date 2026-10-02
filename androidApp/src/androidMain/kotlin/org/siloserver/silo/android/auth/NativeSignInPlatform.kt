@@ -31,9 +31,17 @@ class RepositoryNativeSignInCompleter(
     private val api: ExternalSignInApi,
     private val tokenManager: TokenManager,
 ) : NativeSignInCompleter {
+    /**
+     * Redeems only while the saved server's login is the one the flow began
+     * with: a password sign-in or a sign-out since then supersedes it. The
+     * session expectation [AuthRepository] captures first fences a sign-in
+     * that lands after this check.
+     */
     override suspend fun signIn(pending: PendingNativeSignIn, code: String): ApiResult<User> {
         return authRepository.completeNativeOAuthLogin(pending.serverEntryId) { serverUrl ->
-            if (NativeSignInProtocol.origin(serverUrl) != pending.startOrigin) {
+            if (NativeSignInProtocol.origin(serverUrl) != pending.startOrigin ||
+                tokenManager.loginSessionId(pending.serverEntryId) != pending.loginSessionId
+            ) {
                 changed()
             } else {
                 api.completeOAuthLogin(serverUrl, code, pending.codeVerifier)
@@ -45,7 +53,9 @@ class RepositoryNativeSignInCompleter(
      * Only the account session that asked for the link ticket may confirm the
      * link: the server checks the account, and this checks the session did not
      * change (sign-out, another account, another server or address) while the
-     * browser was open.
+     * browser was open. The login id survives the process being killed in the
+     * meantime; the request is pinned to the scope read before it, so a
+     * sign-in that lands after the check fails it.
      */
     override suspend fun link(pending: PendingNativeSignIn, code: String): ApiResult<Unit> {
         val scope = tokenManager.snapshotCurrentScope()
@@ -55,9 +65,9 @@ class RepositoryNativeSignInCompleter(
         return api.completeLink(scope, code, pending.codeVerifier)
     }
 
-    private fun AuthScopeSnapshot.startedFlow(pending: PendingNativeSignIn): Boolean =
-        serverId == pending.serverEntryId &&
-            identityGeneration == pending.identityGeneration && credentialEpoch == pending.credentialEpoch
+    private suspend fun AuthScopeSnapshot.startedFlow(pending: PendingNativeSignIn): Boolean =
+        serverId == pending.serverEntryId && credentialGenerationId == null && pending.loginSessionId != null &&
+            tokenManager.loginSessionId(serverId) == pending.loginSessionId
 
     private fun changed() = ApiResult.Error(0, "identity_changed", "The account or server changed.")
 }

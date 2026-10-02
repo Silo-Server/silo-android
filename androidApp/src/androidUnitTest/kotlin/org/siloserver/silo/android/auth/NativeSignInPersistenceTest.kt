@@ -42,7 +42,7 @@ class NativeSignInPersistenceTest {
 
     @Test
     fun aPendingSignInSurvivesWithoutTheLinkFields() {
-        val signIn = LINK.copy(purpose = NativeSignInPurpose.SignIn, identityGeneration = null, credentialEpoch = null)
+        val signIn = LINK.copy(purpose = NativeSignInPurpose.SignIn, loginSessionId = null)
         SharedPrefsPendingNativeSignInStore(prefs).save(signIn)
 
         assertEquals(signIn, SharedPrefsPendingNativeSignInStore(prefs).load())
@@ -100,14 +100,13 @@ class NativeSignInPersistenceTest {
             codeVerifier = "code-verifier",
             providerName = "Keycloak",
             startedAtEpochMs = 1_759_300_000_000,
-            identityGeneration = 7,
-            credentialEpoch = 3,
+            loginSessionId = "login-1",
         )
 
         /** [LINK] as the current serializer writes it. */
         const val STORED_LINK_JSON =
             """{"purpose":"Link","serverEntryId":"entry-1","verifiedServerId":"server-1",""" +
                 """"startOrigin":"https://silo.test","appState":"app-state","codeVerifier":"code-verifier",""" +
-                """"providerName":"Keycloak","startedAtEpochMs":1759300000000,"identityGeneration":7,"credentialEpoch":3}"""
+                """"providerName":"Keycloak","startedAtEpochMs":1759300000000,"loginSessionId":"login-1"}"""
     }
 }

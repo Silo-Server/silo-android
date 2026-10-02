@@ -102,6 +102,22 @@ class NativeSignInCompleterTest {
         assertTrue(f.tokens.installedOn.isEmpty())
     }
 
+    /**
+     * The flow began signed out, then a password sign-in landed while the
+     * browser was open: the provider's code no longer speaks for this
+     * session and replaces nothing.
+     */
+    @Test
+    fun aSignInSinceTheFlowBeganRedeemsNothing() = runTest {
+        val f = Fixture(ServerEntry(id = "pub", url = "https://silo.example.test", verifiedServerId = "srv-1"))
+        f.start()
+        f.tokens.loginSessionIds["pub"] = "password-login"
+        val refused = assertIs<ApiResult.Error>(f.completer.signIn(pending("https://silo.example.test", entryId = "pub"), "c"))
+        assertEquals(NativeSignInMessages.ACCOUNT_CHANGED, NativeSignInCoordinator.completionReason(refused))
+        assertTrue(f.api.redeemedAt.isEmpty())
+        assertTrue(f.tokens.installedOn.isEmpty())
+    }
+
     @Test
     fun aFlowForAnotherSavedServerRedeemsNothing() = runTest {
         val f = Fixture(ServerEntry(id = "pub", url = "https://silo.example.test", verifiedServerId = "srv-1"))
@@ -117,14 +133,16 @@ class NativeSignInCompleterTest {
         val f = Fixture(lan)
         f.start()
         f.tokens.scope = AuthScopeSnapshot("lan", null, "http://192.168.1.10:8096", null, identityGeneration = 3, credentialEpoch = 4)
+        f.tokens.loginSessionIds["lan"] = "login-1"
         val linking = pending("http://192.168.1.10:8096", NativeSignInPurpose.Link, entryId = "lan")
-            .copy(identityGeneration = 3, credentialEpoch = 4)
+            .copy(loginSessionId = "login-1")
         assertIs<ApiResult.Success<Unit>>(f.completer.link(linking, "code-1"))
         assertEquals(listOf("http://192.168.1.10:8096"), f.api.linkedAt)
         assertEquals(listOf(lan), f.registry.entries.value)
 
-        // Another session, or a flow started on another origin, confirms nothing.
-        assertIs<ApiResult.Error>(f.completer.link(linking.copy(identityGeneration = 4), "code-1"))
+        // Another login, no login, or a flow started on another origin confirms nothing.
+        assertIs<ApiResult.Error>(f.completer.link(linking.copy(loginSessionId = "login-2"), "code-1"))
+        assertIs<ApiResult.Error>(f.completer.link(linking.copy(loginSessionId = null), "code-1"))
         assertIs<ApiResult.Error>(f.completer.link(linking.copy(startOrigin = "https://silo.example.test"), "code-1"))
         assertEquals(1, f.api.linkedAt.size)
     }
@@ -170,6 +188,9 @@ class NativeSignInCompleterTest {
         val installedOn = mutableListOf<String?>()
         var scope: AuthScopeSnapshot? = null
         var activeServerId: String? = null
+        val loginSessionIds = mutableMapOf<String, String>()
+
+        override suspend fun loginSessionId(serverId: String): String? = loginSessionIds[serverId]
 
         override suspend fun captureAccountSessionExpectation(): AccountSessionExpectation? =
             inner.captureAccountSessionExpectation()?.copy(serverId = activeServerId)

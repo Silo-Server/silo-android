@@ -142,6 +142,8 @@ class LoginViewModel(
             when (val result = authRepository.login(current.username, current.password)) {
                 is ApiResult.Success -> {
                     screenServerId?.let(nativeSignIn::clearAccountChoice)
+                    // A provider flow left open in the browser no longer speaks for this session.
+                    nativeSignIn.discardPending()
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
 
@@ -201,6 +203,7 @@ class LoginViewModel(
                 verifiedServerId = serverId,
                 providerName = provider.displayName,
                 nativeStartPath = startPath,
+                loginSessionId = tokenManager.loginSessionId(entry.id),
                 prompt = NativeSignInProtocol.PROMPT_SELECT_ACCOUNT.takeIf { askForAccount },
             )
             when (start) {

@@ -506,22 +506,39 @@ class EncryptedTokenManagerImpl(
     override suspend fun snapshotDurableLoginAuthority(): DurableLoginAuthority? = tokenWriteMutex.withLock {
         mutex.withLock {
             val scope = snapshotCurrentScopeLocked() ?: return@withLock null
-            if (scope.credentialGenerationId != null || scope.profileId.isNullOrBlank() ||
-                accessToken.isNullOrBlank() || refreshToken.isNullOrBlank() ||
-                scope.serverId in failedAuthorityWrites) return@withLock null
-            val key = serverScopedKey(scope.serverId, KEY_LOGIN_ID)
-            var loginId = prefs.getString(key, null)
-            if (loginId.isNullOrBlank()) {
-                loginId = java.util.UUID.randomUUID().toString()
-                pendingAuthorityBootstrap.add(scope.serverId)
-            }
-            // A failed SharedPreferences commit may still change its in-memory map.
-            // Retry that commit before exposing the marker, never trust the map alone.
-            if (scope.serverId in pendingAuthorityBootstrap) {
-                if (!prefs.edit().putString(key, loginId).commit()) return@withLock null
-                pendingAuthorityBootstrap.remove(scope.serverId)
-            }
-            DurableLoginAuthority(loginId, scope)
+            if (scope.credentialGenerationId != null || scope.profileId.isNullOrBlank()) return@withLock null
+            DurableLoginAuthority(durableLoginIdLocked(scope.serverId) ?: return@withLock null, scope)
+        }
+    }
+
+    /**
+     * The login id of [serverId]'s saved slot, which every account
+     * replacement writes afresh and every sign-out removes. A slot signed in
+     * before the id existed gets one here. Null without saved credentials or
+     * while the slot's last write failed.
+     */
+    private fun durableLoginIdLocked(serverId: String): String? {
+        if (persistentAccessToken(serverId).isNullOrBlank() || persistentRefreshToken(serverId).isNullOrBlank() ||
+            serverId in failedAuthorityWrites) return null
+        val key = serverScopedKey(serverId, KEY_LOGIN_ID)
+        var loginId = prefs.getString(key, null)
+        if (loginId.isNullOrBlank()) {
+            loginId = java.util.UUID.randomUUID().toString()
+            pendingAuthorityBootstrap.add(serverId)
+        }
+        // A failed SharedPreferences commit may still change its in-memory map.
+        // Retry that commit before exposing the marker, never trust the map alone.
+        if (serverId in pendingAuthorityBootstrap) {
+            if (!prefs.edit().putString(key, loginId).commit()) return null
+            pendingAuthorityBootstrap.remove(serverId)
+        }
+        return loginId
+    }
+
+    override suspend fun loginSessionId(serverId: String): String? = tokenWriteMutex.withLock {
+        mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            durableLoginIdLocked(serverId)
         }
     }
 

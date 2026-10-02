@@ -225,7 +225,8 @@ private fun CodeEntry(
         Spacer(modifier = Modifier.height(16.dp))
     }
 
-    val canSubmit = state.code.length == DeviceCodeFormat.LENGTH && !state.isLoading
+    // A token link carries no code, so Continue retries its lookup.
+    val canSubmit = (!state.token.isNullOrBlank() || state.code.length == DeviceCodeFormat.LENGTH) && !state.isLoading
     OutlinedTextField(
         value = state.code,
         onValueChange = onCodeChanged,

@@ -212,7 +212,11 @@ val androidModule = module {
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }
     single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get()) }
-    single<CompanionDeviceLoginApprover> { RepositoryCompanionDeviceLoginApprover(get(), get()) }
+    single<CompanionDeviceLoginApprover> {
+        val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
+        // The nearby approval card names the account approving signs the TV in as.
+        RepositoryCompanionDeviceLoginApprover(get(), get(), accountNameOf = { scope -> accountNameOn(authRepository, scope) })
+    }
     single<CompanionPairingTransportFactory> {
         CompanionPairingTransportFactory { target ->
             TlsPskPairingClientTransport.connect(target.host, target.port)
@@ -530,19 +534,7 @@ val androidModule = module {
                 identityTransitions = get(),
                 // Each server's account, read through that server's own scope
                 // (renewing its access token first when it is expiring).
-                accountNameOf = { scope ->
-                    when (val me = authRepository.getCurrentUser(scope)) {
-                        is org.siloserver.silo.network.ApiResult.Success -> me.data.username
-                        // The provider couldn't re-check the session: the card says so.
-                        is org.siloserver.silo.network.ApiResult.NetworkError ->
-                            if (org.siloserver.silo.network.SiloAuthUnavailableException.isProviderUnavailable(me.exception)) {
-                                throw me.exception
-                            } else {
-                                null
-                            }
-                        is org.siloserver.silo.network.ApiResult.Error -> null
-                    }
-                },
+                accountNameOf = { scope -> accountNameOn(authRepository, scope) },
             ),
             initialServerId = params.getOrNull<String>(),
             // A link named the server: approve there without switching.
@@ -605,4 +597,24 @@ val androidModule = module {
             roomSession = get(),
         )
     }
+}
+
+/**
+ * The account signed in on [scope]'s server, read with that server's own
+ * credentials (renewing its access token first when it is expiring). Null
+ * when it can't be read; throws when the provider couldn't re-check the
+ * session, so a card that can say so does.
+ */
+private suspend fun accountNameOn(
+    authRepository: org.siloserver.silo.repository.AuthRepository,
+    scope: org.siloserver.silo.network.AuthScopeSnapshot,
+): String? = when (val me = authRepository.getCurrentUser(scope)) {
+    is org.siloserver.silo.network.ApiResult.Success -> me.data.username
+    is org.siloserver.silo.network.ApiResult.NetworkError ->
+        if (org.siloserver.silo.network.SiloAuthUnavailableException.isProviderUnavailable(me.exception)) {
+            throw me.exception
+        } else {
+            null
+        }
+    is org.siloserver.silo.network.ApiResult.Error -> null
 }

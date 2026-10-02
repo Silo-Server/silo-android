@@ -229,9 +229,14 @@ data class PendingNativeSignIn(
     val codeVerifier: String,
     val providerName: String,
     val startedAtEpochMs: Long,
-    /** Linking only: the account session that asked, which must still be the signed-in one. */
-    val identityGeneration: Long? = null,
-    val credentialEpoch: Long? = null,
+    /**
+     * The saved server's login when the flow began
+     * ([org.siloserver.silo.network.TokenManager.loginSessionId]); null when
+     * signed out there. It must be unchanged when the redirect arrives, so a
+     * sign-in or sign-out since then supersedes the flow, and it survives the
+     * process being killed while the browser is open. Linking requires one.
+     */
+    val loginSessionId: String? = null,
 ) {
     override fun toString(): String =
         "PendingNativeSignIn(purpose=$purpose, serverEntryId=$serverEntryId, providerName=$providerName, <secrets redacted>)"
