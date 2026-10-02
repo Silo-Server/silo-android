@@ -104,6 +104,8 @@ import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.playback.PlaybackSubtitleReady
 import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.StoredSubtitleSyncController
+import org.siloserver.silo.playback.StoredSubtitleSyncState
 import org.siloserver.silo.playback.affects
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
@@ -1350,6 +1352,14 @@ class TvPlayerViewModel(
     private val _aiTranslate = MutableStateFlow(AiTranslateUiState())
     val aiTranslate: StateFlow<AiTranslateUiState> = _aiTranslate.asStateFlow()
 
+    // Timing and sync state of the playing file's stored subtitles.
+    private val storedSubtitleSync = StoredSubtitleSyncController(subtitlesRepository, viewModelScope)
+    val storedSubtitleSyncState: StateFlow<StoredSubtitleSyncState> = storedSubtitleSync.state
+
+    fun requestSubtitleSync(subtitleId: Int) = storedSubtitleSync.requestSync(subtitleId)
+
+    fun resetSubtitleTiming(subtitleId: Int) = storedSubtitleSync.resetTiming(subtitleId)
+
     /**
      * Mounts the subtitle transaction adapter has asked for, each carrying the
      * owner that must be told how it went. Mirrors the seekRequests idiom: the
@@ -1453,6 +1463,13 @@ class TvPlayerViewModel(
                 .map { it.selectedFileId ?: it.mediaFileId }
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
+        }
+        // Stored-subtitle sync applies to server playback only.
+        viewModelScope.launch {
+            _uiState
+                .map { state -> state.mediaFileId?.takeIf { state.sessionId != null } }
+                .distinctUntilChanged()
+                .collect(storedSubtitleSync::bind)
         }
         // Mirror the screen error into the adb test hook — screen-level
         // failures (terminal server plans) never reach the Media3 player, so
@@ -4834,6 +4851,8 @@ class TvPlayerViewModel(
      * error surfaced).
      */
     fun onSubtitlesPaneShown() {
+        // Opening re-reads sync state so a job that finished meanwhile shows.
+        storedSubtitleSync.reload()
         if (aiStatusRequested) return
         aiStatusRequested = true
         viewModelScope.launch {
@@ -4923,6 +4942,7 @@ class TvPlayerViewModel(
             if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
             when (r) {
                 is ApiResult.Success -> {
+                    storedSubtitleSync.reload()
                     val merged = refreshSubtitles(
                         autoSelectSubtitleId = r.data.subtitle.id,
                         source = TvSubtitleRefreshSource.Download,
@@ -5074,6 +5094,7 @@ class TvPlayerViewModel(
         val sessionId = state.sessionId ?: return
         if (update.sessionId != null && update.sessionId != sessionId) return
         if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        update.subtitleId?.let(storedSubtitleSync::timingChanged)
         val mounted = subtitlesForVideoMediaMount(
             subtitles = state.subtitleUrls,
             playbackPlan = state.playbackPlan,

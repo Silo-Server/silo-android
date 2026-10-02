@@ -80,6 +80,9 @@ data class DownloadedSubtitle(
     val score: Double = 0.0,
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     @SerialName("created_at") val createdAt: String = "",
+    val timing: SubtitleTiming = SubtitleTiming(),
+    /** The latest sync job; null when the subtitle was never synced. */
+    val sync: SubtitleSyncJob? = null,
 )
 
 /** Envelope for POST /api/v2/subtitles/download. */

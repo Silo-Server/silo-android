@@ -17,6 +17,10 @@ import org.siloserver.silo.model.subtitles.SubtitleSearchResponse
 import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SubtitlesApi
+import org.siloserver.silo.network.apiv2.SubtitleSyncV2Api
+import org.siloserver.silo.model.subtitles.DownloadedSubtitle
+import org.siloserver.silo.model.subtitles.SubtitleSyncCapability
+import org.siloserver.silo.model.subtitles.SubtitleSyncJob
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -32,7 +36,11 @@ import kotlinx.coroutines.delay
  *  - rethrows [CancellationException] so callers can cancel via structured
  *    concurrency (player exit cancels the viewModelScope job)
  */
-class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org.siloserver.silo.network.TokenManager? = null) {
+class SubtitlesRepository(
+    private val api: SubtitlesApi,
+    private val tokens: org.siloserver.silo.network.TokenManager? = null,
+    private val sync: SubtitleSyncV2Api? = null,
+) {
 
     /** Terminal result of [pollJob]. */
     sealed class SubtitleJobOutcome {
@@ -51,6 +59,18 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
 
     suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse> =
         api.list(mediaFileId)
+
+    // ---- Stored subtitle sync ----
+
+    suspend fun syncCapability(): ApiResult<SubtitleSyncCapability> = sync?.status() ?: syncUnavailable
+
+    suspend fun requestSync(id: Int): ApiResult<SubtitleSyncJob> = sync?.requestSync(id) ?: syncUnavailable
+
+    suspend fun readSync(id: Int, mediaFileId: Int): ApiResult<DownloadedSubtitle> =
+        sync?.read(id, mediaFileId) ?: syncUnavailable
+
+    suspend fun resetTiming(id: Int, mediaFileId: Int): ApiResult<DownloadedSubtitle> =
+        sync?.resetTiming(id, mediaFileId) ?: syncUnavailable
 
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = api.aiStatus()
 
@@ -125,3 +145,5 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
         }
     }
 }
+
+private val syncUnavailable = ApiResult.Error(0, "sync_unavailable", "Subtitle sync is not available.")

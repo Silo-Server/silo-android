@@ -2,6 +2,8 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import org.siloserver.silo.playback.storedSubtitleIdFor
+import org.siloserver.silo.playback.timingActionsFor
 import android.app.Activity
 import android.content.ComponentName
 import android.graphics.Rect
@@ -322,6 +324,7 @@ fun TvPlayerScreen(
     // swap. Mirrors phone PlayerScreen. The MediaController is kept for transport.
     val sessionPlayer by activePlayerHolder.player.collectAsState()
     val notice by viewModel.notice.collectAsState()
+    val storedSubtitleSync by viewModel.storedSubtitleSyncState.collectAsState()
     val remoteMessage by viewModel.remoteMessage.collectAsState()
     LaunchedEffect(remoteMessage?.id) {
         if (remoteMessage != null) {
@@ -2307,6 +2310,13 @@ fun TvPlayerScreen(
                             onSubtitleAppearanceChanged = viewModel::onSetSubtitleAppearance,
                             subtitleTextOpacitySupported = subtitleTextOpacitySupported,
                             onSubtitlesPaneShown = viewModel::onSubtitlesPaneShown,
+                            subtitleTiming = storedSubtitleSync.timingActionsFor(
+                                state.subtitleUrls.storedSubtitleIdFor(
+                                    state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity,
+                                ),
+                            ),
+                            onSyncSubtitle = viewModel::requestSubtitleSync,
+                            onResetSubtitleTiming = viewModel::resetSubtitleTiming,
                             onSearchSubtitles = if (state.mediaFileId != null) {
                                 {
                                     viewModel.closeHUD()
