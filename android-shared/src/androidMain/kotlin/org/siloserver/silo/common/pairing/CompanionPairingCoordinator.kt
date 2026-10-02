@@ -446,8 +446,15 @@ class CompanionPairingCoordinator(
             serverHost = DeviceCodeFormat.host(server.url),
         )
         if (requireUserConfirmation) {
-            // The card names the account approving signs the TV in as.
-            val shown = approval.copy(accountName = deviceLoginApprover.accountName(server))
+            // The card names the account approving signs the TV in as, and
+            // nothing is approved for an account it couldn't name. The TV
+            // keeps its code, so "Try again" can pick it up.
+            val accountName = deviceLoginApprover.accountName(server)
+            if (accountName.isNullOrBlank()) {
+                transport.send(PairingMessage.Cancel(reason = "account-unknown"))
+                error("Couldn't confirm which account would sign in on ${target.name}. Try again.")
+            }
+            val shown = approval.copy(accountName = accountName)
             _status.value = CompanionPairingStatus.AwaitingMatchConfirmation(shown)
             if (!confirmFirstMatch(shown)) {
                 deviceLoginApprover.deny(server, started.userCode)

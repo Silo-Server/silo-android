@@ -26,7 +26,7 @@ class ExternalSignInRepository(
      * be asked just now (a network failure, a 5xx or a 429 on either read):
      * the screen then offers the password form and a retry rather than
      * settling on no providers. A server that answers without provider
-     * discovery (older, or one the update gate stops) gets the password form
+     * discovery (an older one) gets the password form
      * alone, as before external sign-in; one that answers without the OAuth
      * handshake capability shows no provider buttons.
      */

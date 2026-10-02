@@ -71,7 +71,10 @@ private class ScriptedPhoneTransport : PairingTransport {
 private class FakeCompanionApprover(
     private val matchCodes: Map<String, String> = mapOf("ABCD-0001" to "MATCH-1"),
     private val onApprove: suspend (String) -> Unit = {},
+    private val account: String? = "alice",
 ) : CompanionDeviceLoginApprover {
+    override suspend fun accountName(server: CompanionPairingServer): String? = account
+
     val lookups = mutableListOf<String>()
     val approvals = mutableListOf<String>()
     val denials = mutableListOf<String>()
@@ -346,6 +349,29 @@ class CompanionPairingCoordinatorTest {
             CompanionPairingResult.Failed("Den TV can't reach Home. Check the TV's network connection."),
             result,
         )
+    }
+
+    /** The card can't name the account approving would sign the TV in as: nothing is approved. */
+    @Test
+    fun anUnnamedAccountIsNeverApproved() = runTest {
+        val transport = ScriptedPhoneTransport()
+        val server = CompanionPairingServer(id = "srv-1", url = "https://lib.example", displayName = "Home")
+        val approver = FakeCompanionApprover(account = null)
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+            deviceLoginApprover = approver,
+            transportFactory = { transport },
+        )
+
+        val result = coordinator.pair(target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999))
+
+        assertEquals(
+            CompanionPairingResult.Failed("Couldn't confirm which account would sign in on Living Room. Try again."),
+            result,
+        )
+        assertTrue(approver.approvals.isEmpty())
+        assertTrue(approver.denials.isEmpty())
+        assertTrue(transport.sent.any { it is PairingMessage.Cancel })
     }
 
     /** A TV that refuses the push before starting a sign-in fails the pairing at once, with its reason. */

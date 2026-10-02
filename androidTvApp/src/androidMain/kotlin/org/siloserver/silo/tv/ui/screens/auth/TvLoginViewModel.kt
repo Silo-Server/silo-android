@@ -233,6 +233,13 @@ class TvLoginViewModel(
     val pairingAdvertisement: StateFlow<PairingAdvertisement?> = _pairingAdvertisement.asStateFlow()
 
     private var machine: DeviceSignInMachine? = null
+
+    /**
+     * The sign-in context the machine's codes were started under. A resumed
+     * run polls only while it is unchanged: an approval for a code started
+     * before a sign-in, sign-out or server switch must not be saved over it.
+     */
+    private var machineExpectation: AccountSessionExpectation? = null
     private var machineObserver: Job? = null
     private var deviceLoginJob: Job? = null
     private var credentialLoginJob: Job? = null
@@ -307,7 +314,15 @@ class TvLoginViewModel(
                             accessToken = result.data.accessToken,
                             refreshToken = result.data.refreshToken,
                         )
-                        if (!authCompleted) resumeDeviceSignIn() else passwordWon()
+                        if (!authCompleted) {
+                            // This screen's own save moved the generation without
+                            // committing anything: the code on screen still belongs
+                            // to this sign-in, so it carries on under the new one.
+                            if (machineExpectation?.serverUrl == expected.serverUrl) machineExpectation = captureExpectation()
+                            resumeDeviceSignIn()
+                        } else {
+                            passwordWon()
+                        }
                         return@launch
                     }
                     // Tokens are committed outside persistSession here, so refresh the
@@ -423,6 +438,7 @@ class TvLoginViewModel(
                     machine = created
                     observe(created)
                 }
+            machineExpectation = expected
             // Stopped before the machine existed (onStop had nothing to stop):
             // keep it idle until onStart runs it.
             if (!visible) return@launch
@@ -440,7 +456,9 @@ class TvLoginViewModel(
             previous?.join()
             if (current.isSettled) return@launch
             val expected = captureExpectation()
-            if (expected == null || expected.serverUrl != current.serverUrl) {
+            val bound = machineExpectation
+            if (expected == null || expected.serverUrl != current.serverUrl || bound?.isSameSession(expected) != true) {
+                // "Try again" withdraws the code and starts one under the current context.
                 _deviceSignIn.value = TvDeviceSignInUi(status = TvSignInStatus.Failed)
                 return@launch
             }

@@ -327,10 +327,12 @@ class DeviceSignInMachine(
                 }
                 is DeviceLoginPoller.Step.Retry -> {
                     noteFailure(step.kind, starting = false)
-                    // Past the deadline with the server unreachable: a cancel
-                    // wouldn't arrive either, so just ask for a new code.
+                    // Past the local deadline without an answer: the server may
+                    // still hold the code (an approver can extend it, and a 429
+                    // or 5xx doesn't prove it gone), so withdraw it, bounded,
+                    // before asking for a new one.
                     if (current.isExpired) {
-                        replace(current, stillLive = false, mine)
+                        replace(current, stillLive = true, mine)
                     } else if (!pause(step.waitMs, mine)) {
                         return
                     }

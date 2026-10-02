@@ -240,7 +240,12 @@ class DevicePairingViewModel(
                 // one the card names. A locked link never falls back to another
                 // server: its code means nothing there.
                 val named = list.firstOrNull { it.id == initialServerId && _uiState.value.token == null }
-                val selected = if (locked) named else named ?: list.firstOrNull { it.isActive } ?: list.firstOrNull()
+                val selected = when {
+                    // Never another server: the token goes to the active one.
+                    _uiState.value.token != null -> list.firstOrNull { it.isActive }
+                    locked -> named
+                    else -> named ?: list.firstOrNull { it.isActive } ?: list.firstOrNull()
+                }
                 _uiState.update { it.copy(servers = list, selectedServerId = selected?.id) }
                 when {
                     locked && selected == null ->
@@ -323,16 +328,22 @@ class DevicePairingViewModel(
 
         val generation = ++lookupGeneration
         loadingOwner = generation
+        // The server chosen when the lookup started; choosing another retires it.
+        val server = current.selectedServer
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null, completedStatus = null, notFound = false) }
             // Read the account first: it renews the chosen server's token when
             // it is expiring, and the card names who approving signs in.
             if (servers != null) loadAccountName()
-            val lookupResult = requestLookup(token, code)
-            // Retired while in flight: a newer lookup or, more importantly, a
-            // decision has superseded this answer. Clearing isLoading is still
-            // this request's job, but nothing else it has to say is current.
-            if (generation != lookupGeneration) {
+            // Retired while the account was read (another server chosen, a
+            // decision made): send nothing, since a lookup marks the request
+            // opened on whichever server receives it.
+            val lookupResult = if (generation == lookupGeneration) requestLookup(token, code, server) else null
+            // Retired before or while in flight: a newer lookup or, more
+            // importantly, a decision has superseded this answer. Clearing
+            // isLoading is still this request's job, but nothing else it has
+            // to say is current.
+            if (lookupResult == null || generation != lookupGeneration) {
                 // Clear the loading flag only while this lookup still owns it.
                 // A newer lookup has raised it again for itself, and clearing
                 // it here would report that one as finished while it runs.
@@ -341,7 +352,7 @@ class DevicePairingViewModel(
                 }
                 return@launch
             }
-            when (val result = lookupResult) {
+            when (val result: ApiResult<DeviceLoginLookupResponse> = lookupResult) {
                 is ApiResult.Success -> {
                     val problem = statusProblem(result.data.status)
                     _uiState.update {
@@ -406,9 +417,10 @@ class DevicePairingViewModel(
         // it here — otherwise the screen shows a spinner nothing will finish.
         lookupGeneration++
         _uiState.update { it.copy(isLoading = false) }
+        val server = current.selectedServer
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmitting = true, error = null, completedStatus = null, followOutcome = null) }
-            val result = requestDecision(approve, token, code)
+            val result = requestDecision(approve, token, code, server)
             when (result) {
                 is ApiResult.Success -> {
                     _uiState.update {
@@ -418,7 +430,7 @@ class DevicePairingViewModel(
                             error = null,
                         )
                     }
-                    if (approve) followTv(token, code)
+                    if (approve) followTv(token, code, server)
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
@@ -443,12 +455,12 @@ class DevicePairingViewModel(
      * signing in" to what happened. Best effort and bounded; it never changes
      * the decision's outcome.
      */
-    private fun followTv(token: String?, code: String?) {
+    private fun followTv(token: String?, code: String?, server: DeviceApprovalServer?) {
         followJob?.cancel()
         followJob = viewModelScope.launch {
             repeat(FOLLOW_ATTEMPTS) {
                 delay(FOLLOW_INTERVAL_MS)
-                val status = (requestLookup(token, code) as? ApiResult.Success)?.data?.status ?: return@repeat
+                val status = (requestLookup(token, code, server) as? ApiResult.Success)?.data?.status ?: return@repeat
                 val outcome = when (status) {
                     "consumed" -> DeviceFollowOutcome.SignedIn
                     "canceled" -> DeviceFollowOutcome.Canceled
@@ -465,8 +477,11 @@ class DevicePairingViewModel(
         }
     }
 
-    private suspend fun requestLookup(token: String?, code: String?): ApiResult<DeviceLoginLookupResponse> {
-        val server = _uiState.value.selectedServer
+    private suspend fun requestLookup(
+        token: String?,
+        code: String?,
+        server: DeviceApprovalServer?,
+    ): ApiResult<DeviceLoginLookupResponse> {
         return if (token == null && code != null && server != null && servers != null) {
             repository.lookup(servers.scope(server), code)
         } else {
@@ -478,8 +493,8 @@ class DevicePairingViewModel(
         approve: Boolean,
         token: String?,
         code: String?,
+        server: DeviceApprovalServer?,
     ): ApiResult<org.siloserver.silo.model.auth.DeviceLoginDecisionResponse> {
-        val server = _uiState.value.selectedServer
         return if (token == null && code != null && server != null && servers != null) {
             val scope = servers.scope(server)
             if (approve) repository.approve(scope, code) else repository.deny(scope, code)
@@ -519,7 +534,8 @@ class DevicePairingViewModel(
         "denied" -> DevicePairingError.Declined
         "canceled" -> DevicePairingError.Canceled
         "expired" -> DevicePairingError.Expired
-        else -> null
+        // A status this app doesn't know: don't offer a decision on it.
+        else -> DevicePairingError.Server(null)
     }
 
     /** An exchange that never got an answer; a provider outage keeps the session and says so. */

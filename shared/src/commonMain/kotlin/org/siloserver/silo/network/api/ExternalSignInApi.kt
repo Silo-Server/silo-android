@@ -91,13 +91,17 @@ class DefaultExternalSignInApi(
     private val apiV2Gate: ApiV2Gate,
 ) : ExternalSignInApi {
 
+    // Provider discovery is public and addressed by URL, often to a saved
+    // server other than the active one, so the active server's update verdict
+    // doesn't gate it (like the other URL-addressed sign-in reads). A server
+    // without it answers 404, which leaves the password form alone.
     override suspend fun listProviders(serverUrl: String): ApiResult<SignInProviders> =
-        safeApiV2Call<AuthProviderCollectionV2>(apiV2Gate) {
+        safeApiV2Call<AuthProviderCollectionV2>(ApiV2Gate.Unrestricted) {
             client.get("${serverUrl.trimEnd('/')}/api/v2/auth/providers") { skipSiloAuth() }
         }.map { it.domain(serverUrl) }
 
     override suspend fun oauthCapabilities(serverUrl: String): ApiResult<OAuthHandshakeCapabilities> =
-        safeApiV2Call<OAuthHandshakeCapabilitiesV2>(apiV2Gate) {
+        safeApiV2Call<OAuthHandshakeCapabilitiesV2>(ApiV2Gate.Unrestricted) {
             client.get("${serverUrl.trimEnd('/')}/api/v2/auth/oauth/capabilities") { skipSiloAuth() }
         }.map { it.domain() }
 
