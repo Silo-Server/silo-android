@@ -77,6 +77,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -191,7 +193,16 @@ fun TvLoginScreen(
     LaunchedEffect(state.loginSuccess) {
         if (state.loginSuccess) {
             viewModel.onLoginSuccessConsumed()
-            routeOnce()
+            // A nearby phone that approved this code still has to hear the
+            // result and say done; leaving first closes its session, which it
+            // reports as a failure. Completed routes on by itself after its
+            // dwell. Bounded, so a phone that goes quiet can't hold the TV here.
+            val settled = withTimeoutOrNull(NEARBY_RESULT_WAIT_MS) {
+                pairingReceiver.status.first {
+                    it !is PairingReceiverStatus.AwaitingApproval && it !is PairingReceiverStatus.SignedIn
+                }
+            }
+            if (settled !is PairingReceiverStatus.Completed) routeOnce()
         }
     }
 
@@ -1000,3 +1011,6 @@ private object TvLoginTextStyles {
         letterSpacing = 0.sp,
     )
 }
+
+/** How long a finished sign-in waits for a nearby phone's session to wrap up before routing on. */
+private const val NEARBY_RESULT_WAIT_MS = 5_000L
