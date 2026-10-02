@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +23,7 @@ import org.siloserver.silo.android.ui.screens.home.HomeSectionsEditor
 import org.siloserver.silo.android.ui.theme.SettingsDimens
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.android.ui.util.formatBytes
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.settings.SeekMedia
@@ -65,11 +67,19 @@ internal fun SettingsPageScaffold(
     }
 }
 
-/** Interface (Apple `InterfaceCustomizationView`): Cards & Posters, then Home. */
+/**
+ * Interface (Apple `InterfaceCustomizationView`): Cards & Posters, Home, then
+ * Title Pages.
+ */
 @Composable
 fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit) {
     val state by viewModel.uiState.collectAsState()
     var showHomeSectionsEditor by rememberSaveable { mutableStateOf(false) }
+    val titleArtStore: TitleArtStore = koinInject()
+    // Opening Interface is a refresh edge, so a title art choice made on
+    // another device shows here without waiting for the next foreground. Kept
+    // out of the LazyColumn item, which re-enters composition on scroll.
+    LaunchedEffect(titleArtStore) { titleArtStore.refresh() }
 
     SettingsPageScaffold(title = "Interface", onBackClick = onBackClick) {
         item(key = "cards") {
@@ -92,6 +102,9 @@ fun SettingsInterfaceScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
                     onClick = { showHomeSectionsEditor = true },
                 )
             }
+        }
+        item(key = "title-art") {
+            TitleArtSettingsSection(store = titleArtStore)
         }
     }
 

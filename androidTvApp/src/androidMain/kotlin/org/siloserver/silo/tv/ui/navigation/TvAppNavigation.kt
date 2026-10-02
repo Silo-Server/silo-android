@@ -58,6 +58,8 @@ import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.WatchTogetherEntryTarget
 import org.siloserver.silo.watchtogether.watchTogetherEntryTarget
 import org.siloserver.silo.common.cards.ProvideCardPresentation
+import org.siloserver.silo.common.settings.ProvideTitleArt
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.common.settings.CardPresentationStore
@@ -350,6 +352,7 @@ fun TvAppNavigation(
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
+    val titleArtStore: TitleArtStore = koinInject()
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
     val watchNextSeeder: WatchNextSeeder = koinInject()
     val siloCastReceiver: TvSiloCastReceiver = koinInject()
@@ -564,6 +567,7 @@ fun TvAppNavigation(
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
+    ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
     NavHost(
         navController = navController,
@@ -717,7 +721,10 @@ fun TvAppNavigation(
                     // The switch-profile paths cleared the seek intervals; the
                     // identity flow only reloads when the profile id changes, so
                     // re-selecting the same profile needs this.
-                    scope.launch { seekIntervalStore.hydrateIfNeeded() }
+                    scope.launch {
+                        seekIntervalStore.hydrateIfNeeded()
+                        titleArtStore.hydrateIfNeeded()
+                    }
                 },
                 onAddProfile = {
                     navController.navigate(TvRoute.CreateProfile.route) { launchSingleTop = true }
@@ -829,6 +836,7 @@ fun TvAppNavigation(
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        titleArtStore.clear()
                         // Drop our Watch Next rows + cancel the periodic refresh so
                         // the launcher doesn't keep showing the signed-out user's
                         // progress.
@@ -856,6 +864,7 @@ fun TvAppNavigation(
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        titleArtStore.clear()
                         // Clear the previous profile's Watch Next rows before
                         // landing on the picker; the new profile will re-seed
                         // via [onProfileSelected].
@@ -1389,6 +1398,7 @@ fun TvAppNavigation(
             onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
             allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
         )
+    }
     }
     }
     }

@@ -43,6 +43,7 @@ import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.ui.components.TvFactsRow
@@ -319,15 +320,17 @@ private fun TitleBlock(
     logoUrl: String?,
 ) {
     val seriesContext = seriesTitle?.trim()?.takeIf { it.isNotEmpty() }
+    // "Show title art" off: every title here is text, episodes included.
+    val shownLogoUrl = titleLogoUrl(logoUrl)
 
     when {
         seriesContext != null -> EpisodeHierarchyTitle(
             seriesTitle = seriesContext,
             episodeTitle = title,
-            logoUrl = logoUrl,
+            logoUrl = shownLogoUrl,
         )
-        !logoUrl.isNullOrBlank() -> AsyncImage(
-            model = logoUrl,
+        !shownLogoUrl.isNullOrBlank() -> AsyncImage(
+            model = shownLogoUrl,
             contentDescription = title,
             contentScale = ContentScale.Fit,
             alignment = Alignment.BottomStart,

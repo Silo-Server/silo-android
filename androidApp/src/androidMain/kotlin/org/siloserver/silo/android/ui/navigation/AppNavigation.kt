@@ -106,6 +106,8 @@ import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsSe
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.cards.ProvideCardPresentation
+import org.siloserver.silo.common.settings.ProvideTitleArt
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.CardPresentationStore
@@ -159,6 +161,7 @@ fun AppNavigation(
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
+    val titleArtStore: TitleArtStore = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
@@ -312,6 +315,7 @@ fun AppNavigation(
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
+    ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     // Shared-element host: lets a tapped poster morph into the item-detail
     // backdrop. The scope is published via CompositionLocal so deep descendants
     // (a poster card, the detail hero) can opt in without threading it through
@@ -624,6 +628,7 @@ fun AppNavigation(
                         overlayPrefsStore.hydrateIfNeeded()
                         cardPresentationStore.hydrateIfNeeded()
                         seekIntervalStore.hydrateIfNeeded()
+                        titleArtStore.hydrateIfNeeded()
                     }
                     // Route through the tour gate: OnboardingTourScreen checks
                     // server-side state and immediately hands off to Home when
@@ -756,6 +761,7 @@ fun AppNavigation(
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
                     seekIntervalStore.clear()
+                    titleArtStore.clear()
                 },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
@@ -1410,6 +1416,7 @@ fun AppNavigation(
                     .padding(bottom = if (currentRoute in tabRoutes) 80.dp else 0.dp),
             )
         }
+    }
     }
     }
     }
