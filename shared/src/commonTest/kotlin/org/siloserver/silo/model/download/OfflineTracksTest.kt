@@ -143,4 +143,31 @@ class OfflineTracksTest {
         assertFalse(isOfflineSubtitleFetchUrl("/api/v2/downloads/dl_1/artwork/poster"))
         assertFalse(isOfflineSubtitleFetchUrl("/api/v1/downloads/dl_1/subtitles/external:0"))
     }
+
+    @Test
+    fun findsSavedSidecarsWhoseStoredSubtitleWasRetimed() {
+        val manifest = requireNotNull(
+            decodeOfflineManifestTracks(
+                """
+                {"subtitles": [
+                  {"language": "en", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/downloaded:7", "revision": "3"},
+                  {"language": "fr", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/downloaded:8", "revision": "1"},
+                  {"language": "de", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:0"}
+                ]}
+                """.trimIndent(),
+            ),
+        )
+        fun saved(path: String, url: String?, revision: String?) =
+            OfflineSubtitleFile(path = path, format = "srt", fetchUrl = url, revision = revision)
+        val retimed = saved("/d/0.srt", "/api/v2/downloads/dl_1/subtitles/downloaded:7", "2")
+        val current = saved("/d/1.srt", "/api/v2/downloads/dl_1/subtitles/downloaded:8", "1")
+        val external = saved("/d/2.srt", "/api/v2/downloads/dl_1/subtitles/external:0", null)
+        val legacy = saved("/d/3.srt", null, null)
+        val tracks = OfflineTrackInfo(subtitles = listOf(retimed, current, external, legacy))
+
+        assertEquals(listOf(retimed to "3"), tracks.subtitlesWithNewRevision(manifest))
+        // A capture from a server without revisions gets them on its first refresh.
+        val unversioned = OfflineTrackInfo(subtitles = listOf(current.copy(revision = null)))
+        assertEquals(listOf(current.copy(revision = null) to "1"), unversioned.subtitlesWithNewRevision(manifest))
+    }
 }

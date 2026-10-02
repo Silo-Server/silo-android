@@ -149,6 +149,13 @@ class SiloApplication : Application(), Configuration.Provider, SingletonImageLoa
         }.onFailure {
             android.util.Log.w("SiloApplication", "Download subscription periodic enqueue failed", it)
         }
+        // Re-fetch saved subtitle sidecars the server has retimed since they
+        // were downloaded. Guarded for the same reason.
+        runCatching {
+            org.siloserver.silo.common.downloads.OfflineSubtitleRefreshWorker.enqueuePeriodic(this)
+        }.onFailure {
+            android.util.Log.w("SiloApplication", "Offline subtitle refresh periodic enqueue failed", it)
+        }
         registerDownloadsNotificationChannel()
     }
 
