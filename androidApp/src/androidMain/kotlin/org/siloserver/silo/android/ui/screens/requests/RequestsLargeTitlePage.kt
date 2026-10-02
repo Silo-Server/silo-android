@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
@@ -48,6 +49,8 @@ internal fun RequestsLargeTitlePage(
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    /** Gap between list items; grouped-row pages pass zero and space their own sections. */
+    itemSpacing: Dp = 24.dp,
     actions: @Composable () -> Unit = {},
     content: LazyListScope.() -> Unit,
 ) {
@@ -86,7 +89,7 @@ internal fun RequestsLargeTitlePage(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(top = topInset, bottom = 24.dp + bottomInset),
-                    verticalArrangement = Arrangement.spacedBy(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(itemSpacing),
                 ) {
                     item(key = "large-title", contentType = "large-title") {
                         RequestsLargeTitle(title = title)

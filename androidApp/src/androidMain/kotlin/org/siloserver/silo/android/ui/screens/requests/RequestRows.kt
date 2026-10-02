@@ -175,7 +175,7 @@ internal fun MyRequestRow(
                             modifier = Modifier.padding(top = 6.dp),
                         ) { error ->
                             if (error != null) {
-                                RequestRowErrorLine(text = "Couldn't retry · $error")
+                                RequestRowErrorLine(text = error)
                             } else {
                                 RequestStatusLabel(
                                     progress = progress,

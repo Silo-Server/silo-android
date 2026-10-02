@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.requests
 
 import android.os.Build
 import android.view.HapticFeedbackConstants
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -13,7 +14,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -87,12 +87,15 @@ fun RequestApprovalsScreen(
         onBackClick = onBackClick,
         isRefreshing = state.isRefreshing,
         onRefresh = viewModel::refresh,
+        itemSpacing = 0.dp,
     ) {
         when {
             state.error != null && state.awaitingApproval.isEmpty() && state.failed.isEmpty() -> item(key = "error") {
                 ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
             }
-            !state.hasLoaded -> item(key = "loading") { RequestRowsSkeleton(progress = rememberShimmerProgress()) }
+            !state.hasLoaded -> item(key = "loading") {
+                Box(modifier = Modifier.padding(top = RequestGroupGap)) { RequestRowsSkeleton(progress = rememberShimmerProgress()) }
+            }
             state.isEmpty -> item(key = "empty") {
                 EmptyStateView(
                     title = "Nothing waiting on you",
@@ -109,50 +112,34 @@ fun RequestApprovalsScreen(
                             fontSize = 12.sp,
                             color = SiloSecondaryText,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = RequestGroupGap).padding(horizontal = 16.dp),
                         )
                     }
                 }
-                if (state.awaitingApproval.isNotEmpty()) {
-                    item(key = "awaiting", contentType = "bucket") {
-                        RequestGroupedSection(title = "Waiting for approval", count = state.awaitingApproval.size) {
-                            state.awaitingApproval.forEachIndexed { index, record ->
-                                key(record.id) {
-                                    RequestApprovalRow(
-                                        record = record,
-                                        isBusy = !state.canAct(record),
-                                        phase = state.phases[record.id],
-                                        actionError = state.rowErrors[record.id],
-                                        shakeTrigger = state.failureCounts[record.id] ?: 0,
-                                        showDivider = index > 0,
-                                        onOpen = { router.openModerationRecord(record) },
-                                        onApprove = { viewModel.perform(AdminRequestAction.Approve, record) },
-                                        onDecline = { pendingDecline = record },
-                                    )
-                                }
-                            }
-                        }
-                    }
+                requestGroupedSection(key = "awaiting", title = "Waiting for approval", items = state.awaitingApproval, itemKey = { it.id }) { record, showDivider ->
+                    RequestApprovalRow(
+                        record = record,
+                        isBusy = !state.canAct(record),
+                        phase = state.phases[record.id],
+                        actionError = state.rowErrors[record.id],
+                        shakeTrigger = state.failureCounts[record.id] ?: 0,
+                        showDivider = showDivider,
+                        onOpen = { router.openModerationRecord(record) },
+                        onApprove = { viewModel.perform(AdminRequestAction.Approve, record) },
+                        onDecline = { pendingDecline = record },
+                    )
                 }
-                if (state.failed.isNotEmpty()) {
-                    item(key = "failed", contentType = "bucket") {
-                        RequestGroupedSection(title = "Failed", count = state.failed.size) {
-                            state.failed.forEachIndexed { index, record ->
-                                key(record.id) {
-                                    MyRequestRow(
-                                        record = record,
-                                        isBusy = !state.canAct(record),
-                                        actionPhase = state.phases[record.id],
-                                        actionError = state.rowErrors[record.id],
-                                        shakeTrigger = state.failureCounts[record.id] ?: 0,
-                                        showDivider = index > 0,
-                                        onOpen = { router.openModerationRecord(record) },
-                                        onRetry = { viewModel.perform(AdminRequestAction.Retry, record) },
-                                    )
-                                }
-                            }
-                        }
-                    }
+                requestGroupedSection(key = "failed", title = "Failed", items = state.failed, itemKey = { it.id }) { record, showDivider ->
+                    MyRequestRow(
+                        record = record,
+                        isBusy = !state.canAct(record),
+                        actionPhase = state.phases[record.id],
+                        actionError = state.rowErrors[record.id]?.let { "Couldn't retry · $it" },
+                        shakeTrigger = state.failureCounts[record.id] ?: 0,
+                        showDivider = showDivider,
+                        onOpen = { router.openModerationRecord(record) },
+                        onRetry = { viewModel.perform(AdminRequestAction.Retry, record) },
+                    )
                 }
             }
         }

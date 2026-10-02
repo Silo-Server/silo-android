@@ -207,4 +207,27 @@ class RequestsRepositoryTest {
         repo.ensureMine()
         assertEquals(2, api.mineCalls)
     }
+
+    @Test
+    fun `a list read that a create overtook keeps the created request`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val created = stubRequest("created", 2)
+        val api = FakeRequestsApi(
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(stubRequest("old", 1)))),
+            createResult = ApiResult.Success(created),
+            mineGate = gate,
+        )
+        val repo = RequestsRepository(api)
+
+        val read = async { repo.refreshMine() }
+        runCurrent()
+        repo.create(CreateMediaRequest(mediaType = RequestMediaType.Movie, tmdbId = 2, title = "Movie 2"))
+        gate.complete(Unit)
+        read.await()
+
+        assertEquals(listOf(created), repo.mine.first())
+        // The snapshot doesn't count as fresh, so the next caller reads again.
+        repo.ensureMine()
+        assertEquals(2, api.mineCalls)
+    }
 }

@@ -72,4 +72,14 @@ class RequestDetailStatusTest {
         assertEquals(listOf(AdminRequestAction.Approve, AdminRequestAction.Decline), moderating.moderationActions)
         assertEquals("Requested by someone on this server", moderating.eyebrow)
     }
+
+    @Test
+    fun aRequestableFailedAnnotationStillOffersRequestToTheRequester() {
+        // A card patched from the user's failed record carries its state but
+        // stays requestable; the page must not block on it.
+        val detail = requestable.copy(
+            request = RequestState(status = RequestStatus.Downloading, state = RequestUserState.Failed, requestable = true),
+        )
+        assertEquals(RequestPrimaryAction.Request, RequestDetailUiState(detail = detail).primaryAction)
+    }
 }

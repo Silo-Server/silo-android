@@ -686,6 +686,14 @@ fun TvMainShell(
         }
     }
 
+    // Request detail can open another request detail ("More like this"). A
+    // single-top push would reuse the current entry, its view model and its
+    // back stack slot, so the new title would show the old one's state and
+    // Back would skip it. Each title gets its own entry.
+    val openRequestDetail: (String, Int) -> Unit = { mediaType, tmdbId ->
+        nestedNav.navigate(TvMainRoute.RequestDetail(mediaType, tmdbId).route)
+    }
+
     // True when a requester actually took focus. `requestFocus()` throws rather
     // than returning false when its node has not composed yet, so each call has
     // to be guarded — and that guard is what used to swallow the failure whole.
@@ -1224,9 +1232,7 @@ fun TvMainShell(
                                 onOpenPersonDetail = onOpenPersonDetail,
                             )
                         },
-                        onOpenRequestDetail = { mediaType, tmdbId ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mediaType, tmdbId).route)
-                        },
+                        onOpenRequestDetail = openRequestDetail,
                         onOpenLibraryItem = onOpenItemDetail,
                         onOpenPersonDetail = onOpenPersonDetail,
                         searchFieldFocusRequester = searchInputFocusRequester,
@@ -1340,9 +1346,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Requests.route) {
                     TvRequestsPage(
                         onOpenLibraryItem = onOpenItemDetail,
-                        onOpenRequestDetail = { mt, id ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mt, id).route)
-                        },
+                        onOpenRequestDetail = openRequestDetail,
                         onInitialContentFocus = {
                             focusState.closeProfileMenuForContent()
                             requestsFocusHandoffPending = false
@@ -1369,9 +1373,7 @@ fun TvMainShell(
                         tmdbId = entry.arguments?.getInt(TvMainRoute.RequestDetail.ARG_TMDB_ID) ?: 0,
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
                         onOpenLibraryItem = onOpenItemDetail,
-                        onOpenRequestDetail = { mt, id ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mt, id).route)
-                        },
+                        onOpenRequestDetail = openRequestDetail,
                         // Back closes an open panel or profile menu first, as
                         // on every other screen; the shell's handler does that.
                         backEnabled = focusState.openPanel == null && !focusState.profileMenuOpen,

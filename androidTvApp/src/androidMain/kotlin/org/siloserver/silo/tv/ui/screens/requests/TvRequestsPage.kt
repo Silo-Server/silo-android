@@ -159,20 +159,31 @@ fun TvRequestsPage(
     val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections, approvalsState, canModerate) else emptyList()
     // A failed action's reason shows for a few seconds; an unconfirmed decision
     // stays until a read settles it.
+    // The view models outlive this page's composition (a detail push and
+    // Back re-enter it), so remember what was already shown and replay nothing.
     var transientMessage by remember { mutableStateOf<String?>(null) }
+    var seenFailedActions by rememberSaveable { mutableStateOf(approvalsState.failedActions) }
+    var seenCancelMessage by rememberSaveable { mutableStateOf(mineState.actionErrorMessage) }
     LaunchedEffect(approvalsState.failedActions) {
-        if (approvalsState.failedActions == 0) return@LaunchedEffect
+        if (approvalsState.failedActions <= seenFailedActions) return@LaunchedEffect
+        seenFailedActions = approvalsState.failedActions
         transientMessage = approvalsState.lastActionError
         delay(ActionMessageMs)
         transientMessage = null
     }
     LaunchedEffect(mineState.actionErrorMessage) {
-        val message = mineState.actionErrorMessage ?: return@LaunchedEffect
+        val message = mineState.actionErrorMessage
+        if (message == null || message == seenCancelMessage) return@LaunchedEffect
+        seenCancelMessage = message
         transientMessage = message
         delay(ActionMessageMs)
         if (transientMessage == message) transientMessage = null
     }
-    val actionMessage = approvalsState.actionErrorMessage ?: transientMessage
+    // An admin whose approval queue couldn't load sees why, instead of a page
+    // that silently lacks its approval rows.
+    val approvalsError = approvalsState.error?.takeIf { canModerate && hasLoaded }
+        ?.let { "Couldn't load requests waiting for approval" }
+    val actionMessage = approvalsState.actionErrorMessage ?: transientMessage ?: approvalsError
 
     val router = rememberRequestRouter(repository, onOpenLibraryItem, onOpenRequestDetail)
     fun open(item: TvRequestItem) {

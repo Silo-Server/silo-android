@@ -44,6 +44,9 @@ class RequestsRepository(
 
     private var eventSequence = 0L
 
+    /** Bumped by each of this client's own creates and cancels as they land. */
+    private var ownMutations = 0L
+
     /** Bumped by [reset]: anything still running from the previous session drops its result. */
     @kotlin.concurrent.Volatile
     private var generation = 0
@@ -87,7 +90,14 @@ class RequestsRepository(
         limit: Int? = null,
         offset: Int? = null,
     ): ApiResult<Unit> {
+        val mutationsBefore = ownMutations
         val result = read({ api.mine(status, outcome, limit, offset) }) { response ->
+            // A create or cancel that landed while this read was out isn't in
+            // it: keep the patched list, and let the next caller read again.
+            if (ownMutations != mutationsBefore) {
+                mineReadAt = null
+                return@read
+            }
             _mine.value = response.requests
             if (status == null && outcome == null) {
                 cache.storeOwnRecords(response.requests)
@@ -185,6 +195,7 @@ class RequestsRepository(
     }
 
     private fun publish(request: MediaRequest) {
+        ownMutations++
         upsertMine(request)
         cache.storeOwnRecord(request)
         _lastUpdate.value = RequestEvent(request, ++eventSequence)

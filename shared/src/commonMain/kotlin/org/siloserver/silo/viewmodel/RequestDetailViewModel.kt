@@ -30,6 +30,7 @@ import org.siloserver.silo.model.request.RequestOutcome
 import org.siloserver.silo.model.request.RequestProgress
 import org.siloserver.silo.model.request.RequestStatus
 import org.siloserver.silo.model.request.RequestUnconfirmedToken
+import org.siloserver.silo.model.request.toRequestState
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.repository.RequestDetailCache
@@ -98,7 +99,11 @@ data class RequestDetailUiState(
             if (openedForModeration && moderation != null) {
                 return RequestPrimaryAction.Status(RequestDisplayState.of(moderation))
             }
-            if (state != null) return RequestPrimaryAction.Status(state)
+            // A failed or declined request no longer blocks a new one: when the
+            // server calls the title requestable, the status shows on the card
+            // and progress, and the action stays Request (Again).
+            val endedButRequestable = state is RequestDisplayState.NeedsAttention && detail.request.requestable
+            if (state != null && !endedButRequestable) return RequestPrimaryAction.Status(state)
             // The title annotation drops a request whose download finished but
             // hasn't reached the library, and would offer a duplicate request;
             // the user's own record still knows it's on the way.
@@ -392,7 +397,9 @@ class RequestDetailViewModel(
             val result = repository.create(detail.toCreateMediaRequest())
             when {
                 result is ApiResult.Success -> {
-                    _uiState.update { it.copy(submittedCount = it.submittedCount + 1) }
+                    // The server's answer stands even if the re-read below fails,
+                    // so Request can't come back for a request that exists.
+                    _uiState.update { it.applyingOwn(result.data).copy(submittedCount = it.submittedCount + 1) }
                     // Re-read so the page reflects the server's state, not a local
                     // guess. Still submitting meanwhile, so this page's own
                     // broadcast doesn't trigger a second read.
@@ -424,6 +431,7 @@ class RequestDetailViewModel(
             val result = repository.cancel(record.id)
             when {
                 result is ApiResult.Success -> {
+                    _uiState.update { it.applyingOwn(result.data) }
                     fetch()
                     _uiState.update { it.copy(isCancelling = false) }
                 }
@@ -453,7 +461,7 @@ class RequestDetailViewModel(
                 result is ApiResult.Success -> {
                     // Still moderating through the re-read, so the decision
                     // buttons can't come back for the request just decided.
-                    _uiState.update { it.copy(moderatedCount = it.moderatedCount + 1) }
+                    _uiState.update { it.copy(moderationRecord = result.data, moderatedCount = it.moderatedCount + 1) }
                     fetch()
                     _uiState.update { it.copy(isModerating = false) }
                 }
@@ -506,6 +514,12 @@ class RequestDetailViewModel(
             fetch(ownMaxAge = Duration.ZERO)
         }
     }
+
+    /** The page as the server's answer to the user's own create or cancel leaves it. */
+    private fun RequestDetailUiState.applyingOwn(record: MediaRequest): RequestDetailUiState = copy(
+        record = record,
+        detail = detail?.copy(request = record.toRequestState()),
+    )
 
     private fun RequestDetailUiState.releasingModerationHold(): RequestDetailUiState = copy(
         isModerationUnconfirmed = false,

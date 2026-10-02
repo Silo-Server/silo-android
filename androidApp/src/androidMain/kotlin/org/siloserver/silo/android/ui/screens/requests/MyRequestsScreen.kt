@@ -87,7 +87,12 @@ fun MyRequestsScreen(
         title = "My Requests",
         onBackClick = onBackClick,
         isRefreshing = state.isRefreshing,
-        onRefresh = viewModel::refresh,
+        onRefresh = {
+            viewModel.refresh()
+            // The approvals card is this page's only way into the queue.
+            if (canModerate) approvals.refresh()
+        },
+        itemSpacing = 0.dp,
         actions = {
             if (state.buckets.size > 1) {
                 FilterMenu(buckets = state.buckets, filter = filter, onFilter = { filter = it })
@@ -101,6 +106,7 @@ fun MyRequestsScreen(
         if (canModerate && approvalsState.hasLoaded && (pending > 0 || failed > 0)) {
             item(key = "approvals-card") {
                 RequestSummaryCard(
+                    modifier = Modifier.padding(top = RequestGroupGap),
                     title = when {
                         pending == 1 -> "1 request needs your approval"
                         pending > 1 -> "$pending requests need your approval"
@@ -118,7 +124,7 @@ fun MyRequestsScreen(
                 ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
             }
             state.isLoading && state.buckets.isEmpty() -> item(key = "loading") {
-                RequestRowsSkeleton(progress = rememberShimmerProgress())
+                Box(modifier = Modifier.padding(top = RequestGroupGap)) { RequestRowsSkeleton(progress = rememberShimmerProgress()) }
             }
             state.isEmpty -> item(key = "empty") {
                 EmptyStateView(
@@ -136,26 +142,20 @@ fun MyRequestsScreen(
                             fontSize = 12.sp,
                             color = SiloSecondaryText,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = RequestGroupGap).padding(horizontal = 16.dp),
                         )
                     }
                 }
                 state.buckets.filter { filter == null || it.first == filter }.forEach { (bucket, requests) ->
-                    item(key = "bucket:${bucket.name}", contentType = "bucket") {
-                        RequestGroupedSection(title = bucket.title, count = requests.size) {
-                            requests.forEachIndexed { index, record ->
-                                androidx.compose.runtime.key(record.id) {
-                                    MyRequestRow(
-                                        record = record,
-                                        isBusy = state.cancellingId == record.id,
-                                        showDivider = index > 0,
-                                        onOpen = { router.openRecord(record) },
-                                        onOpenInLibrary = record.libraryContentId?.takeIf { it.isNotBlank() }?.let { id -> { onLibraryItemClick(id) } },
-                                        onCancel = if (state.canCancel(record)) ({ viewModel.cancel(record) }) else null,
-                                    )
-                                }
-                            }
-                        }
+                    requestGroupedSection(key = "bucket:${bucket.name}", title = bucket.title, items = requests, itemKey = { it.id }) { record, showDivider ->
+                        MyRequestRow(
+                            record = record,
+                            isBusy = state.cancellingId == record.id,
+                            showDivider = showDivider,
+                            onOpen = { router.openRecord(record) },
+                            onOpenInLibrary = record.libraryContentId?.takeIf { it.isNotBlank() }?.let { id -> { onLibraryItemClick(id) } },
+                            onCancel = if (state.canCancel(record)) ({ viewModel.cancel(record) }) else null,
+                        )
                     }
                 }
             }

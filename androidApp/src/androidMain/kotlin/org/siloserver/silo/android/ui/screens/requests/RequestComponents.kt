@@ -6,7 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -498,26 +499,50 @@ internal fun RequestSummaryCard(
     }
 }
 
-/** A grouped list section: a muted header with a count over a rounded card of rows. */
-@Composable
-internal fun RequestGroupedSection(
+/** Space above each grouped section on pages that pass zero item spacing. */
+internal val RequestGroupGap = 24.dp
+
+/**
+ * A grouped list section: a muted header with a count over a rounded card of
+ * rows. Each row is its own lazy item, so a long queue composes only what's on
+ * screen; the card's corners come from the first and last rows.
+ */
+internal fun <T> LazyListScope.requestGroupedSection(
+    key: String,
     title: String,
-    count: Int,
-    modifier: Modifier = Modifier,
-    content: @Composable ColumnScope.() -> Unit,
+    items: List<T>,
+    itemKey: (T) -> Any,
+    row: @Composable (item: T, showDivider: Boolean) -> Unit,
 ) {
-    Column(modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText, modifier = Modifier.weight(1f))
-            Text(text = count.toString(), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
-        }
-        Column(
+    if (items.isEmpty()) return
+    item(key = "$key:header", contentType = "group-header") {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(SiloSurfaceContainer),
-            content = content,
+                .padding(top = RequestGroupGap)
+                .padding(horizontal = 32.dp, vertical = 8.dp),
+        ) {
+            Text(text = title, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText, modifier = Modifier.weight(1f))
+            Text(text = items.size.toString(), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = SiloSecondaryText)
+        }
+    }
+    itemsIndexed(items, key = { _, item -> "$key:${itemKey(item)}" }, contentType = { _, _ -> "group-row" }) { index, item ->
+        val corner = 20.dp
+        val shape = RoundedCornerShape(
+            topStart = if (index == 0) corner else 0.dp,
+            topEnd = if (index == 0) corner else 0.dp,
+            bottomStart = if (index == items.lastIndex) corner else 0.dp,
+            bottomEnd = if (index == items.lastIndex) corner else 0.dp,
         )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(shape)
+                .background(SiloSurfaceContainer),
+        ) {
+            row(item, index > 0)
+        }
     }
 }
 
