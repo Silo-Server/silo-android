@@ -23,6 +23,7 @@ import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.cast.CastMediaSpec
 import org.siloserver.silo.common.player.cast.CastPrepareRequest
 import org.siloserver.silo.common.player.PlayerNotice
@@ -75,6 +76,8 @@ import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.playback.PlaybackSubtitleReady
+import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.affects
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
@@ -3797,6 +3800,25 @@ class PlayerViewModel(
                 ?: false
             if (selected) pendingAuthoritativeSubtitleDownloadId = null
         }
+    }
+
+    /**
+     * The server retimed a stored subtitle (sync or timing reset). Media3
+     * keeps the cues it already parsed, so when that subtitle is the mounted
+     * sidecar, remount the same item at the same position to fetch it again.
+     */
+    fun applySubtitleTimingChanged(update: PlaybackSubtitleTimingChanged) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = state.subtitleTracks,
+            playbackPlan = state.playbackPlan,
+            subtitleIdentity = state.localSubtitleMountIdentity ?: state.committedSubtitleIdentity,
+        )
+        if (!update.affects(mounted)) return
+        _uiState.update { it.copy(subtitleRefreshNonce = it.subtitleRefreshNonce + 1) }
     }
 
     private suspend fun doRefreshSubtitles(autoSelectSubtitleId: Int?) {
