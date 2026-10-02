@@ -313,9 +313,13 @@ class SignInSettingsViewModel(
             is NativeSignInResult.Finishing -> _uiState.update { it.copy(busy = true, error = null, message = null) }
             is NativeSignInResult.Linked -> {
                 nativeSignIn.consume(result)
+                val loginSessionId = tokenManager.loginSessionId(result.serverEntryId)
                 load()
-                // Still the server the link was made on once the section has reloaded.
-                val here = result.serverEntryId == serverRegistry.activeServerId.value
+                // Still the server and login the link was made for once the
+                // section has reloaded. `busy` came from this flow's Finishing,
+                // and nothing else can start while it's set, so it clears either way.
+                val here = result.serverEntryId == serverRegistry.activeServerId.value &&
+                    tokenManager.loginSessionId(result.serverEntryId) == loginSessionId
                 _uiState.update {
                     it.copy(busy = false, message = if (here) "Connected ${result.providerName}." else it.message)
                 }

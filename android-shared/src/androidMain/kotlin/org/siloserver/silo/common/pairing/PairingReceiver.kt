@@ -488,6 +488,9 @@ class PairingReceiver(
     }
 
     private suspend fun reportSignedIn(pushedUrl: String, displayName: String, transport: PairingTransport) {
+        // An attempt that outlived its connection (the session save can't be
+        // cancelled) must not report into the connection that replaced it.
+        if (activeTransport !== transport) return
         signedInNames += displayName
         _status.value = PairingReceiverStatus.SignedIn(signedInNames.size)
         // Best-effort: the tokens are committed, so a lost confirmation
@@ -510,6 +513,7 @@ class PairingReceiver(
         code: PairingFailureCode,
         transport: PairingTransport,
     ) {
+        if (activeTransport !== transport) return
         Log.i(TAG, "server pairing failed: ${code.wire}")
         _status.value = PairingReceiverStatus.Failed(displayName, code)
         runCatching {
