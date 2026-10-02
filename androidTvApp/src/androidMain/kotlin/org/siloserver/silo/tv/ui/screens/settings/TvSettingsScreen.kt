@@ -685,17 +685,23 @@ private fun SettingsRailCategoryRow(
                 modifier = Modifier.size(17.dp),
             )
             Column(modifier = Modifier.weight(1f)) {
+                // One line each: the row is a fixed height, so a wrapped
+                // description at a large font scale would be cut off mid-line.
                 Text(
                     text = category.title,
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.sp, lineHeight = 18.sp),
                     fontWeight = FontWeight.Medium,
                     color = foreground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 // TV text keeps its 14sp floor, a little above tvOS's 16pt.
                 Text(
                     text = category.railDescription,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
                     color = foreground.copy(alpha = 0.62f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
