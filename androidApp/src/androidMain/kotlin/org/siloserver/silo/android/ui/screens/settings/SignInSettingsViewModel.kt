@@ -314,7 +314,11 @@ class SignInSettingsViewModel(
             is NativeSignInResult.Linked -> {
                 nativeSignIn.consume(result)
                 load()
-                _uiState.update { it.copy(busy = false, message = "Connected ${result.providerName}.") }
+                // Still the server the link was made on once the section has reloaded.
+                val here = result.serverEntryId == serverRegistry.activeServerId.value
+                _uiState.update {
+                    it.copy(busy = false, message = if (here) "Connected ${result.providerName}." else it.message)
+                }
             }
             is NativeSignInResult.Failed -> {
                 nativeSignIn.consume(result)
