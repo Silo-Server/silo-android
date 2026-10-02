@@ -28,5 +28,5 @@ jobs:
   ci:
     uses: Silo-Server/silo-android/.github/workflows/trusted-linux-ci.yml@main
     with:
-      self_hosted: ${{ github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')) }}
+      self_hosted: false
       build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
