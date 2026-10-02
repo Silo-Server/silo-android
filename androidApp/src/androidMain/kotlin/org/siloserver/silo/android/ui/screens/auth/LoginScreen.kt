@@ -165,7 +165,7 @@ fun LoginScreen(
             }
             if (state.offersAccountChoice) {
                 AuroraGhostButton(
-                    label = "Use a different account",
+                    label = differentAccountLabel(state.providers),
                     onClick = viewModel::onUseDifferentAccount,
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 )

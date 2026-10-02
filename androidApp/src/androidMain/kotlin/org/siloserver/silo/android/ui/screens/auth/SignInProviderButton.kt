@@ -40,6 +40,14 @@ import org.siloserver.silo.model.auth.SignInProvider
 fun signInWithLabel(provider: SignInProvider): String = "Sign in with ${provider.displayName}"
 
 /**
+ * The account-choice link under the provider buttons. It picks another
+ * account at the provider, not another way into Silo, so it names the
+ * provider when there is one; with several, a chooser follows.
+ */
+fun differentAccountLabel(providers: List<SignInProvider>): String =
+    providers.singleOrNull()?.let { "Use a different ${it.displayName} account" } ?: "Use a different account"
+
+/**
  * One external sign-in provider's button: its icon (SVG or bitmap from the
  * plugin, a generic sign-in glyph when it has none or it can't be drawn) and
  * [label]. Glass-outlined so the cream password button stays the primary
