@@ -90,6 +90,13 @@ data class SettingsUiState(
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /**
+     * What playback draws: [subtitleAppearance], or the device caption style
+     * while Use Device Settings is on. The preview shows this; the editors
+     * edit [subtitleAppearance].
+     */
+    val effectiveSubtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
+        org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
     /** False when the server is known to discard subtitle text opacity. */
     val subtitleTextOpacitySupported: Boolean = true,
     // Up Next card: auto-play the next episode at countdown expiry, and how
@@ -300,6 +307,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.effectiveSubtitleAppearanceFlow.onEach { appearance ->
+            _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
             _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }

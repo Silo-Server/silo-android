@@ -123,19 +123,21 @@ fun SubtitleMetadataSection(
 
 /**
  * Subtitles → Appearance: the live preview, then "Use Device Settings", whose
- * footer says where the style comes from. The Text, Background, and Layout
- * groups below edit the same appearance the player's Subtitle Style sheet does.
+ * footer says where the style comes from. The preview draws [previewAppearance],
+ * the style playback uses, so it shows the device caption style while Use
+ * Device Settings is on. The Text, Background, and Layout groups below edit the
+ * same appearance the player's Subtitle Style sheet does.
  */
 @Composable
 fun SubtitleAppearanceSection(
-    appearance: SubtitleAppearance,
+    previewAppearance: SubtitleAppearance,
     subtitleMatchesDevice: Boolean,
     onSubtitleMatchesDeviceChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         SettingsSectionHeader("Appearance")
-        SubtitleAppearancePreview(appearance)
+        SubtitleAppearancePreview(previewAppearance)
         Spacer(modifier = Modifier.height(SettingsDimens.sectionGap))
         SettingsSection(
             title = null,

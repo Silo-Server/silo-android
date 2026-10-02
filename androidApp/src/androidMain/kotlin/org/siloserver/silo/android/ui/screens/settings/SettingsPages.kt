@@ -208,7 +208,7 @@ fun SettingsSubtitlesScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
         }
         item(key = "appearance") {
             SubtitleAppearanceSection(
-                appearance = state.subtitleAppearance,
+                previewAppearance = state.effectiveSubtitleAppearance,
                 subtitleMatchesDevice = state.subtitleMatchesDevice,
                 onSubtitleMatchesDeviceChanged = viewModel::setSubtitleMatchesDevice,
             )
