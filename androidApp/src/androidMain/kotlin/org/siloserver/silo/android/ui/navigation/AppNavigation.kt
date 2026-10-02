@@ -1527,7 +1527,7 @@ fun AppNavigation(
 
         // Nearby-TV offer, app-wide once signed in (iOS parity). Not over the
         // sign-in chain, where the phone has no session to approve with, nor
-        // over playback.
+        // over playback or reading.
         val companionHiddenRoutes = setOf(
             Route.Login.route,
             Route.ServerSetup.route,
@@ -1539,6 +1539,8 @@ fun AppNavigation(
             Route.InviteClaim.ROUTE,
             Route.PairDevice.ROUTE,
             Route.Player.ROUTE,
+            Route.AudiobookPlayer.ROUTE,
+            Route.BookReader.ROUTE,
             Route.SiloCastRemote.route,
         )
         org.siloserver.silo.android.ui.screens.pairing.CompanionPairingHost(
