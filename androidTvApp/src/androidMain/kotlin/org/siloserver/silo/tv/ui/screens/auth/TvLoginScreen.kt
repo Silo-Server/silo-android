@@ -192,7 +192,6 @@ fun TvLoginScreen(
 
     LaunchedEffect(state.loginSuccess) {
         if (state.loginSuccess) {
-            viewModel.onLoginSuccessConsumed()
             // A nearby phone that approved this code still has to hear the
             // result and say done; leaving first closes its session, which it
             // reports as a failure. Completed routes on by itself after its
@@ -202,6 +201,9 @@ fun TvLoginScreen(
                     it !is PairingReceiverStatus.AwaitingApproval && it !is PairingReceiverStatus.SignedIn
                 }
             }
+            // Consumed only now: it is this effect's key, so clearing it
+            // before the wait would cancel the wait and the fallback route.
+            viewModel.onLoginSuccessConsumed()
             if (settled !is PairingReceiverStatus.Completed) routeOnce()
         }
     }
