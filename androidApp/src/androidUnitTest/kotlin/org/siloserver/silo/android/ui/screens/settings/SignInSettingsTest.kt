@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancel
@@ -17,6 +18,7 @@ import org.siloserver.silo.android.auth.NativeSignInCompleter
 import org.siloserver.silo.android.auth.NativeSignInCoordinator
 import org.siloserver.silo.android.auth.PendingNativeSignIn
 import org.siloserver.silo.android.ui.screens.auth.passwordLoginMessage
+import org.siloserver.silo.android.ui.screens.auth.networkSignInMessage
 import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
@@ -102,7 +104,10 @@ class SignInSettingsTest {
         assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
         texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
         assertEquals("Open this server at its Tailscale address to connect Tailscale.", texts[1])
-        assertEquals("Tailscale doesn't allow this device to sign in to this server.", texts[3])
+        assertEquals("Tailscale doesn't allow this device on this server.", texts[3])
+        // The network refusals read as they do on the sign-in screen.
+        assertEquals(networkSignInMessage(ApiResult.Error(403, "not_permitted", ""), "Tailscale"), texts[3])
+        assertEquals(networkSignInMessage(ApiResult.Error(404, "not_found", ""), "Tailscale"), texts[7])
         // Shared refusals read as in the other links.
         assertEquals(SignInSettingsViewModel.directoryLinkMessage(ApiResult.Error(409, "identity_linked_elsewhere", ""), "Tailscale"), texts[5])
     }
@@ -271,6 +276,9 @@ class SignInSettingsNetworkLinkTest {
         var linkAnswer: ApiResult<AccountIdentity> = ApiResult.Success(linked)
         val links = mutableListOf<Triple<AuthScopeSnapshot, String, String>>()
 
+        /** When set, the link answers only once this completes. */
+        var linkGate: CompletableDeferred<Unit>? = null
+
         override suspend fun listProviders(serverUrl: String): ApiResult<SignInProviders> =
             ApiResult.Success(SignInProviders(listOf(provider), passwordLogin = true))
         override suspend fun oauthCapabilities(serverUrl: String): ApiResult<OAuthHandshakeCapabilities> =
@@ -281,6 +289,7 @@ class SignInSettingsNetworkLinkTest {
             ApiResult.Success(AccountIdentities(identities, canUnlink = null))
         override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String): ApiResult<AccountIdentity> {
             links += Triple(scope, installationId, password)
+            linkGate?.await()
             return linkAnswer.also { if (it is ApiResult.Success) identities = listOf(it.data) }
         }
         override suspend fun completeOAuthLogin(serverUrl: String, code: String, codeVerifier: String): ApiResult<LoginResponse> = TODO()
@@ -387,6 +396,39 @@ class SignInSettingsNetworkLinkTest {
         assertNull(vm.uiState.value.networkPrompt)
         assertEquals("Open this server at its Tailscale address to connect Tailscale.", vm.uiState.value.error)
         assertTrue(vm.uiState.value.identities.isEmpty())
+        vm.viewModelScope.cancel()
+    }
+
+    /** Cancel while "Checking…" stops the link: nothing reports back, and the section shows what the server has. */
+    @Test
+    fun cancellingTheNetworkPromptStopsTheLink() = runTest(dispatcher) {
+        val api = Api(tailscale, linkedIdentity)
+        val gate = CompletableDeferred<Unit>()
+        api.linkGate = gate
+        val registry = OneServer(ServerEntry(id = "a", url = "https://silo.tailnet.ts.net"))
+        val identityApi = object : ServerIdentityApi {
+            override suspend fun probeIdentity(serverUrl: String) = ServerIdentityProbe.Identity("srv-1")
+            override suspend fun connections(scope: AuthScopeSnapshot): ServerConnections? = null
+        }
+        val vm = SignInSettingsViewModel(
+            ExternalSignInRepository(api), SignedIn(), registry, ServerIdentityRepository(registry, identityApi),
+            NativeSignInCoordinator(InMemoryPendingNativeSignInStore(), NoBrowser, backgroundScope, InMemoryAccountChoiceStore()),
+        )
+        advanceUntilIdle()
+        vm.onConnectNetwork(tailscale)
+        vm.onConfirmNetwork("local-pw")
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.busy)
+        assertEquals(1, api.links.size)
+
+        vm.onDismissNetworkPrompt()
+        assertNull(vm.uiState.value.networkPrompt)
+        assertFalse(vm.uiState.value.busy, "the section can be used again")
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.message, "a cancelled link doesn't report \"Connected\"")
+        assertNull(vm.uiState.value.error)
+        assertEquals(tailscale, vm.uiState.value.network, "the server made no link: still offered")
         vm.viewModelScope.cancel()
     }
 }

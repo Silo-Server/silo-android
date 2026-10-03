@@ -16,7 +16,9 @@ import org.siloserver.silo.android.auth.NativeSignInMessages
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.android.ui.screens.auth.ProviderRefusalText
 import org.siloserver.silo.model.auth.AccountIdentity
+import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInOptions
 import org.siloserver.silo.model.auth.SignInProvider
@@ -86,7 +88,10 @@ class SignInSettingsViewModel(
 
     private val _uiState = MutableStateFlow(SignInSettingsUiState())
 
-    /** The password prompt's ticket request and flow start, until the browser opens. */
+    /**
+     * The open prompt's work: the ticket request and flow start until the
+     * browser opens, or a directory or network link until it answers.
+     */
     private var connectJob: Job? = null
     val uiState: StateFlow<SignInSettingsUiState> = _uiState.asStateFlow()
 
@@ -160,9 +165,7 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(directoryPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
-    fun onDismissDirectoryPrompt() {
-        _uiState.update { it.copy(directoryPrompt = null, passwordError = null) }
-    }
+    fun onDismissDirectoryPrompt() = dismissPrompt { it.copy(directoryPrompt = null) }
 
     /**
      * Links the directory (LDAP) account whose credentials the person typed,
@@ -188,9 +191,7 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(networkPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
-    fun onDismissNetworkPrompt() {
-        _uiState.update { it.copy(networkPrompt = null, passwordError = null) }
-    }
+    fun onDismissNetworkPrompt() = dismissPrompt { it.copy(networkPrompt = null) }
 
     /**
      * Links the person who owns this device at the network provider, after
@@ -224,7 +225,7 @@ class SignInSettingsViewModel(
         link: suspend (AuthScopeSnapshot) -> ApiResult<AccountIdentity>,
     ) {
         _uiState.update { it.copy(busy = true, passwordError = null) }
-        viewModelScope.launch {
+        connectJob = viewModelScope.launch {
             val scope = tokenManager.snapshotCurrentScope()
             if (scope == null) {
                 _uiState.update { closePrompt(it).copy(busy = false, error = ACCOUNT_CHANGED) }
@@ -254,12 +255,19 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(passwordPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
-    /** Cancel also stops a ticket or identity check still under way, so no browser opens once the prompt is gone. */
-    fun onDismissPasswordPrompt() {
+    fun onDismissPasswordPrompt() = dismissPrompt { it.copy(passwordPrompt = null) }
+
+    /**
+     * Cancel also stops the prompt's work still under way: no browser opens
+     * and nothing reports back once the prompt is gone. A link the server
+     * made before the cancel shows when the section reloads.
+     */
+    private fun dismissPrompt(close: (SignInSettingsUiState) -> SignInSettingsUiState) {
         val stopped = connectJob?.isActive == true
         connectJob?.cancel()
         connectJob = null
-        _uiState.update { it.copy(passwordPrompt = null, passwordError = null, busy = it.busy && !stopped) }
+        _uiState.update { close(it).copy(passwordError = null, busy = it.busy && !stopped) }
+        if (stopped) refresh()
     }
 
     /**
@@ -490,7 +498,7 @@ class SignInSettingsViewModel(
         private fun noLocalPassword(providerName: String) =
             "This account has no password to confirm with. Ask an admin to connect it to $providerName."
 
-        private fun noLongerAvailable(providerName: String) = "$providerName is no longer available on this server."
+        private fun noLongerAvailable(providerName: String) = ProviderRefusalText.providerGone(providerName)
 
         /** Text for a refused link ticket (`createAccountIdentityLinkTicket`). */
         fun linkTicketMessage(error: ApiResult.Error, providerName: String): String = when {
@@ -525,14 +533,16 @@ class SignInSettingsViewModel(
          */
         fun networkLinkMessage(error: ApiResult.Error, providerName: String): String = when (error.error) {
             DefaultExternalSignInApi.WRONG_PASSWORD -> "That password is incorrect."
-            "network_identity_required" -> "Open this server at its $providerName address to connect $providerName."
-            "not_permitted" -> "$providerName doesn't allow this device to sign in to this server."
             "local_password_required" -> noLocalPassword(providerName)
-            "not_found" -> noLongerAvailable(providerName)
-            else -> when {
-                error.code == 422 -> CHECK_ENTRIES
-                error.code == 404 -> noLongerAvailable(providerName)
-                else -> NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+            else -> when (NetworkSignInFailure.of(error.code, error.error)) {
+                NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "connect $providerName")
+                NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
+                NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
+                else -> if (error.code == 422) {
+                    CHECK_ENTRIES
+                } else {
+                    NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+                }
             }
         }
 

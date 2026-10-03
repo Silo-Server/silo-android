@@ -64,8 +64,6 @@ data class OAuthHandshakeCapabilities(
     val linking: Boolean,
     /** Sign-in starts take `prompt=select_account` ("Use a different account", "Not you? Switch account"). */
     val selectAccount: Boolean = false,
-    /** A network provider (such as Tailscale) that signs in this device's owner, with its sign-in path. */
-    val networkProvider: SignInProvider? = null,
 ) {
     companion object {
         val None = OAuthHandshakeCapabilities(available = false, native = false, linking = false)

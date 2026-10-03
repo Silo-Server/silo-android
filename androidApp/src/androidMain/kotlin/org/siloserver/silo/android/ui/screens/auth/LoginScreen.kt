@@ -162,8 +162,8 @@ fun LoginScreen(
                     label = continueAsLabel(provider),
                     supportingText = continueViaLabel(provider),
                     onClick = viewModel::onNetworkSignIn,
-                    busy = state.providerBusy == provider.id,
-                    enabled = !state.isLoading && state.providerBusy == null,
+                    busy = state.networkSignInBusy,
+                    enabled = !state.signInBusy,
                 )
             }
             state.providers.forEach { provider ->
@@ -172,7 +172,7 @@ fun LoginScreen(
                     label = signInWithLabel(provider),
                     onClick = { viewModel.onProviderClick(provider) },
                     busy = state.providerBusy == provider.id,
-                    enabled = !state.isLoading && state.providerBusy == null,
+                    enabled = !state.signInBusy,
                 )
             }
             if (state.offersAccountChoice) {

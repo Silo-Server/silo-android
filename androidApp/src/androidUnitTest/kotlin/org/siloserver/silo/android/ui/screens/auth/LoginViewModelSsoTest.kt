@@ -8,6 +8,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondError
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -99,6 +100,9 @@ class LoginViewModelSsoTest {
         /** What the network sign-in answers, and where each one was sent (saved base, path). */
         var networkAnswer: ApiResult<LoginResponse> = ApiResult.Error(403, "network_identity_required", "")
         val networkCalls = mutableListOf<Pair<String, String>>()
+
+        /** When set, the network sign-in answers only once this completes. */
+        var networkGate: CompletableDeferred<Unit>? = null
         val api = object : ExternalSignInApi {
             override suspend fun listProviders(serverUrl: String) = providers
             override suspend fun oauthCapabilities(serverUrl: String) = handshake
@@ -118,6 +122,7 @@ class LoginViewModelSsoTest {
             ): ApiResult<AccountIdentity> = TODO()
             override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> {
                 networkCalls += serverUrl to signInPath
+                networkGate?.await()
                 return networkAnswer
             }
             override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String):
@@ -472,7 +477,7 @@ class LoginViewModelSsoTest {
         advanceUntilIdle()
         assertEquals(listOf("https://silo.tailnet.ts.net/silo" to "/api/v2/auth/network/7/sign-in"), f.networkCalls)
         assertTrue(vm.uiState.value.loginSuccess)
-        assertNull(vm.uiState.value.providerBusy)
+        assertFalse(vm.uiState.value.networkSignInBusy)
         assertNull(vm.uiState.value.error)
         assertEquals("net-access", f.tokens.getAccessToken())
         assertEquals("net-refresh", f.tokens.getRefreshToken())
@@ -491,7 +496,7 @@ class LoginViewModelSsoTest {
         advanceUntilIdle()
         assertEquals("Open this server at its Tailscale address to sign in this way.", vm.uiState.value.error)
         assertFalse(vm.uiState.value.loginSuccess)
-        assertNull(vm.uiState.value.providerBusy, "the button can be pressed again")
+        assertFalse(vm.uiState.value.networkSignInBusy, "the button can be pressed again")
         assertNull(f.tokens.getAccessToken())
 
         f.networkAnswer = ApiResult.NetworkError(RuntimeException("offline"))
@@ -499,6 +504,34 @@ class LoginViewModelSsoTest {
         advanceUntilIdle()
         assertEquals("Network error. Please check your connection.", vm.uiState.value.error)
         assertEquals(2, f.networkCalls.size)
+        vm.close(); f.close()
+    }
+
+    /** Reloading the options while "Continue as …" waits doesn't free the other ways in. */
+    @Test
+    fun theOtherWaysInWaitForContinueAsAcrossAnOptionsReload() = runTest(dispatcher) {
+        val f = fixture(providers = listOf(keycloak, tailscale))
+        val answer = CompletableDeferred<Unit>()
+        f.networkGate = answer
+        val vm = f.viewModel()
+        advanceUntilIdle()
+        vm.onNetworkSignIn()
+        advanceUntilIdle()
+
+        vm.loadOptions()
+        vm.onUsernameChanged("alice")
+        vm.onPasswordChanged("pw")
+        vm.onLoginClick()
+        assertTrue(vm.uiState.value.networkSignInBusy)
+        assertFalse(vm.uiState.value.isLoading, "no password sign-in starts while the options reload")
+        advanceUntilIdle()
+        vm.onProviderClick(keycloak)
+        assertNull(vm.uiState.value.providerBusy, "no browser sign-in starts either")
+
+        answer.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.networkSignInBusy)
+        assertEquals(1, f.networkCalls.size)
         vm.close(); f.close()
     }
 
@@ -539,7 +572,7 @@ class LoginViewModelSsoTest {
         val texts = cases.map { (status, code) -> networkSignInMessage(ApiResult.Error(status, code, "server detail"), "Tailscale") }
         assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
         texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
-        assertEquals("Tailscale doesn't allow this device to sign in to this server.", texts[1])
+        assertEquals("Tailscale doesn't allow this device on this server.", texts[1])
         assertEquals(
             "An account with your email already exists. Sign in with your password, then connect Tailscale in Settings → Sign-in.",
             texts[4],

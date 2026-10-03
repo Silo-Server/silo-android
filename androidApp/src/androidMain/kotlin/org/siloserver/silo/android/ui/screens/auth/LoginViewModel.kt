@@ -41,11 +41,14 @@ data class LoginUiState(
      * fallback, with a retry for the server's other ways to sign in.
      */
     val optionsUnavailable: Boolean = false,
-    /**
-     * The provider whose sign-in is under way: a browser sign-in starting,
-     * or a network sign-in ("Continue as …") waiting for the server.
-     */
+    /** The provider whose browser sign-in is starting or finishing. */
     val providerBusy: String? = null,
+    /**
+     * "Continue as …" is waiting for the server: the password form and the
+     * provider buttons wait too. Its own flag, so reloading the options
+     * can't free them while the request is still out.
+     */
+    val networkSignInBusy: Boolean = false,
     /** A start URL for the screen to open in a Custom Tab, once. */
     val browserLaunch: String? = null,
     /** "Use a different account" with several providers: which one to sign in with. */
@@ -57,11 +60,11 @@ data class LoginUiState(
     /** "Continue as <owner>": the network provider the server listed for this device, above everything else. */
     val networkProvider: SignInProvider? get() = options?.networkProvider
 
-    /** The network sign-in is waiting for the server: the password form waits too. */
-    val networkSignInBusy: Boolean get() = providerBusy != null && providerBusy == networkProvider?.id
-
     /** "Use a different account" under the provider buttons, when the server takes `prompt=select_account`. */
     val offersAccountChoice: Boolean get() = options?.selectAccount == true && providers.isNotEmpty()
+
+    /** A sign-in on this screen is under way, so no other may start. */
+    val signInBusy: Boolean get() = isLoading || providerBusy != null || networkSignInBusy
 }
 
 class LoginViewModel(
@@ -135,7 +138,7 @@ class LoginViewModel(
     }
 
     fun onLoginClick() {
-        if (_uiState.value.isLoading || _uiState.value.networkSignInBusy) return
+        if (_uiState.value.signInBusy) return
         val current = _uiState.value
         if (current.username.isBlank()) {
             _uiState.update { it.copy(error = "Username is required") }
@@ -194,20 +197,20 @@ class LoginViewModel(
         val state = _uiState.value
         val provider = state.networkProvider ?: return
         val path = provider.networkSignInPath ?: return
-        if (state.isLoading || state.providerBusy != null) return
-        _uiState.update { it.copy(providerBusy = provider.id, error = null) }
+        if (state.signInBusy) return
+        _uiState.update { it.copy(networkSignInBusy = true, error = null) }
         viewModelScope.launch {
             val result = authRepository.signInWith { serverUrl -> externalSignIn.signInWithNetworkIdentity(serverUrl, path) }
             when (result) {
                 is ApiResult.Success -> {
                     onSignedIn()
-                    _uiState.update { it.copy(providerBusy = null, loginSuccess = true) }
+                    _uiState.update { it.copy(networkSignInBusy = false, loginSuccess = true) }
                 }
                 is ApiResult.Error -> _uiState.update {
-                    it.copy(providerBusy = null, error = networkSignInMessage(result, provider.displayName))
+                    it.copy(networkSignInBusy = false, error = networkSignInMessage(result, provider.displayName))
                 }
                 is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(providerBusy = null, error = "Network error. Please check your connection.")
+                    it.copy(networkSignInBusy = false, error = "Network error. Please check your connection.")
                 }
             }
         }
@@ -223,7 +226,7 @@ class LoginViewModel(
      */
     fun onProviderClick(provider: SignInProvider, chooseAccount: Boolean = false) {
         val startPath = provider.nativeStartPath ?: return
-        if (_uiState.value.isLoading || _uiState.value.providerBusy != null) return
+        if (_uiState.value.signInBusy) return
         _uiState.update { it.copy(providerBusy = provider.id, error = null, choosingAccountProvider = false) }
         viewModelScope.launch {
             val entry = serverRegistry.activeEntry.value
@@ -267,7 +270,7 @@ class LoginViewModel(
      */
     fun onUseDifferentAccount() {
         val state = _uiState.value
-        if (!state.offersAccountChoice || state.isLoading || state.providerBusy != null) return
+        if (!state.offersAccountChoice || state.signInBusy) return
         val only = state.providers.singleOrNull()
         if (only != null) onProviderClick(only, chooseAccount = true) else _uiState.update { it.copy(choosingAccountProvider = true) }
     }
@@ -363,14 +366,14 @@ internal fun passwordLoginMessage(
  */
 internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): String =
     when (NetworkSignInFailure.of(error.code, error.error)) {
-        NetworkSignInFailure.NetworkIdentityRequired -> "Open this server at its $providerName address to sign in this way."
-        NetworkSignInFailure.NotPermitted -> "$providerName doesn't allow this device to sign in to this server."
+        NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "sign in this way")
+        NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
         NetworkSignInFailure.EmailInUse ->
             "An account with your email already exists. Sign in with your password, then connect $providerName in Settings → Sign-in."
         NetworkSignInFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
         NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.forReason("account_disabled")
         NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", providerName)
-        NetworkSignInFailure.NotFound -> "$providerName is no longer available on this server."
+        NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
         NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.forReason("provider_unavailable", providerName)
         NetworkSignInFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
         NetworkSignInFailure.Other -> when {
@@ -381,6 +384,21 @@ internal fun networkSignInMessage(error: ApiResult.Error, providerName: String):
             else -> NativeSignInMessages.forReason("login_failed", providerName)
         }
     }
+
+/**
+ * The phone's copy for provider refusals that sign-in ("Continue as …") and
+ * "Connect <provider>" in Settings share.
+ */
+internal object ProviderRefusalText {
+    /** `network_identity_required`: the app reached the server some other way; [toDo] is what needs that address. */
+    fun addressRequired(providerName: String, toDo: String) = "Open this server at its $providerName address to $toDo."
+
+    /** `not_permitted`: a tagged device, or one the provider's policy leaves out. */
+    fun notPermitted(providerName: String) = "$providerName doesn't allow this device on this server."
+
+    /** The provider is no longer enabled on the server (404). */
+    fun providerGone(providerName: String) = "$providerName is no longer available on this server."
+}
 
 internal fun loginServerHostLabel(serverUrl: String): String? {
     val trimmed = serverUrl.trim()

@@ -229,16 +229,20 @@ fun TvLoginScreen(
     // button moves from the code screen into the form.
     val networkInForm = device.passwordOnly && state.networkProvider != null
     val networkKey = if (passwordFormVisible) "formNetwork" else "network"
+    // "Continue as …" is the one-press way in, so it takes focus whenever the
+    // server offers it, unless it was refused and the code needs the person:
+    // then that recovery action leads again.
+    val networkLeads = state.networkProvider != null &&
+        (state.networkError == null || !device.status.actionTakesFocus())
 
-    // "Continue as …" takes focus whenever the server offers it: it is the
-    // one-press way in. Otherwise focus moves to the state's action when the
-    // code needs the person ("Try again" / "Show a new code"), to "Change
-    // server" when only that helps, otherwise to the one local action, "Sign
-    // in with a password". "Can't reach" and "Too many requests" keep retrying
-    // by themselves, so their "Try again" doesn't take focus (Apple TV parity).
+    // After "Continue as …", focus moves to the state's action when the code
+    // needs the person ("Try again" / "Show a new code"), to "Change server"
+    // when only that helps, otherwise to the one local action, "Sign in with a
+    // password". "Can't reach" and "Too many requests" keep retrying by
+    // themselves, so their "Try again" doesn't take focus (Apple TV parity).
     val focusTarget = when {
-        passwordFormVisible && !networkInForm -> "username"
-        state.networkProvider != null -> networkKey
+        passwordFormVisible -> if (networkInForm && networkLeads) networkKey else "username"
+        networkLeads -> networkKey
         device.status.actionTakesFocus() -> "action"
         device.status == TvSignInStatus.UpdateRequired -> "changeServer"
         device.status == TvSignInStatus.Unreachable || device.status == TvSignInStatus.TooManyRequests -> null
@@ -289,11 +293,7 @@ fun TvLoginScreen(
         NetworkSignInAction(
             provider = provider,
             busy = state.networkBusy,
-            error = state.networkError?.message(
-                providerName = null,
-                directoryName = provider.displayName,
-                networkName = provider.displayName,
-            ),
+            error = state.networkError?.message(providerName = null, externalName = provider.displayName),
             focusRequester = networkFocus,
             focusTracking = trackFocus(networkKey),
             onClick = viewModel::onNetworkSignInClick,
@@ -412,7 +412,9 @@ fun TvLoginScreen(
                         changeServerFocus = changeServerFocus,
                         usePasswordTracking = trackFocus("usePassword"),
                         changeServerTracking = trackFocus("changeServer"),
-                        onUsePassword = { showPasswordForm = true },
+                        // The form would hide "Signing in…" while "Continue as …"
+                        // waits, and its Sign in would do nothing until then.
+                        onUsePassword = { if (!state.networkBusy) showPasswordForm = true },
                         onChangeServer = changeServer,
                         showPasswordAction = state.passwordAvailable,
                         network = network,
@@ -766,55 +768,40 @@ private fun BrandHeader() {
 /**
  * [providerName] is the server's browser sign-in provider: an account that
  * signs in with it has no password here, so a refused password points to the
- * phone. [directoryName] names the provider whose first sign-in met the email
- * or identity refusals (the directory the form also reaches, or the network
- * provider), and [networkName] the network provider behind "Continue as …".
+ * phone. [externalName] names the provider the refused attempt went through:
+ * the directory (LDAP) the form also reaches, or the network provider behind
+ * "Continue as …".
  */
 @Composable
-private fun TvLoginError.message(providerName: String?, directoryName: String?, networkName: String? = null): String = when (this) {
-    TvLoginError.UsernameRequired -> stringResource(R.string.tv_signin_error_username_required)
-    TvLoginError.PasswordRequired -> stringResource(R.string.tv_signin_error_password_required)
-    TvLoginError.InvalidCredentials -> if (providerName != null) {
-        stringResource(R.string.tv_signin_error_invalid_credentials_provider, providerName)
-    } else {
-        stringResource(R.string.tv_signin_error_invalid_credentials)
+private fun TvLoginError.message(providerName: String?, externalName: String?): String {
+    val external = externalName ?: stringResource(R.string.tv_signin_provider_fallback)
+    return when (this) {
+        TvLoginError.UsernameRequired -> stringResource(R.string.tv_signin_error_username_required)
+        TvLoginError.PasswordRequired -> stringResource(R.string.tv_signin_error_password_required)
+        TvLoginError.InvalidCredentials -> if (providerName != null) {
+            stringResource(R.string.tv_signin_error_invalid_credentials_provider, providerName)
+        } else {
+            stringResource(R.string.tv_signin_error_invalid_credentials)
+        }
+        TvLoginError.EmailInUse -> stringResource(R.string.tv_signin_error_email_in_use, external)
+        TvLoginError.IdentityLinkedElsewhere -> stringResource(R.string.tv_signin_error_identity_linked_elsewhere, external)
+        TvLoginError.RateLimited -> stringResource(R.string.tv_signin_error_rate_limited)
+        TvLoginError.AccountRequired -> stringResource(R.string.tv_signin_error_account_required)
+        TvLoginError.AccountDisabled -> stringResource(R.string.tv_signin_error_account_disabled)
+        TvLoginError.Network -> stringResource(R.string.tv_signin_error_network)
+        TvLoginError.LocalLoginDisabled -> stringResource(R.string.tv_signin_error_local_login_disabled)
+        TvLoginError.NotPermitted -> stringResource(R.string.tv_signin_error_not_permitted)
+        TvLoginError.PasswordExpired -> stringResource(R.string.tv_signin_error_password_expired)
+        TvLoginError.ProviderUnavailable -> stringResource(R.string.tv_signin_error_provider_unavailable)
+        TvLoginError.IdentityChanged -> stringResource(R.string.tv_signin_error_identity_changed)
+        TvLoginError.SaveFailed -> stringResource(R.string.tv_signin_error_save_failed)
+        TvLoginError.CleanupIncomplete -> stringResource(R.string.tv_signin_error_cleanup_incomplete)
+        TvLoginError.NetworkIdentityRequired -> stringResource(R.string.tv_signin_error_network_identity_required, external)
+        TvLoginError.NetworkNotPermitted -> stringResource(R.string.tv_signin_error_network_not_permitted, external)
+        TvLoginError.NetworkEmailInUse -> stringResource(R.string.tv_signin_error_network_email_in_use, external)
+        TvLoginError.NetworkProviderGone -> stringResource(R.string.tv_signin_error_network_provider_gone, external)
+        is TvLoginError.Server -> message ?: stringResource(R.string.tv_signin_error_login_failed)
     }
-    TvLoginError.EmailInUse -> stringResource(
-        R.string.tv_signin_error_email_in_use,
-        directoryName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    TvLoginError.IdentityLinkedElsewhere -> stringResource(
-        R.string.tv_signin_error_identity_linked_elsewhere,
-        directoryName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    TvLoginError.RateLimited -> stringResource(R.string.tv_signin_error_rate_limited)
-    TvLoginError.AccountRequired -> stringResource(R.string.tv_signin_error_account_required)
-    TvLoginError.AccountDisabled -> stringResource(R.string.tv_signin_error_account_disabled)
-    TvLoginError.Network -> stringResource(R.string.tv_signin_error_network)
-    TvLoginError.LocalLoginDisabled -> stringResource(R.string.tv_signin_error_local_login_disabled)
-    TvLoginError.NotPermitted -> stringResource(R.string.tv_signin_error_not_permitted)
-    TvLoginError.PasswordExpired -> stringResource(R.string.tv_signin_error_password_expired)
-    TvLoginError.ProviderUnavailable -> stringResource(R.string.tv_signin_error_provider_unavailable)
-    TvLoginError.IdentityChanged -> stringResource(R.string.tv_signin_error_identity_changed)
-    TvLoginError.SaveFailed -> stringResource(R.string.tv_signin_error_save_failed)
-    TvLoginError.CleanupIncomplete -> stringResource(R.string.tv_signin_error_cleanup_incomplete)
-    TvLoginError.NetworkIdentityRequired -> stringResource(
-        R.string.tv_signin_error_network_identity_required,
-        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    TvLoginError.NetworkNotPermitted -> stringResource(
-        R.string.tv_signin_error_network_not_permitted,
-        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    TvLoginError.NetworkEmailInUse -> stringResource(
-        R.string.tv_signin_error_network_email_in_use,
-        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    TvLoginError.NetworkProviderGone -> stringResource(
-        R.string.tv_signin_error_network_provider_gone,
-        networkName ?: stringResource(R.string.tv_signin_provider_fallback),
-    )
-    is TvLoginError.Server -> message ?: stringResource(R.string.tv_signin_error_login_failed)
 }
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)

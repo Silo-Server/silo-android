@@ -60,8 +60,10 @@ interface ExternalSignInApi {
     suspend fun completeOAuthLogin(serverUrl: String, code: String, codeVerifier: String): ApiResult<LoginResponse>
 
     /**
-     * `signInWithNetworkIdentity`: POST `{}` to [signInPath] (base-relative,
-     * from provider discovery) on the saved base [serverUrl], unauthenticated.
+     * `signInWithNetworkIdentity`: POST `{}` to [signInPath] on the saved base
+     * [serverUrl], unauthenticated. [signInPath] is a provider's
+     * [SignInProvider.networkSignInPath], which discovery already reduced to
+     * the base-relative route, so nothing is posted to another origin.
      * Answers `login`'s token pair and account. Never retried: each attempt
      * spends the server's login rate-limit budget.
      */
@@ -145,12 +147,9 @@ class DefaultExternalSignInApi(
         }.requireAuthStatus(200)
     }.map { it.domain() }
 
-    override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> {
-        // Only the listed route, below the saved base: nothing is posted to another origin.
-        val path = networkSignInPath(signInPath)
-            ?: return ApiResult.Error(0, "invalid_request", "Not a network sign-in path.")
-        return safeApiV2Call<TokenPairV2>(apiV2Gate) {
-            client.post("${serverUrl.trimEnd('/')}$path") {
+    override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> =
+        safeApiV2Call<TokenPairV2>(apiV2Gate) {
+            client.post("${serverUrl.trimEnd('/')}$signInPath") {
                 skipSiloAuth(); singleAttempt()
                 // The server refuses a sign-in without a JSON body (415), which
                 // keeps a cross-site form post from signing a device in.
@@ -158,7 +157,6 @@ class DefaultExternalSignInApi(
                 setBody(JsonObject(emptyMap()))
             }.requireAuthStatus(200)
         }.map { it.domain() }
-    }
 
     override suspend fun listIdentities(scope: AuthScopeSnapshot): ApiResult<AccountIdentities> =
         safeApiV2Call<AccountIdentityCollectionV2>(apiV2Gate.forServer(scope.serverId)) {

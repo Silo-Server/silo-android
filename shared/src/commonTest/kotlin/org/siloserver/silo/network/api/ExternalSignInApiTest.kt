@@ -200,22 +200,18 @@ class ExternalSignInApiTest {
         } finally { client.close() }
     }
 
+    /** Discovery keeps only the listed route, so the sign-in posts nowhere else. */
     @Test
-    fun networkSignInGoesNowhereButTheListedRoute() = runTest {
-        var requests = 0
-        val (client, api) = api { requests++; json("{}") }
-        try {
-            listOf(
-                "//evil.example.test/api/v2/auth/network/5/sign-in",
-                "https://evil.example.test/api/v2/auth/network/5/sign-in",
-                "/api/v2/auth/login",
-                "/api/v2/auth/network/5/sign-in/../../login",
-                "",
-            ).forEach { path ->
-                assertIs<ApiResult.Error>(api.signInWithNetworkIdentity("https://silo.example.test", path), path)
-            }
-            assertEquals(0, requests)
-        } finally { client.close() }
+    fun networkSignInGoesNowhereButTheListedRoute() {
+        listOf(
+            "//evil.example.test/api/v2/auth/network/5/sign-in",
+            "https://evil.example.test/api/v2/auth/network/5/sign-in",
+            "/api/v2/auth/login",
+            "/api/v2/auth/network/5/sign-in/../../login",
+            "",
+            null,
+        ).forEach { path -> assertNull(networkSignInPath(path), path) }
+        assertEquals("/api/v2/auth/network/5/sign-in", networkSignInPath("/silo/api/v2/auth/network/5/sign-in"))
     }
 
     @Test
