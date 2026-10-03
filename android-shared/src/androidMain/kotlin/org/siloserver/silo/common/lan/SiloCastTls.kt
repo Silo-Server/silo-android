@@ -37,8 +37,12 @@ import org.bouncycastle.tls.crypto.impl.bc.BcTlsCrypto
  * external-PSK hook.
  */
 object SiloCastTls {
-    private val KEY = "silo-cast-v1".toByteArray(Charsets.UTF_8)
-    private val IDENTITY = "silo-cast".toByteArray(Charsets.UTF_8)
+    // Fresh arrays on every use: BouncyCastle zeroes the PSK buffer it is
+    // handed once a TLS 1.2 handshake has derived its keys. Handing it one
+    // shared array let the first TLS 1.2 client wipe the key for the rest of
+    // the process, failing every later handshake (TLS 1.3 included).
+    private fun key(): ByteArray = "silo-cast-v1".toByteArray(Charsets.UTF_8)
+    private fun identity(): ByteArray = "silo-cast".toByteArray(Charsets.UTF_8)
     private const val TLS12_SUITE = CipherSuite.TLS_PSK_WITH_AES_128_GCM_SHA256
     private const val TLS13_SUITE = CipherSuite.TLS_AES_128_GCM_SHA256
     private const val HANDSHAKE_TIMEOUT_MS = 10_000
@@ -117,7 +121,7 @@ object SiloCastTls {
         object : TlsPSKIdentityManager {
             override fun getHint(): ByteArray? = null
 
-            override fun getPSK(identity: ByteArray?): ByteArray = KEY
+            override fun getPSK(identity: ByteArray?): ByteArray = key()
         },
     ) {
         override fun getCipherSuites(): IntArray = intArrayOf(TLS13_SUITE, TLS12_SUITE)
@@ -128,7 +132,7 @@ object SiloCastTls {
         override fun allowCertificateStatus(): Boolean = false
 
         override fun getExternalPSK(identities: Vector<*>?): TlsPSKExternal =
-            BasicTlsPSKExternal(IDENTITY, bcCrypto.createSecret(KEY), PRFAlgorithm.tls13_hkdf_sha256)
+            BasicTlsPSKExternal(identity(), bcCrypto.createSecret(key()), PRFAlgorithm.tls13_hkdf_sha256)
 
         override fun notifyAlertRaised(
             alertLevel: Short,
@@ -146,7 +150,7 @@ object SiloCastTls {
         private val bcCrypto: BcTlsCrypto,
     ) : PSKTlsClient(
         bcCrypto,
-        BasicTlsPSKIdentity(IDENTITY, KEY),
+        BasicTlsPSKIdentity(identity(), key()),
     ) {
         override fun getSupportedCipherSuites(): IntArray = intArrayOf(TLS13_SUITE, TLS12_SUITE)
 
@@ -157,8 +161,8 @@ object SiloCastTls {
             Vector<TlsPSKExternal>().apply {
                 add(
                     BasicTlsPSKExternal(
-                        IDENTITY,
-                        bcCrypto.createSecret(KEY),
+                        identity(),
+                        bcCrypto.createSecret(key()),
                         PRFAlgorithm.tls13_hkdf_sha256,
                     ),
                 )
