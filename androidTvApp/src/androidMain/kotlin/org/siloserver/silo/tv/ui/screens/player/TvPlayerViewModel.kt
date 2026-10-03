@@ -12,6 +12,7 @@ import org.siloserver.silo.tv.BuildConfig
 import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.common.player.SubDiag
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -102,6 +103,8 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.playback.PlaybackSubtitleReady
+import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.affects
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
@@ -5059,6 +5062,25 @@ class TvPlayerViewModel(
         )
         if (applied && autoSelectId != null) pendingAuthoritativeSubtitleDownloadId = null
         return applied
+    }
+
+    /**
+     * The server retimed a stored subtitle (sync or timing reset). Media3
+     * keeps the cues it already parsed, so when that subtitle is the mounted
+     * sidecar, remount the same item at the same position to fetch it again.
+     */
+    internal fun applySubtitleTimingChanged(update: PlaybackSubtitleTimingChanged) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        val mounted = subtitlesForVideoMediaMount(
+            subtitles = state.subtitleUrls,
+            playbackPlan = state.playbackPlan,
+            subtitleIdentity = state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity,
+            preferMuxedTracks = true,
+        )
+        if (update.affects(mounted)) subtitleTransactions.remountSubtitles()
     }
 
     // ---- Subtitle suite: AI translate / transcribe -------------------------------
