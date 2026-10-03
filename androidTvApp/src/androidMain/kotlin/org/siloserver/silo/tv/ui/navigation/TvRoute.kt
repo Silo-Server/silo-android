@@ -226,17 +226,21 @@ sealed class TvRoute(val route: String) {
         val title: String,
         /** Drives which sort keys and filter facets the page offers. */
         val libraryType: String = "",
+        val collectionSource: String = "library_collection",
+        val mediaScope: String? = null,
     ) : TvRoute(
         "library/$libraryId/collection/${collectionId.routeEncode()}" +
-            "?title=${title.routeEncode()}&libraryType=${libraryType.routeEncode()}"
+            "?title=${title.routeEncode()}&libraryType=${libraryType.routeEncode()}&source=${collectionSource.routeEncode()}&mediaScope=${mediaScope.orEmpty().routeEncode()}"
     ) {
         companion object {
             const val ROUTE =
-                "library/{libraryId}/collection/{collectionId}?title={title}&libraryType={libraryType}"
+                "library/{libraryId}/collection/{collectionId}?title={title}&libraryType={libraryType}&source={collectionSource}&mediaScope={mediaScope}"
             const val ARG_LIBRARY_ID = "libraryId"
             const val ARG_COLLECTION_ID = "collectionId"
             const val ARG_TITLE = "title"
             const val ARG_LIBRARY_TYPE = "libraryType"
+            const val ARG_SOURCE = "collectionSource"
+            const val ARG_MEDIA_SCOPE = "mediaScope"
         }
     }
 

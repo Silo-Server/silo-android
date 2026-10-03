@@ -57,6 +57,7 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.tv.material3.Card
+import androidx.tv.material3.Button
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -101,6 +102,7 @@ fun TvLibraryDetailScreen(
     libraryId: Int,
     libraryTitle: String,
     libraryType: String,
+    mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onCollectionClick: (collectionId: String, title: String, isUserCollection: Boolean) -> Unit,
     onInitialContentFocus: () -> Unit = {},
@@ -115,8 +117,8 @@ fun TvLibraryDetailScreen(
     sectionRequestNonce: Int = 0,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     viewModel: TvLibraryDetailViewModel = koinViewModel(
-        key = "library-$libraryId",
-        parameters = { parametersOf(libraryId, libraryTitle, libraryType) },
+        key = "library-$libraryId-${mediaScope.orEmpty()}",
+        parameters = { parametersOf(libraryId, libraryTitle, libraryType, mediaScope) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -138,7 +140,7 @@ fun TvLibraryDetailScreen(
     ) {
         when (state.selectedTab) {
             TvLibraryTab.Recommended -> RecommendedTab(
-                surfaceKey = "library-$libraryId",
+                surfaceKey = "library-$libraryId-${mediaScope.orEmpty()}",
                 state = state,
                 onItemClick = onItemClick,
                 onRetry = viewModel::retryRecommended,
@@ -252,6 +254,7 @@ fun TvLibraryDetailScreen(
 // Tab content
 // ============================================================================
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun RecommendedTab(
     /** Distinguishes this feed's saveable slots from other surfaces'. */
@@ -291,14 +294,28 @@ private fun RecommendedTab(
             )
         }
         else -> {
-            TvSkylineSectionFeed(
-                surfaceKey = surfaceKey,
-                sections = rows,
-                onItemClick = onItemClick,
-                focusRequest = focusRequest,
-                onInitialContentFocus = onInitialContentFocus,
-                onContentUpFallbackChanged = onContentUpFallbackChanged,
-            )
+            Box {
+                TvSkylineSectionFeed(
+                    surfaceKey = surfaceKey,
+                    sections = rows,
+                    onItemClick = onItemClick,
+                    focusRequest = focusRequest,
+                    onInitialContentFocus = onInitialContentFocus,
+                    onContentUpFallbackChanged = onContentUpFallbackChanged,
+                )
+                state.recommendedError?.let { message ->
+                    Row(
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal = Spacing.safeArea, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(message, modifier = Modifier.weight(1f))
+                        Button(onClick = onRetry) { Text("Retry") }
+                    }
+                }
+            }
         }
     }
 }

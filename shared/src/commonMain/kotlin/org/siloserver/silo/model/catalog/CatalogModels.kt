@@ -66,7 +66,15 @@ data class BrowseItem(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
-    @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null
+    @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    @SerialName("series_id") val seriesId: String? = null,
+    @SerialName("series_title") val seriesTitle: String? = null,
+    @SerialName("season_number") val seasonNumber: Int? = null,
+    @SerialName("episode_number") val episodeNumber: Int? = null,
+    @SerialName("item_source") val itemSource: String? = null,
+    @SerialName("position_seconds") val positionSeconds: Double? = null,
+    @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    @SerialName("progress_updated_at") val progressUpdatedAt: String? = null,
 )
 
 @Serializable
