@@ -255,10 +255,13 @@ fun AuroraTextField(
     onImeAction: (() -> Unit)? = null,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     trailing: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val shape = RoundedCornerShape(AuroraControlCorner)
+    // A disabled field's text dims like a disabled sign-in button's label.
+    val inkAlpha = if (enabled) 1f else 0.6f
 
     Column(modifier = modifier.fillMaxWidth()) {
         AuroraFieldLabel(label)
@@ -290,17 +293,18 @@ fun AuroraTextField(
                         Text(
                             text = placeholder,
                             fontSize = 17.sp,
-                            color = if (isFocused) AuroraActivePlaceholder else AuroraInkTertiary,
+                            color = (if (isFocused) AuroraActivePlaceholder else AuroraInkTertiary).let { it.copy(alpha = it.alpha * inkAlpha) },
                         )
                     }
                     BasicTextField(
                         value = value,
                         onValueChange = onValueChange,
                         modifier = Modifier.fillMaxWidth(),
+                        enabled = enabled,
                         singleLine = true,
                         textStyle = LocalTextStyle.current.merge(
                             TextStyle(
-                                color = if (isFocused) AuroraActiveInk else AuroraInk,
+                                color = (if (isFocused) AuroraActiveInk else AuroraInk).let { it.copy(alpha = it.alpha * inkAlpha) },
                                 fontSize = 17.sp,
                             ),
                         ),

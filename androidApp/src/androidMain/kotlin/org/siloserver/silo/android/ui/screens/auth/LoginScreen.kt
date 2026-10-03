@@ -225,6 +225,7 @@ fun LoginScreen(
                     modifier = Modifier.focusRequester(usernameFocus),
                     placeholder = "yourname",
                     imeAction = ImeAction.Next,
+                    enabled = !state.signInBusy,
                 )
                 AuroraTextField(
                     label = "Password",
@@ -239,8 +240,9 @@ fun LoginScreen(
                     } else {
                         PasswordVisualTransformation()
                     },
+                    enabled = !state.signInBusy,
                     trailing = {
-                        IconButton(onClick = { showPassword = !showPassword }) {
+                        IconButton(onClick = { showPassword = !showPassword }, enabled = !state.signInBusy) {
                             Icon(
                                 imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
                                 contentDescription = if (showPassword) "Hide password" else "Show password",
@@ -256,7 +258,8 @@ fun LoginScreen(
                     label = if (state.isLoading) "Signing in…" else "Sign in",
                     onClick = viewModel::onLoginClick,
                     isLoading = state.isLoading,
-                    enabled = !state.networkSignInBusy,
+                    // Any sign-in under way: the view model takes no password until it ends.
+                    enabled = !state.signInBusy,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

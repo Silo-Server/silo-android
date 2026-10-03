@@ -523,6 +523,7 @@ class LoginViewModelSsoTest {
         vm.onPasswordChanged("pw")
         vm.onLoginClick()
         assertTrue(vm.uiState.value.networkSignInBusy)
+        assertTrue(vm.uiState.value.signInBusy, "the password form is disabled while it waits")
         assertFalse(vm.uiState.value.isLoading, "no password sign-in starts while the options reload")
         advanceUntilIdle()
         vm.onProviderClick(keycloak)
@@ -531,6 +532,7 @@ class LoginViewModelSsoTest {
         answer.complete(Unit)
         advanceUntilIdle()
         assertFalse(vm.uiState.value.networkSignInBusy)
+        assertFalse(vm.uiState.value.signInBusy)
         assertEquals(1, f.networkCalls.size)
         vm.close(); f.close()
     }
