@@ -37,6 +37,7 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.ui.castCrewCredits
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -127,6 +128,8 @@ fun MovieDetailContent(
     val sourceTokens = HeroMetadata.movieSourceTokens(detail)
     val selectedRuntimeMinutes = selectedMediaRuntimeMinutes(detail, selectedVersion)
     val factsLine = HeroMetadata.movieFactsLine(detail, selectedRuntimeMinutes)
+    // Movies get the grouped Cast & Crew row; episodes keep the plain cast row.
+    val castCrew = remember(detail) { castCrewCredits(detail) }
 
     // iOS below-fold section spacing is 36 (hero→first section 32). Use 36
     // uniformly — the closest single-value match to the iOS column rhythm.
@@ -320,12 +323,12 @@ fun MovieDetailContent(
             }
         }
 
-        if (detail.cast.isNotEmpty()) {
+        if (castCrew.isNotEmpty()) {
             item(contentType = "detail-cast") {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     SectionHeader(title = "Cast & Crew")
                     CastCrewSection(
-                        cast = detail.cast,
+                        credits = castCrew,
                         onPersonClick = onPersonClick,
                     )
                 }

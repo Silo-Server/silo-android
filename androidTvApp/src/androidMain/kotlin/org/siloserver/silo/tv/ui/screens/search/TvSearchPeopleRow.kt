@@ -15,7 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.model.catalog.CastMember
+import org.siloserver.silo.common.ui.CastCrewCredit
+import org.siloserver.silo.common.ui.CastCrewGroup
 import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.screens.detail.TvCastCard
@@ -47,7 +48,16 @@ internal fun TvSearchPeopleRow(
     if (people.isEmpty()) return
     val rowState = rememberLazyListState()
     val members = remember(people) {
-        people.map { CastMember(name = it.name, personId = it.id.toString(), photoUrl = it.photoUrl, photoThumbhash = it.photoThumbhash) }
+        people.map {
+            CastCrewCredit(
+                group = CastCrewGroup.Cast,
+                name = it.name,
+                caption = null,
+                personId = it.id.toString(),
+                photoUrl = it.photoUrl,
+                photoThumbhash = it.photoThumbhash,
+            )
+        }
     }
     Column(
         modifier = modifier
@@ -72,7 +82,7 @@ internal fun TvSearchPeopleRow(
                 ) { index, person ->
                     val isRestoreTarget = restoreItemFocusRequester != null && index == restoreItemIndex
                     TvCastCard(
-                        member = members[index],
+                        credit = members[index],
                         photoSize = 100.dp,
                         // The restore target wins the slot when it is this card:
                         // index zero can be both.

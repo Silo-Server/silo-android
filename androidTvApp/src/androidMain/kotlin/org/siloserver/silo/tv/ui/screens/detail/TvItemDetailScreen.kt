@@ -97,6 +97,7 @@ import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.audiobook.AudioPlaybackTrack
 import org.siloserver.silo.audiobook.AudiobookTimeline
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.ui.castCrewCredits
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.common.ui.openYoutubeTrailer
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
@@ -572,7 +573,10 @@ private fun TvDetailContent(
     // chips) sits above the cast / similar rails — drives their
     // Up-return-to-hero fallback.
     val hasEpisodeNavAbove = showsEpisodeRail || showsSeasonChips
-    val showsCastSection = !isAudiobook && detail.cast.isNotEmpty()
+    // Movies and series get the grouped Cast & Crew row (directors or
+    // creators, writers, cast); episodes keep the plain cast row.
+    val castCrew = remember(detail) { castCrewCredits(detail) }
+    val showsCastSection = !isAudiobook && castCrew.isNotEmpty()
     val showsTrailersSection = !isAudiobook && trailerEntries.isNotEmpty()
     val showsSimilarRail = !isAudiobook && detail.type != "episode" && state.moreLikeThis.isNotEmpty()
     val showsDetailsSection = !isAudiobook && remember(detail) { detail.hasTvDetailFacts() }
@@ -1082,7 +1086,7 @@ private fun TvDetailContent(
                                     .detailBodySectionAnchor(listState, coroutineScope),
                             ) {
                             TvCastCrewSection(
-                                cast = detail.cast,
+                                credits = castCrew,
                                 horizontalContentPadding = TvDetailHorizontalInset,
                                 firstItemFocusRequester = firstCastFocus,
                                 // Cast is the first body rail only when there is no
@@ -1096,11 +1100,11 @@ private fun TvDetailContent(
                                 restoreFocusRequester = castReturnFocus
                                     .takeIf { pendingCastFocusIndex >= 0 },
                                 onRestoreCardFocused = { castRestoreFocused.value = true },
-                                onCastMemberClick = { index, member ->
+                                onCreditClick = { index, credit ->
                                     // Record the index only once navigation
                                     // actually fires — openPerson can no-op when
                                     // the person can't be resolved.
-                                    viewModel.openPerson(member) { personId ->
+                                    viewModel.openPerson(credit.name, credit.personId) { personId ->
                                         pendingSimilarContentId = null
                                         pendingCastFocusIndex = index
                                         castRestoreFocused.value = false

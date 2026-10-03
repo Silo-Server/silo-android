@@ -174,9 +174,11 @@ fun TvRailScrollBehavior(content: @Composable () -> Unit) {
  * viewport edge that D-pad focus reaches through beyond-bounds layout — is
  * extrapolated from the nearest visible card, since rail cards share a width
  * and spacing; the list clamps the result. Only a genuinely far target (deep
- * restore) falls back to `animateScrollToItem`.
+ * restore) falls back to `animateScrollToItem`. Rails whose items differ in
+ * width pass [uniformItems] = false, so every offscreen target uses
+ * `animateScrollToItem` instead of an extrapolated distance.
  */
-suspend fun LazyListState.tvRailPinItem(index: Int, leadingPx: Float) {
+suspend fun LazyListState.tvRailPinItem(index: Int, leadingPx: Float, uniformItems: Boolean = true) {
     val info = layoutInfo
     val visible = info.visibleItemsInfo
     val target = leadingPx + info.viewportStartOffset
@@ -184,6 +186,7 @@ suspend fun LazyListState.tvRailPinItem(index: Int, leadingPx: Float) {
     val distance = when {
         item != null -> item.offset - target
         visible.isEmpty() -> null
+        !uniformItems -> null
         index > visible.last().index && index - visible.last().index <= NEAR_EDGE_ITEMS -> {
             val last = visible.last()
             val stride = last.size + info.mainAxisItemSpacing
@@ -210,13 +213,15 @@ private const val NEAR_EDGE_ITEMS = 2
 
 /**
  * Pin the item at [index] (see [tvRailPinItem]) whenever it gains focus.
- * [leading] is the row's start content padding.
+ * [leading] is the row's start content padding. Pass [uniformItems] = false
+ * for a rail whose items are not all the same width.
  */
 @Composable
 fun Modifier.tvRailPinOnFocus(
     state: LazyListState,
     index: Int,
     leading: Dp,
+    uniformItems: Boolean = true,
 ): Modifier {
     val leadingPx = with(LocalDensity.current) { leading.toPx() }
     val scope = rememberCoroutineScope()
@@ -227,7 +232,7 @@ fun Modifier.tvRailPinOnFocus(
             (event.key == Key.DirectionLeft || event.key == Key.DirectionRight) &&
             state.isScrollInProgress
     }.onFocusChanged { focusState ->
-        if (focusState.isFocused) scope.launch { state.tvRailPinItem(index, leadingPx) }
+        if (focusState.isFocused) scope.launch { state.tvRailPinItem(index, leadingPx, uniformItems) }
     }
 }
 

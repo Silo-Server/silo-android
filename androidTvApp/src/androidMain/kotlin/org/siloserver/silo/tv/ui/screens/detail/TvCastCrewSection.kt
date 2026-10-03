@@ -8,8 +8,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -54,7 +56,9 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.model.catalog.CastMember
+import org.siloserver.silo.common.ui.CastCrewCredit
+import org.siloserver.silo.common.ui.components.verticalText
+import org.siloserver.silo.common.ui.personInitials
 import org.siloserver.silo.tv.ui.theme.TvRailScrollBehavior
 import org.siloserver.silo.tv.ui.theme.tvRailPinOnFocus
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
@@ -64,17 +68,24 @@ internal fun restoredRailIndex(lastFocusedIndex: Int, itemCount: Int): Int? =
     if (itemCount <= 0) null else lastFocusedIndex.coerceIn(0, itemCount - 1)
 
 /**
- * Horizontal rail of circular cast portraits, matching the tvOS
- * `TVDetailCastRail`. Cards lift on focus; the whole rail is a `focusGroup`
- * so seasons-rail / hero focus arithmetic stays clean. Cards lift on focus
- * and invoke [onCastMemberClick] when selected. The caller decides whether a
- * member has a routable `person_id`; members without one can still render as
- * display-only credits.
+ * Horizontal Cast & Crew rail of circular portraits, matching the tvOS
+ * `TVDetailCastRail` card and the Silo web grouping: directors (or series
+ * creators), then writers, then cast, with a thin labelled divider between
+ * groups. Every credit uses the same [TvCastCard], so crew and cast cards
+ * stay the same size. Cards lift on focus; the whole rail is a `focusGroup`
+ * so seasons-rail / hero focus arithmetic stays clean. Cards invoke
+ * [onCreditClick] when selected. The caller decides whether a credit has a
+ * routable `person_id`; credits without one can still render as
+ * display-only cards.
+ *
+ * Dividers are drawn inside the following card's LazyRow item rather than as
+ * items of their own, so item index == card index for focus restore and
+ * pinning, and the dividers can never take D-pad focus.
  */
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvCastCrewSection(
-    cast: List<CastMember>,
+    credits: List<CastCrewCredit>,
     modifier: Modifier = Modifier,
     /**
      * Safe-area inset applied INSIDE the rail (header padding + LazyRow
@@ -89,7 +100,7 @@ fun TvCastCrewSection(
     onDirectionUp: (() -> Boolean)? = null,
     /**
      * Attaches [restoreFocusRequester] to the card at this index so the caller
-     * can put focus back on the cast member that pushed a person page.
+     * can put focus back on the credit that pushed a person page.
      */
     restoreFocusIndex: Int = -1,
     restoreFocusRequester: FocusRequester? = null,
@@ -97,16 +108,20 @@ fun TvCastCrewSection(
      *  can end their restore window immediately instead of holding it open
      *  (and re-requesting) for a fixed number of frames. */
     onRestoreCardFocused: (() -> Unit)? = null,
-    onCastMemberClick: (index: Int, member: CastMember) -> Unit = { _, _ -> },
+    onCreditClick: (index: Int, credit: CastCrewCredit) -> Unit = { _, _ -> },
 ) {
-    if (cast.isEmpty()) return
+    if (credits.isEmpty()) return
     val photoSize = 100.dp
     var lastFocusedIndex by rememberSaveable { mutableIntStateOf(-1) }
     val rememberedEntryRequester = remember { FocusRequester() }
     val castListState = rememberLazyListState()
-    // One list per cast snapshot: a fresh take() per composition re-keys the
-    // LazyRow interval on every focus move.
-    val visibleCast = remember(cast) { cast.take(24) }
+    // One list per credits snapshot: a fresh take() per composition re-keys
+    // the LazyRow interval on every focus move. Movie and series credits are
+    // already capped well below this; it bounds plain episode cast rows.
+    val visibleCast = remember(credits) { credits.take(24) }
+    // A divider widens the first card of its group, so a rail with dividers
+    // can't extrapolate offscreen card positions from a neighbour.
+    val uniformItems = remember(visibleCast) { visibleCast.none { it.dividerLabel != null } }
     val rememberedEntryIndex = restoredRailIndex(lastFocusedIndex, visibleCast.size)
 
     Column(
@@ -162,11 +177,16 @@ fun TvCastCrewSection(
         ) {
             itemsIndexed(
                 visibleCast,
-                key = { idx, member -> "${member.personId ?: member.name}-${member.order}-$idx" },
+                key = { idx, credit -> "${credit.group}-${credit.personId ?: credit.name}-$idx" },
                 contentType = { _, _ -> "cast-member" },
-            ) { index, member ->
+            ) { index, credit ->
+                Row(verticalAlignment = Alignment.Top) {
+                credit.dividerLabel?.let { label ->
+                    TvCastCrewDivider(label = label, height = photoSize)
+                    Spacer(modifier = Modifier.width(22.dp))
+                }
                 TvCastCard(
-                    member = member,
+                    credit = credit,
                     photoSize = photoSize,
                     focusRequester = firstItemFocusRequester.takeIf { index == 0 },
                     cardModifier = (if (index == 0) firstItemCardModifier else Modifier)
@@ -184,7 +204,12 @@ fun TvCastCrewSection(
                                 Modifier
                             },
                         )
-                        .tvRailPinOnFocus(castListState, index, horizontalContentPadding)
+                        .tvRailPinOnFocus(
+                            castListState,
+                            index,
+                            horizontalContentPadding,
+                            uniformItems = uniformItems,
+                        )
                         .onFocusChanged { state ->
                             if (state.isFocused) {
                                 lastFocusedIndex = index
@@ -193,18 +218,49 @@ fun TvCastCrewSection(
                                 }
                             }
                         },
-                    onClick = { onCastMemberClick(index, member) },
+                    onClick = { onCreditClick(index, credit) },
                 )
+                }
             }
         }
         }
     }
 }
 
+/** Thin vertical rule with a small rotated group label, e.g. "WRITERS". Not focusable. */
+@Composable
+private fun TvCastCrewDivider(label: String, height: Dp) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.height(height),
+    ) {
+        Text(
+            text = label.uppercase(),
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.SemiBold,
+                // TV copy keeps the 14sp readability floor.
+                fontSize = 14.sp,
+                lineHeight = 16.sp,
+                letterSpacing = 1.0.sp,
+            ),
+            color = Color.White.copy(alpha = 0.6f),
+            maxLines = 1,
+            modifier = Modifier.verticalText(),
+        )
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(Color.White.copy(alpha = 0.2f)),
+        )
+    }
+}
+
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvCastCard(
-    member: CastMember,
+    credit: CastCrewCredit,
     photoSize: Dp,
     focusRequester: FocusRequester?,
     cardModifier: Modifier,
@@ -236,13 +292,23 @@ internal fun TvCastCard(
                     .background(DarkSurfaceElevated),
                 contentAlignment = Alignment.Center,
             ) {
-                if (!member.photoUrl.isNullOrBlank()) {
+                val initials = personInitials(credit.name)
+                if (!credit.photoUrl.isNullOrBlank()) {
                     ThumbhashImage(
-                        url = member.photoUrl,
-                        thumbhash = member.photoThumbhash,
-                        contentDescription = member.name,
+                        url = credit.photoUrl,
+                        thumbhash = credit.photoThumbhash,
+                        contentDescription = credit.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
+                    )
+                } else if (initials.isNotEmpty()) {
+                    Text(
+                        text = initials,
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 28.sp,
+                        ),
+                        color = Color.White.copy(alpha = 0.6f),
                     )
                 } else {
                     Icon(
@@ -256,7 +322,7 @@ internal fun TvCastCard(
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = member.name,
+            text = credit.name,
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
@@ -271,10 +337,10 @@ internal fun TvCastCard(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth(),
         )
-        if (!member.character.isNullOrBlank()) {
+        if (!credit.caption.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = member.character!!,
+                text = credit.caption.orEmpty(),
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 14.sp,
                     lineHeight = 18.sp,
