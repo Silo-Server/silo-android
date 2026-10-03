@@ -23,6 +23,7 @@ fun deviceCaptioningAppearance(context: Context, base: SubtitleAppearance): Subt
     val edgeType = style.takeIf { it.hasEdgeType() }?.edgeType
     val edgeColor = style.takeIf { it.hasEdgeColor() }?.edgeColor
 
+    val foregroundAlpha = fontColor?.let { AndroidColor.alpha(it) }
     val backgroundAlpha = backgroundColor?.let { AndroidColor.alpha(it) }
     val backgroundStyle = when {
         backgroundAlpha == null -> SubtitleBackgroundStylePreset.Box
@@ -34,6 +35,7 @@ fun deviceCaptioningAppearance(context: Context, base: SubtitleAppearance): Subt
         fontSize = fontSizePresetFor(manager.fontScale),
         fontFamily = base.fontFamily,
         fontColor = fontColor?.let(::rgbHex) ?: base.fontColor,
+        textOpacity = foregroundAlpha?.let { (it * 100 / 255).coerceIn(1, 100) } ?: base.textOpacity,
         backgroundColor = backgroundColor?.let(::rgbHex) ?: base.backgroundColor,
         backgroundStyle = backgroundStyle,
         backgroundOpacity = backgroundAlpha?.let { (it * 100) / 255 } ?: base.backgroundOpacity,

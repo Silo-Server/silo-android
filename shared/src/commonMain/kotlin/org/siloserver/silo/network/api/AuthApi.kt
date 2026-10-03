@@ -8,6 +8,9 @@ import io.ktor.http.*
 import org.siloserver.silo.model.auth.*
 import org.siloserver.silo.network.ApiErrorBody
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
+import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.freshSiloAuth
 import org.siloserver.silo.network.map
 import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.skipSiloAuth
@@ -115,6 +118,20 @@ class AuthApi(
 
     suspend fun getMe(): ApiResult<User> =
         safeApiV2Call<Account>(apiV2Gate) { client.get("/api/v2/account/me") }.map { account -> account.toUser() }
+
+    /**
+     * The account signed in on [scope]'s server, which need not be the active
+     * one. Read by a phone about to approve a TV, so the scope's access token is
+     * renewed first when it has expired or is about to (TV sign-in spec).
+     */
+    suspend fun getMe(scope: AuthScopeSnapshot): ApiResult<User> =
+        // Gated on the scope's own server, not the active one.
+        safeApiV2Call<Account>(apiV2Gate.forServer(scope.serverId)) {
+            client.get("/api/v2/account/me") {
+                authScope(scope)
+                freshSiloAuth()
+            }
+        }.map { account -> account.toUser() }
 
     suspend fun logout(): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
         client.post("/api/v2/auth/logout").requireAuthStatus(204)

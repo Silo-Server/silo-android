@@ -609,6 +609,27 @@ class SubtitleManagerTrackSelectionTest {
         }
     }
 
+    @Test
+    fun renderableTextTracksDropUnsupportedTracksAndReportTheCueSourceFormat() {
+        fun group(format: Format, support: Int) =
+            Tracks.Group(TrackGroup(format), false, intArrayOf(support), booleanArrayOf(false))
+        val tracks = Tracks(
+            listOf(
+                group(
+                    subtitle("English", "en", MimeTypes.APPLICATION_MEDIA3_CUES, MimeTypes.TEXT_SSA, id = "0:3", forced = true),
+                    C.FORMAT_HANDLED,
+                ),
+                group(subtitle(null, "it", MimeTypes.APPLICATION_TX3G, id = "0:4"), C.FORMAT_UNSUPPORTED_TYPE),
+            ),
+        )
+
+        val mounted = renderableMountedTextTracks(tracks).single()
+
+        assertEquals("0:3", mounted.trackId)
+        assertEquals(MimeTypes.TEXT_SSA, mounted.codec)
+        assertEquals(true, mounted.forced)
+    }
+
     private fun subtitle(
         label: String?,
         language: String?,

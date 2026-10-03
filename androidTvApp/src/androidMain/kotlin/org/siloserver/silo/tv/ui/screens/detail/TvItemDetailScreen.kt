@@ -109,6 +109,7 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
@@ -643,6 +644,7 @@ private fun TvDetailContent(
             runtimeMinutes = activeSeriesPlaybackDetail?.let { playbackDetail ->
                 selectedMediaRuntimeMinutes(playbackDetail, activeSeriesSelectedVersion)
             } ?: episode.runtime,
+            ratings = detail.titleRatings(),
         )
     } ?: TvDetailMetadata.factsLine(
         detail = detail,
@@ -842,6 +844,11 @@ private fun TvDetailContent(
                                     onSeriesClick = onSeriesClick,
                                     onSeasonClick = onSeasonClick,
                                     onWatchTogether = onWatchTogether,
+                                    // Season mode marks the selected season;
+                                    // Show mode offers only the whole series.
+                                    watchedSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
                                 )
                             },
                         )
@@ -1488,6 +1495,7 @@ private fun HeroActionRow(
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchTogether: (RoomSnapshot) -> Unit,
+    watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
 ) {
     val suggestViewModel: TvSuggestToRoomViewModel = koinViewModel()
     val activeRoom by suggestViewModel.room.collectAsState()
@@ -1775,6 +1783,21 @@ private fun HeroActionRow(
                     },
                 ),
             )
+            watchedSeason?.let { season ->
+                val seasonWatched = season.userData?.played == true
+                add(
+                    TvDialogOption(
+                        key = "season-watched",
+                        title = "Mark ${tvSeasonPickerLabel(season)} " +
+                            if (seasonWatched) "Unwatched" else "Watched",
+                        selected = seasonWatched,
+                        onClick = {
+                            moreOpen = false
+                            viewModel.onSetSeasonWatched(season, !seasonWatched)
+                        },
+                    ),
+                )
+            }
             if (canSuggestToRoom) {
                 add(
                     TvDialogOption(

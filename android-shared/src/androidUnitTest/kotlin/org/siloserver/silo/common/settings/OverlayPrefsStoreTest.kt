@@ -24,6 +24,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -45,7 +46,73 @@ class OverlayPrefsStoreTest {
 
         assertEquals(expected, store.prefs.value)
         assertTrue(store.hasUserOverride)
-        assertEquals(listOf(SettingKeys.UI_CARD_OVERLAYS), api.effectiveRequests.single())
+        assertEquals(
+            listOf(SettingKeys.UI_CARD_OVERLAYS, SettingKeys.UI_CARD_OVERLAYS_ENABLED),
+            api.effectiveRequests.single(),
+        )
+    }
+
+    @Test
+    fun `profile that turned overlays off hides them although the server default is on`() = runTest {
+        val api = RecordingOverlaySettingsApi(profileOverlaysEnabled = false)
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+
+        store.refresh()
+
+        assertFalse(store.enabled.value)
+    }
+
+    @Test
+    fun `profile that turned overlays on shows them although the server default is off`() = runTest {
+        val api = RecordingOverlaySettingsApi(profileOverlaysEnabled = true)
+        api.overlayEnabled = false
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+
+        store.refresh()
+
+        assertTrue(store.enabled.value)
+    }
+
+    @Test
+    fun `profile without a choice follows the server default, including on servers without the key`() = runTest {
+        for (servesKey in listOf(true, false)) {
+            val api = RecordingOverlaySettingsApi(servesOverlaysEnabled = servesKey)
+            api.overlayEnabled = false
+            val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+
+            store.refresh()
+
+            assertFalse(store.enabled.value, "servesKey=$servesKey")
+            assertEquals(null, store.lastError.value, "servesKey=$servesKey")
+        }
+    }
+
+    @Test
+    fun `profile choice made elsewhere applies on the next refresh`() = runTest {
+        val api = RecordingOverlaySettingsApi()
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+        assertTrue(store.enabled.value)
+
+        api.profileOverlaysEnabled = false
+        store.refresh()
+        assertFalse(store.enabled.value)
+
+        api.profileOverlaysEnabled = null
+        store.refresh()
+        assertTrue(store.enabled.value)
+    }
+
+    @Test
+    fun `clear forgets the previous profile's overlay choice`() = runTest {
+        val api = RecordingOverlaySettingsApi(profileOverlaysEnabled = false)
+        val store = DefaultOverlayPrefsStore(SettingsRepository(api), this)
+        store.refresh()
+        assertFalse(store.enabled.value)
+
+        store.clear()
+
+        assertTrue(store.enabled.value)
     }
 
     @Test
@@ -295,6 +362,10 @@ class OverlayPrefsStoreTest {
 private class RecordingOverlaySettingsApi(
     var storedValue: JsonElement? = null,
     var adminDefaults: String? = null,
+    var profileOverlaysEnabled: Boolean? = null,
+    // A server below the revision that introduced ui.card_overlays_enabled
+    // omits the key from the response.
+    val servesOverlaysEnabled: Boolean = true,
 ) : SettingsApi(org.siloserver.silo.network.apiv2.SettingsV2Api(HttpClient(), org.siloserver.silo.network.TokenManagerImpl(), org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted)) {
 
     data class CallGate(
@@ -345,29 +416,36 @@ private class RecordingOverlaySettingsApi(
     ): ApiResult<EffectiveSettingValuesResponse> {
         effectiveRequests += keys
         val value = storedValue
+        val enabled = profileOverlaysEnabled
         nextEffectiveReadGate?.also { gate ->
             nextEffectiveReadGate = null
             gate.started.complete(Unit)
             gate.release.await()
         }
+        val settings = buildList {
+            add(effective(SettingKeys.UI_CARD_OVERLAYS, value))
+            if (servesOverlaysEnabled && SettingKeys.UI_CARD_OVERLAYS_ENABLED in keys) {
+                add(effective(SettingKeys.UI_CARD_OVERLAYS_ENABLED, enabled?.let(::JsonPrimitive)))
+            }
+        }
         return ApiResult.Success(
             EffectiveSettingValuesResponse(
-                settings = listOf(
-                    EffectiveSettingValue(
-                        key = SettingKeys.UI_CARD_OVERLAYS,
-                        value = value ?: JsonNull,
-                        source = if (value == null) {
-                            EffectiveSettingValue.SOURCE_DEFAULT
-                        } else {
-                            SettingScope.PROFILE.wire
-                        },
-                        scope = SettingScope.PROFILE.wire.takeIf { value != null },
-                    ),
-                ),
+                settings = settings,
                 revision = SettingKeys.REVISION,
             ),
         )
     }
+
+    private fun effective(key: String, value: JsonElement?) = EffectiveSettingValue(
+        key = key,
+        value = value ?: JsonNull,
+        source = if (value == null) {
+            EffectiveSettingValue.SOURCE_DEFAULT
+        } else {
+            SettingScope.PROFILE.wire
+        },
+        scope = SettingScope.PROFILE.wire.takeIf { value != null },
+    )
 
     override suspend fun putValue(
         key: String,

@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +76,7 @@ import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.pairing.PairingAdvertisement
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
@@ -134,9 +136,11 @@ fun TvServerSetupScreen(
     // so a phone running Silo can push the server URL + drive device-login,
     // sparing the viewer from typing a URL on the remote. Advertising stops
     // when the screen leaves the composition.
+    var advertiserToken by remember { mutableStateOf(0L) }
     DisposableEffect(Unit) {
-        pairingAdvertiser.start()
-        onDispose { pairingAdvertiser.stop() }
+        val token = pairingAdvertiser.start(PairingAdvertisement.Setup)
+        advertiserToken = token
+        onDispose { pairingAdvertiser.stop(token) }
     }
     // Snapshot-backed: re-keys the claim when the viewer switches between
     // pointer and key input.
@@ -168,7 +172,7 @@ fun TvServerSetupScreen(
     LaunchedEffect(pairingStatus) {
         if (pairingStatus is PairingReceiverStatus.Completed) {
             delay(1_800)
-            pairingAdvertiser.stop()
+            pairingAdvertiser.stop(advertiserToken)
             onPairedSignIn()
         }
     }
@@ -235,11 +239,13 @@ fun TvServerSetupScreen(
                     status = pairingStatus,
                     onCancel = pairingReceiver::cancelActiveSession,
                     onContinue = {
-                        pairingAdvertiser.stop()
+                        pairingAdvertiser.stop(advertiserToken)
                         onPairedSignIn()
                     },
                     onAllow = pairingReceiver::allowPendingServer,
                     onDeny = pairingReceiver::denyPendingServer,
+                    onUseAlternate = pairingReceiver::useAlternateAddress,
+                    onRetryAddress = pairingReceiver::retryPushedAddress,
                     // tvOS renders pairing states directly on the Aurora backdrop
                     // in an 880pt content column. Shield uses a 2x density, so
                     // 440dp produces the same 880px maximum footprint.
@@ -280,7 +286,7 @@ fun TvServerSetupScreen(
                         color = Color.White,
                     )
                     Text(
-                        text = "Use your phone, or enter the server address with the remote.",
+                        text = stringResource(R.string.tv_setup_subtitle),
                         style = TvServerSetupTextStyles.PairingDetail,
                         color = Color.White.copy(alpha = 0.72f),
                         textAlign = TextAlign.Center,
@@ -375,7 +381,7 @@ private fun PhoneSetupCard(
     ) {
         // Top-leading pill, matching tvOS TVServerSetupView.phoneCard.
         Text(
-            text = "RECOMMENDED · USE PHONE",
+            text = stringResource(R.string.tv_setup_phone_pill),
             style = TvServerSetupTextStyles.Pill,
             color = Color.White.copy(alpha = 0.70f),
             modifier = Modifier
@@ -398,7 +404,7 @@ private fun PhoneSetupCard(
 @Composable
 private fun PhoneSetupBody(modifier: Modifier = Modifier) {
     // Beacon centered, copy left-aligned beneath it — mirrors tvOS
-    // TVServerSetupView.phoneCard (iPhone → phone).
+    // TVServerSetupView.phoneCard, with its neutral "phone or tablet" copy.
     Column(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = modifier.fillMaxWidth(),
@@ -410,13 +416,12 @@ private fun PhoneSetupBody(modifier: Modifier = Modifier) {
         )
 
         Text(
-            text = "Looking for a phone…",
+            text = stringResource(R.string.tv_setup_phone_looking),
             style = TvServerSetupTextStyles.Headline,
             color = Color.White,
         )
         Text(
-            text = "Open Silo on a phone connected to the same Wi-Fi. Accept the " +
-                "setup card and Silo will securely bring over the server and account.",
+            text = stringResource(R.string.tv_setup_phone_detail),
             style = TvServerSetupTextStyles.PairingDetail,
             color = Color.White.copy(alpha = 0.72f),
             maxLines = 4,
@@ -676,294 +681,6 @@ private fun SearchingBeacon(modifier: Modifier = Modifier) {
     }
 }
 
-private val PairingReceiverStatus.isActivePairing: Boolean
-    get() = this is PairingReceiverStatus.Connected ||
-        this is PairingReceiverStatus.ConsentRequested ||
-        this is PairingReceiverStatus.Pairing ||
-        this is PairingReceiverStatus.AwaitingApproval ||
-        this is PairingReceiverStatus.SignedIn ||
-        this is PairingReceiverStatus.Completed ||
-        this is PairingReceiverStatus.Failed
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ActivePairingPanel(
-    status: PairingReceiverStatus,
-    onCancel: () -> Unit,
-    onContinue: () -> Unit,
-    onAllow: () -> Unit = {},
-    onDeny: () -> Unit = {},
-    modifier: Modifier = Modifier,
-) {
-    val allowFocusRequester = remember { FocusRequester() }
-    var consentHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(status) {
-        if (status is PairingReceiverStatus.ConsentRequested) {
-            // A consent prompt whose Allow button never takes focus cannot be
-            // answered from a remote at all.
-            requestFocusUntilObserved(
-                maxAttempts = TvContentInitialFocusMaxAttempts,
-                awaitAttempt = { withFrameNanos { } },
-                requestFocus = allowFocusRequester::requestFocus,
-                isFocused = { consentHasFocus },
-            )
-        }
-    }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
-        modifier = modifier
-            .onFocusChanged { consentHasFocus = it.hasFocus }
-            .fillMaxWidth(),
-    ) {
-        when (status) {
-            PairingReceiverStatus.Connected -> {
-                AuroraEyebrow(text = "Step 01 — Connect")
-                Text(
-                    text = "Phone connected",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                WaitingDots()
-                Text(
-                    text = "On your phone, choose which servers this TV should sign in to.",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                AuroraGhostButton(label = "Cancel", onClick = onCancel)
-            }
-            is PairingReceiverStatus.ConsentRequested -> {
-                AuroraEyebrow(text = "Step 01 — Connect")
-                Text(
-                    text = "Allow this setup?",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                Text(
-                    text = "A nearby phone wants to sign this TV in to ${status.serverName}.",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                    modifier = Modifier.padding(top = Spacing.sm),
-                ) {
-                    AuroraPrimaryButton(
-                        label = "Allow",
-                        onClick = onAllow,
-                        focusRequester = allowFocusRequester,
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(60.dp),
-                    )
-                    AuroraGhostButton(
-                        label = "Don\u2019t allow",
-                        onClick = onDeny,
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(60.dp),
-                    )
-                }
-            }
-            is PairingReceiverStatus.Pairing -> {
-                AuroraEyebrow(text = "Almost there")
-                Text(
-                    text = "Setting up this TV",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                ServerNameLabel(status.serverName)
-                WaitingDots(compact = true)
-                Text(
-                    text = "Starting secure sign-in…",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                AuroraGhostButton(label = "Cancel", onClick = onCancel)
-            }
-            is PairingReceiverStatus.AwaitingApproval -> {
-                AuroraEyebrow(text = "Almost there")
-                Text(
-                    text = "Confirm on your phone",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                MatchCodeCard(code = status.matchCode)
-                ServerNameLabel(status.serverName)
-                WaitingDots(compact = true)
-                Text(
-                    text = "Make sure your phone shows this same code before approving sign-in.",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                AuroraGhostButton(label = "Cancel", onClick = onCancel)
-            }
-            is PairingReceiverStatus.SignedIn -> {
-                AuroraEyebrow(text = "All set")
-                SuccessMark()
-                Text(
-                    text = if (status.serverCount <= 1) "Signed in" else "Signed in to ${status.serverCount} servers",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                WaitingDots(compact = true)
-                Text(
-                    text = "Finishing up on your phone…",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-            }
-            is PairingReceiverStatus.Completed -> {
-                AuroraEyebrow(text = "All set")
-                SuccessMark()
-                Text(
-                    text = "You’re all set",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                Text(
-                    text = completedSummary(status.serverNames),
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = Color.White.copy(alpha = 0.72f),
-                )
-                AuroraPrimaryButton(
-                    label = "Continue",
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    onClick = onContinue,
-                    modifier = Modifier.width(320.dp),
-                )
-            }
-            is PairingReceiverStatus.Failed -> {
-                AuroraEyebrow(text = "Step 01 — Connect")
-                Text(
-                    text = "Setup didn’t finish",
-                    style = TvServerSetupTextStyles.PairingTitle,
-                    color = Color.White,
-                )
-                Text(
-                    text = "Something went wrong setting up ${status.serverName}. Try again from your phone, or set up your server manually.",
-                    style = TvServerSetupTextStyles.PairingDetail,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                AuroraPrimaryButton(
-                    label = "Try again",
-                    onClick = onCancel,
-                    modifier = Modifier.width(320.dp),
-                )
-            }
-            else -> Unit
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ServerNameLabel(serverName: String) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-    ) {
-        Text(
-            text = "SETTING UP",
-            style = TvServerSetupTextStyles.CodeLabel,
-            color = Color.White.copy(alpha = 0.48f),
-        )
-        Text(
-            text = serverName,
-            style = TvServerSetupTextStyles.Headline,
-            color = Color.White,
-        )
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun WaitingDots(compact: Boolean = false) {
-    val dotSize = if (compact) 8.dp else 12.dp
-    Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
-        repeat(3) {
-            Box(
-                modifier = Modifier
-                    .size(dotSize)
-                    .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(999.dp)),
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun SuccessMark() {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(74.dp)
-            .background(Color(0xFF22C55E).copy(alpha = 0.18f), RoundedCornerShape(999.dp))
-            .border(2.dp, Color(0xFF22C55E).copy(alpha = 0.68f), RoundedCornerShape(999.dp)),
-    ) {
-        Text(
-            text = "✓",
-            style = TvServerSetupTextStyles.SuccessMark,
-            color = Color(0xFF86EFAC),
-        )
-    }
-}
-
-private fun completedSummary(names: List<String>): String =
-    when (names.size) {
-        0 -> "Taking you to your profiles…"
-        1 -> "Signed in to ${names[0]}. Taking you to your profiles…"
-        else -> "Signed in to ${names.joinToString(", ")}. Taking you to your profiles…"
-    }
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun MatchCodeCard(code: String) {
-    if (code.isBlank()) return
-    val tileWidthDp = matchCodeTileWidthDp(code)
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-        modifier = Modifier
-            .fillMaxWidth()
-            .auroraGlass(12.dp)
-            .padding(horizontal = Spacing.md, vertical = Spacing.md),
-    ) {
-        Text(
-            text = "CONFIRM THIS CODE",
-            style = TvServerSetupTextStyles.CodeLabel,
-            color = Color.White.copy(alpha = 0.62f),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(MATCH_CODE_TILE_GAP_DP.dp)) {
-            code.uppercase().forEach { ch ->
-                if (ch == '-' || ch == ' ') {
-                    Text(
-                        text = "–",
-                        style = TvServerSetupTextStyles.CodeSeparator,
-                        color = Color.White.copy(alpha = 0.42f),
-                        modifier = Modifier.width(MATCH_CODE_SEPARATOR_WIDTH_DP.dp),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(width = tileWidthDp.dp, height = 42.dp)
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(7.dp))
-                            .border(1.dp, Color.White.copy(alpha = 0.20f), RoundedCornerShape(7.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = ch.toString(),
-                            style = TvServerSetupTextStyles.CodeDigit,
-                            color = Color.White,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 private object TvServerSetupTextStyles {
     val Title = TextStyle(
         fontWeight = FontWeight.SemiBold,
@@ -1015,43 +732,6 @@ private object TvServerSetupTextStyles {
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp,
         lineHeight = 22.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val PairingTitle = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 24.sp,
-        lineHeight = 30.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val CodeLabel = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
-        letterSpacing = 2.sp,
-    )
-
-    val CodeDigit = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Bold,
-        fontSize = 24.sp,
-        lineHeight = 28.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val CodeSeparator = TextStyle(
-        fontWeight = FontWeight.Bold,
-        fontSize = 24.sp,
-        lineHeight = 28.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val SuccessMark = TextStyle(
-        fontWeight = FontWeight.Bold,
-        fontSize = 38.sp,
-        lineHeight = 38.sp,
         letterSpacing = 0.sp,
     )
 }

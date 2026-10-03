@@ -5,7 +5,13 @@ import androidx.test.core.app.ApplicationProvider
 import org.siloserver.silo.common.data.db.SiloDatabase
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadSidecar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import org.siloserver.silo.common.data.db.dao.DownloadArtworkRow
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlin.test.AfterTest
@@ -221,4 +227,54 @@ class DownloadMetadataStoreTest {
         assertNotNull(store.readSidecar("server", "profile", 7))
     }
 
+
+    @Test
+    fun `savedArtworkChanges emits on artwork writes and not on other column writes`() = runBlocking {
+        val emissions = Channel<List<DownloadArtworkRow>>(Channel.UNLIMITED)
+        val collector = launch(Dispatchers.Default) { store.savedArtworkChanges().collect { emissions.send(it) } }
+        suspend fun next() = withTimeout(10_000) { emissions.receive() }
+        try {
+            assertEquals(emptyList(), next())
+
+            val downloading = stubSidecar(7).let {
+                it.copy(record = it.record.copy(status = "downloading", bytesSent = 10))
+            }
+            // A new row and progress ticks carry no artwork.
+            store.writeSidecar("srv1", "profA", downloading)
+            store.writeSidecar("srv1", "profA", downloading.copy(record = downloading.record.copy(bytesSent = 20)))
+            val completed = stubSidecar(7).copy(offlinePosterPath = "/art/poster")
+            store.writeSidecar("srv1", "profA", completed)
+            assertEquals(listOf(DownloadArtworkRow("dl-7", null, "/art/poster", null, null)), next())
+
+            // Status and title rewrites keep the artwork as it was.
+            store.writeSidecar("srv1", "profA", completed.copy(title = "Renamed", updatedAtMs = 2L))
+            store.writeSidecar("srv1", "profA", completed.copy(offlineSeriesPosterPath = "/art/series_poster"))
+            // Ordered invalidation: had the rename emitted, it would be received here.
+            assertEquals(
+                listOf(DownloadArtworkRow("dl-7", null, "/art/poster", "/art/series_poster", null)),
+                next(),
+            )
+        } finally {
+            collector.cancel()
+        }
+    }
+
+    @Test
+    fun `savedArtworkChanges emits when only the poster thumbhash is saved`() = runBlocking {
+        val emissions = Channel<List<DownloadArtworkRow>>(Channel.UNLIMITED)
+        val collector = launch(Dispatchers.Default) { store.savedArtworkChanges().collect { emissions.send(it) } }
+        suspend fun next() = withTimeout(10_000) { emissions.receive() }
+        try {
+            assertEquals(emptyList(), next())
+
+            // A completed movie queued without a hash, whose poster fetch failed:
+            // the capture saves only the manifest's ThumbHash.
+            val completed = stubSidecar(7)
+            store.writeSidecar("srv1", "profA", completed)
+            store.writeSidecar("srv1", "profA", completed.copy(posterThumbhash = "hash"))
+            assertEquals(listOf(DownloadArtworkRow("dl-7", "hash", null, null, null)), next())
+        } finally {
+            collector.cancel()
+        }
+    }
 }

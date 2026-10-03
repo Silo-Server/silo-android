@@ -21,6 +21,14 @@ fun subtitleArtifactTrackId(serverIndex: Int): String =
     "$SUBTITLE_ARTIFACT_TRACK_ID_PREFIX$serverIndex"
 
 /**
+ * True for a Media3 track id Silo authored for a subtitle artifact (a
+ * [subtitleArtifactTrackId] or a downloaded-subtitle id), including one Media3
+ * reports with a merged-source child prefix (`1:silo-subtitle:0`).
+ */
+fun isSubtitleArtifactTrackId(trackId: String?): Boolean =
+    trackId?.withoutMergedSourcePrefix().isReservedArtifactTrackId()
+
+/**
  * True when a mounted Media3 `Format.id` denotes [expected].
  *
  * A sidecar merged with the primary stream comes back from Media3 carrying the
@@ -33,13 +41,14 @@ fun subtitleArtifactTrackId(serverIndex: Int): String =
  * Only a purely numeric prefix is accepted, so this can never collide with an
  * authored id that happens to contain a colon.
  */
-fun trackIdDenotes(actual: String?, expected: String): Boolean {
-    if (actual == null) return false
-    if (actual == expected) return true
-    val separator = actual.indexOf(':')
-    if (separator <= 0) return false
-    if (!actual.substring(0, separator).all(Char::isDigit)) return false
-    return actual.substring(separator + 1) == expected
+fun trackIdDenotes(actual: String?, expected: String): Boolean =
+    actual != null && (actual == expected || actual.withoutMergedSourcePrefix() == expected)
+
+/** [trackIdDenotes]'s merged-source form: drops a purely numeric `<child>:` prefix. */
+private fun String.withoutMergedSourcePrefix(): String {
+    val separator = indexOf(':')
+    if (separator <= 0 || !substring(0, separator).all(Char::isDigit)) return this
+    return substring(separator + 1)
 }
 
 /**

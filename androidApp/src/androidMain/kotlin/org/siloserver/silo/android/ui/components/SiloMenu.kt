@@ -104,7 +104,7 @@ fun SiloMenuItem(
     ) {
         Text(
             text = label,
-            style = SettingsTextStyles.rowLabel,
+            style = SettingsTextStyles.menuLabel,
             color = labelColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

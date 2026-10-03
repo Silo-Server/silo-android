@@ -19,6 +19,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * Cached card-overlay configuration for the signed-in profile. Mirrors
@@ -40,9 +42,11 @@ import kotlinx.serialization.json.JsonNull
  */
 interface OverlayPrefsStore {
     /**
-     * `true` when the server allows overlays at all. An admin can flip
-     * this off globally; when `false`, cards should not render overlays
-     * even if the user has prefs configured.
+     * `true` when cards should render overlays at all. The profile's
+     * `ui.card_overlays_enabled` choice wins in either direction; a profile
+     * that has not chosen inherits the server-wide `overlays.enabled`
+     * default from `GET /settings/overlay-config`. When `false`, cards
+     * render no overlays even if the profile has prefs configured.
      */
     val enabled: StateFlow<Boolean>
 
@@ -95,6 +99,12 @@ class DefaultOverlayPrefsStore(
 
     @Volatile
     private var adminDefaultsRaw: String? = null
+
+    // The two inputs to [enabled], cached separately so a failed read of
+    // one keeps the last answer for that half without discarding the other.
+    // Both change only under [stateLock].
+    private var serverEnabled: Boolean = true
+    private var profileEnabled: Boolean? = null
 
     // The last state confirmed by a successful canonical read or write. An
     // optimistic edit rolls back here when its PUT fails, including when the
@@ -150,18 +160,19 @@ class DefaultOverlayPrefsStore(
     }
 
     /**
-     * Re-fetch both the admin config and the canonical profile value, then recompute
-     * [prefs].
+     * Re-fetch both the admin config and the canonical profile values, then
+     * recompute [prefs] and [enabled].
      *
      * Failure semantics mirror iOS:
      * - A canonical null/default means "not set yet" and renders from admin
      *   defaults or registry defaults.
      * - Any other transport error on either endpoint leaves
      *   [hasHydrated] false so the next [hydrateIfNeeded] retries. This is
-     *   critical for the admin kill-switch: if `/overlay-config` errors
-     *   but the user setting resolves, we MUST NOT mark hydrated, or
-     *   [enabled] is stuck at `true` and the admin's "disable globally"
-     *   toggle is silently ignored for the session.
+     *   critical for the server-wide overlay default: if `/overlay-config`
+     *   errors but the user settings resolve, we MUST NOT mark hydrated, or
+     *   [enabled] is stuck at `true` for a profile that has not chosen and
+     *   the admin's "off for everyone" default is silently ignored for the
+     *   session.
      */
     override suspend fun refresh() = refreshLock.withLock {
         val refreshState = synchronized(stateLock) {
@@ -194,9 +205,14 @@ class DefaultOverlayPrefsStore(
             }
 
             var userValue: JsonElement? = null
+            var userEnabled: Boolean? = null
             var userFetchFailed = false
             var userError: String? = null
-            when (val result = repository.getEffectiveValues(listOf(OVERLAY_SETTING_KEY))) {
+            when (
+                val result = repository.getEffectiveValues(
+                    listOf(OVERLAY_SETTING_KEY, OVERLAYS_ENABLED_SETTING_KEY),
+                )
+            ) {
                 is ApiResult.Success -> {
                     val entry = result.data[OVERLAY_SETTING_KEY]
                     if (entry == null) {
@@ -208,6 +224,13 @@ class DefaultOverlayPrefsStore(
                     ) {
                         userValue = entry.value
                     }
+                    // A server that predates the key omits it, which reads
+                    // the same as a profile that has not chosen.
+                    userEnabled = result.data[OVERLAYS_ENABLED_SETTING_KEY]
+                        ?.takeIf { it.source == SettingScope.PROFILE.wire }
+                        ?.value
+                        ?.let { it as? JsonPrimitive }
+                        ?.booleanOrNull
                 }
                 is ApiResult.Error -> {
                     userError = result.message
@@ -238,7 +261,7 @@ class DefaultOverlayPrefsStore(
             synchronized(stateLock) {
                 // Clear crosses a session boundary, so none of the old refresh
                 // may land. Profile edits and reset only invalidate the
-                // user-derived half: the independent admin kill-switch and
+                // user-derived half: the independent server-wide default and
                 // baseline remain valid and must still update.
                 if (sessionStateEpoch == refreshState.sessionStateEpoch) {
                     val userResponseIsCurrent =
@@ -247,7 +270,7 @@ class DefaultOverlayPrefsStore(
                     // sentinel `resolvedEnabled = true` is only valid when the
                     // fetch actually succeeded.
                     if (!configFetchFailed) {
-                        _enabled.value = resolvedEnabled
+                        serverEnabled = resolvedEnabled
                         adminDefaultsRaw = resolvedAdminDefaults
                         // When the current confirmed state has no user value,
                         // the admin baseline is independently authoritative.
@@ -268,6 +291,14 @@ class DefaultOverlayPrefsStore(
                             }
                         }
                     }
+                    // This store never writes ui.card_overlays_enabled, so a
+                    // local document edit cannot make this answer stale.
+                    if (!userFetchFailed) {
+                        profileEnabled = userEnabled
+                    }
+                    // An explicit profile choice overrides the server-wide
+                    // default in either direction, as on web.
+                    _enabled.value = profileEnabled ?: serverEnabled
 
                     if (userResponseIsCurrent) {
                         _lastError.value = userError ?: configError
@@ -511,6 +542,8 @@ class DefaultOverlayPrefsStore(
             pendingSnapshot = null
             val activeWrite = pendingWrite
             pendingWrite = null
+            serverEnabled = true
+            profileEnabled = null
             _enabled.value = true
             _prefs.value = OverlaySchema.buildDefaults()
             confirmedPrefs = _prefs.value
@@ -541,5 +574,6 @@ class DefaultOverlayPrefsStore(
 
     companion object {
         const val OVERLAY_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS
+        const val OVERLAYS_ENABLED_SETTING_KEY = SettingKeys.UI_CARD_OVERLAYS_ENABLED
     }
 }

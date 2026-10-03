@@ -1,9 +1,9 @@
 package org.siloserver.silo.model.request
 
 /**
- * Presentation policy shared by the mobile and TV request surfaces:
- * TMDB image URL building, badge/chip status precedence, status
- * labelling, cancellability, and the per-target summary line.
+ * Presentation policy shared by the mobile and TV request surfaces: TMDB
+ * image URL building and card routing. Status copy lives with
+ * [RequestDisplayState] and [RequestProgress].
  */
 
 fun requestPosterUrl(path: String?): String? = requestImageUrl(path, "w500")
@@ -20,42 +20,14 @@ private fun requestImageUrl(path: String?, size: String): String? {
 }
 
 /**
- * Raw status token for a discover/search card badge, in precedence
- * order: in-library beats request status beats requestability beats
- * the server-provided reason. Render with [requestDisplayLabel].
+ * The one routing rule for request cards: a card whose status reads "In
+ * library" opens the real item; everything else opens the request detail, so
+ * the user can always see state and reason. That includes a title in the
+ * library with an active request, such as a series with missing seasons coming.
  */
-fun RequestMediaResult.badgeStatus(): String = when {
-    availability == RequestAvailability.Available -> RequestAvailability.Available
-    request.status?.isNotBlank() == true -> request.status.orEmpty()
-    request.requestable -> "request"
-    request.reason.isNotBlank() -> request.reason
-    else -> RequestAvailability.Missing
-}
+fun RequestMediaResult.libraryItemToOpen(): String? =
+    RequestDisplayState.of(availability, request)?.libraryItemToOpen(libraryContentId)
 
-/** Human label for a request status/outcome/availability/media-type token. */
-fun String.requestDisplayLabel(): String = when (lowercase()) {
-    RequestMediaType.Movie -> "Movie"
-    RequestMediaType.Series -> "Series"
-    RequestMediaType.Audiobook -> "Audiobook"
-    RequestMediaType.Ebook -> "Ebook"
-    RequestMediaType.All -> "All"
-    RequestAvailability.Available -> "In Library"
-    RequestAvailability.Missing -> "Missing"
-    "request" -> "Request"
-    else -> split('_', '-', ' ')
-        .filter { it.isNotBlank() }
-        .joinToString(" ") { token -> token.replaceFirstChar { it.uppercase() } }
-        .ifBlank { this }
-}
-
-fun MediaRequest.canCancel(): Boolean =
-    outcome == RequestOutcome.Active && status == RequestStatus.Pending
-
-fun MediaRequest.targetSummary(): String? {
-    if (targets.isEmpty()) return null
-    return targets.joinToString(limit = 2, truncated = "…") { target ->
-        listOf(target.instanceName, target.quality, target.status, target.externalStatus, target.lastError)
-            .filter { it.isNotBlank() }
-            .joinToString(" • ")
-    }
-}
+/** Same rule for the user's own request records. */
+fun MediaRequest.libraryItemToOpen(): String? =
+    RequestDisplayState.of(this).libraryItemToOpen(libraryContentId)

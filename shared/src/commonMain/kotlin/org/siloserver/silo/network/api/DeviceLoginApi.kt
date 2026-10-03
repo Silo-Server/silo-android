@@ -1,5 +1,6 @@
 package org.siloserver.silo.network.api
 
+import org.siloserver.silo.model.auth.DeviceLoginCancelResponse
 import org.siloserver.silo.model.auth.DeviceLoginPollRequest
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginDecisionRequest
@@ -15,6 +16,7 @@ import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.authScope
+import org.siloserver.silo.network.freshSiloAuth
 import org.siloserver.silo.network.skipSiloAuth
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -70,6 +72,25 @@ interface DeviceLoginApi {
         error = "remote_playback_unsupported",
         message = "Remote playback handoff is not supported.",
     )
+
+    /**
+     * The device-pairing capability document at [serverUrl]: whether device
+     * sign-in is configured, and whether the server supports cancel and the
+     * opened signal. Same document [remotePlaybackCapabilityAt] reads.
+     */
+    suspend fun deviceLoginCapabilityAt(
+        serverUrl: String,
+    ): ApiResult<DeviceLoginCapabilityResponse> = remotePlaybackCapabilityAt(serverUrl)
+
+    /**
+     * Withdraw this device's own request (`POST /auth/device/cancel`) so an
+     * abandoned code can't be approved later. Only call it when the
+     * capability reports `cancel`.
+     */
+    suspend fun cancelDeviceLoginAt(
+        serverUrl: String,
+        deviceCode: String,
+    ): ApiResult<DeviceLoginCancelResponse> = unsupportedScopedDeviceLoginOperation()
 
     suspend fun startRemotePlaybackAt(
         serverUrl: String,
@@ -182,6 +203,22 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
         }.requireAuthStatus(200)
     }.map { it.domain() }
 
+    override suspend fun deviceLoginCapabilityAt(
+        serverUrl: String,
+    ): ApiResult<DeviceLoginCapabilityResponse> = remotePlaybackCapabilityAt(serverUrl)
+
+    override suspend fun cancelDeviceLoginAt(
+        serverUrl: String,
+        deviceCode: String,
+    ): ApiResult<DeviceLoginCancelResponse> = safeApiV2Call(ApiV2Gate.Unrestricted) {
+        client.post("${serverUrl.trimEnd('/')}/api/v2/auth/device/cancel") {
+            skipSiloAuth()
+            singleAttempt()
+            contentType(ContentType.Application.Json)
+            setBody(DeviceLoginPollRequest(deviceCode))
+        }.requireAuthStatus(200)
+    }
+
     override suspend fun startRemotePlaybackAt(
         serverUrl: String,
         deviceName: String?,
@@ -218,6 +255,8 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
         code: String?,
     ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
         client.post("/api/v2/auth/device/approve") {
+            // The approver refreshes before deciding (TV sign-in spec).
+            freshSiloAuth()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(token = token, code = code))
         }.requireAuthStatus(200)
@@ -228,6 +267,8 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
         code: String?,
     ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
         client.post("/api/v2/auth/device/deny") {
+            // The approver refreshes before deciding (TV sign-in spec).
+            freshSiloAuth()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(token = token, code = code))
         }.requireAuthStatus(200)
@@ -236,7 +277,7 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
     override suspend fun lookupDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginLookupResponse> = safeApiV2Call(gate) {
+    ): ApiResult<DeviceLoginLookupResponse> = safeApiV2Call(gate.forServer(scope.serverId)) {
         client.get("/api/v2/auth/device") {
             skipSiloAuth()
             authScope(scope)
@@ -247,9 +288,11 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
     override suspend fun approveDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate.forServer(scope.serverId)) {
         client.post("/api/v2/auth/device/approve") {
             authScope(scope)
+            // The approver refreshes before deciding (TV sign-in spec).
+            freshSiloAuth()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
         }.requireAuthStatus(200)
@@ -276,9 +319,11 @@ class DefaultDeviceLoginApi(private val client: HttpClient, private val gate: Ap
     override suspend fun denyDeviceLoginForScope(
         scope: AuthScopeSnapshot,
         code: String,
-    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate) {
+    ): ApiResult<DeviceLoginDecisionResponse> = safeApiV2Call(gate.forServer(scope.serverId)) {
         client.post("/api/v2/auth/device/deny") {
             authScope(scope)
+            // The approver refreshes before deciding (TV sign-in spec).
+            freshSiloAuth()
             contentType(ContentType.Application.Json)
             setBody(DeviceLoginDecisionRequest(code = code))
         }.requireAuthStatus(200)

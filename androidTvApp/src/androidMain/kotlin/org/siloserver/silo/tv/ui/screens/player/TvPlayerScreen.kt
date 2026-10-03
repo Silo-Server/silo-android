@@ -334,6 +334,7 @@ fun TvPlayerScreen(
     val introSkipCountdownRun by viewModel.introSkipCountdownRun.collectAsState()
     val introSkipTimerRunning by viewModel.introSkipTimerRunning.collectAsState()
     val subtitleAppearance by viewModel.subtitleAppearance.collectAsState()
+    val subtitleTextOpacitySupported by viewModel.subtitleTextOpacitySupported.collectAsState()
     val playbackSpeed by viewModel.playbackSpeed.collectAsState()
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     val introSkipMode by viewModel.introSkipMode.collectAsState()
@@ -2304,6 +2305,7 @@ fun TvPlayerScreen(
                             onSubtitleDelayChanged = viewModel::onSubtitleDelayChanged,
                             subtitleAppearance = subtitleAppearance,
                             onSubtitleAppearanceChanged = viewModel::onSetSubtitleAppearance,
+                            subtitleTextOpacitySupported = subtitleTextOpacitySupported,
                             onSubtitlesPaneShown = viewModel::onSubtitlesPaneShown,
                             onSearchSubtitles = if (state.mediaFileId != null) {
                                 {

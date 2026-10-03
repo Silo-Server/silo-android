@@ -34,6 +34,7 @@ class DownloadCreationV2Api(
         request.episodeId?.let { put("episode_id",it) }
         request.fileId?.let { put("media_file_id",it.toString()) }
         put("quality", request.quality ?: "original")
+        request.caps?.let { put("caps", SiloJson.encodeToJsonElement(DownloadCaps.serializer(), it)) }
     }.toMutableMap()
 
     private suspend fun send(scope: AuthScopeSnapshot, device: String, body: JsonObject, cursor: String? = null): ApiResult<CreatedDownloadsV2> {
@@ -56,8 +57,12 @@ class DownloadCreationV2Api(
         val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
         if (!current(scope,device)) return identityChanged()
         if (request.series || request.fileId == null || request.fileId <= 0) return invalid()
-        // Reconcile first. A confirmed usable entry with the requested quality
-        // can be downloaded without resetting its bytes/status/batch on the server.
+        // Reconcile first. A usable entry with the requested quality whose
+        // bytes are already on or coming to this device is downloaded without
+        // resetting its bytes/status/batch on the server. One no bytes have
+        // reached yet is posted again with the current caps, so an entry an
+        // earlier build created without them is decided for this device; the
+        // server keeps the entry unchanged when the decision is the same.
         val listed = registry.list(scope)
         if (listed !is ApiResult.Success) return when(listed) {
             is ApiResult.Error -> listed
@@ -74,7 +79,8 @@ class DownloadCreationV2Api(
         if (matches.size > 1) return invalid()
         val existing = matches.singleOrNull()
         if (existing != null && existing.mediaFileId == request.fileId && existing.quality == (request.quality ?: "original") &&
-            existing.status in setOf("ready","preparing","queued","downloading","completed")) return ApiResult.Success(existing)
+            existing.status in setOf("ready","preparing","queued","downloading","completed") &&
+            (request.caps == null || existing.status in setOf("downloading","completed") || existing.bytesSent > 0)) return ApiResult.Success(existing)
         val fields = body(request)
         fields["expected_revision"] = JsonPrimitive(existing?.revision ?: 0)
         existing?.let { fields["expected_download_id"] = JsonPrimitive(it.id) }

@@ -25,6 +25,13 @@ data class ServerEntry(
     val lastUsedAtEpochMs: Long = 0L,
     /** Native API contract learned on connect; see [ServerContract]. */
     val contract: ServerContract = ServerContract.UNKNOWN,
+    /**
+     * Deployment identity (`GET /api/v2/system/identity`) last verified at
+     * [url]. One deployment answers the same id at every address, so this —
+     * not URL spelling — is how a TV's advertisement or a `silo://device`
+     * link is matched to a saved server. Null until verified.
+     */
+    val verifiedServerId: String? = null,
 ) {
     val displayName: String
         get() = userOverrideName?.takeIf { it.isNotBlank() }

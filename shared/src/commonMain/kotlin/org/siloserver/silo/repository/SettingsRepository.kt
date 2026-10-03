@@ -40,13 +40,25 @@ class SettingsRepository(
      * preference that applies on every device until a device overrides it.
      *
      * Picker callers surface failure and let the user make a new decision.
+     *
+     * [authority] pins the request to one captured profile (as the settings
+     * flusher does); a caller making several requests for one change passes
+     * the same snapshot to each so none can land on a profile switched to
+     * in between.
      */
-    suspend fun setProfileValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profile(), value)
+    suspend fun setProfileValue(
+        key: String,
+        value: JsonElement,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profile(), value, authority = authority)
 
     /** Clear the profile-scoped value so the setting inherits again. */
-    suspend fun clearProfileValue(key: String): ApiResult<Unit> =
-        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profile()))
+    suspend fun clearProfileValue(
+        key: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> =
+        treatMissingAsCleared(settingsApi.deleteValue(key, SettingScopeIdentity.profile(), authority = authority))
 
     /**
      * Write one like-client value (`scope=profile_client`) — the preference
@@ -65,8 +77,12 @@ class SettingsRepository(
      * on this device only. The device half of the identity rides the
      * `X-Silo-Device-Id` header.
      */
-    suspend fun setProfileDeviceValue(key: String, value: JsonElement): ApiResult<StoredSettingValue> =
-        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value)
+    suspend fun setProfileDeviceValue(
+        key: String,
+        value: JsonElement,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot? = null,
+    ): ApiResult<StoredSettingValue> =
+        settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, authority = authority)
 
     suspend fun setMigrationDeviceValue(key: String, value: JsonElement, authority: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<StoredSettingValue> =
         settingsApi.putValue(key, SettingScopeIdentity.profileDevice(), value, authority.profileId, authority)

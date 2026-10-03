@@ -48,9 +48,30 @@ object TvSubtitleAppearanceOptions {
     /** Background-opacity percentage steps for the HUD quick overlay (coarse). */
     val OPACITY_STEPS: List<Int> = listOf(0, 25, 50, 75, 100)
 
+    /** Text-opacity percentage steps for the HUD quick overlay (coarse). Starts
+     *  at 25: 1% is the schema floor but reads as no subtitles at all. Matches
+     *  silo-apple's tvOS HUD. */
+    val TEXT_OPACITY_STEPS: List<Int> = listOf(25, 50, 75, 100)
+
     /** Fine-grained opacity steps for the Settings Appearance block — 0–100 by
      *  5, matching silo-apple `TVSettingsOptions.backgroundOpacity`. */
     val OPACITY_PERCENT_STEPS: List<Int> = (0..100 step 5).toList()
+
+    /** Fine-grained text-opacity steps for the Settings Appearance block — same
+     *  5-point cadence as [OPACITY_PERCENT_STEPS], but starting at 5 rather than
+     *  0 since fully transparent text has no legible affordance to pick it back
+     *  up from. Matches silo-apple `TVSettingsOptions.textOpacity`. */
+    val TEXT_OPACITY_PERCENT_STEPS: List<Int> = (5..100 step 5).toList()
+
+    /**
+     * A step list plus the currently saved value, so a value set elsewhere
+     * (the phone's free-typed percent field) that doesn't fall on this
+     * picker's cadence is still a selectable option. Without this, opening
+     * the picker focuses the first step and pressing Select silently
+     * overwrites the real value with it.
+     */
+    fun percentOptions(steps: List<Int>, current: Int): List<Int> =
+        (steps + current).toSortedSet().toList()
 
     /** Font / outline color palette: (hex, label). Matches Apple `fontColors`. */
     val FONT_COLORS: List<Pair<String, String>> = listOf(
@@ -61,6 +82,7 @@ object TvSubtitleAppearanceOptions {
         "#d946ef" to "Magenta",
         "#ef4444" to "Red",
         "#3b82f6" to "Blue",
+        "#9ca3af" to "Gray",
         "#000000" to "Black",
     )
 
@@ -112,6 +134,14 @@ object TvSubtitleAppearanceOptions {
         SubtitleAppearance.MONOSPACE -> FontFamily.Monospace
         else -> FontFamily.SansSerif
     }
+
+    /**
+     * Converts a stored opacity percent (0-100 for background, 1-100 for
+     * text) into the alpha channel the TV preview composables paint with.
+     * Shared by both the Settings and player HUD previews so the two never
+     * drift apart on rounding or clamping.
+     */
+    fun previewOpacityAlpha(percent: Int, floor: Int): Float = percent.coerceIn(floor, 100) / 100f
 
     fun previewAlignment(value: SubtitlePositionPreset): Alignment = when (value) {
         SubtitlePositionPreset.Top -> Alignment.TopCenter

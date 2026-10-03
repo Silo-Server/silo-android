@@ -4,7 +4,17 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 import org.siloserver.silo.common.data.db.entity.DownloadEntity
+
+/** The artwork columns of one downloads row, for [DownloadDao.observeSavedArtwork]. */
+data class DownloadArtworkRow(
+    val recordId: String,
+    val posterThumbhash: String?,
+    val offlinePosterPath: String?,
+    val offlineSeriesPosterPath: String?,
+    val seriesPosterThumbhash: String?,
+)
 
 /**
  * Downloads projection access. Scoped reads seed the Downloads tab and the
@@ -68,6 +78,18 @@ interface DownloadDao {
 
     @Query("SELECT * FROM downloads ORDER BY updatedAtMs DESC")
     suspend fun getAllAcrossScopes(): List<DownloadEntity>
+
+    /**
+     * Rows that carry saved artwork, across scopes. Room re-queries on every
+     * downloads write (progress and status included), so collectors should
+     * apply `distinctUntilChanged` and react only when artwork actually changes.
+     */
+    @Query(
+        "SELECT recordId, posterThumbhash, offlinePosterPath, offlineSeriesPosterPath, seriesPosterThumbhash " +
+            "FROM downloads WHERE posterThumbhash IS NOT NULL OR offlinePosterPath IS NOT NULL " +
+            "OR offlineSeriesPosterPath IS NOT NULL OR seriesPosterThumbhash IS NOT NULL ORDER BY recordId",
+    )
+    fun observeSavedArtwork(): Flow<List<DownloadArtworkRow>>
 
     /** First download (any scope) for a content id — offline player contentId→file lookup. */
     @Query("SELECT * FROM downloads WHERE contentId = :contentId LIMIT 1")

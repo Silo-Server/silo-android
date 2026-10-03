@@ -183,13 +183,14 @@ class CatalogV2Api(
             client.get("/api/v2/catalog/people/$id") { scope?.let { authScope(it) } }
         }) { it.toDomain() }
 
-    suspend fun people(query: String?, limit: Int = 20): ApiResult<List<Person>> {
+    suspend fun people(query: String?, limit: Int = 20, mediaScope: String? = null): ApiResult<List<Person>> {
         if (limit !in 1..100) return ApiResult.Error(0, "validation_failed", "People search limit must be between 1 and 100.")
         return read<DetailCollectionReadV2<PersonReadV2>, List<Person>>({ scope ->
             client.get("/api/v2/catalog/people") {
                 scope?.let { authScope(it) }
                 parameter("q", query)
                 parameter("limit", limit)
+                parameter("media_scope", mediaScope)
             }
         }) { it.requireComplete(); it.items.map { person -> person.toDomain() } }
     }

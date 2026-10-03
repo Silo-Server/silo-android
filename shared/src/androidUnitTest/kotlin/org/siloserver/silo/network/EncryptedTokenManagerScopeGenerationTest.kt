@@ -395,6 +395,55 @@ class EncryptedTokenManagerScopeGenerationTest {
         assertTrue(observed.isEmpty())
     }
 
+    // accessTokenExpiresWithin: whether the approver renews a scope's token
+    // before looking a TV's code up (TV sign-in spec).
+
+    private fun key(serverId: String, name: String) = AndroidServerRegistry.serverScopedKey(serverId, name)
+
+    private fun savedSession(serverId: String, expiresInMs: Long?): Array<Pair<String, Any?>> = listOfNotNull(
+        key(serverId, EncryptedTokenManagerImpl.KEY_ACCESS_TOKEN) to "$serverId-access",
+        key(serverId, EncryptedTokenManagerImpl.KEY_REFRESH_TOKEN) to "$serverId-refresh",
+        expiresInMs?.let { key(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_EXPIRY) to System.currentTimeMillis() + it },
+        expiresInMs?.let { key(serverId, EncryptedTokenManagerImpl.KEY_TOKEN_LIFETIME) to 3_600_000L },
+    ).toTypedArray()
+
+    private fun scope(serverId: String, credentialGenerationId: String? = null) =
+        AuthScopeSnapshot(serverId, null, "https://$serverId.example", null, credentialGenerationId = credentialGenerationId)
+
+    @Test
+    fun theActiveServersNearExpiryAsksForARefresh() = runTest {
+        val near = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 10_000L)), FakeServerRegistry())
+        assertTrue(near.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L))
+
+        val far = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 3_000_000L)), FakeServerRegistry())
+        assertFalse(far.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L))
+    }
+
+    @Test
+    fun aNonActiveServersNearExpiryIsReadFromItsOwnSlot() = runTest {
+        val manager = EncryptedTokenManagerImpl(
+            inMemoryPreferences(*savedSession("server-a", 3_000_000L), *savedSession("server-b", 10_000L)),
+            FakeServerRegistry(),
+        )
+        assertTrue(manager.accessTokenExpiresWithin(scope("server-b"), marginMs = 60_000L))
+        assertFalse(manager.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L), "the active slot is separate")
+    }
+
+    @Test
+    fun aNonActiveServerWithoutAStoredExpiryDoesNotAsk() = runTest {
+        val manager = EncryptedTokenManagerImpl(
+            inMemoryPreferences(*savedSession("server-a", 10_000L), *savedSession("server-b", expiresInMs = null)),
+            FakeServerRegistry(),
+        )
+        assertFalse(manager.accessTokenExpiresWithin(scope("server-b"), marginMs = 60_000L))
+    }
+
+    @Test
+    fun anOverlayScopeDoesNotAsk() = runTest {
+        val manager = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 10_000L)), FakeServerRegistry())
+        assertFalse(manager.accessTokenExpiresWithin(scope("server-a", credentialGenerationId = "overlay-1"), marginMs = 60_000L))
+    }
+
     private class FakeServerRegistry : ServerRegistry {
         private val serverA = ServerEntry(id = "server-a", url = "https://server-a.example")
         private val serverB = ServerEntry(id = "server-b", url = "https://server-b.example")

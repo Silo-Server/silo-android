@@ -51,6 +51,8 @@ data class CatalogSearchCapabilitiesV2(
     val revision: String,
     val state: String,
     val provider: String,
+    /** People search accepts `media_scope` and filters credits by viewer access. */
+    @SerialName("people_media_scope") val peopleMediaScope: Boolean = false,
     @SerialName("result_window_limit") val resultWindowLimit: Int? = null,
     @SerialName("session_ttl_seconds") val sessionTTLSeconds: Int? = null,
     @SerialName("max_sessions_per_account") val maxSessionsPerAccount: Int? = null,

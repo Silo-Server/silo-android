@@ -10,6 +10,7 @@ import org.siloserver.silo.common.data.sync.SyncWorker
 import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
+import org.siloserver.silo.common.downloads.DownloadStatusWorker
 import org.siloserver.silo.common.downloads.DownloadWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
@@ -63,6 +64,16 @@ class AppWorkerFactory : WorkerFactory() {
                         koin.get<org.siloserver.silo.network.ServerRegistry>().activeServerId.value to
                             koin.get<org.siloserver.silo.repository.ProfileRepository>().getActiveProfileId()
                     },
+                )
+            }
+            DownloadStatusWorker::class.java.name -> {
+                Log.i(TAG, "Building DownloadStatusWorker via Koin")
+                DownloadStatusWorker(
+                    appContext = appContext,
+                    params = workerParameters,
+                    repository = koin.get<DownloadsRepository>(),
+                    authorities = koin.get(),
+                    devices = koin.get(),
                 )
             }
             DownloadSubscriptionWorker::class.java.name -> {

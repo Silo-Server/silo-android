@@ -7,6 +7,7 @@ import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.pairing.PairingEndpoint
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingReceiverState
 import org.siloserver.silo.pairing.PairingServerStatus
@@ -70,7 +71,10 @@ private class ScriptedPhoneTransport : PairingTransport {
 private class FakeCompanionApprover(
     private val matchCodes: Map<String, String> = mapOf("ABCD-0001" to "MATCH-1"),
     private val onApprove: suspend (String) -> Unit = {},
+    private val account: String? = "alice",
 ) : CompanionDeviceLoginApprover {
+    override suspend fun accountName(server: CompanionPairingServer): String? = account
+
     val lookups = mutableListOf<String>()
     val approvals = mutableListOf<String>()
     val denials = mutableListOf<String>()
@@ -255,5 +259,180 @@ class CompanionPairingCoordinatorTest {
             CompanionPairingStatus.Completed("Living Room", listOf("Selected")),
             coordinator.status.value,
         )
+    }
+
+    @Test
+    fun signedOutTvGetsOnlyItsServerWithIdentityAndNoChooser() = runTest {
+        val transport = ScriptedPhoneTransport()
+        val home = CompanionPairingServer(id = "srv-1", url = "https://lib.example", displayName = "Home", isActive = true)
+        val other = CompanionPairingServer(id = "srv-2", url = "https://other.example", displayName = "Other")
+        val identities = mapOf("srv-1" to "S-HOME", "srv-2" to "S-OTHER")
+        val endpoints = listOf(PairingEndpoint.of("https://lib.example", PairingEndpoint.Kind.Public))
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(home, other))),
+            deviceLoginApprover = FakeCompanionApprover(
+                matchCodes = mapOf("ABCD-0001" to "MATCH-1"),
+                onApprove = { transport.signIn("https://other.example") },
+            ),
+            transportFactory = { transport },
+            identitySource = object : CompanionServerIdentitySource {
+                override suspend fun identity(server: CompanionPairingServer) = identities[server.id]
+                override suspend fun endpoints(server: CompanionPairingServer) = endpoints
+            },
+        )
+        val target = CompanionPairingTarget(
+            deviceId = "tv-1", name = "Den TV", host = "127.0.0.1", port = 9999,
+            state = "login", serverIdentity = "S-OTHER",
+        )
+        assertEquals(other, coordinator.serverForSignedOutTv(target))
+
+        var chooserShown = false
+        val result = coordinator.pair(target, chooseServers = { chooserShown = true; it })
+
+        assertEquals(CompanionPairingResult.Completed(serverCount = 1), result)
+        assertEquals(false, chooserShown)
+        val push = transport.sent.filterIsInstance<PairingMessage.PushServer>().single()
+        assertEquals("https://other.example", push.serverURL)
+        assertEquals("S-OTHER", push.serverIdentity)
+        assertEquals(endpoints, push.endpoints)
+    }
+
+    @Test
+    fun signedOutTvForAServerThisPhoneLacksIsNotOffered() = runTest {
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(
+                CompanionPairingServerSnapshot("srv-1", listOf(CompanionPairingServer("srv-1", "https://lib.example", "Home"))),
+            ),
+            deviceLoginApprover = FakeCompanionApprover(),
+            transportFactory = { error("must not connect") },
+            identitySource = object : CompanionServerIdentitySource {
+                override suspend fun identity(server: CompanionPairingServer) = "S-HOME"
+                override suspend fun endpoints(server: CompanionPairingServer) = null
+            },
+        )
+        val target = CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999, state = "login", serverIdentity = "S-ELSEWHERE")
+        assertEquals(null, coordinator.serverForSignedOutTv(target))
+        assertIs<CompanionPairingResult.Failed>(coordinator.pair(target))
+        // st filtering: login without srv, and unknown states, are never offered.
+        assertEquals(false, target.copy(serverIdentity = null).isOfferable)
+        assertEquals(false, target.copy(state = "future").isOfferable)
+        assertEquals(true, target.copy(state = null).isOfferable)
+        assertEquals(true, target.copy(state = "setup").isOfferable)
+    }
+
+    @Test
+    fun tvFailureCodeBecomesReadablePhoneCopy() = runTest {
+        val transport = object : PairingTransport {
+            private val inbound = Channel<PairingMessage>(Channel.UNLIMITED)
+            override val incoming: Flow<PairingMessage> = inbound.consumeAsFlow()
+            init {
+                inbound.trySend(PairingMessage.Hello("Den TV", "tv-1", PairingReceiverState.Setup, listOf(1)))
+            }
+            override suspend fun send(message: PairingMessage) {
+                if (message is PairingMessage.PushServer) {
+                    inbound.send(PairingMessage.DeviceStarted(message.serverURL, "ABCD-0001", "MATCH-1"))
+                }
+            }
+            suspend fun fail(url: String) {
+                inbound.send(PairingMessage.ServerResult(url, PairingServerStatus.Failed, "unreachable"))
+            }
+            override fun close() { inbound.close() }
+        }
+        val server = CompanionPairingServer("srv-1", "https://lib.example", "Home")
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+            deviceLoginApprover = FakeCompanionApprover(onApprove = { transport.fail(server.url) }),
+            transportFactory = { transport },
+        )
+        val result = coordinator.pair(CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999))
+        assertEquals(
+            CompanionPairingResult.Failed("Den TV can't reach Home. Check the TV's network connection."),
+            result,
+        )
+    }
+
+    /** The card can't name the account approving would sign the TV in as: nothing is approved. */
+    @Test
+    fun anUnnamedAccountIsNeverApproved() = runTest {
+        val transport = ScriptedPhoneTransport()
+        val server = CompanionPairingServer(id = "srv-1", url = "https://lib.example", displayName = "Home")
+        val approver = FakeCompanionApprover(account = null)
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+            deviceLoginApprover = approver,
+            transportFactory = { transport },
+        )
+
+        val result = coordinator.pair(target = CompanionPairingTarget("tv-1", "Living Room", "127.0.0.1", 9999))
+
+        assertEquals(
+            CompanionPairingResult.Failed("Couldn't confirm which account would sign in on Living Room. Try again."),
+            result,
+        )
+        assertTrue(approver.approvals.isEmpty())
+        assertTrue(approver.denials.isEmpty())
+        assertTrue(transport.sent.any { it is PairingMessage.Cancel })
+    }
+
+    /** A TV that refuses the push before starting a sign-in fails the pairing at once, with its reason. */
+    @Test
+    fun tvRefusingThePushBeforeStartingFailsAtOnceWithItsReason() = runTest {
+        val result = pairWithTvThat { inbound, push ->
+            inbound.send(PairingMessage.ServerResult(push.serverURL, PairingServerStatus.Failed, "identity_mismatch"))
+        }
+        assertEquals(
+            CompanionPairingResult.Failed("Den TV reached a different server at that address. Nothing was signed in."),
+            result,
+        )
+    }
+
+    @Test
+    fun tvDecliningThePushFailsAtOnceInsteadOfSpinning() = runTest {
+        // The TV user picks "Don't allow": the TV sends `cancel` and hangs up.
+        val result = pairWithTvThat { inbound, _ ->
+            inbound.send(PairingMessage.Cancel(reason = "consent_denied"))
+            inbound.close()
+        }
+        assertEquals(CompanionPairingResult.Failed("Den TV didn't allow it."), result)
+    }
+
+    @Test
+    fun tvHangingUpMidPushFailsAtOnce() = runTest {
+        val result = pairWithTvThat { inbound, _ -> inbound.close() }
+        assertEquals(CompanionPairingResult.Failed("Den TV closed the connection. Try again."), result)
+    }
+
+    @Test
+    fun silentTvTimesOutIntoAFailureNotAStuckCard() = runTest {
+        val coordinator = arrayOfNulls<CompanionPairingCoordinator>(1)
+        val result = pairWithTvThat(onCoordinator = { coordinator[0] = it }) { _, _ -> }
+        assertEquals(CompanionPairingResult.Failed("Den TV stopped responding. Try again."), result)
+        assertIs<CompanionPairingStatus.Failed>(coordinator[0]?.status?.value)
+    }
+
+    /** Pairs with a TV whose reaction to the pushed server is [onPush]. */
+    private suspend fun pairWithTvThat(
+        onCoordinator: (CompanionPairingCoordinator) -> Unit = {},
+        onPush: suspend (Channel<PairingMessage>, PairingMessage.PushServer) -> Unit,
+    ): CompanionPairingResult {
+        val transport = object : PairingTransport {
+            private val inbound = Channel<PairingMessage>(Channel.UNLIMITED)
+            override val incoming: Flow<PairingMessage> = inbound.consumeAsFlow()
+            init {
+                inbound.trySend(PairingMessage.Hello("Den TV", "tv-1", PairingReceiverState.Setup, listOf(1)))
+            }
+            override suspend fun send(message: PairingMessage) {
+                if (message is PairingMessage.PushServer) onPush(inbound, message)
+            }
+            override fun close() { inbound.close() }
+        }
+        val server = CompanionPairingServer("srv-1", "https://lib.example", "Home")
+        val coordinator = CompanionPairingCoordinator(
+            serverStore = FakeCompanionServerStore(CompanionPairingServerSnapshot("srv-1", listOf(server))),
+            deviceLoginApprover = FakeCompanionApprover(),
+            transportFactory = { transport },
+        )
+        onCoordinator(coordinator)
+        return coordinator.pair(CompanionPairingTarget("tv-1", "Den TV", "127.0.0.1", 9999))
     }
 }

@@ -233,12 +233,28 @@ interface TokenManager {
     suspend fun accessTokenExpiresWithin(marginMs: Long): Boolean = false
 
     /**
+     * [accessTokenExpiresWithin] for a saved account's [scope], which need not
+     * be the active server: a phone approving a TV on another saved server
+     * renews that server's token first. Same clamping rules. Default false, so
+     * an implementation that can't answer keeps the reactive 401 refresh.
+     */
+    suspend fun accessTokenExpiresWithin(scope: AuthScopeSnapshot, marginMs: Long): Boolean = false
+
+    /**
      * Capture the currently-active scope for pinning a background request. Returns
      * null when no server is active or the implementation isn't multi-server-aware.
      * Default: not supported (single-scope impls), so callers fall back to the
      * global active scope.
      */
     suspend fun snapshotCurrentScope(): AuthScopeSnapshot? = null
+
+    /**
+     * The durable id of the login whose credentials [serverId]'s saved slot
+     * holds: new on every sign-in there, gone on sign-out, and unchanged
+     * across process restarts, refreshes and profile switches. Null when that
+     * server has no saved credentials, or the implementation keeps no such id.
+     */
+    suspend fun loginSessionId(serverId: String): String? = null
 
     /**
      * Read a specific server's latest access token (handles rotation). Default

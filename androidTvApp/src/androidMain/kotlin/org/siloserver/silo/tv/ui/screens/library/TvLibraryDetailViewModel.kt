@@ -80,9 +80,8 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
     ListOrder("Recently Saved", "__list_order"),
     Title("Title", "title"),
     DateAdded("Date Added", "added_at"),
-    // Server expects "year" for release-date sort (matches phone); the old
-    // "release_date" value was unsupported.
-    ReleaseDate("Year", "year"),
+    ReleaseDate("Release Date", "release_date"),
+    Year("Year", "year"),
     Rating("Rating", "rating_imdb"),
     Runtime("Runtime", "runtime"),
     Resolution("Resolution", "resolution"),
@@ -101,7 +100,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
         // No direction to report — the order is whatever the source defines.
         CollectionOrder, ListOrder -> "Default"
         Title, Author, Narrator, SeriesName -> if (order == "asc") "A–Z" else "Z–A"
-        ReleaseDate, DateAdded -> if (order == "asc") "Oldest" else "Newest"
+        ReleaseDate, Year, DateAdded -> if (order == "asc") "Oldest" else "Newest"
         Runtime -> if (order == "asc") "Shortest" else "Longest"
         Rating, Resolution -> if (order == "asc") "Lowest" else "Highest"
     }
@@ -115,7 +114,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
             if (org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType(libraryType)) {
                 listOf(Title, Author, Narrator, SeriesName, DateAdded, Runtime)
             } else {
-                listOf(Title, DateAdded, ReleaseDate, Rating, Runtime, Resolution)
+                listOf(Title, DateAdded, ReleaseDate, Year, Rating, Runtime, Resolution)
             }
 
         /**
@@ -135,7 +134,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
          * `added_at` by for these sources.
          */
         fun availableForPersonalList(): List<TvLibrarySortOption> =
-            listOf(ListOrder, Title, DateAdded, ReleaseDate, Rating, Runtime)
+            listOf(ListOrder, Title, DateAdded, Year, Rating, Runtime)
     }
 }
 
@@ -859,6 +858,7 @@ internal val TvLibrarySortOption.defaultOrder: String
         TvLibrarySortOption.SeriesName -> "asc"
         TvLibrarySortOption.DateAdded,
         TvLibrarySortOption.ReleaseDate,
+        TvLibrarySortOption.Year,
         TvLibrarySortOption.Rating,
         TvLibrarySortOption.Runtime,
         TvLibrarySortOption.Resolution -> "desc"

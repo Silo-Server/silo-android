@@ -106,6 +106,7 @@ class CompanionPairingNsdBrowser(context: Context) {
             state = attributes.string("st"),
             version = version,
             sessionId = attributes.string("sid"),
+            serverIdentity = attributes.string("srv"),
         )
     }
 

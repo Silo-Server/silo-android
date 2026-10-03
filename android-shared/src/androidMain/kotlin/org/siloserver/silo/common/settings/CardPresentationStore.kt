@@ -460,7 +460,7 @@ class DefaultCardPresentationStore(
         val deviceId: String,
     ) {
         val cacheKeyPrefix: String =
-            "cp_" + sha256Hex("$serverUrl|$profileId|$clientFamily|$deviceId").take(24)
+            settingsCachePrefix("cp_", "$serverUrl|$profileId|$clientFamily|$deviceId")
     }
 
     private suspend fun currentIdentity(): Identity? {
@@ -530,10 +530,5 @@ class DefaultCardPresentationStore(
             CardPresentationSource.Default -> EffectiveSettingValue.SOURCE_DEFAULT
             CardPresentationSource.Unknown -> null
         }
-
-        fun sha256Hex(s: String): String =
-            java.security.MessageDigest.getInstance("SHA-256")
-                .digest(s.toByteArray(Charsets.UTF_8))
-                .joinToString(separator = "") { "%02x".format(it) }
     }
 }

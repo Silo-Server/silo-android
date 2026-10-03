@@ -1,6 +1,9 @@
 package org.siloserver.silo.viewmodel
 
+import org.siloserver.silo.model.request.AdminRequestAction
+import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
+import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestAvailability
 import org.siloserver.silo.model.request.RequestDiscoverySection
@@ -17,6 +20,7 @@ import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.repository.RequestsRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -48,7 +52,7 @@ class RequestsViewModelTest {
     }
 
     @Test
-    fun `requests view model loads status then discover sections`() = runTest(dispatcher) {
+    fun `requests view model loads discover sections and the user's requests`() = runTest(dispatcher) {
         // Server sections are per-media-type; the VM merges them into the
         // hub's two carousels (iOS RequestCarouselMerge parity).
         val section = RequestDiscoverySection(
@@ -56,37 +60,26 @@ class RequestsViewModelTest {
             title = "Trending Movies",
             results = listOf(stubResult(tmdbId = 11, title = "The Signal")),
         )
+        val failed = stubRequest(id = "r-failed", tmdbId = 70, title = "Broken", outcome = RequestOutcome.Failed)
+        val pending = stubRequest(id = "r-pending", tmdbId = 71, title = "Waiting")
         val api = FakeRequestsApi(
-            statusResult = ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true)),
             discoverResult = ApiResult.Success(RequestsDiscoverResponse(listOf(section))),
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(failed, pending))),
         )
 
         val viewModel = RequestsViewModel(RequestsRepository(api))
         val state = viewModel.uiState.value
 
         assertFalse(state.isLoading)
-        assertTrue(state.isEnabled)
+        assertTrue(state.hasLoaded)
         assertEquals(listOf("trending"), state.sections.map { it.key })
         assertEquals("Trending now", state.sections.single().title)
         assertEquals(listOf(11), state.sections.single().results.map { it.tmdbId })
+        // In progress before needs-you, matching the My Requests buckets.
+        assertEquals(listOf("r-pending", "r-failed"), state.myRequests.map { it.id })
+        assertEquals(1, state.inProgressCount)
+        assertEquals(1, state.needsAttentionCount)
         assertNull(state.error)
-        assertEquals(listOf("status", "discover"), api.calls)
-    }
-
-    @Test
-    fun `requests view model skips discover when requests are disabled`() = runTest(dispatcher) {
-        val api = FakeRequestsApi(
-            statusResult = ApiResult.Success(RequestsFeatureStatus(requestsEnabled = false)),
-        )
-
-        val viewModel = RequestsViewModel(RequestsRepository(api))
-        val state = viewModel.uiState.value
-
-        assertFalse(state.isLoading)
-        assertFalse(state.isEnabled)
-        assertTrue(state.sections.isEmpty())
-        assertEquals("Requests are not enabled on this server.", state.error)
-        assertEquals(listOf("status"), api.calls)
     }
 
     @Test
@@ -229,6 +222,7 @@ class RequestsViewModelTest {
             mediaType = RequestMediaType.Movie,
             tmdbId = 33,
         )
+        assertEquals(RequestPrimaryAction.Request, viewModel.uiState.value.primaryAction)
 
         viewModel.submitRequest()
         val state = viewModel.uiState.value
@@ -236,8 +230,9 @@ class RequestsViewModelTest {
         assertFalse(state.isLoading)
         assertFalse(state.isSubmitting)
         assertEquals(refreshedDetail, state.detail)
-        assertEquals("Request submitted.", state.notice)
-        assertNull(state.error)
+        assertEquals(1, state.submittedCount)
+        assertEquals(RequestPrimaryAction.Status(RequestDisplayState.Pending), state.primaryAction)
+        assertNull(state.actionErrorMessage)
         assertEquals(
             CreateMediaRequest(
                 mediaType = RequestMediaType.Movie,
@@ -251,16 +246,66 @@ class RequestsViewModelTest {
             ),
             api.createRequests.single(),
         )
+        // The create patched the user's list, so the re-read reuses it.
         assertEquals(
-            listOf("detail:movie:33", "detail:movie:33"),
+            listOf("detail:movie:33", "mine", "detail:movie:33"),
             api.calls,
         )
     }
 
     @Test
+    fun `an unconfirmed create stays held until a read shows the request`() = runTest(dispatcher) {
+        val requestable = RequestMediaDetail(
+            mediaType = RequestMediaType.Movie,
+            tmdbId = 33,
+            title = "Deep Archive",
+            request = RequestState(requestable = true),
+        )
+        val api = FakeRequestsApi(
+            // The first read, then the one right after the timeout: the server
+            // hasn't committed the create yet.
+            detailResults = ArrayDeque(listOf(ApiResult.Success(requestable), ApiResult.Success(requestable))),
+            createResult = ApiResult.NetworkError(IllegalStateException("timed out")),
+        )
+        val viewModel = RequestDetailViewModel(RequestsRepository(api), RequestMediaType.Movie, 33)
+
+        viewModel.submitRequest()
+        assertTrue(viewModel.uiState.value.isSubmissionUnconfirmed)
+        assertTrue(viewModel.uiState.value.primaryAction != RequestPrimaryAction.Request)
+        viewModel.submitRequest()
+        assertEquals(1, api.createRequests.size)
+
+        // The hold lapses on its own.
+        dispatcher.scheduler.advanceTimeBy(61_000)
+        assertFalse(viewModel.uiState.value.isSubmissionUnconfirmed)
+    }
+
+    @Test
+    fun `an approvals read sent before a decision does not bring the row back`() = runTest(dispatcher) {
+        val waiting = stubRequest(id = "r-1", tmdbId = 80, title = "Waiting")
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeRequestsApi(
+            adminHandler = { status, _ ->
+                gate.await()
+                ApiResult.Success(RequestsListResponse(if (status == RequestStatus.Pending) listOf(waiting) else emptyList()))
+            },
+            adminActionResult = ApiResult.Success(waiting.copy(status = RequestStatus.Approved)),
+        )
+        val viewModel = RequestApprovalsViewModel(RequestsRepository(api), loadOnInit = false)
+        viewModel.refresh()
+
+        viewModel.perform(AdminRequestAction.Approve, waiting)
+        dispatcher.scheduler.advanceTimeBy(1_000)
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.uiState.value.awaitingApproval.isEmpty())
+        assertEquals(listOf("r-1"), api.adminActionCalls)
+    }
+
+    @Test
     fun `requests view model falls back to default message for blank discover errors`() = runTest(dispatcher) {
         val api = FakeRequestsApi(
-            statusResult = ApiResult.Success(RequestsFeatureStatus(requestsEnabled = true)),
             discoverResult = ApiResult.Error(code = 500, error = "internal", message = ""),
         )
 
@@ -270,8 +315,8 @@ class RequestsViewModelTest {
     }
 
     @Test
-    fun `requests view model shows network copy when status request cannot reach the server`() = runTest(dispatcher) {
-        val api = FakeRequestsApi(statusResult = ApiResult.NetworkError(IllegalStateException("offline")))
+    fun `requests view model shows network copy when discover cannot reach the server`() = runTest(dispatcher) {
+        val api = FakeRequestsApi(discoverResult = ApiResult.NetworkError(IllegalStateException("offline")))
 
         val viewModel = RequestsViewModel(RequestsRepository(api))
 
@@ -327,13 +372,15 @@ class RequestsViewModelTest {
         val viewModel = MyRequestsViewModel(RequestsRepository(api))
 
         assertEquals(listOf(pending), viewModel.uiState.value.requests)
+        api.mineResult = ApiResult.Success(RequestsListResponse(listOf(cancelled)))
 
-        viewModel.cancel("request-1")
+        viewModel.cancel(pending)
         val state = viewModel.uiState.value
 
         assertFalse(state.isLoading)
-        assertNull(state.actionInFlightId)
-        assertEquals(listOf(cancelled), state.requests)
+        assertNull(state.cancellingId)
+        // A cancelled request leaves My Requests.
+        assertTrue(state.requests.isEmpty())
         assertNull(state.error)
         assertEquals(listOf("request-1"), api.cancelCalls)
     }
@@ -356,7 +403,7 @@ private class FakeRequestsApi(
         ArrayDeque(listOf(ApiResult.NetworkError(IllegalStateException("no detail fake")))),
     private val createResult: ApiResult<MediaRequest> =
         ApiResult.NetworkError(IllegalStateException("no create fake")),
-    private val mineResult: ApiResult<RequestsListResponse> =
+    var mineResult: ApiResult<RequestsListResponse> =
         ApiResult.Success(RequestsListResponse()),
     private val cancelResult: ApiResult<MediaRequest> =
         ApiResult.NetworkError(IllegalStateException("no cancel fake")),
@@ -371,12 +418,15 @@ private class FakeRequestsApi(
         limit: Int?,
         offset: Int?,
     ) -> ApiResult<RequestsListResponse>)? = null,
+    private val adminHandler: (suspend (status: String?, outcome: String?) -> ApiResult<RequestsListResponse>)? = null,
+    private val adminActionResult: ApiResult<MediaRequest> = ApiResult.Error(403, "forbidden", ""),
 ) : RequestsApi {
 
     val calls = mutableListOf<String>()
     val searchCalls = mutableListOf<SearchCall>()
     val createRequests = mutableListOf<CreateMediaRequest>()
     val cancelCalls = mutableListOf<String>()
+    val adminActionCalls = mutableListOf<String>()
 
     override suspend fun status(): ApiResult<RequestsFeatureStatus> {
         calls += "status"
@@ -427,6 +477,21 @@ private class FakeRequestsApi(
     override suspend fun cancel(id: String): ApiResult<MediaRequest> {
         cancelCalls += id
         return cancelResult
+    }
+
+    override suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> =
+        ApiResult.Error(403, "forbidden", "")
+
+    override suspend fun adminRequests(
+        status: String?,
+        outcome: String?,
+        mediaType: String?,
+        tmdbId: Int?,
+    ): ApiResult<RequestsListResponse> = adminHandler?.invoke(status, outcome) ?: ApiResult.Error(403, "forbidden", "")
+
+    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> {
+        adminActionCalls += id
+        return adminActionResult
     }
 }
 

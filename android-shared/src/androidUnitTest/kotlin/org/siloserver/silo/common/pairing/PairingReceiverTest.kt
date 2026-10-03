@@ -2,6 +2,9 @@ package org.siloserver.silo.common.pairing
 
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
+import org.siloserver.silo.network.api.ServerIdentityProbe
+import org.siloserver.silo.pairing.PairingEndpoint
+import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.pairing.PairingMessage
 import org.siloserver.silo.pairing.PairingReceiverState
 import org.siloserver.silo.pairing.PairingServerStatus
@@ -16,6 +19,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.assertIs
 
@@ -55,6 +59,8 @@ private class FakeAuthPort : PairingAuthPort {
     )
 
     val committedSessions = mutableListOf<CommittedSession>()
+    val verifiedIds = mutableListOf<String?>()
+    var failPersist = false
 
     override suspend fun persistApprovedSession(
         serverUrl: String,
@@ -63,7 +69,10 @@ private class FakeAuthPort : PairingAuthPort {
         refreshToken: String,
         expiresIn: Long,
         expectedIdentity: org.siloserver.silo.network.AccountSessionExpectation?,
+        verifiedServerId: String?,
     ) {
+        if (failPersist) throw IllegalStateException("disk full")
+        verifiedIds += verifiedServerId
         committedSessions += CommittedSession(
             serverUrl = serverUrl,
             serverName = serverName,
@@ -145,12 +154,13 @@ class PairingReceiverTest {
         auth: FakeAuthPort,
         login: FakeDeviceLogin,
         state: PairingReceiverState = PairingReceiverState.Setup,
+        identities: Map<String, ServerIdentityProbe> = emptyMap(),
     ) = PairingReceiver(
         authPort = auth,
         deviceLogin = login,
         identityProvider = { PairingDeviceIdentity(name = "Test TV", deviceId = "device-1") },
-        receiverStateProvider = { state },
-    )
+        identityProbe = { url -> identities[url] ?: ServerIdentityProbe.Unreachable },
+    ).also { it.advertisement = PairingAdvertisement(state) }
 
     @Test
     fun helloSentFirstWithCurrentState() = runTest {
@@ -212,7 +222,11 @@ class PairingReceiverTest {
         val status = recv.status.value
         assertIs<PairingReceiverStatus.AwaitingApproval>(status)
         assertEquals("Srv", status.serverName)
+        // People compare the TV's sign-in code, never the match words.
+        assertEquals("USER-CODE", status.userCode)
+        // The words ride along for the "Older phones show ..." fallback line.
         assertEquals("MATCH-42", status.matchCode)
+        assertFalse(status.automatic)
 
         // Approve → ServerResult(signedIn).
         login.approve()
@@ -264,10 +278,12 @@ class PairingReceiverTest {
 
         val result = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
         assertEquals(PairingServerStatus.Failed, result.status)
-        assertEquals("denied-by-user", result.error)
+        // A structured code, never human text (iOS reads unknown values as auth_failed).
+        assertEquals("denied", result.error)
         val failed = recv.status.value
         assertIs<PairingReceiverStatus.Failed>(failed)
         assertEquals("https://srv.test", failed.serverName)
+        assertEquals(PairingFailureCode.Denied, failed.code)
         assertEquals(emptyList(), auth.committedSessions)
 
         transport.deliver(PairingMessage.Done)
@@ -337,6 +353,227 @@ class PairingReceiverTest {
         assertEquals(listOf("https://one.test"), auth.committedSessions.map { it.serverUrl })
         assertEquals("https://two.test", login.beganWith?.serverUrl)
 
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.settle() = repeat(20) { yield() }
+
+    @Test
+    fun newerPushSupersedesTheOneInFlight() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort()
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login)
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer(serverURL = "https://one.test", serverName = "One"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        assertEquals("https://one.test", login.beganWith?.serverUrl)
+
+        transport.deliver(PairingMessage.PushServer(serverURL = "https://two.test", serverName = "Two"))
+        settle()
+        assertEquals("https://two.test", login.beganWith?.serverUrl)
+        val started = transport.sent.filterIsInstance<PairingMessage.DeviceStarted>()
+        assertEquals(listOf("https://one.test", "https://two.test"), started.map { it.serverURL })
+        login.approve()
+        settle()
+        assertEquals(listOf("https://two.test"), auth.committedSessions.map { it.serverUrl })
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    @Test
+    fun pushedIdentityIsVerifiedAndRecorded() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort()
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login, identities = mapOf("https://srv.test" to ServerIdentityProbe.Identity("S1")))
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv", serverIdentity = "S1"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        login.approve()
+        settle()
+        assertEquals(listOf<String?>("S1"), auth.verifiedIds)
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    @Test
+    fun differentIdentityAtThePushedAddressFailsWithIdentityMismatch() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort()
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login, identities = mapOf("https://srv.test" to ServerIdentityProbe.Identity("OTHER")))
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv", serverIdentity = "S1"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        assertEquals(null, login.beganWith, "never signs in at a different deployment")
+        val result = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
+        assertEquals("identity_mismatch", result.error)
+        transport.deliver(PairingMessage.Done)
+        job.join()
+        assertEquals(PairingReceiverStatus.Failed("Srv", PairingFailureCode.IdentityMismatch), recv.status.value)
+    }
+
+    @Test
+    fun unreachableAddressOffersAVerifiedAlternateAndUsesItOnlyWhenChosen() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort()
+        val login = FakeDeviceLogin()
+        val recv = receiver(
+            auth,
+            login,
+            identities = mapOf("https://alt.test" to ServerIdentityProbe.Identity("S1")),
+        )
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(
+            PairingMessage.PushServer(
+                "https://srv.test",
+                "Srv",
+                serverIdentity = "S1",
+                endpoints = listOf(
+                    PairingEndpoint.of("https://srv.test", PairingEndpoint.Kind.Provider, "tailscale", "Tailscale"),
+                    PairingEndpoint.of("https://alt.test", PairingEndpoint.Kind.Public),
+                ),
+            ),
+        )
+        settle()
+        recv.allowPendingServer()
+        settle()
+        assertEquals(
+            PairingReceiverStatus.Unreachable("https://srv.test", "Srv", "Tailscale", "https://alt.test"),
+            recv.status.value,
+        )
+        assertEquals(null, login.beganWith)
+        recv.useAlternateAddress()
+        settle()
+        assertEquals("https://alt.test", login.beganWith?.serverUrl)
+        // Frames still name the pushed address.
+        assertEquals("https://srv.test", transport.sent.filterIsInstance<PairingMessage.DeviceStarted>().single().serverURL)
+        transport.deliver(PairingMessage.Cancel("done"))
+        job.join()
+    }
+
+    /** The sign-in screen's code, lent to the receiver in login mode. */
+    private class FakeCodeSource : NearbySignInCodeSource {
+        val outcome = kotlinx.coroutines.CompletableDeferred<NearbySignInOutcome>()
+        var askedFor = mutableListOf<String>()
+        override suspend fun codeForNearbyApproval() = FakeDeviceLogin.START_RESPONSE
+        override suspend fun nearbyApprovalOutcome(deviceCode: String): NearbySignInOutcome {
+            askedFor += deviceCode
+            return outcome.await()
+        }
+    }
+
+    @Test
+    fun signedOutTvLendsItsOwnCodeAndStartsNoSecondRequest() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort()
+        val login = FakeDeviceLogin()
+        val source = FakeCodeSource()
+        val recv = receiver(auth, login)
+        recv.advertisement = PairingAdvertisement.login(serverIdentity = "S1", serverUrl = "http://192.168.1.5:8090", source = source)
+        val job = launch { recv.run(transport) }
+        yield()
+        assertEquals(PairingReceiverState.Login, (transport.sent.first() as PairingMessage.Hello).state)
+        transport.deliver(PairingMessage.PushServer("https://media.example.com", "Home", serverIdentity = "S1"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        val started = transport.sent.filterIsInstance<PairingMessage.DeviceStarted>().single()
+        assertEquals("USER-CODE", started.userCode)
+        assertEquals("MATCH-42", started.matchCode)
+        assertEquals("https://media.example.com", started.serverURL)
+        assertEquals(null, login.beganWith, "no second device request")
+        assertEquals(listOf("dev-code"), source.askedFor)
+
+        source.outcome.complete(NearbySignInOutcome.SignedIn)
+        settle()
+        assertTrue(auth.committedSessions.isEmpty(), "the sign-in screen saves the session")
+        val result = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
+        assertEquals(PairingServerStatus.SignedIn, result.status)
+        assertEquals("https://media.example.com", result.serverURL)
+        transport.deliver(PairingMessage.Done)
+        job.join()
+    }
+
+    @Test
+    fun signedOutTvRefusesAnotherServerOrAPushWithoutIdentity() = runTest {
+        for (identity in listOf("S2", null)) {
+            val transport = FakeTransport()
+            val source = FakeCodeSource()
+            val recv = receiver(FakeAuthPort(), FakeDeviceLogin(), identities = mapOf("https://media.example.com" to ServerIdentityProbe.Identity("S1")))
+            recv.advertisement = PairingAdvertisement.login(serverIdentity = "S1", serverUrl = "http://192.168.1.5:8090", source = source)
+            val job = launch { recv.run(transport) }
+            yield()
+            transport.deliver(PairingMessage.PushServer("https://media.example.com", "Home", serverIdentity = identity))
+            settle()
+            recv.allowPendingServer()
+            settle()
+            val refused = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
+            assertEquals("identity_mismatch", refused.error, "identity=$identity")
+            assertTrue(transport.sent.none { it is PairingMessage.DeviceStarted })
+            assertTrue(source.askedFor.isEmpty())
+            transport.deliver(PairingMessage.Done)
+            job.join()
+        }
+    }
+
+    @Test
+    fun aLoneFailureStaysOnScreenUntilClosedThenAdvertisingResumes() = runTest {
+        val transport = FakeTransport()
+        val source = FakeCodeSource()
+        val recv = receiver(FakeAuthPort(), FakeDeviceLogin())
+        recv.advertisement = PairingAdvertisement.login(serverIdentity = "S1", serverUrl = "http://192.168.1.5:8090", source = source)
+        recv.setAdvertising()
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://media.example.com", "Home", serverIdentity = "S1"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        source.outcome.complete(NearbySignInOutcome.Failed(PairingFailureCode.Expired))
+        settle()
+        transport.deliver(PairingMessage.Done)
+        job.join()
+        // What the advertiser sees when the connection ends: it keeps a
+        // Failed status rather than replacing it with Advertising.
+        assertEquals(PairingReceiverStatus.Failed("Home", PairingFailureCode.Expired), recv.status.value)
+        assertEquals(false, resumesAdvertisingAfterConnection(recv.status.value))
+        assertEquals(true, resumesAdvertisingAfterConnection(PairingReceiverStatus.Idle))
+
+        recv.cancelActiveSession()
+        assertEquals(PairingReceiverStatus.Advertising, recv.status.value)
+    }
+
+    @Test
+    fun failedCommitIsReportedInsteadOfStalling() = runTest {
+        val transport = FakeTransport()
+        val auth = FakeAuthPort().apply { failPersist = true }
+        val login = FakeDeviceLogin()
+        val recv = receiver(auth, login)
+        val job = launch { recv.run(transport) }
+        yield()
+        transport.deliver(PairingMessage.PushServer("https://srv.test", "Srv"))
+        settle()
+        recv.allowPendingServer()
+        settle()
+        login.approve()
+        settle()
+        val result = transport.sent.filterIsInstance<PairingMessage.ServerResult>().single()
+        assertEquals(PairingServerStatus.Failed, result.status)
+        assertEquals("auth_failed", result.error)
+        assertEquals(PairingReceiverStatus.Failed("Srv", PairingFailureCode.AuthFailed), recv.status.value)
         transport.deliver(PairingMessage.Done)
         job.join()
     }

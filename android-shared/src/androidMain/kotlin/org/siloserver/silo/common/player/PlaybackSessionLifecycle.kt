@@ -723,6 +723,7 @@ class PlaybackSessionLifecycle(
     private fun startProgressReporter() {
         reporterJob?.cancel()
         reporterJob = scope.launch {
+            var sequencedFailures = 0
             while (isActive) {
                 delay(PROGRESS_REPORT_INTERVAL_MS)
                 val sess = (_state.value as? SessionState.Active)?.session ?: continue
@@ -749,9 +750,17 @@ class PlaybackSessionLifecycle(
                 // all of that to episode B.
                 if (!ownsProgressReply(sess.sessionId)) continue
                 if (sessionManager.isSequenced(sess.sessionId)) {
+                    // The journal resends the pending sample on the next tick,
+                    // so one failed tick loses nothing. Warn only once failures
+                    // persist, not on a single transient one.
                     if (result !is ApiResult.Success) {
-                        _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                        sequencedFailures++
+                        Log.w(TAG, "sequenced reportProgress failed ($sequencedFailures): $result")
+                        if (sequencedFailures >= SEQUENCED_PROGRESS_WARNING_FAILURES) {
+                            _notice.value = PlayerNotice("Playback progress is pending. The current session will not be replaced.", NoticeTone.Warning)
+                        }
                     } else {
+                        sequencedFailures = 0
                         _notice.value = null
                     }
                     continue
@@ -977,6 +986,9 @@ class PlaybackSessionLifecycle(
 
         // Mirrors PROGRESS_REPORT_INTERVAL_MS in PlayerViewModel / TvPlayerViewModel.
         const val PROGRESS_REPORT_INTERVAL_MS: Long = 10_000L
+
+        /** Consecutive failed sequenced progress ticks (~30 s) before warning. */
+        const val SEQUENCED_PROGRESS_WARNING_FAILURES: Int = 3
 
         // Mirrors iOS `serverOutageRecovery*` constants in PlayerViewModel.swift.
         const val OUTAGE_INITIAL_DELAY_MS: Long = 1_000L

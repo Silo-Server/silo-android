@@ -506,22 +506,39 @@ class EncryptedTokenManagerImpl(
     override suspend fun snapshotDurableLoginAuthority(): DurableLoginAuthority? = tokenWriteMutex.withLock {
         mutex.withLock {
             val scope = snapshotCurrentScopeLocked() ?: return@withLock null
-            if (scope.credentialGenerationId != null || scope.profileId.isNullOrBlank() ||
-                accessToken.isNullOrBlank() || refreshToken.isNullOrBlank() ||
-                scope.serverId in failedAuthorityWrites) return@withLock null
-            val key = serverScopedKey(scope.serverId, KEY_LOGIN_ID)
-            var loginId = prefs.getString(key, null)
-            if (loginId.isNullOrBlank()) {
-                loginId = java.util.UUID.randomUUID().toString()
-                pendingAuthorityBootstrap.add(scope.serverId)
-            }
-            // A failed SharedPreferences commit may still change its in-memory map.
-            // Retry that commit before exposing the marker, never trust the map alone.
-            if (scope.serverId in pendingAuthorityBootstrap) {
-                if (!prefs.edit().putString(key, loginId).commit()) return@withLock null
-                pendingAuthorityBootstrap.remove(scope.serverId)
-            }
-            DurableLoginAuthority(loginId, scope)
+            if (scope.credentialGenerationId != null || scope.profileId.isNullOrBlank()) return@withLock null
+            DurableLoginAuthority(durableLoginIdLocked(scope.serverId) ?: return@withLock null, scope)
+        }
+    }
+
+    /**
+     * The login id of [serverId]'s saved slot, which every account
+     * replacement writes afresh and every sign-out removes. A slot signed in
+     * before the id existed gets one here. Null without saved credentials or
+     * while the slot's last write failed.
+     */
+    private fun durableLoginIdLocked(serverId: String): String? {
+        if (persistentAccessToken(serverId).isNullOrBlank() || persistentRefreshToken(serverId).isNullOrBlank() ||
+            serverId in failedAuthorityWrites) return null
+        val key = serverScopedKey(serverId, KEY_LOGIN_ID)
+        var loginId = prefs.getString(key, null)
+        if (loginId.isNullOrBlank()) {
+            loginId = java.util.UUID.randomUUID().toString()
+            pendingAuthorityBootstrap.add(serverId)
+        }
+        // A failed SharedPreferences commit may still change its in-memory map.
+        // Retry that commit before exposing the marker, never trust the map alone.
+        if (serverId in pendingAuthorityBootstrap) {
+            if (!prefs.edit().putString(key, loginId).commit()) return null
+            pendingAuthorityBootstrap.remove(serverId)
+        }
+        return loginId
+    }
+
+    override suspend fun loginSessionId(serverId: String): String? = tokenWriteMutex.withLock {
+        mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            durableLoginIdLocked(serverId)
         }
     }
 
@@ -562,6 +579,36 @@ class EncryptedTokenManagerImpl(
             isIdentityGenerationStamped = true,
             credentialEpoch = persistentCredentialEpoch,
         )
+    }
+
+    /**
+     * Answers for a saved account's slot only, active or not. A temporary
+     * overlay's scope answers false: its deadline lives with the overlay and
+     * [accessTokenExpiresWithin] already covers it.
+     */
+    override suspend fun accessTokenExpiresWithin(scope: AuthScopeSnapshot, marginMs: Long): Boolean {
+        if (scope.credentialGenerationId != null) return false
+        return mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            val serverId = scope.serverId
+            if (persistentAccessToken(serverId) == null) return@withLock false
+            val expiry: Long?
+            val lifetime: Long?
+            if (serverId == activeServerId) {
+                expiry = tokenExpiryEpochMs
+                lifetime = tokenLifetimeMs
+            } else {
+                val expiryKey = serverScopedKey(serverId, KEY_TOKEN_EXPIRY)
+                val lifetimeKey = serverScopedKey(serverId, KEY_TOKEN_LIFETIME)
+                expiry = if (prefs.contains(expiryKey)) prefs.getLong(expiryKey, 0L) else null
+                lifetime = if (prefs.contains(lifetimeKey)) prefs.getLong(lifetimeKey, 0L) else null
+            }
+            shouldRefreshProactively(
+                remainingMs = (expiry ?: return@withLock false) - System.currentTimeMillis(),
+                lifetimeMs = lifetime,
+                marginMs = marginMs,
+            )
+        }
     }
 
     override suspend fun getAccessTokenForScope(serverId: String): String? = mutex.withLock {

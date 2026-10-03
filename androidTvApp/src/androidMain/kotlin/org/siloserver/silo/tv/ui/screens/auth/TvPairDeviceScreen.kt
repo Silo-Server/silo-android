@@ -21,6 +21,9 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
+import org.siloserver.silo.tv.R
+import org.siloserver.silo.viewmodel.DevicePairingError
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -170,13 +173,13 @@ fun TvPairDeviceScreen(
             state.error?.let { error ->
                 Spacer(Modifier.height(18.dp))
                 Text(
-                    text = error,
+                    text = error.message(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (error.startsWith("Sign in")) {
+                if (error == DevicePairingError.SignInFirst) {
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = onSignIn) { Text("Sign In") }
                 }
@@ -274,7 +277,12 @@ fun TvPairDeviceScreen(
 @Composable
 private fun PairingDetails(lookup: DeviceLoginLookupResponse) {
     Spacer(Modifier.height(18.dp))
-    DetailRow(label = "Match", value = lookup.matchCode.orEmpty())
+    // The code the other device shows, grouped 4+4; the match words are no
+    // longer shown anywhere.
+    DetailRow(
+        label = "Code",
+        value = lookup.userCode?.let(org.siloserver.silo.model.auth.DeviceCodeFormat::display).orEmpty(),
+    )
     DetailRow(label = "Device", value = lookup.deviceName.orEmpty())
     DetailRow(label = "Platform", value = lookup.devicePlatform.orEmpty())
     lookup.ipAddressHint?.takeIf { it.isNotBlank() }?.let { DetailRow(label = "IP", value = it) }
@@ -305,4 +313,19 @@ private fun DetailRow(label: String, value: String) {
             modifier = Modifier.weight(1f),
         )
     }
+}
+
+@Composable
+private fun DevicePairingError.message(): String = when (this) {
+    DevicePairingError.EnterCode -> stringResource(R.string.tv_pair_error_enter_code)
+    DevicePairingError.SignInFirst -> stringResource(R.string.tv_pair_error_sign_in_first)
+    DevicePairingError.NotFound -> stringResource(R.string.tv_pair_error_not_found)
+    is DevicePairingError.NotFoundOn -> stringResource(R.string.tv_pair_error_not_found_on, serverName)
+    DevicePairingError.Expired -> stringResource(R.string.tv_pair_error_expired)
+    DevicePairingError.AlreadySignedIn -> stringResource(R.string.tv_pair_error_already_signed_in)
+    DevicePairingError.Declined -> stringResource(R.string.tv_pair_error_declined)
+    DevicePairingError.Canceled -> stringResource(R.string.tv_pair_error_canceled)
+    DevicePairingError.Network -> stringResource(R.string.tv_pair_error_network)
+    DevicePairingError.ProviderUnavailable -> stringResource(R.string.tv_pair_error_provider_unavailable)
+    is DevicePairingError.Server -> message ?: stringResource(R.string.tv_pair_error_generic)
 }

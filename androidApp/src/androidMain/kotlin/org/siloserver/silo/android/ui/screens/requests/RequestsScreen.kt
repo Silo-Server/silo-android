@@ -1,169 +1,202 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.Movie
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.HowToReg
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import org.siloserver.silo.android.ui.components.SiloTopBar
-import org.siloserver.silo.android.ui.components.EmptyStateView
-import org.siloserver.silo.android.ui.components.LoadingIndicator
-import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
-import org.siloserver.silo.model.request.RequestMediaResult
-import org.siloserver.silo.model.request.RequestMediaType
-import org.siloserver.silo.viewmodel.RequestSearchViewModel
-import org.siloserver.silo.viewmodel.RequestsViewModel
+import androidx.compose.ui.unit.sp
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.android.ui.components.EmptyStateView
+import org.siloserver.silo.android.ui.components.ErrorView
+import org.siloserver.silo.android.ui.components.MediaGridDefaults
+import org.siloserver.silo.android.ui.components.rememberShimmerProgress
+import org.siloserver.silo.android.ui.components.skeleton
+import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.requests.RequestColors
+import org.siloserver.silo.common.requests.RequestRouter
+import org.siloserver.silo.common.requests.rememberRequestRouter
+import org.siloserver.silo.model.request.RequestMediaResult
+import org.siloserver.silo.model.request.RequestStatusTint
+import org.siloserver.silo.viewmodel.RequestsUiState
+import org.siloserver.silo.viewmodel.RequestsViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Requests hub, in the same grammar as the library pages: search TMDB to
+ * request, a status summary and the user's own requests one glance down, then
+ * the discover carousels.
+ */
 @Composable
 fun RequestsScreen(
     onBackClick: () -> Unit,
     onMyRequestsClick: () -> Unit,
-    onMediaClick: (RequestMediaResult) -> Unit,
+    onApprovalsClick: () -> Unit,
+    onRequestDetailClick: (mediaType: String, tmdbId: Int) -> Unit,
     onLibraryItemClick: (String) -> Unit,
     viewModel: RequestsViewModel = koinViewModel(),
-    searchViewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val searchState by searchViewModel.uiState.collectAsState()
-    val hasSubmittedQuery = searchState.hasSubmittedQuery
-    val hasSearchResults = searchState.results.isNotEmpty()
-    val showDiscoverRows = !hasSubmittedQuery ||
-        (searchState.error != null && state.sections.any { it.results.isNotEmpty() })
+    val router = rememberRequestRouter(koinInject(), onLibraryItemClick, onRequestDetailClick)
 
-    Scaffold(
-        topBar = {
-            SiloTopBar(
-                title = "Requests",
-                onBackClick = onBackClick,
-                actions = {
-                    TextButton(onClick = onMyRequestsClick) {
-                        Text("My Requests")
-                    }
-                },
+    RequestsLargeTitlePage(
+        title = "Requests",
+        onBackClick = onBackClick,
+        isRefreshing = state.isRefreshing,
+        onRefresh = viewModel::refresh,
+    ) {
+        item(key = "search", contentType = "search") {
+            RequestsSearchField(
+                query = state.query,
+                onQueryChange = viewModel::onQueryChanged,
+                onSearch = viewModel::submitSearch,
             )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { padding ->
+        }
         when {
-            state.isLoading && state.sections.isEmpty() -> {
-                LoadingIndicator(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
+            !state.isShowingDiscover -> searchResults(state, router::openResult)
+            state.error != null -> item(key = "error") {
+                ErrorView(message = state.error.orEmpty(), onRetry = viewModel::load, modifier = Modifier.padding(top = 60.dp))
+            }
+            state.isLoading -> item(key = "loading") {
+                val progress = rememberShimmerProgress()
+                Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
+                    RequestRailSkeleton(progress, title = "Your requests")
+                    RequestRailSkeleton(progress)
+                }
+            }
+            state.myRequests.isEmpty() && state.sections.isEmpty() -> item(key = "empty") {
+                EmptyStateView(
+                    title = "Nothing here yet",
+                    subtitle = "Search for a movie or series to request it",
+                    icon = Icons.Outlined.AutoAwesome,
+                    modifier = Modifier.padding(top = 80.dp),
                 )
             }
-            state.error != null && state.sections.isEmpty() && !state.isEnabled && !hasSubmittedQuery -> {
-                RequestErrorState(
-                    message = state.error ?: "Requests are unavailable.",
-                    onRetry = viewModel::load,
-                    modifier = Modifier.padding(padding),
+            else -> discover(state, router, onMyRequestsClick, onApprovalsClick)
+        }
+    }
+}
+
+private fun LazyListScope.discover(
+    state: RequestsUiState,
+    router: RequestRouter,
+    onMyRequestsClick: () -> Unit,
+    onApprovalsClick: () -> Unit,
+) {
+    val moving = state.inProgressCount + state.needsAttentionCount
+    if (moving > 0 || state.pendingApprovals > 0) {
+        item(key = "summary", contentType = "summary") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (moving > 0) {
+                    RequestSummaryCard(title = summaryTitle(state), parts = summaryParts(state), onClick = onMyRequestsClick)
+                }
+                if (state.pendingApprovals > 0) {
+                    RequestSummaryCard(
+                        title = when {
+                            state.morePendingApprovals -> "${state.pendingApprovals}+ requests need your approval"
+                            state.pendingApprovals == 1 -> "1 request needs your approval"
+                            else -> "${state.pendingApprovals} requests need your approval"
+                        },
+                        leadingIcon = Icons.Outlined.HowToReg,
+                        leadingTint = RequestColors.Amber,
+                        onClick = onApprovalsClick,
+                    )
+                }
+            }
+        }
+    }
+    if (state.myRequests.isNotEmpty()) {
+        item(key = "mine", contentType = "rail") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RequestsSectionHeader(title = "Your requests", trailing = "See all", onTrailingClick = onMyRequestsClick)
+                RequestCardRail(items = state.myRequests, key = { it.id }) { record ->
+                    RequestRecordCard(record = record, onClick = { router.openRecord(record) })
+                }
+            }
+        }
+    }
+    state.sections.forEachIndexed { index, section ->
+        item(key = "discover:${section.key}", contentType = "rail") {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                RequestsSectionHeader(title = section.title, label = if (index == 0) "Discover" else null)
+                RequestCardRail(items = section.results, key = { "${it.mediaType}:${it.tmdbId}" }) { result ->
+                    RequestMediaCard(item = result, onClick = { router.openResult(result) })
+                }
+            }
+        }
+    }
+}
+
+private fun summaryTitle(state: RequestsUiState): String {
+    val count = state.inProgressCount
+    return when (count) {
+        0 -> "Your requests need you"
+        1 -> "1 request in progress"
+        else -> "$count requests in progress"
+    }
+}
+
+private fun summaryParts(state: RequestsUiState): List<Pair<RequestStatusTint, String>> = buildList {
+    if (state.onTheWayCount > 0) add(RequestStatusTint.Sky to "${state.onTheWayCount} on the way")
+    if (state.pendingCount > 0) add(RequestStatusTint.Amber to "${state.pendingCount} pending")
+    if (state.needsAttentionCount > 0) add(RequestStatusTint.Rose to "${state.needsAttentionCount} need you")
+}
+
+/** Library search's grid: adaptive columns from the card presentation, placeholders in the same cells while searching. */
+private fun LazyListScope.searchResults(state: RequestsUiState, onOpen: (RequestMediaResult) -> Unit) {
+    when {
+        state.isSearching && state.searchResults.isEmpty() -> item(key = "search-loading") {
+            SearchGrid(count = 9) { width, _ ->
+                val progress = rememberShimmerProgress()
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Box(
+                        modifier = Modifier.width(width).aspectRatio(RequestPosterAspect).skeleton(progress),
+                    )
+                    Box(
+                        modifier = Modifier.width(width * 0.7f).height(10.dp).skeleton(progress, RoundedCornerShape(3.dp)),
+                    )
+                }
+            }
+        }
+        state.hasSearched && state.searchResults.isEmpty() -> item(key = "search-empty") {
+            EmptyStateView(
+                title = "No matches",
+                subtitle = "Nothing on TMDB matched that search",
+                icon = Icons.Outlined.Search,
+                modifier = Modifier.padding(top = 80.dp),
+            )
+        }
+        else -> {
+            item(key = "search-count") {
+                Text(
+                    text = "${state.searchTotal} result${if (state.searchTotal == 1) "" else "s"}",
+                    fontSize = 12.sp,
+                    color = SiloSecondaryText,
+                    modifier = Modifier.padding(horizontal = 16.dp),
                 )
             }
-            else -> {
-                PullToRefreshBox(
-                    isRefreshing = state.isRefreshing,
-                    onRefresh = viewModel::refresh,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                ) {
-                    val feedState = rememberLazyListState()
-                    DeferImagePresentationWhileScrolling(feedState) {
-                    LazyColumn(
-                        state = feedState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(20.dp),
-                    ) {
-                        item(contentType = "request-search") {
-                            RequestSearchPanel(
-                                query = searchState.query,
-                                selectedType = searchState.mediaType,
-                                isLoading = searchState.isLoading,
-                                error = searchState.error,
-                                totalResults = searchState.totalResults,
-                                results = searchState.results,
-                                hasSubmittedQuery = hasSubmittedQuery,
-                                onQueryChange = searchViewModel::onQueryChanged,
-                                onTypeChange = { type ->
-                                    searchViewModel.onMediaTypeChanged(type)
-                                    if (searchState.query.isNotBlank()) {
-                                        searchViewModel.search()
-                                    }
-                                },
-                                onSearch = { searchViewModel.search() },
-                                onMediaClick = onMediaClick,
-                                onLibraryItemClick = onLibraryItemClick,
-                            )
-                        }
-
-                        state.error?.let { error ->
-                            item(contentType = "request-error") {
-                                Text(
-                                    text = error,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
-
-                        if (state.sections.isEmpty() && !hasSubmittedQuery) {
-                            item(contentType = "request-empty") {
-                                EmptyStateView(
-                                    title = "No request suggestions yet",
-                                    subtitle = "Search for movies or series to request.",
-                                    icon = Icons.Outlined.Movie,
-                                )
-                            }
-                        } else if (showDiscoverRows) {
-                            items(
-                                state.sections,
-                                key = { it.key },
-                                contentType = { "request-section" },
-                            ) { section ->
-                                RequestSectionRow(
-                                    title = section.title,
-                                    items = section.results,
-                                    onMediaClick = onMediaClick,
-                                    onLibraryItemClick = onLibraryItemClick,
-                                )
-                            }
-                        }
-                    }
-                    }
+            item(key = "search-grid") {
+                SearchGrid(count = state.searchResults.size) { width, index ->
+                    val result = state.searchResults[index]
+                    RequestMediaCard(item = result, width = width, onClick = { onOpen(result) })
                 }
             }
         }
@@ -171,190 +204,20 @@ fun RequestsScreen(
 }
 
 @Composable
-private fun RequestSearchPanel(
-    query: String,
-    selectedType: String?,
-    isLoading: Boolean,
-    error: String?,
-    totalResults: Int,
-    results: List<RequestMediaResult>,
-    hasSubmittedQuery: Boolean,
-    onQueryChange: (String) -> Unit,
-    onTypeChange: (String?) -> Unit,
-    onSearch: () -> Unit,
-    onMediaClick: (RequestMediaResult) -> Unit,
-    onLibraryItemClick: (String) -> Unit,
-) {
-    val summary = requestSearchSummary(
-        query = query,
-        totalResults = totalResults,
-        isLoading = isLoading,
-        hasSubmittedQuery = hasSubmittedQuery,
-        hasResults = results.isNotEmpty(),
-        error = error,
-    )
-
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            text = "Search",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold,
-        )
-        OutlinedTextField(
-            value = query,
-            onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("Movie or series title") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            RequestFilterChip(
-                selected = selectedType == RequestMediaType.All,
-                label = "All",
-                onClick = { onTypeChange(RequestMediaType.All) },
-            )
-            RequestFilterChip(
-                selected = selectedType == RequestMediaType.Movie,
-                label = "Movies",
-                onClick = { onTypeChange(RequestMediaType.Movie) },
-            )
-            RequestFilterChip(
-                selected = selectedType == RequestMediaType.Series,
-                label = "Series",
-                onClick = { onTypeChange(RequestMediaType.Series) },
-            )
-        }
-        Button(onClick = onSearch, enabled = !isLoading) {
-            Text(if (isLoading) "Searching..." else "Search")
-        }
-        error?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        summary?.let {
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        if (results.isNotEmpty()) {
-            RequestMediaRow(
-                items = results,
-                onMediaClick = onMediaClick,
-                onLibraryItemClick = onLibraryItemClick,
-            )
+private fun SearchGrid(count: Int, cell: @Composable (width: Dp, index: Int) -> Unit) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val columns = requestGridColumns(maxWidth, MediaGridDefaults.scaledPosterGridMinWidth)
+        val spacing = MediaGridDefaults.PosterGridHorizontalSpacing
+        val cellWidth = (maxWidth - 32.dp - spacing * (columns - 1)) / columns
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
+        ) {
+            (0 until count).chunked(columns).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                    row.forEach { index -> cell(cellWidth, index) }
+                }
+            }
         }
     }
-}
-
-@Composable
-private fun RequestSectionRow(
-    title: String,
-    items: List<RequestMediaResult>,
-    onMediaClick: (RequestMediaResult) -> Unit,
-    onLibraryItemClick: (String) -> Unit,
-) {
-    if (items.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold,
-        )
-        RequestMediaRow(
-            items = items,
-            onMediaClick = onMediaClick,
-            onLibraryItemClick = onLibraryItemClick,
-        )
-    }
-}
-
-@Composable
-private fun RequestMediaRow(
-    items: List<RequestMediaResult>,
-    onMediaClick: (RequestMediaResult) -> Unit,
-    onLibraryItemClick: (String) -> Unit,
-) {
-    val rowState = rememberLazyListState()
-    DeferImagePresentationWhileScrolling(rowState) {
-    LazyRow(
-        state = rowState,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(end = 16.dp),
-    ) {
-        items(
-            items,
-            key = { "${it.mediaType}-${it.tmdbId}" },
-            contentType = { item -> item.mediaType },
-        ) { item ->
-            RequestMediaCard(
-                item = item,
-                onClick = {
-                    val libraryId = item.libraryContentId?.takeIf { it.isNotBlank() }
-                    if (libraryId != null) {
-                        onLibraryItemClick(libraryId)
-                    } else {
-                        onMediaClick(item)
-                    }
-                },
-            )
-        }
-    }
-    }
-}
-
-@Composable
-private fun RequestErrorState(
-    message: String,
-    onRetry: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.ErrorOutline,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.error,
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(modifier = Modifier.height(20.dp))
-        Button(onClick = onRetry) {
-            Text("Retry")
-        }
-    }
-}
-
-private fun requestSearchSummary(
-    query: String,
-    totalResults: Int,
-    isLoading: Boolean,
-    hasSubmittedQuery: Boolean,
-    hasResults: Boolean,
-    error: String?,
-): String? = when {
-    query.isBlank() -> "Search movies and series to request them."
-    isLoading -> "Searching..."
-    error != null -> null
-    hasSubmittedQuery && !hasResults -> "No matches for \"$query\"."
-    hasResults && totalResults == 1 -> "1 result"
-    hasResults -> "$totalResults results"
-    else -> null
 }

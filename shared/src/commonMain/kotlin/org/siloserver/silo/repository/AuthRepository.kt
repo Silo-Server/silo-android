@@ -135,9 +135,47 @@ class AuthRepository(
         authApi.login(LoginRequest(username, password), it.serverUrl)
     }
 
-    suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> {
+    /**
+     * Signs in with another operation that answers `login`'s token pair, such
+     * as the network identity sign-in (silo-server `docs/auth-api.md`,
+     * "External sign-in"). [exchange] runs against the active server's saved
+     * base URL it is given, and the session lands exactly like a password
+     * sign-in's.
+     */
+    suspend fun signInWith(exchange: suspend (serverUrl: String) -> ApiResult<LoginResponse>): ApiResult<User> =
+        authenticate { exchange(it.serverUrl) }
+
+    /**
+     * Signs in with the one-time code a native OAuth flow returned to the app
+     * (silo-server `docs/auth-api.md`, "OAuth sign-in flows"). The flow must
+     * still belong to [serverId], the saved server the app started it for and
+     * the active one, or nothing is redeemed. [redeem] spends the code at the
+     * saved base URL it is given (the caller checks it is still the origin the
+     * flow started on), and the session lands on that server exactly like a
+     * password sign-in. The saved server keeps its address and id.
+     */
+    suspend fun completeNativeOAuthLogin(
+        serverId: String,
+        redeem: suspend (serverUrl: String) -> ApiResult<LoginResponse>,
+    ): ApiResult<User> = authenticate { expected ->
+        if ((expected.serverId ?: serverRegistry?.activeServerId?.value) != serverId) staleSession() else redeem(expected.serverUrl)
+    }
+
+    suspend fun loginForTokens(username: String, password: String, expected: AccountSessionExpectation? = null): ApiResult<LoginResponse> =
+        tokensFor(expected) { serverUrl -> authApi.login(LoginRequest(username, password), serverUrl) }
+
+    /**
+     * [loginForTokens] for another operation that answers `login`'s token
+     * pair: the tokens, not yet saved, from [exchange] run against the saved
+     * base URL of the sign-in context [expected] (the current one when null),
+     * and only while that context still holds.
+     */
+    suspend fun tokensFor(
+        expected: AccountSessionExpectation? = null,
+        exchange: suspend (serverUrl: String) -> ApiResult<LoginResponse>,
+    ): ApiResult<LoginResponse> {
         val captured = expected ?: tokenManager.captureAccountSessionExpectation() ?: return staleSession()
-        val result = authApi.login(LoginRequest(username, password), captured.serverUrl)
+        val result = exchange(captured.serverUrl)
         return if (captured.isSameSession(tokenManager.captureAccountSessionExpectation())) result else staleSession()
     }
 
@@ -214,6 +252,10 @@ class AuthRepository(
     /** Fetches the currently authenticated user. */
     suspend fun getCurrentUser(): ApiResult<User> =
         authApi.getMe()
+
+    /** Fetches the account signed in on [scope]'s server. */
+    suspend fun getCurrentUser(scope: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<User> =
+        authApi.getMe(scope)
 
     /**
      * Logs out by clearing all persisted tokens and profile state for the

@@ -81,6 +81,92 @@ class DownloadRegistryV2Test {
         } finally { c.close() }
     }
 
+    @Test fun reportStatusPatchesTheRevisionBoundEvent() = runTest {
+        val event = DownloadStatusEvent("completed", "2026-01-02T03:04:05.000Z", 1)
+        var answer: MockRequestHandleScope.() -> io.ktor.client.request.HttpResponseData = {
+            reply(row.replace("\"ready\"", "\"completed\"").replace("\"revision\":1", "\"revision\":1,\"status_event_at\":\"2026-01-02T03:04:05.000Z\""))
+        }
+        var sent = 0
+        val c = client {
+            sent++
+            assertEquals(HttpMethod.Patch, it.method)
+            assertEquals("/api/v2/downloads/one", it.url.encodedPath)
+            assertEquals(scope, it.attributes[AuthScopeAttributeKey])
+            val body = SiloJson.parseToJsonElement((it.body as io.ktor.http.content.TextContent).text)
+            assertEquals(SiloJson.parseToJsonElement("""{"status":"completed","updated_at":"2026-01-02T03:04:05.000Z","revision":1}"""), body)
+            answer()
+        }
+        try {
+            val api = DownloadRegistryV2Api(c,tokens,devices, ApiV2Gate.Unrestricted)
+            val answered = assertIs<ApiResult.Success<DownloadRecord>>(api.reportStatus("one", event, scope)).data
+            assertEquals("completed", answered.status); assertEquals("2026-01-02T03:04:05.000Z", answered.statusEventAt)
+
+            answer = { respond("""{"code":"conflict","detail":"The download revision changed."}""", HttpStatusCode.Conflict, headersOf(HttpHeaders.ContentType, "application/problem+json")) }
+            assertEquals(409, assertIs<ApiResult.Error>(api.reportStatus("one", event, scope)).code)
+
+            // An answer for another entry is not this event's receipt.
+            answer = { reply(row.replace("\"one\"", "\"two\"")) }
+            assertIs<ApiResult.Error>(api.reportStatus("one", event, scope))
+
+            // Events the server would refuse are never sent.
+            val before = sent
+            assertIs<ApiResult.Error>(api.reportStatus("one", event.copy(revision = 0), scope))
+            assertIs<ApiResult.Error>(api.reportStatus("one", event.copy(status = "ready"), scope))
+            assertEquals(before, sent)
+        } finally { c.close() }
+    }
+
+    @Test fun delayedStatusRefreshesItsOwnerAndResendsTheRetainedEvent() = runTest {
+        var access = "expired-access"
+        var refreshedOwner: AuthScopeSnapshot? = null
+        val authenticated = object : TokenManager by TokenManagerImpl() {
+            override suspend fun snapshotCurrentScope() = scope
+            override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot) = access
+            override suspend fun getRefreshTokenForScope(scope: AuthScopeSnapshot) = "owner-refresh"
+            override suspend fun saveTokensForScope(scope: AuthScopeSnapshot, accessToken: String, refreshToken: String, expiresIn: Long) {
+                refreshedOwner = scope
+                access = accessToken
+            }
+            override suspend fun invalidateSession() = fail("A background report must retain its owner's session.")
+        }
+        val bodies = mutableListOf<String>()
+        val bearers = mutableListOf<String?>()
+        var refreshes = 0
+        val c = HttpClient(MockEngine { request ->
+            assertEquals("example.invalid", request.url.host)
+            when (request.url.encodedPath) {
+                "/api/v2/auth/refresh" -> {
+                    refreshes++
+                    reply("""{"access_token":"rotated-access","refresh_token":"rotated-refresh","expires_in":900}""")
+                }
+                "/api/v2/downloads/one" -> {
+                    assertEquals(HttpMethod.Patch, request.method)
+                    assertEquals(scope, request.attributes[AuthScopeAttributeKey])
+                    bodies += request.body.toByteArray().decodeToString()
+                    bearers += request.headers[HttpHeaders.Authorization]
+                    if (bearers.size == 1) respond("""{"code":"invalid_token","detail":"Expired."}""",
+                        HttpStatusCode.Unauthorized, headersOf(HttpHeaders.ContentType, "application/problem+json"))
+                    else reply(row.replace("\"ready\"", "\"completed\""))
+                }
+                else -> fail("Unexpected request ${request.url}")
+            }
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) { tokenManager = authenticated; deviceMetadataProvider = devices }
+        }
+        try {
+            val event = DownloadStatusEvent("completed", "2026-01-02T03:04:05.000Z", 1)
+            assertIs<ApiResult.Success<DownloadRecord>>(
+                DownloadRegistryV2Api(c, authenticated, devices, ApiV2Gate.Unrestricted).reportStatus("one", event, scope),
+            )
+            assertEquals(1, refreshes)
+            assertEquals(scope, refreshedOwner)
+            assertEquals<List<String?>>(listOf("Bearer expired-access", "Bearer rotated-access"), bearers)
+            assertEquals(2, bodies.size)
+            assertEquals(bodies[0], bodies[1])
+        } finally { c.close() }
+    }
+
     @Test fun capabilityRequiresVersionedStateAndFailsClosed() = runTest {
         var body = """{"revision":"rev","state":"future","enabled":true,"download_allowed":true}"""
         val c = client { reply(body) }

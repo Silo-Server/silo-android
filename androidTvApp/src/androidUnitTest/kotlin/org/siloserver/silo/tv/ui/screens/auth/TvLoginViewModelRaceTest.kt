@@ -166,7 +166,11 @@ class TvLoginViewModelRaceTest {
         assertEquals("newer-refresh", actualTokens.getRefreshToken())
         assertFalse(viewModel.uiState.value.isLoading)
         assertFalse(viewModel.uiState.value.loginSuccess)
-        assertEquals("The account or server changed. Start sign-in again.", viewModel.uiState.value.error)
+        assertEquals(TvLoginError.IdentityChanged, viewModel.uiState.value.error)
+        if (qr) {
+            // #422: the QR card must not claim "Signed in" when the install lost the race.
+            assertEquals(TvSignInStatus.CouldntFinish, viewModel.deviceSignIn.value.status)
+        }
 
         viewModel.onLoginClick()
         advanceUntilIdle()
@@ -193,7 +197,7 @@ class TvLoginViewModelRaceTest {
         val viewModel = passwordSignIn(tokenManager, HttpStatusCode.Unauthorized)
 
         assertFalse(viewModel.uiState.value.loginSuccess)
-        assertEquals("Invalid username or password", viewModel.uiState.value.error)
+        assertEquals(TvLoginError.InvalidCredentials, viewModel.uiState.value.error)
         assertEquals(emptyList(), tokenManager.savedAccessTokens)
     }
 
@@ -206,7 +210,7 @@ class TvLoginViewModelRaceTest {
         }
 
         assertFalse(viewModel.uiState.value.loginSuccess)
-        assertEquals("The account or server changed. Start sign-in again.", viewModel.uiState.value.error)
+        assertEquals(TvLoginError.IdentityChanged, viewModel.uiState.value.error)
         assertEquals(listOf("newer-access"), tokenManager.savedAccessTokens)
     }
 

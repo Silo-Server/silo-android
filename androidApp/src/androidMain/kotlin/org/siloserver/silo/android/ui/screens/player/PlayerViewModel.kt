@@ -85,6 +85,7 @@ import org.siloserver.silo.model.subtitles.SubtitleSearchRequest
 import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.common.player.AutoPlayGuard
+import org.siloserver.silo.common.player.MountedSubtitleTrack
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.errorMessage
 import org.siloserver.silo.playback.audioTrackFingerprint
@@ -135,6 +136,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.siloserver.silo.playback.orNullIfBlank
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -157,7 +159,11 @@ internal fun selectedServerSubtitleTrackIndex(
     subtitleTracks: List<PlayerSubtitleInfo>,
 ): Int? = when (selectedOrdinal) {
     -1 -> -1
-    else -> subtitleTracks.getOrNull(selectedOrdinal)?.index
+    // A downloaded file's own tracks and saved sidecars carry local menu
+    // indexes that name no server subtitle; let the server apply preferences.
+    else -> subtitleTracks.getOrNull(selectedOrdinal)
+        ?.takeUnless { it.isOfflineLocalSubtitleRow() }
+        ?.index
 }
 
 data class PlaybackClock(
@@ -226,8 +232,12 @@ internal fun PlayerViewModel.PlayerUiState.withPlaybackClock(clock: PlaybackCloc
 internal fun mobileAudioTrackPersistenceUpdate(
     committedAudioTrackIndex: Int?,
     audioTracks: List<AudioTrack>,
+    originalDownload: Boolean = false,
 ): TrackSelectionFingerprintUpdate = committedAudioTrackIndex
     ?.let(audioTracks::getOrNull)
+    // Offline manifests number audio rows by position. The online catalog
+    // omits this field, so its source-track fingerprints use the default 0.
+    ?.let { if (originalDownload) it.copy(index = 0) else it }
     ?.let(::audioTrackFingerprint)
     ?.let(TrackSelectionFingerprintUpdate::Set)
     ?: TrackSelectionFingerprintUpdate.Preserve
@@ -284,6 +294,9 @@ class PlayerViewModel(
     // Profile-wide seek intervals (settings revision 9). Optional so unit
     // tests that construct the VM directly keep the legacy fixed intervals.
     private val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore? = null,
+    // Cached active profile; offline playback reads subtitle preferences from
+    // it instead of waiting on the server. Optional for the same reason.
+    private val activeProfileStore: org.siloserver.silo.model.profile.ActiveProfileStore? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -462,6 +475,12 @@ class PlayerViewModel(
          * current position.
          */
         val subtitleRefreshNonce: Int = 0,
+        /**
+         * True when [audioTracks] come from a download's offline manifest and
+         * list the local file's own audio tracks in file order, so an audio
+         * choice selects the Media3 audio group at the same position.
+         */
+        val offlineAudioByPosition: Boolean = false,
         // Live player statistics for phone diagnostics. Populates field-by-field
         // as PlaybackAnalyticsListener emits decoder, format, bandwidth, and
         // dropped-frame events.
@@ -749,6 +768,9 @@ class PlayerViewModel(
     // (then the OS captioning style, tvOS parity).
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.effectiveSubtitleAppearanceFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SubtitleAppearance.DEFAULT)
+    /** False when the server is known to discard subtitle text opacity. */
+    val subtitleTextOpacitySupported: StateFlow<Boolean> = playerSettingsStore.subtitleTextOpacitySupportedFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /**
      * Per-device audio/subtitle delay in ms. Mirrors iOS phone's `audioSyncMs` /
      * `subtitleSyncMs` (`iosApp/Screens/Player/Sheets/PlayerSettingsSheet.swift:265-285`).
@@ -973,8 +995,10 @@ class PlayerViewModel(
                 upNextVideoEnded = it.upNextVideoEnded && preservesNextUp,
                 upNextCountdownSeconds = null,
                 stats = PlayerStatsSnapshot(),
+                offlineAudioByPosition = false,
             )
         }
+        localSubtitleState = null
     }
 
     private var browseLibraryId: Int? = null
@@ -1444,6 +1468,7 @@ class PlayerViewModel(
                 subtitleRefreshNonce = 0,
                 preferredAudioLanguage = playbackState.preferredAudioLanguage,
                 preferredTextLanguage = playbackState.preferredTextLanguage,
+                offlineAudioByPosition = false,
                 )
             }
 
@@ -3141,7 +3166,10 @@ class PlayerViewModel(
             qualityPreference = currentMobileQualityPreference(),
             subtitleTracks = state.subtitleTracks,
             audioTracks = state.audioTracks,
-            writeScope = finalPositionScope,
+            // A download's subtitle rows describe the local file, not the
+            // server's inventory. Saved as the item's preference they would not
+            // resolve online and would suppress auto-selection there.
+            writeScope = finalPositionScope.takeUnless { state.isLocalFilePlayback() },
         )
 
     private fun currentMobileQualityPreference(): String? =
@@ -3320,6 +3348,8 @@ class PlayerViewModel(
     fun onSelectSubtitle(index: Int) {
         val state = _uiState.value
         if (index != -1 && index !in state.subtitleTracks.indices) return
+        // The viewer chose: a later local track discovery must not auto-select over it.
+        localSubtitleState = localSubtitleState?.copy(autoSelectionPending = false)
         val identity = state.subtitleTracks
             .getOrNull(index)
             ?.let(::mobileSubtitleIdentity)
@@ -3371,6 +3401,10 @@ class PlayerViewModel(
             )
         }
         setDesiredAudio(serverIndex, explicit = userInitiated)
+        // A downloaded file is switched on the player only: there is no
+        // server session to replan, and the desired-audio reconcile above
+        // already applies the track when the file carries it.
+        if (state.isLocalFilePlayback()) return
         // Already in the mounted stream: switch it on the player instead of
         // rebuilding the session to deliver audio already being received. A
         // replan is only needed when the track is genuinely absent.
@@ -3443,6 +3477,7 @@ class PlayerViewModel(
                 selectedOrdinal = selectedOrdinal,
                 planAudioOrdinal = state.playbackPlan?.selectedTracks?.audioIndex,
                 requiresMountedIdentity = requiresMountedIdentity,
+                positionalCatalog = state.offlineAudioByPosition,
             )
         ) {
             AudioReconcileAction.None -> armOriginalAudioSelectionVerification(
@@ -3484,7 +3519,9 @@ class PlayerViewModel(
                     localAudioAttemptsFor(desired.generation) >= MAX_LOCAL_AUDIO_ATTEMPTS
                 ) {
                     _pendingLocalAudioSelection.value = null
-                    replanForDesiredAudio(desired)
+                    // A downloaded file has no server plan to change; the
+                    // player's own tracks are all there is.
+                    if (!state.isLocalFilePlayback()) replanForDesiredAudio(desired)
                     return
                 }
                 localAudioAttempt += 1
@@ -3600,8 +3637,11 @@ class PlayerViewModel(
 
     private fun persistDesiredAudio(catalogOrdinal: Int) {
         val state = _uiState.value
+        // A prepared download's rows describe its own re-encoded tracks, whose
+        // fingerprints would not match the source's tracks online.
+        if (state.offlineAudioByPosition) return
         val context = mobileSubtitleContext(state)
-        val scope = context.writeScope ?: return
+        val scope = finalPositionScope ?: return
         viewModelScope.launch {
             runCatching {
                 userItemStatePort.recordTrackSelection(
@@ -3611,6 +3651,7 @@ class PlayerViewModel(
                     audioUpdate = mobileAudioTrackPersistenceUpdate(
                         committedAudioTrackIndex = catalogOrdinal,
                         audioTracks = context.audioTracks,
+                        originalDownload = state.isLocalFilePlayback(),
                     ),
                     // Untouched: this path changed audio only.
                     subtitleUpdate = TrackSelectionFingerprintUpdate.Preserve,
@@ -4272,8 +4313,16 @@ class PlayerViewModel(
         viewModelScope.launch { playerSettingsStore.setDolbyVisionEnabled(value) }
     }
 
-    fun onSetSubtitleAppearance(value: SubtitleAppearance) {
-        viewModelScope.launch { playerSettingsStore.setSubtitleAppearance(value) }
+    /**
+     * Commits a subtitle-appearance change via a transform rather than a
+     * precomputed value (replaced the former `onSetSubtitleAppearance`).
+     * [PlayerSettingsStore.updateSubtitleAppearance] applies it atomically
+     * inside the store's own write transaction, so two edits committing
+     * around the same time (e.g. two opacity fields as the sheet is
+     * dismissed) can't race on a snapshot read before either writes.
+     */
+    fun onEditSubtitleAppearance(transform: (SubtitleAppearance) -> SubtitleAppearance) {
+        viewModelScope.launch { playerSettingsStore.updateSubtitleAppearance(transform) }
     }
 
     /**
@@ -4613,6 +4662,30 @@ class PlayerViewModel(
             ?: watchDetail?.posterUrl?.takeIf { url -> url.isNotBlank() }
             ?: sidecar.posterUrl?.takeIf { url -> url.isNotBlank() }
 
+        // Downloads that captured their offline manifest describe the local
+        // file's own audio tracks (positions in the file) and carry saved
+        // subtitle sidecars. Older downloads keep the catalog audio rows and
+        // have no sidecars.
+        val offlineTracks = sidecar.offlineTracks
+        val offlineAudioTracks = offlineTracks?.audioTracks.orEmpty()
+        val offlineAudioByPosition = offlineTracks?.audioByPosition == true && offlineAudioTracks.isNotEmpty()
+        val localAudioTracks = offlineAudioTracks.ifEmpty { versions[selectedIndex].audioTracks.orEmpty() }
+        // The selected version carries the same rows: cast, replans and the
+        // subtitle context read audio indexes from it.
+        val localVersions = if (offlineAudioTracks.isNotEmpty()) {
+            versions.mapIndexed { index, version ->
+                if (index == selectedIndex) version.copy(audioTracks = offlineAudioTracks) else version
+            }
+        } else {
+            versions
+        }
+        val localSelectedAudio = offlineTracks?.defaultAudioPosition() ?: 0
+        val sidecarSubtitles = withContext(Dispatchers.IO) {
+            offlineSidecarSubtitleRows(offlineTracks?.subtitles.orEmpty())
+        }
+        val subtitlePreferences = offlineSubtitlePreferences(watchDetail)
+        if (!ownsLoad(loadOwner)) return false
+
         val published = loadOwners.runIfOwned(loadOwner) {
             val mountGeneration = expectNextMediaMount()
             val preservesNextUp = nextUpTransitionGate.expectMount(
@@ -4650,12 +4723,20 @@ class PlayerViewModel(
                 isPlaying = true,
                 isPaused = false,
                 isBuffering = false,
-                versions = versions,
+                versions = localVersions,
                 selectedVersionIndex = selectedIndex,
-                audioTracks = versions[selectedIndex].audioTracks ?: emptyList(),
-                subtitleTracks = emptyList(),  // sidecars are remote in v1
-                selectedAudioIndex = 0,
+                audioTracks = localAudioTracks,
+                // Saved sidecars mount with the file. Text tracks inside the
+                // file join the list once Media3 reports them
+                // (onLocalMediaTracksChanged).
+                subtitleTracks = sidecarSubtitles,
+                selectedAudioIndex = localSelectedAudio,
                 selectedSubtitleIndex = -1,
+                committedSubtitleIdentity = SubtitleIdentity.Off,
+                pendingSubtitleIdentity = null,
+                localSubtitleMountIdentity = null,
+                subtitleApplying = false,
+                offlineAudioByPosition = offlineAudioByPosition,
                 intro = watchDetail?.intro,
                 credits = watchDetail?.credits,
                 recap = watchDetail?.recap,
@@ -4674,17 +4755,28 @@ class PlayerViewModel(
                 subtitleRefreshNonce = 0,
                 )
             }
+            localSubtitleState = LocalSubtitleState(
+                contentId = contentId,
+                mountGeneration = mountGeneration,
+                preferences = subtitlePreferences,
+            )
+            mobileSubtitleTransactions.resetContent(
+                context = mobileSubtitleContext(_uiState.value),
+                committedIdentity = SubtitleIdentity.Off,
+            )
             Log.i(
                 TAG,
-                "tryLocalPlayback: serving ${media.displayName} (${media.sizeBytes}B) for content=$contentId (sidecar id=${sidecar.record.id})",
+                "tryLocalPlayback: serving ${media.displayName} (${media.sizeBytes}B) for content=$contentId " +
+                    "(sidecar id=${sidecar.record.id}) offlineAudio=${offlineAudioTracks.size} " +
+                    "sidecarSubtitles=${sidecarSubtitles.size}",
             )
         }
 
-        // Downloaded playback publishes the catalog and hardcodes ordinal 0, but
-        // Media3 still picks its own default from the file's tracks -- so the
-        // intent has to exist here too or a multi-audio download cannot be
-        // corrected.
-        if (_uiState.value.audioTracks.isNotEmpty()) setDesiredAudio(0, explicit = false)
+        // Media3 picks its own default from the file's tracks, so the intent
+        // has to exist here too or a multi-audio download cannot be corrected.
+        // With manifest data the default is the manifest's pick (the viewer's
+        // preferred language when the file has it); legacy downloads keep 0.
+        if (_uiState.value.audioTracks.isNotEmpty()) setDesiredAudio(localSelectedAudio, explicit = false)
         return published
     }
 
@@ -4721,6 +4813,111 @@ class PlayerViewModel(
         super.onCleared()
     }
 
+    // ---- Local (downloaded) subtitle discovery ---------------------------------
+
+    /**
+     * Subtitle state of the downloaded file being played: the preferences to
+     * auto-select with, the file's own text tracks last listed, and whether auto-selection still
+     * has to run. Text tracks inside the file are only known once Media3 has
+     * parsed it, so the menu is completed, and auto-selection runs, from the
+     * first track snapshot of this mount.
+     */
+    private data class LocalSubtitleState(
+        val contentId: String,
+        val mountGeneration: Long,
+        val preferences: OfflineSubtitlePreferences,
+        val embeddedTracks: List<MountedSubtitleTrack>? = null,
+        val autoSelectionPending: Boolean = true,
+    )
+
+    private var localSubtitleState: LocalSubtitleState? = null
+
+    /**
+     * Called by PlayerScreen with every Media3 track snapshot of the current
+     * mount. Only acts for a downloaded file this ViewModel mounted: adds the
+     * file's own text tracks to the subtitle menu and runs the one-time
+     * preference-based subtitle auto-selection.
+     */
+    internal fun onLocalMediaTracksChanged(
+        mediaId: String?,
+        textTracks: List<MountedSubtitleTrack>,
+        hasTracks: Boolean,
+    ) {
+        val local = localSubtitleState ?: return
+        val state = _uiState.value
+        if (!state.isLocalFilePlayback()) return
+        if (state.contentId != local.contentId || state.mediaMountGeneration != local.mountGeneration) return
+        if (mediaId != null && mediaId != local.contentId) return
+        // An empty snapshot is the gap between mounts, not a file without tracks.
+        if (!hasTracks) return
+
+        var current = local
+        if (current.embeddedTracks != textTracks) {
+            val embedded = localEmbeddedSubtitleRows(textTracks)
+            _uiState.update {
+                // Replace only the rows for the file's own tracks; the saved
+                // sidecars (and anything else already listed) stay as they are.
+                val rows = embedded + it.subtitleTracks.filterNot(PlayerSubtitleInfo::isLocalEmbeddedSubtitleRow)
+                it.copy(
+                    subtitleTracks = rows,
+                    selectedSubtitleIndex = resolveMobileSubtitleOrdinal(it.committedSubtitleIdentity, rows) ?: -1,
+                )
+            }
+            current = current.copy(embeddedTracks = textTracks)
+            localSubtitleState = current
+            mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+        }
+        if (!current.autoSelectionPending) return
+        localSubtitleState = current.copy(autoSelectionPending = false)
+
+        val published = _uiState.value
+        val selection = resolveMobileAutoSubtitleSelection(
+            audioTracks = published.audioTracks,
+            selectedAudioIndex = published.selectedAudioIndex,
+            subtitles = published.subtitleTracks,
+            preferredLanguage = current.preferences.preferredLanguage,
+            subtitleMode = current.preferences.mode,
+            showForcedSubtitles = current.preferences.showForced,
+        )
+        val identity = when (selection) {
+            is MobileSubtitleAutoSelection.Select ->
+                published.subtitleTracks.getOrNull(selection.ordinal)?.let(::mobileSubtitleIdentity)
+            MobileSubtitleAutoSelection.Disable,
+            MobileSubtitleAutoSelection.NoChange,
+            -> null
+        } ?: return
+        if (identity == published.committedSubtitleIdentity) return
+        Log.i(TAG, "local subtitle auto-selection applied")
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(published))
+        mobileSubtitleTransactions.select(identity)
+    }
+
+    /**
+     * Subtitle preferences for offline playback, resolved the way the online
+     * starter does: the server's effective values for this item when the
+     * detail could be read, then the cached active profile, then the
+     * defaults. Nothing here waits on the server, so an unreachable one cannot
+     * delay the local file.
+     */
+    private suspend fun offlineSubtitlePreferences(
+        watchDetail: org.siloserver.silo.model.catalog.WatchDetail?,
+    ): OfflineSubtitlePreferences {
+        val language = watchDetail?.effectiveSubtitleLanguage.orNullIfBlank()
+        val mode = watchDetail?.effectiveSubtitleMode.orNullIfBlank()
+        val forced = watchDetail?.effectiveShowForcedSubtitles
+        val profile = if (language == null || mode == null || forced == null) {
+            val activeId = profileRepository.getActiveProfileId()
+            activeProfileStore?.activeProfile?.value?.takeIf { it.id == activeId }
+        } else {
+            null
+        }
+        return OfflineSubtitlePreferences(
+            preferredLanguage = language ?: profile?.subtitleLanguage.orNullIfBlank(),
+            mode = mode ?: profile?.subtitleMode.orNullIfBlank(),
+            showForced = forced ?: profile?.showForcedSubtitles ?: true,
+        )
+    }
+
     private suspend fun resolveDownloadScope(): Pair<String, String> {
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
         val profileId = profileRepository.getActiveProfileId() ?: DownloadEnqueuer.DEFAULT_PROFILE_ID
@@ -4737,6 +4934,16 @@ private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
 /** Snapshots to let a local audio switch take before asking the server. */
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
+
+/**
+ * A downloaded file mounted by the offline-first path: a local URI with no
+ * server session or playback plan behind it.
+ */
+internal fun PlayerViewModel.PlayerUiState.isLocalFilePlayback(): Boolean {
+    val url = streamUrl ?: return false
+    return sessionId == null && playbackPlan == null &&
+        (url.startsWith("file://") || url.startsWith("content://"))
+}
 
 internal fun authoritativePlaybackSubtitleOrdinal(
     serverIndex: Int?,

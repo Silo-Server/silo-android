@@ -106,8 +106,10 @@ class DownloadStorage(
      * directories are left in place; cleanup at higher granularity goes
      * through [deleteAllForProfile] or [deleteAllForServer].
      */
-    fun delete(serverId: String, profileId: String, fileId: Int): Boolean =
-        publicStore.delete(serverId, profileId, fileId, uriString = null)
+    fun delete(serverId: String, profileId: String, fileId: Int): Boolean {
+        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString())?.deleteRecursively()
+        return publicStore.delete(serverId, profileId, fileId, uriString = null)
+    }
 
     fun completeWrite(uriString: String): String =
         publicStore.complete(uriString)
@@ -133,12 +135,35 @@ class DownloadStorage(
 
     /** Wipes every downloaded byte under (serverId, profileId). Used on sign-out
      *  and profile switch. Metadata rows are cleared via [DownloadMetadataStore]. */
-    fun deleteAllForProfile(serverId: String, profileId: String): Boolean =
-        publicStore.deleteAllForProfile(serverId, profileId)
+    fun deleteAllForProfile(serverId: String, profileId: String): Boolean {
+        containedSafeChild(offlineAssetsRoot, serverId, profileId)?.deleteRecursively()
+        return publicStore.deleteAllForProfile(serverId, profileId)
+    }
 
     /** Wipes every downloaded byte under (serverId). Used on server delete / re-bind. */
-    fun deleteAllForServer(serverId: String): Boolean =
-        publicStore.deleteAllForServer(serverId)
+    fun deleteAllForServer(serverId: String): Boolean {
+        containedSafeChild(offlineAssetsRoot, serverId)?.deleteRecursively()
+        return publicStore.deleteAllForServer(serverId)
+    }
+
+    /**
+     * Private directory for the offline subtitle sidecars of one download.
+     * Kept in app-internal storage rather than beside the (public, possibly
+     * MediaStore-owned) media file: they are only meaningful to this app, and
+     * a scoped directory is removed with the download by [delete].
+     */
+    fun offlineSubtitleDirectory(serverId: String, profileId: String, fileId: Int): File? =
+        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), SUBTITLES_DIR)
+
+    /**
+     * Private directory for the artwork saved with one download. Separate from
+     * [offlineSubtitleDirectory], which the track capture clears on every run,
+     * and removed with the download by [delete].
+     */
+    fun offlineArtworkDirectory(serverId: String, profileId: String, fileId: Int): File? =
+        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), ARTWORK_DIR)
+
+    private val offlineAssetsRoot: File get() = File(baseDir, OFFLINE_ASSETS_DIR)
 
     /** Sum of bytes across every downloaded file under this storage. */
     fun totalBytesUsed(): Long = publicStore.totalBytesUsed()
@@ -170,6 +195,11 @@ class DownloadStorage(
     private fun sanitizeBasename(value: String): String =
         value.replace(Regex("[\\\\/:*?\"<>|]"), "_")
 
+    private companion object {
+        const val OFFLINE_ASSETS_DIR = "download-assets"
+        const val SUBTITLES_DIR = "subtitles"
+        const val ARTWORK_DIR = "artwork"
+    }
 }
 
 data class DownloadTarget(

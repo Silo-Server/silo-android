@@ -65,6 +65,22 @@ class TvMediaDestinationsTest {
     }
 
     @Test
+    fun requestsTrailsTheContentTabsOnlyWhileTheServerEnablesIt() {
+        val libraries = listOf(library(1, "movies"))
+        assertEquals(
+            listOf(
+                TvRootDestination.Home,
+                TvRootDestination.LibraryType(TvLibraryTabType.Movies),
+                TvRootDestination.ForYou,
+                TvRootDestination.Calendar,
+                TvRootDestination.Requests,
+            ),
+            visibleTvRoots(libraries, requestsEnabled = true),
+        )
+        assertEquals(false, TvRootDestination.Requests in visibleTvRoots(libraries, requestsEnabled = false))
+    }
+
+    @Test
     fun firstRouteIsAlwaysHome() {
         assertEquals(TvMainRoute.Home.route, firstTvRoute())
     }

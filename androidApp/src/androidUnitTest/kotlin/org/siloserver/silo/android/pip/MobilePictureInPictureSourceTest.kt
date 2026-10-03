@@ -47,11 +47,11 @@ class MobilePictureInPictureSourceTest {
     @Test
     fun mobileSettingsExposePipToggle() {
         // Pin the binding, not just the label: the label is copy and moves
-        // with the settings voice (it was "Picture-in-Picture" before the
-        // sentence-case pass), while a switch row bound to the PiP preference
-        // is what actually makes the toggle reachable.
+        // with the settings voice (back to "Picture-in-Picture" with the Apple
+        // title-case pass), while a switch row bound to the PiP preference is
+        // what actually makes the toggle reachable.
         assertTrue(settings.contains("checked = pictureInPictureEnabled"))
         assertTrue(settings.contains("onCheckedChange = onPictureInPictureEnabledChanged"))
-        assertTrue(settings.contains("Picture-in-picture"))
+        assertTrue(settings.contains("Picture-in-Picture"))
     }
 }
