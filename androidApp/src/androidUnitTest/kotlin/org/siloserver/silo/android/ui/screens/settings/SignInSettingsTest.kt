@@ -285,8 +285,13 @@ class SignInSettingsNetworkLinkTest {
             ApiResult.Error(404, "not_found", "")
         override suspend fun externalSignInCapabilities(scope: AuthScopeSnapshot): ApiResult<ExternalSignInCapabilities> =
             ApiResult.Success(ExternalSignInCapabilities(identities = true, networkSignIn = true))
-        override suspend fun listIdentities(scope: AuthScopeSnapshot): ApiResult<AccountIdentities> =
-            ApiResult.Success(AccountIdentities(identities, canUnlink = null))
+        /** Each read takes the next gate, if any, and answers with the identities as they were when asked. */
+        val identityGates = ArrayDeque<CompletableDeferred<Unit>>()
+        override suspend fun listIdentities(scope: AuthScopeSnapshot): ApiResult<AccountIdentities> {
+            val asked = identities
+            identityGates.removeFirstOrNull()?.await()
+            return ApiResult.Success(AccountIdentities(asked, canUnlink = null))
+        }
         override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String): ApiResult<AccountIdentity> {
             links += Triple(scope, installationId, password)
             linkGate?.await()
@@ -429,6 +434,42 @@ class SignInSettingsNetworkLinkTest {
         assertNull(vm.uiState.value.message, "a cancelled link doesn't report \"Connected\"")
         assertNull(vm.uiState.value.error)
         assertEquals(tailscale, vm.uiState.value.network, "the server made no link: still offered")
+        vm.viewModelScope.cancel()
+    }
+
+    /** The reload after a cancelled link answers late: it doesn't undo the link made after it. */
+    @Test
+    fun aLateReloadDoesNotOverwriteANewerOne() = runTest(dispatcher) {
+        val api = Api(tailscale, linkedIdentity)
+        val registry = OneServer(ServerEntry(id = "a", url = "https://silo.tailnet.ts.net"))
+        val identityApi = object : ServerIdentityApi {
+            override suspend fun probeIdentity(serverUrl: String) = ServerIdentityProbe.Identity("srv-1")
+            override suspend fun connections(scope: AuthScopeSnapshot): ServerConnections? = null
+        }
+        val vm = SignInSettingsViewModel(
+            ExternalSignInRepository(api), SignedIn(), registry, ServerIdentityRepository(registry, identityApi),
+            NativeSignInCoordinator(InMemoryPendingNativeSignInStore(), NoBrowser, backgroundScope, InMemoryAccountChoiceStore()),
+        )
+        advanceUntilIdle()
+        api.linkGate = CompletableDeferred()
+        vm.onConnectNetwork(tailscale)
+        vm.onConfirmNetwork("local-pw")
+        advanceUntilIdle()
+        val lateReload = CompletableDeferred<Unit>()
+        api.identityGates += lateReload
+        vm.onDismissNetworkPrompt()
+        advanceUntilIdle()
+
+        api.linkGate = null
+        vm.onConnectNetwork(tailscale)
+        vm.onConfirmNetwork("local-pw")
+        advanceUntilIdle()
+        assertEquals(listOf(linkedIdentity), vm.uiState.value.identities)
+
+        lateReload.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf(linkedIdentity), vm.uiState.value.identities, "the older read is dropped")
+        assertNull(vm.uiState.value.network, "connected: not offered again")
         vm.viewModelScope.cancel()
     }
 }

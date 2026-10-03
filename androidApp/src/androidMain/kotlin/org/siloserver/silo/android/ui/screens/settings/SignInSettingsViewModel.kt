@@ -93,6 +93,9 @@ class SignInSettingsViewModel(
      * browser opens, or a directory or network link until it answers.
      */
     private var connectJob: Job? = null
+
+    /** Bumped by each [load]; only the newest read publishes, so an older one can't overwrite it. */
+    private var loadGeneration = 0
     val uiState: StateFlow<SignInSettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -112,9 +115,11 @@ class SignInSettingsViewModel(
      * signed in on the same server; otherwise the section is read again.
      */
     private suspend fun load() {
+        val generation = ++loadGeneration
         val scope = tokenManager.snapshotCurrentScope()
         val loginSessionId = scope?.let { tokenManager.loginSessionId(it.serverId) }
         if (scope == null) {
+            if (generation != loadGeneration) return
             _uiState.update {
                 it.copy(
                     loading = false,
@@ -145,7 +150,10 @@ class SignInSettingsViewModel(
             )
         }
         val now = tokenManager.snapshotCurrentScope()
-        if (now?.serverId != scope.serverId || tokenManager.loginSessionId(scope.serverId) != loginSessionId) {
+        val sameLogin = now?.serverId == scope.serverId && tokenManager.loginSessionId(scope.serverId) == loginSessionId
+        // A later read (a reload after a link, say) started meanwhile: it has the newer answer.
+        if (generation != loadGeneration) return
+        if (!sameLogin) {
             load()
             return
         }
