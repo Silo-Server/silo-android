@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastError
 import org.siloserver.silo.cast.SiloCastHello
 import org.siloserver.silo.cast.SiloCastHandoffCancel
@@ -547,6 +548,13 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.Control -> {
                 if (!requireAuthorized(session)) return true
+                if (message.control.name !in SiloCastControlCommand.knownNames) {
+                    // A command from a newer (or retired, like set_hdr_enabled)
+                    // remote. Ignored without an error, as tvOS does: the phone
+                    // shows errors as banners, and nothing happened anyway.
+                    Log.i(TAG, "SiloCast ignoring unsupported command ${message.control.name}")
+                    return true
+                }
                 val player = activePlayer
                 if (player == null) {
                     session.send(
@@ -651,8 +659,8 @@ class TvSiloCastReceiver(
             if (read < 0) return
             val payloads = buffer.append(chunk.copyOf(read))
             for (payload in payloads) {
-                val text = payload.decodeToString()
-                val message = json.decodeFromString(SiloCastMessage.serializer(), text)
+                // A kind added after this build is skipped, not fatal.
+                val message = SiloCastMessage.decodeOrNull(json, payload.decodeToString()) ?: continue
                 if (!onMessage(message)) return
             }
         }
