@@ -523,6 +523,12 @@ object TvPlaybackFormatting {
         val mode: String?,
         /** Whether forced subs should be auto-selected when available. */
         val showForced: Boolean = false,
+        /**
+         * `playback.prefer_embedded_subtitles`. When on, an embedded track wins
+         * the source tie inside one track class, so the Auto pill previews the
+         * track the player will actually start on.
+         */
+        val preferEmbedded: Boolean = false,
         /** Language of the Auto-resolved audio track (see [resolvedAudioLanguage]);
          *  "auto" mode skips subs when it matches [preferredLanguage]. */
         val audioLanguage: String? = null,
@@ -611,6 +617,7 @@ object TvPlaybackFormatting {
                 mode = context.mode,
                 showForced = context.showForced,
                 audioLanguage = context.audioLanguage,
+                preferEmbedded = context.preferEmbedded,
             ),
         ).selectedCandidate() ?: return null
         return combinedSubtitleSelectionIndexes(tracks)

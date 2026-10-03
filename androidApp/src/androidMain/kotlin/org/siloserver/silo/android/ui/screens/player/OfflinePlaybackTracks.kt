@@ -21,6 +21,8 @@ internal data class OfflineSubtitlePreferences(
     val preferredLanguage: String?,
     val mode: String?,
     val showForced: Boolean,
+    /** `playback.prefer_embedded_subtitles`; off unless the profile chose it. */
+    val preferEmbedded: Boolean = false,
 )
 
 /**

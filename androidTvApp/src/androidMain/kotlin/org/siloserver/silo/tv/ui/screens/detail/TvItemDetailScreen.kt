@@ -1353,6 +1353,7 @@ private fun TvDetailPlaybackSelectionSummary(
                     preferredLanguage = state.preferredSubtitleLanguage,
                     mode = state.subtitleMode,
                     showForced = state.showForcedSubtitles,
+                    preferEmbedded = state.preferEmbeddedSubtitles,
                     audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                         version,
                         selectedAudioIndex,
@@ -1614,6 +1615,7 @@ private fun HeroActionRow(
                 preferredLanguage = state.preferredSubtitleLanguage,
                 mode = state.subtitleMode,
                 showForced = state.showForcedSubtitles,
+                preferEmbedded = state.preferEmbeddedSubtitles,
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     version,
                     selectorAudioIndex,
@@ -1716,6 +1718,7 @@ private fun HeroActionRow(
                     preferredSubtitleLanguage = state.preferredSubtitleLanguage,
                     subtitleMode = state.subtitleMode,
                     showForcedSubtitles = state.showForcedSubtitles,
+                    preferEmbeddedSubtitles = state.preferEmbeddedSubtitles,
                     onSelectVersion = if (isSeriesOrSeason) {
                         viewModel::onNextUpVersionSelected
                     } else {
@@ -1961,6 +1964,7 @@ internal fun seriesEpisodePlaybackLaunch(
                 preferredLanguage = state.preferredSubtitleLanguage,
                 mode = state.subtitleMode,
                 showForced = state.showForcedSubtitles,
+                preferEmbedded = state.preferEmbeddedSubtitles,
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     version,
                     audioTrackIndex,

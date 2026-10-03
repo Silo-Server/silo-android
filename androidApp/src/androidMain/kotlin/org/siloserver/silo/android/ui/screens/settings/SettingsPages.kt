@@ -195,6 +195,8 @@ fun SettingsSubtitlesScreen(viewModel: SettingsViewModel, onBackClick: () -> Uni
                 onLanguageChanged = viewModel::setSubtitleLanguage,
                 onModeChanged = viewModel::setSubtitleMode,
                 onForcedSubtitlesChanged = viewModel::setShowForcedSubtitles,
+                preferEmbeddedSubtitles = state.preferEmbeddedSubtitles,
+                onPreferEmbeddedSubtitlesChanged = viewModel::setPreferEmbeddedSubtitles,
             )
         }
         if (metadataLanguageEnabled) {

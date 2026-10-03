@@ -125,6 +125,9 @@ data class SettingsUiState(
     val metadataLanguageSuggestions: List<String> = emptyList(),
     val subtitleMode: SubtitleMode = SubtitleMode.AUTO,
     val showForcedSubtitles: Boolean = true,
+    // `playback.prefer_embedded_subtitles` (contract revision 17); off unless
+    // the profile chose it.
+    val preferEmbeddedSubtitles: Boolean = false,
 
     // Media cards: the effective `ui.card_presentation` value plus where it
     // resolved from and whether the server supports the key at all.
@@ -163,6 +166,8 @@ class SettingsViewModel(
     private var subtitleLanguageConfirmedGeneration = 0L
     private var subtitleModeConfirmedGeneration = 0L
     private var forcedSubtitlesConfirmedGeneration = 0L
+    private var preferEmbeddedSubtitlesEditGeneration = 0L
+    private var preferEmbeddedSubtitlesConfirmedGeneration = 0L
 
     /** Profile-wide video and audiobook skip intervals (settings revision 9). */
     val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
@@ -231,6 +236,7 @@ class SettingsViewModel(
                     subtitleLanguage = snapshot.subtitleLanguage,
                     subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
                     showForcedSubtitles = snapshot.showForcedSubtitles,
+                    preferEmbeddedSubtitles = snapshot.preferEmbeddedSubtitles,
                     metadataLanguage = snapshot.metadataLanguage,
                     audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
                     subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
@@ -668,6 +674,38 @@ class SettingsViewModel(
     }
 
     /**
+     * Writes `playback.prefer_embedded_subtitles` at profile scope.
+     *
+     * Canonical-only, so unlike [setShowForcedSubtitles] there is nothing to
+     * mirror into the active-profile store: playback reads the server's
+     * `effective_prefer_embedded_subtitles`, never a profile column.
+     */
+    fun setPreferEmbeddedSubtitles(enabled: Boolean) {
+        val editGeneration = ++preferEmbeddedSubtitlesEditGeneration
+        val previous = _uiState.value.preferEmbeddedSubtitles
+        _uiState.update { it.copy(preferEmbeddedSubtitles = enabled) }
+        viewModelScope.launch {
+            val result = profileSettings.setPreferEmbeddedSubtitles(enabled)
+            if (!result.succeeded) {
+                _uiState.update {
+                    if (it.preferEmbeddedSubtitles == enabled) {
+                        it.copy(preferEmbeddedSubtitles = previous)
+                    } else {
+                        it
+                    }
+                }
+            } else {
+                if (editGeneration > preferEmbeddedSubtitlesConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = enabled.toString()) {
+                        it.preferEmbeddedSubtitles.toString()
+                    }
+                    preferEmbeddedSubtitlesConfirmedGeneration = editGeneration
+                }
+            }
+        }
+    }
+
+    /**
      * Replaces the optimistic values with what the server actually resolves.
      *
      * A successful PUT stores the authored value; it does not make it
@@ -699,6 +737,7 @@ class SettingsViewModel(
                 subtitleLanguage = snapshot.subtitleLanguage,
                 subtitleMode = SubtitleMode.fromWire(snapshot.subtitleMode),
                 showForcedSubtitles = snapshot.showForcedSubtitles,
+                preferEmbeddedSubtitles = snapshot.preferEmbeddedSubtitles,
                 metadataLanguage = snapshot.metadataLanguage,
                 audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
                 subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,

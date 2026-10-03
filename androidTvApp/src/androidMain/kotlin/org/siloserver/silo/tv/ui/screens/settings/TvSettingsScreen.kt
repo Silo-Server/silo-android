@@ -292,6 +292,7 @@ fun TvSettingsScreen(
         onMetadataLanguageChanged = viewModel::onMetadataLanguageChanged,
         metadataLanguageEnabled = metadataAiStatus.enabled && metadataAiStatus.onView != org.siloserver.silo.model.metadata.MetadataAiOnView.Off,
         onShowForcedSubtitlesChanged = viewModel::onShowForcedSubtitlesChanged,
+        onPreferEmbeddedSubtitlesChanged = viewModel::onPreferEmbeddedSubtitlesChanged,
         onCardPresentationChanged = viewModel::onCardPresentationSelected,
         onCardPresentationDeviceOnlyChanged = viewModel::onCardPresentationDeviceOnlyChanged,
         onUseProfileCardDefault = viewModel::onUseProfileCardDefault,
@@ -439,6 +440,7 @@ private fun SettingsSplitLayout(
     onMetadataLanguageChanged: (String) -> Unit,
     metadataLanguageEnabled: Boolean,
     onShowForcedSubtitlesChanged: (Boolean) -> Unit,
+    onPreferEmbeddedSubtitlesChanged: (Boolean) -> Unit,
     onCardPresentationChanged: (CardPresentation) -> Unit,
     onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileCardDefault: () -> Unit,
@@ -518,6 +520,7 @@ private fun SettingsSplitLayout(
             onMetadataLanguageChanged = onMetadataLanguageChanged,
             metadataLanguageEnabled = metadataLanguageEnabled,
             onShowForcedSubtitlesChanged = onShowForcedSubtitlesChanged,
+            onPreferEmbeddedSubtitlesChanged = onPreferEmbeddedSubtitlesChanged,
             onCardPresentationChanged = onCardPresentationChanged,
             onCardPresentationDeviceOnlyChanged = onCardPresentationDeviceOnlyChanged,
             onUseProfileCardDefault = onUseProfileCardDefault,
@@ -799,6 +802,7 @@ private fun SettingsDetailPane(
     onMetadataLanguageChanged: (String) -> Unit,
     metadataLanguageEnabled: Boolean,
     onShowForcedSubtitlesChanged: (Boolean) -> Unit,
+    onPreferEmbeddedSubtitlesChanged: (Boolean) -> Unit,
     onCardPresentationChanged: (CardPresentation) -> Unit,
     onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileCardDefault: () -> Unit,
@@ -857,6 +861,7 @@ private fun SettingsDetailPane(
                 onMetadataLanguageChanged = onMetadataLanguageChanged,
                 metadataLanguageEnabled = metadataLanguageEnabled,
                 onShowForcedSubtitlesChanged = onShowForcedSubtitlesChanged,
+                onPreferEmbeddedSubtitlesChanged = onPreferEmbeddedSubtitlesChanged,
                 onSubtitleFontSizeChanged = onSubtitleFontSizeChanged,
                 onSubtitleFontFamilyChanged = onSubtitleFontFamilyChanged,
                 onSubtitleFontColorChanged = onSubtitleFontColorChanged,
@@ -1533,6 +1538,7 @@ private fun TvSubtitleSettingsPane(
     onMetadataLanguageChanged: (String) -> Unit,
     metadataLanguageEnabled: Boolean,
     onShowForcedSubtitlesChanged: (Boolean) -> Unit,
+    onPreferEmbeddedSubtitlesChanged: (Boolean) -> Unit,
     onSubtitleFontSizeChanged: (SubtitleFontSizePreset) -> Unit,
     onSubtitleFontFamilyChanged: (String) -> Unit,
     onSubtitleFontColorChanged: (String) -> Unit,
@@ -1596,6 +1602,16 @@ private fun TvSubtitleSettingsPane(
                     label = "Show Forced Subtitles",
                     checked = state.showForcedSubtitles,
                     onCheckedChange = onShowForcedSubtitlesChanged,
+                )
+                SettingsToggleRow(
+                    label = "Prefer embedded subtitles",
+                    checked = state.preferEmbeddedSubtitles,
+                    onCheckedChange = onPreferEmbeddedSubtitlesChanged,
+                )
+                SettingsFooterText(
+                    text = "Start on the subtitle track stored in the video file when it matches " +
+                        "your language, instead of an external subtitle file in the same language. " +
+                        "External files are cut for one release and can play out of sync.",
                 )
                 SettingsFooterText(
                     text = "Used to pick a matching track when one is available. Forced subtitles cover " +

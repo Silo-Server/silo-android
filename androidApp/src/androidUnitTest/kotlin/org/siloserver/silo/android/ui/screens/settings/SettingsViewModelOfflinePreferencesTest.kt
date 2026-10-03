@@ -127,6 +127,43 @@ class SettingsViewModelOfflinePreferencesTest {
         assertEquals("always", profiles.activeProfile.value?.subtitleMode)
     }
 
+    @Test
+    fun preferEmbeddedSubtitlesReadsFromTheCanonicalSnapshot() = scenario { vm, api, _ ->
+        // Off unless the profile chose it: a server that sends no row must not
+        // leave the switch on by accident.
+        assertEquals(false, vm.uiState.value.preferEmbeddedSubtitles)
+
+        val reply = api.queueReply()
+        vm.setPreferEmbeddedSubtitles(true)
+        runCurrent()
+        reply.complete(snapshot(preferEmbedded = true))
+        runCurrent()
+
+        assertEquals(true, vm.uiState.value.preferEmbeddedSubtitles)
+    }
+
+    @Test
+    fun aFailedPreferEmbeddedWriteRollsTheSwitchBack() = scenario { vm, api, _ ->
+        api.failNextWrite = true
+        vm.setPreferEmbeddedSubtitles(true)
+        runCurrent()
+
+        assertEquals(false, vm.uiState.value.preferEmbeddedSubtitles)
+    }
+
+    @Test
+    fun aDeviceOverrideNarrowsThePreferEmbeddedSubtitlesSwitchBack() = scenario { vm, api, _ ->
+        val reply = api.queueReply()
+        vm.setPreferEmbeddedSubtitles(true)
+        runCurrent()
+        // This device's own row says no; the screen must show what playback
+        // will use, not what the PUT stored.
+        reply.complete(snapshot(preferEmbedded = false))
+        runCurrent()
+
+        assertEquals(false, vm.uiState.value.preferEmbeddedSubtitles)
+    }
+
     private fun scenario(
         block: suspend TestScope.(SettingsViewModel, PendingSettingsApi, ActiveProfileStore) -> Unit,
     ) = runTest {
@@ -207,10 +244,18 @@ class SettingsViewModelOfflinePreferencesTest {
     }
 
     companion object {
-        private fun snapshot(mode: String = "auto", metadataLanguage: String = "") = ApiResult.Success(
+        private fun snapshot(
+            mode: String = "auto",
+            metadataLanguage: String = "",
+            preferEmbedded: Boolean = false,
+        ) = ApiResult.Success(
             EffectiveSettingValuesResponse(settings = listOf(
                 EffectiveSettingValue(key = SettingKeys.PLAYBACK_SUBTITLE_MODE, value = JsonPrimitive(mode)),
                 EffectiveSettingValue(key = SettingKeys.CATALOG_METADATA_LANGUAGE, value = JsonPrimitive(metadataLanguage)),
+                EffectiveSettingValue(
+                    key = SettingKeys.PLAYBACK_PREFER_EMBEDDED_SUBTITLES,
+                    value = JsonPrimitive(preferEmbedded),
+                ),
             )),
         )
     }

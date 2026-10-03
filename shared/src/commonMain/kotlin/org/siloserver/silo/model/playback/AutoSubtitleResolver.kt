@@ -40,6 +40,8 @@ data class AutoSubtitleCandidate(
      * it, because the catalog only ever says SDH in the title.
      */
     val hearingImpaired: Boolean = false,
+    /** `external`, `embedded` or `downloaded`; null when the surface cannot tell. */
+    val source: String? = null,
 )
 
 /** Cascaded preference inputs. Same shape on every surface. */
@@ -52,6 +54,13 @@ data class AutoSubtitleContext(
     val showForced: Boolean = false,
     /** Language of the audio track that will play. */
     val audioLanguage: String? = null,
+    /**
+     * Cascaded `playback.prefer_embedded_subtitles`. When on, an embedded
+     * container track wins the source tie inside a track class: an external
+     * sidecar was cut for one release of the title and can play out of sync,
+     * while the track inside the file cannot.
+     */
+    val preferEmbedded: Boolean = false,
 )
 
 sealed class AutoSubtitleResolution {
@@ -106,7 +115,7 @@ fun resolveAutoSubtitle(
     val targetLanguage = autoSubtitleLanguageKey(preferred)
     if (targetLanguage == null) {
         if (mode != "always") return AutoSubtitleResolution.NoChange
-        return bestAutoSubtitleCandidate(candidates, null)
+        return bestAutoSubtitleCandidate(candidates, null, context.preferEmbedded)
             ?.let(AutoSubtitleResolution::Select)
             ?: AutoSubtitleResolution.NoChange
     }
@@ -114,7 +123,7 @@ fun resolveAutoSubtitle(
     val audioLanguage = autoSubtitleLanguageKey(context.audioLanguage)
     if (mode == "auto" && audioLanguage != null && audioLanguage == targetLanguage) {
         if (context.showForced) {
-            bestForcedAutoSubtitleCandidate(candidates, targetLanguage)
+            bestForcedAutoSubtitleCandidate(candidates, targetLanguage, context.preferEmbedded)
                 // Idempotent re-select even when this track is already on:
                 // NoChange is reserved for "no track should be on", so a
                 // launch-time consumer can map it to an explicit disable
@@ -123,15 +132,55 @@ fun resolveAutoSubtitle(
         }
         return AutoSubtitleResolution.Disable
     }
-
-    val target = bestAutoSubtitleCandidate(candidates, targetLanguage)
+    val target = bestAutoSubtitleCandidate(candidates, targetLanguage, context.preferEmbedded)
         ?: if (context.showForced) candidates.firstOrNull { it.forced } else null
     return target?.let(AutoSubtitleResolution::Select) ?: AutoSubtitleResolution.NoChange
+}
+
+/** The highest source tier: embedded, and anything the caller left unnamed. */
+private const val SOURCE_TIER_CEILING = 2
+
+/**
+ * The source tier of a candidate, or the source tier it should be ranked at
+ * once `playback.prefer_embedded_subtitles` is on. Lower is better.
+ *
+ * The reversal mirrors the tiers rather than listing them twice: an external
+ * sidecar drops to the embedded track's place, embedded rises to the sidecar's,
+ * and the middle tier — a downloaded subtitle, which the server can re-time —
+ * keeps its place either way.
+ */
+private fun AutoSubtitleCandidate.sourcePriority(preferEmbedded: Boolean): Int {
+    val tier = when (source) {
+        "external" -> 0
+        "downloaded" -> 1
+        else -> SOURCE_TIER_CEILING
+    }
+    return if (preferEmbedded) SOURCE_TIER_CEILING - tier else tier
+}
+
+/**
+ * The best candidate of one track class: the first in the caller's order, which
+ * is the server's combined-ordinal order — sidecars first — unless the profile
+ * prefers embedded subtitles, in which case the source tier decides inside the
+ * class.
+ *
+ * The preference deliberately does not reach past this: the class cascade in
+ * [bestAutoSubtitleCandidate] still runs first, so an embedded track in another
+ * language, or an embedded forced track where a full one exists, does not win.
+ */
+private fun List<AutoSubtitleCandidate>.bestInClass(
+    preferEmbedded: Boolean,
+    predicate: (AutoSubtitleCandidate) -> Boolean,
+): AutoSubtitleCandidate? {
+    val matches = filter(predicate)
+    if (matches.isEmpty()) return null
+    return if (preferEmbedded) matches.minBy { it.sourcePriority(true) } else matches.first()
 }
 
 private fun bestAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,
     targetLanguage: String?,
+    preferEmbedded: Boolean,
 ): AutoSubtitleCandidate? {
     val pool = if (targetLanguage == null) {
         candidates
@@ -140,24 +189,26 @@ private fun bestAutoSubtitleCandidate(
     }
     if (pool.isEmpty()) return null
 
-    pool.firstOrNull { !it.forced && !it.isHearingImpaired() && !it.isBitmap() }?.let { return it }
-    pool.firstOrNull { !it.forced && !it.isBitmap() }?.let { return it }
-    pool.firstOrNull { !it.isBitmap() }?.let { return it }
-    return pool.first()
+    pool.bestInClass(preferEmbedded) { !it.forced && !it.isHearingImpaired() && !it.isBitmap() }
+        ?.let { return it }
+    pool.bestInClass(preferEmbedded) { !it.forced && !it.isBitmap() }?.let { return it }
+    pool.bestInClass(preferEmbedded) { !it.isBitmap() }?.let { return it }
+    return pool.bestInClass(preferEmbedded) { true }
 }
 
 private fun bestForcedAutoSubtitleCandidate(
     candidates: List<AutoSubtitleCandidate>,
     targetLanguage: String?,
+    preferEmbedded: Boolean,
 ): AutoSubtitleCandidate? {
     val pool = candidates
         .filter { targetLanguage == null || autoSubtitleLanguageKey(it.language) == targetLanguage }
         .filter { it.forced }
     if (pool.isEmpty()) return null
 
-    pool.firstOrNull { !it.isHearingImpaired() && !it.isBitmap() }?.let { return it }
-    pool.firstOrNull { !it.isHearingImpaired() }?.let { return it }
-    return pool.first()
+    pool.bestInClass(preferEmbedded) { !it.isHearingImpaired() && !it.isBitmap() }?.let { return it }
+    pool.bestInClass(preferEmbedded) { !it.isHearingImpaired() }?.let { return it }
+    return pool.bestInClass(preferEmbedded) { true }
 }
 
 /** The ONE SDH predicate: an explicit signal, or the track's own title. */
@@ -210,6 +261,7 @@ fun catalogAutoSubtitleCandidates(
             codec = track.codec,
             title = track.title,
             forced = track.forced,
+            source = if (track.external) "external" else "embedded",
         )
     }
 }
@@ -229,5 +281,6 @@ fun inventoryAutoSubtitleCandidates(
         codec = row.codec,
         title = row.catalogLabel ?: row.label,
         forced = row.forced == true,
+        source = row.source,
     )
 }

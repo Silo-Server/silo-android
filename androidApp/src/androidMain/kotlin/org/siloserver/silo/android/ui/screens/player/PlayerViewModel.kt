@@ -1374,6 +1374,7 @@ class PlayerViewModel(
                 preferredLanguage = playbackState.preferredTextLanguage,
                 subtitleMode = playbackState.preferredSubtitleMode,
                 showForcedSubtitles = playbackState.showForcedSubtitles,
+                preferEmbedded = playbackState.preferEmbeddedSubtitles,
             )
         } else {
             MobileSubtitleAutoSelection.NoChange
@@ -4878,6 +4879,7 @@ class PlayerViewModel(
             preferredLanguage = current.preferences.preferredLanguage,
             subtitleMode = current.preferences.mode,
             showForcedSubtitles = current.preferences.showForced,
+            preferEmbedded = current.preferences.preferEmbedded,
         )
         val identity = when (selection) {
             is MobileSubtitleAutoSelection.Select ->
@@ -4905,6 +4907,9 @@ class PlayerViewModel(
         val language = watchDetail?.effectiveSubtitleLanguage.orNullIfBlank()
         val mode = watchDetail?.effectiveSubtitleMode.orNullIfBlank()
         val forced = watchDetail?.effectiveShowForcedSubtitles
+        // Canonical-only: there is no profile column to fall back to, and a
+        // server before contract revision 17 sends no field, which reads off.
+        val preferEmbedded = watchDetail?.effectivePreferEmbeddedSubtitles
         val profile = if (language == null || mode == null || forced == null) {
             val activeId = profileRepository.getActiveProfileId()
             activeProfileStore?.activeProfile?.value?.takeIf { it.id == activeId }
@@ -4915,6 +4920,7 @@ class PlayerViewModel(
             preferredLanguage = language ?: profile?.subtitleLanguage.orNullIfBlank(),
             mode = mode ?: profile?.subtitleMode.orNullIfBlank(),
             showForced = forced ?: profile?.showForcedSubtitles ?: true,
+            preferEmbedded = preferEmbedded ?: false,
         )
     }
 

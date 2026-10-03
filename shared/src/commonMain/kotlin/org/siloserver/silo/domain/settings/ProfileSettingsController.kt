@@ -46,6 +46,8 @@ class ProfileSettingsController(
         /** One of "auto", "always", "off". */
         val subtitleMode: String = DEFAULT_SUBTITLE_MODE,
         val showForcedSubtitles: Boolean = true,
+        /** `playback.prefer_embedded_subtitles`; off unless the profile chose it. */
+        val preferEmbeddedSubtitles: Boolean = false,
         /** BCP 47 tag; "" inherits the library metadata language. */
         val metadataLanguage: String = "",
         val audioLanguageSuggestions: List<String> = emptyList(),
@@ -127,6 +129,9 @@ class ProfileSettingsController(
     suspend fun setShowForcedSubtitles(enabled: Boolean): WriteResult =
         resolved(write(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, JsonPrimitive(enabled)))
 
+    suspend fun setPreferEmbeddedSubtitles(enabled: Boolean): WriteResult =
+        resolved(write(SettingKeys.PLAYBACK_PREFER_EMBEDDED_SUBTITLES, JsonPrimitive(enabled)))
+
     /** [language] is a BCP 47 tag, or "" to inherit the library's language. */
     suspend fun setMetadataLanguage(language: String): WriteResult =
         resolved(writeLanguage(SettingKeys.CATALOG_METADATA_LANGUAGE, language))
@@ -161,6 +166,8 @@ class ProfileSettingsController(
                 effective.stringOrEmpty(SettingKeys.PLAYBACK_SUBTITLE_MODE),
             ),
             showForcedSubtitles = effective.boolOr(SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES, true),
+            preferEmbeddedSubtitles =
+                effective.boolOr(SettingKeys.PLAYBACK_PREFER_EMBEDDED_SUBTITLES, false),
             metadataLanguage = effective.stringOrEmpty(SettingKeys.CATALOG_METADATA_LANGUAGE),
             audioLanguageSuggestions =
                 effective[SettingKeys.PLAYBACK_AUDIO_LANGUAGE]?.suggestedValues.orEmpty(),
@@ -187,6 +194,7 @@ class ProfileSettingsController(
             SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE,
             SettingKeys.PLAYBACK_SUBTITLE_MODE,
             SettingKeys.PLAYBACK_SHOW_FORCED_SUBTITLES,
+            SettingKeys.PLAYBACK_PREFER_EMBEDDED_SUBTITLES,
             SettingKeys.CATALOG_METADATA_LANGUAGE,
         )
 

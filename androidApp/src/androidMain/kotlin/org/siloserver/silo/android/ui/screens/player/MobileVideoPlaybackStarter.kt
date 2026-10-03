@@ -460,6 +460,13 @@ internal class MobileVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                // Server-resolved first, exactly like `show_forced_subtitles`
+                // above: a canonical profile write is never mirrored back into
+                // `user_profiles`, so only `effective_*` reflects the last
+                // edit. Absent before settings contract revision 17, which
+                // must read as off.
+                preferEmbeddedSubtitles = watchDetail.effectivePreferEmbeddedSubtitles
+                    ?: false,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
                 recap = watchDetail.recap,

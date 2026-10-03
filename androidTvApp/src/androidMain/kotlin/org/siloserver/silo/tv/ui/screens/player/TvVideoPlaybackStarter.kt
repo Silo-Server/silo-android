@@ -380,6 +380,12 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                // Server-resolved first, exactly like `show_forced_subtitles`
+                // above. Absent before settings contract revision 17, which
+                // must read as off — there is no profile column to fall back
+                // to, because the setting is only ever written canonically.
+                preferEmbeddedSubtitles = watchDetail.effectivePreferEmbeddedSubtitles
+                    ?: false,
                 intro = watchDetail.intro,
                 credits = watchDetail.credits,
                 recap = watchDetail.recap,

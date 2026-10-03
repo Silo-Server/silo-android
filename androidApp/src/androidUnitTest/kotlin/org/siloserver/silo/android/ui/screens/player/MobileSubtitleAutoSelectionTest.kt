@@ -574,6 +574,209 @@ class MobileSubtitleAutoSelectionTest {
         )
     }
 
+    // --- `playback.prefer_embedded_subtitles` ---------------------------
+
+    @Test
+    fun preferEmbeddedIsOffByDefaultAndLeavesTheExternalSidecarFirst() {
+        // The player-specific cascade is a separate implementation from the
+        // shared resolver, so the OFF behaviour is pinned here on its own:
+        // with no preference the caller's order (sidecars first) decides.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(index = 1, label = "English", language = "en", source = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedPicksTheEmbeddedTrackInsideTheSameClassAndLanguage() {
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(index = 1, label = "English", language = "en", source = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedStillLosesToAMatchingLanguageInTheSameClass() {
+        // Language decides before the source tier: an embedded French track
+        // never beats an external English one for an English viewer.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(index = 1, label = "Nederlands", language = "nl", source = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedDoesNotChangeWhatTheForcedShortCircuitAlreadyPicks() {
+        // The phone cascade leads with a forced track when "show forced" is on
+        // — a pre-existing divergence from the shared resolver's class order,
+        // and out of scope here. What this pins is that the new preference does
+        // not move that answer: the embedded forced track was already the pick
+        // before the setting existed, and still is.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(index = 1, label = "English Signs", language = "en", forced = true, source = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+            ),
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedNeverPromotesAnEmbeddedForcedTrackOverAFullOneWhenForcedIsOff() {
+        // With "show forced" off the full-dialogue class runs, and it runs
+        // before the source tier: an embedded signs-only track is not full
+        // dialogue and loses to the external track that is.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(index = 1, label = "English Signs", language = "en", forced = true, source = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = false,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedNeverTradesATextSidecarForAnEmbeddedBitmapTrack() {
+        // Text still beats bitmap within a source tier, so the embedded track
+        // has to be text too before the preference can reach it.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en", source = "external"),
+            subtitle(
+                index = 1,
+                label = "English",
+                language = "en",
+                codec = "hdmv_pgs_subtitle",
+                source = "embedded",
+            ),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preferEmbeddedReordersTheForcedBranchWhenAudioAlreadyMatches() {
+        val subtitles = listOf(
+            subtitle(
+                index = 0,
+                label = "English Signs",
+                language = "en",
+                forced = true,
+                source = "external",
+            ),
+            subtitle(
+                index = 1,
+                label = "English Signs",
+                language = "en",
+                forced = true,
+                source = "embedded",
+            ),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "en")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+            ),
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "en")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = true,
+                preferEmbedded = true,
+            ),
+        )
+    }
+
     @Test
     fun initialDetailOrdinalTranslatesFromCatalogToMountedList() {
         // Catalog order: [Signs (forced), English] with demux indices 3/5;
@@ -652,12 +855,13 @@ class MobileSubtitleAutoSelectionTest {
         language: String?,
         forced: Boolean = false,
         codec: String = "srt",
+        source: String? = null,
     ): PlayerSubtitleInfo = PlayerSubtitleInfo(
         index = index,
         language = language,
         codec = codec,
         label = label,
-        source = null,
+        source = source,
         forced = forced,
         url = "/stream/subtitles/$index.vtt",
     )

@@ -562,6 +562,94 @@ class TvPlaybackFormattingTest {
         assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
     }
 
+    // --- `playback.prefer_embedded_subtitles` ---
+
+    @Test fun subtitleValueLabel_autoIsOffByDefaultSoTheSidecarStillPreviews() {
+        // The pill must preview the SAME track the player starts on, so the
+        // default (no preference) has to keep previewing the sidecar.
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(lang = "eng", codec = "srt", external = true),
+                subtitleTrack(lang = "eng", codec = "ass"),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            audioLanguage = "jpn",
+        )
+        assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
+    @Test fun subtitleValueLabel_autoPreviewsTheEmbeddedTrackWhenPreferred() {
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(lang = "eng", codec = "srt", external = true),
+                subtitleTrack(lang = "eng", codec = "ass"),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            audioLanguage = "jpn",
+            preferEmbedded = true,
+        )
+        assertEquals("Auto - English · ASS", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
+    @Test fun subtitleValueLabel_autoStillPrefersTheRequestedLanguageWhenPreferringEmbedded() {
+        // An embedded French track never previews over an external English one
+        // for an English viewer.
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(lang = "eng", codec = "srt", external = true),
+                subtitleTrack(lang = "fre", codec = "ass"),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            audioLanguage = "jpn",
+            preferEmbedded = true,
+        )
+        assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
+    @Test fun subtitleValueLabel_autoStillPrefersFullDialogueWhenPreferringEmbedded() {
+        // An embedded signs-only track is not full dialogue, so the external
+        // full track keeps the pill and playback.
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(lang = "eng", codec = "srt", external = true),
+                subtitleTrack(lang = "eng", codec = "ass", forced = true),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            audioLanguage = "jpn",
+            preferEmbedded = true,
+        )
+        assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
+    @Test fun subtitleValueLabel_autoStillSkipsBitmapWhenPreferringEmbedded() {
+        // Text still beats bitmap within a source tier.
+        val v = fileVersion(
+            subtitles = listOf(
+                subtitleTrack(lang = "eng", codec = "srt", external = true),
+                subtitleTrack(lang = "eng", codec = "hdmv_pgs_subtitle"),
+            ),
+        )
+        val ctx = TvPlaybackFormatting.SubtitleAutoContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            audioLanguage = "jpn",
+            preferEmbedded = true,
+        )
+        assertEquals("Auto - English · SRT", TvPlaybackFormatting.subtitleValueLabel(v, null, ctx))
+    }
+
     @Test fun resolvedAudioLanguage_returnsAutoTrackLanguage() {
         val v = fileVersion(
             audio = listOf(

@@ -242,6 +242,178 @@ class AutoSubtitleResolverTest {
         assertNull(autoSubtitleLanguageKey(" "))
     }
 
+    // --- `playback.prefer_embedded_subtitles` ---------------------------
+
+    @Test
+    fun thePreferenceIsOffUnlessTheContextSaysOtherwise() {
+        // The five pre-existing cases above all run with no preference in the
+        // context and keep their answers: this pins the DEFAULT so a future
+        // caller that forgets the flag cannot silently start moving viewers.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 1, codec = "srt", language = "eng"),
+        )
+        val off = AutoSubtitleContext(preferredLanguage = "en", mode = "always")
+        val on = off.copy(preferEmbedded = true)
+
+        assertEquals(
+            0,
+            resolveAutoSubtitle(catalogAutoSubtitleCandidates(tracks), off)
+                .selectedCandidate()?.selectionIndex,
+        )
+        assertEquals(
+            1,
+            resolveAutoSubtitle(catalogAutoSubtitleCandidates(tracks), on)
+                .selectedCandidate()?.selectionIndex,
+        )
+    }
+
+    @Test
+    fun thePreferenceMovesTheSourceTieInsideTheClassButNotAcrossLanguages() {
+        // An embedded FRENCH track must not beat an external ENGLISH one for a
+        // viewer who asked for English: the language pool is decided first.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "fre", external = true),
+            SubtitleTrack(index = 1, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 2, codec = "srt", language = "eng"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = "en",
+                mode = "always",
+                preferEmbedded = true,
+            ),
+        ).selectedCandidate()
+
+        // Combined space is externals-first, so the embedded English track is 2.
+        assertEquals(2, selected?.selectionIndex)
+        assertEquals("eng", selected?.language)
+    }
+
+    @Test
+    fun thePreferenceNeverPromotesAnEmbeddedForcedTrackOverAFullOne() {
+        // The class cascade runs before the source tier: an embedded
+        // signs-only track is not full dialogue and loses to the external one.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", forced = true, external = true),
+            SubtitleTrack(index = 1, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 2, codec = "srt", language = "eng", forced = true),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = "en",
+                mode = "always",
+                showForced = true,
+                audioLanguage = "ja",
+                preferEmbedded = true,
+            ),
+        ).selectedCandidate()
+
+        assertEquals(1, selected?.selectionIndex)
+        assertEquals(false, selected?.forced)
+    }
+
+    @Test
+    fun thePreferenceNeverTradesATextTrackForABitmapOne() {
+        // Text still beats bitmap WITHIN a source tier, so preferring embedded
+        // does not promote an embedded PGS over a mounted text sidecar.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 1, codec = "hdmv_pgs_subtitle", language = "eng"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(
+                preferredLanguage = "en",
+                mode = "always",
+                preferEmbedded = true,
+            ),
+        ).selectedCandidate()
+
+        assertEquals(0, selected?.selectionIndex)
+        assertEquals("srt", selected?.codec)
+    }
+
+    @Test
+    fun thePreferenceKeepsADownloadedSubtitleInTheMiddle() {
+        // A downloaded subtitle was cut for the same release as the viewer is
+        // watching and the server can re-time it, so it keeps its place between
+        // the two container sources.
+        val rows = listOf(
+            PlayerSubtitleInfo(
+                index = 0,
+                language = "eng",
+                codec = "srt",
+                url = "",
+                source = "external",
+            ),
+            PlayerSubtitleInfo(
+                index = 1,
+                language = "eng",
+                codec = "srt",
+                url = "",
+                source = "downloaded",
+            ),
+            PlayerSubtitleInfo(
+                index = 2,
+                language = "eng",
+                codec = "srt",
+                url = "",
+                source = "embedded",
+            ),
+        )
+        val off = AutoSubtitleContext(preferredLanguage = "en", mode = "always")
+
+        assertEquals(0, resolveAutoSubtitle(inventoryAutoSubtitleCandidates(rows), off).selectedCandidate()?.selectionIndex)
+        assertEquals(
+            2,
+            resolveAutoSubtitle(inventoryAutoSubtitleCandidates(rows), off.copy(preferEmbedded = true))
+                .selectedCandidate()?.selectionIndex,
+        )
+    }
+
+    @Test
+    fun thePreferenceAlsoReordersTheForcedFallbackBranch() {
+        // The audio-already-matches branch is the one place a forced track can
+        // be the answer, and the source tier applies there too.
+        val rows = listOf(
+            PlayerSubtitleInfo(
+                index = 0,
+                language = "eng",
+                codec = "srt",
+                url = "",
+                source = "external",
+                forced = true,
+            ),
+            PlayerSubtitleInfo(
+                index = 1,
+                language = "eng",
+                codec = "srt",
+                url = "",
+                source = "embedded",
+                forced = true,
+            ),
+        )
+        val off = AutoSubtitleContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            showForced = true,
+            audioLanguage = "eng",
+        )
+
+        assertEquals(0, resolveAutoSubtitle(inventoryAutoSubtitleCandidates(rows), off).selectedCandidate()?.selectionIndex)
+        assertEquals(
+            1,
+            resolveAutoSubtitle(inventoryAutoSubtitleCandidates(rows), off.copy(preferEmbedded = true))
+                .selectedCandidate()?.selectionIndex,
+        )
+    }
+
     // ------------------------------------------------------------------
 
     /** Catalog ordinal of the resolved track — no externals, so ordinal == combined. */

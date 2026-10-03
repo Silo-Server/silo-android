@@ -126,4 +126,86 @@ class TvAutoSubtitleFallbackTest {
         val local = assertIs<SubtitleIdentity.LocalMedia3>(identity)
         assertEquals("English", local.media.label)
     }
+
+    // --- `playback.prefer_embedded_subtitles` ---------------------------
+
+    private val embeddedTextRow = sidecarRow.copy(
+        index = 2,
+        label = "English",
+        source = "embedded",
+        url = "",
+        catalogSource = "embedded",
+    )
+
+    @Test
+    fun theFallbackIsOffByDefaultSoTheSidecarStillWins() {
+        // Byte-for-byte the pre-existing answer: the flag defaults to false, so
+        // a launch that never read the setting picks exactly what it picked
+        // before the setting existed.
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = mountedPgsOnly,
+            subtitleRows = listOf(sidecarRow, embeddedTextRow),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(sidecarRow), identity)
+    }
+
+    @Test
+    fun theFallbackStartsOnTheEmbeddedTrackInsideTheSameClassAndLanguage() {
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = mountedPgsOnly,
+            subtitleRows = listOf(sidecarRow, embeddedTextRow),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+            preferEmbedded = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(embeddedTextRow), identity)
+    }
+
+    @Test
+    fun theFallbackNeverTradesATextSidecarForAnEmbeddedBitmapTrack() {
+        // Text still beats bitmap within a source tier, so the preference stops
+        // short of promoting the embedded PGS the regression test pinned.
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = mountedPgsOnly,
+            subtitleRows = listOf(sidecarRow, pgsRow),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+            preferEmbedded = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(sidecarRow), identity)
+    }
+
+    @Test
+    fun theFallbackNeverPromotesAnEmbeddedForcedTrackOverAFullOne() {
+        val embeddedForced = sidecarRow.copy(
+            index = 2,
+            label = "English Signs",
+            source = "embedded",
+            url = "",
+            catalogSource = "embedded",
+            forced = true,
+        )
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = mountedPgsOnly,
+            subtitleRows = listOf(sidecarRow, embeddedForced),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+            preferEmbedded = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(sidecarRow), identity)
+    }
 }

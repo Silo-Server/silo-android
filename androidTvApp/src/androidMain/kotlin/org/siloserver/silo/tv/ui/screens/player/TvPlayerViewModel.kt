@@ -456,6 +456,11 @@ internal fun resolveAutoSubtitleSelection(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    /**
+     * `playback.prefer_embedded_subtitles`; see
+     * [org.siloserver.silo.model.playback.AutoSubtitleContext.preferEmbedded].
+     */
+    preferEmbedded: Boolean = false,
 ): SubtitleAutoSelection =
     when (
         val resolution = resolveAutoSubtitle(
@@ -464,6 +469,7 @@ internal fun resolveAutoSubtitleSelection(
                 preferredLanguage = preferredLanguage,
                 mode = subtitleMode,
                 showForced = showForced,
+                preferEmbedded = preferEmbedded,
                 audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
             ),
         )
@@ -496,11 +502,13 @@ internal fun resolveTvAutoSubtitleIdentity(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    preferEmbedded: Boolean = false,
 ): SubtitleIdentity {
     val context = AutoSubtitleContext(
         preferredLanguage = preferredLanguage,
         mode = subtitleMode,
         showForced = showForced,
+        preferEmbedded = preferEmbedded,
         audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
     )
     if (subtitleRows.isNotEmpty()) {
@@ -1069,6 +1077,8 @@ class TvPlayerViewModel(
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        // `playback.prefer_embedded_subtitles`; off unless the profile chose it.
+        val preferEmbeddedSubtitles: Boolean = false,
         // Intro / credits ranges — populated from `WatchDetail`. Used by the
         // intro auto-skip observer and (eventually) the next-up promote.
         val intro: TimeRange? = null,
@@ -2178,6 +2188,7 @@ class TvPlayerViewModel(
                                 preferredTextLanguage = result.preferredTextLanguage,
                                 preferredSubtitleMode = result.preferredSubtitleMode,
                                 showForcedSubtitles = result.showForcedSubtitles,
+                                preferEmbeddedSubtitles = result.preferEmbeddedSubtitles,
                                 intro = result.intro,
                                 credits = result.credits,
                                 recap = result.recap,
@@ -4396,6 +4407,7 @@ class TvPlayerViewModel(
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
+            preferEmbedded = state.preferEmbeddedSubtitles,
         )
         autoTextSubtitleSelectionAttempted = true
         SubDiag.log("AUTO subtitle -> $identity")

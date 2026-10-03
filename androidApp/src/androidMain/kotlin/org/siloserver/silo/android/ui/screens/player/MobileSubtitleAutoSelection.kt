@@ -88,6 +88,13 @@ internal fun resolveMobileAutoSubtitleSelection(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    /**
+     * `playback.prefer_embedded_subtitles`. When on, an embedded track wins
+     * the source tie INSIDE one track class: an external sidecar was cut for
+     * one release of the title and can play out of sync, the track inside the
+     * file cannot. See the shared resolver's `bestInClass`.
+     */
+    preferEmbedded: Boolean = false,
 ): MobileSubtitleAutoSelection {
     if (subtitles.isEmpty()) return MobileSubtitleAutoSelection.NoChange
 
@@ -104,6 +111,7 @@ internal fun resolveMobileAutoSubtitleSelection(
                 subtitles = subtitles,
                 targetLanguage = null,
                 preferForced = showForcedSubtitles,
+                preferEmbedded = preferEmbedded,
             )?.let(MobileSubtitleAutoSelection::Select)
                 ?: MobileSubtitleAutoSelection.NoChange
         }
@@ -121,6 +129,7 @@ internal fun resolveMobileAutoSubtitleSelection(
             bestForcedAutoSubtitleOrdinal(
                 subtitles = subtitles,
                 targetLanguage = targetLanguage,
+                preferEmbedded = preferEmbedded,
             )?.let { return MobileSubtitleAutoSelection.Select(it) }
         }
         return MobileSubtitleAutoSelection.Disable
@@ -130,6 +139,7 @@ internal fun resolveMobileAutoSubtitleSelection(
         subtitles = subtitles,
         targetLanguage = targetLanguage,
         preferForced = showForcedSubtitles,
+        preferEmbedded = preferEmbedded,
     ) ?: if (showForcedSubtitles) {
         subtitles.indexOfFirst { it.forced == true }.takeIf { it >= 0 }
     } else {
@@ -219,6 +229,7 @@ private fun bestAutoSubtitleOrdinal(
     subtitles: List<PlayerSubtitleInfo>,
     targetLanguage: String?,
     preferForced: Boolean,
+    preferEmbedded: Boolean,
 ): Int? {
     val pool = subtitles.withIndex().filter { (_, subtitle) ->
         targetLanguage == null || canonicalSubtitleLanguage(subtitle.language) == targetLanguage
@@ -226,17 +237,17 @@ private fun bestAutoSubtitleOrdinal(
     if (pool.isEmpty()) return null
 
     if (preferForced) {
-        pool.firstOrNull { (_, subtitle) ->
+        pool.bestInClass(preferEmbedded) { (_, subtitle) ->
             subtitle.forced == true && !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap()
         }?.let { return it.index }
     }
-    pool.firstOrNull { (_, subtitle) ->
+    pool.bestInClass(preferEmbedded) { (_, subtitle) ->
         subtitle.forced != true && !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap()
     }?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) ->
+    pool.bestInClass(preferEmbedded) { (_, subtitle) ->
         subtitle.forced != true && !subtitle.isBitmap()
     }?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isBitmap() }
+    pool.bestInClass(preferEmbedded) { (_, subtitle) -> !subtitle.isBitmap() }
         ?.let { return it.index }
     return pool.first().index
 }
@@ -244,6 +255,7 @@ private fun bestAutoSubtitleOrdinal(
 private fun bestForcedAutoSubtitleOrdinal(
     subtitles: List<PlayerSubtitleInfo>,
     targetLanguage: String?,
+    preferEmbedded: Boolean,
 ): Int? {
     val pool = subtitles.withIndex().filter { (_, subtitle) ->
         subtitle.forced == true &&
@@ -251,11 +263,40 @@ private fun bestForcedAutoSubtitleOrdinal(
     }
     if (pool.isEmpty()) return null
 
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap() }
-        ?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isEffectivelyHearingImpaired() }
+    pool.bestInClass(preferEmbedded) { (_, subtitle) ->
+        !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap()
+    }?.let { return it.index }
+    pool.bestInClass(preferEmbedded) { (_, subtitle) -> !subtitle.isEffectivelyHearingImpaired() }
         ?.let { return it.index }
     return pool.first().index
+}
+
+/**
+ * The best row of one track class, in the caller's order — the server's
+ * combined-ordinal order, sidecars first — unless the profile prefers embedded
+ * subtitles, in which case the source tier decides inside the class.
+ *
+ * Mirrors the shared resolver's `bestInClass`, tiers included: external drops
+ * to the embedded track's place, embedded rises to the sidecar's, and a
+ * downloaded subtitle — which the server can re-time — keeps its place either
+ * way. With the preference off this is exactly `firstOrNull`.
+ */
+private fun List<IndexedValue<PlayerSubtitleInfo>>.bestInClass(
+    preferEmbedded: Boolean,
+    predicate: (IndexedValue<PlayerSubtitleInfo>) -> Boolean,
+): IndexedValue<PlayerSubtitleInfo>? {
+    val matches = filter(predicate)
+    if (matches.isEmpty()) return null
+    return if (preferEmbedded) matches.minBy { it.value.subtitleSourcePriority(true) } else matches.first()
+}
+
+private fun PlayerSubtitleInfo.subtitleSourcePriority(preferEmbedded: Boolean): Int {
+    val tier = when (source?.lowercase()) {
+        "external" -> 0
+        "downloaded" -> 1
+        else -> 2
+    }
+    return if (preferEmbedded) 2 - tier else tier
 }
 
 private fun PlayerSubtitleInfo.isEffectivelyHearingImpaired(): Boolean =

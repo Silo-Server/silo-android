@@ -46,6 +46,8 @@ fun SubtitleProfileSection(
     onLanguageChanged: (String) -> Unit,
     onModeChanged: (SubtitleMode) -> Unit,
     onForcedSubtitlesChanged: (Boolean) -> Unit,
+    preferEmbeddedSubtitles: Boolean = false,
+    onPreferEmbeddedSubtitlesChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val subtitleLanguageOptions = remember(subtitleLanguage, subtitleLanguageSuggestions) {
@@ -83,6 +85,15 @@ fun SubtitleProfileSection(
             label = "Show Forced Subtitles",
             checked = showForcedSubtitles,
             onCheckedChange = onForcedSubtitlesChanged,
+        )
+
+        SettingsSwitchRow(
+            label = "Prefer embedded subtitles",
+            description = "Start on the subtitle track stored in the video file when it matches your " +
+                "language, instead of an external subtitle file in the same language. External files " +
+                "are cut for one release and can play out of sync.",
+            checked = preferEmbeddedSubtitles,
+            onCheckedChange = onPreferEmbeddedSubtitlesChanged,
         )
     }
 }

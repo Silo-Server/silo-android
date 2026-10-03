@@ -111,6 +111,9 @@ class TvSettingsViewModel(
         val audioLanguageSuggestions: List<String> = emptyList(),
         val subtitleSize: SubtitleSize = SubtitleSize.Medium,
         val showForcedSubtitles: Boolean = true,
+        // `playback.prefer_embedded_subtitles` (contract revision 17); off
+        // unless the profile chose it.
+        val preferEmbeddedSubtitles: Boolean = false,
         // Full subtitle appearance + whether the device-scoped override is on.
         // Mirrors iOS `subtitleAppearance` / `subtitleUsesDeviceAppearanceOverride`.
         val subtitleAppearance: SubtitleAppearance = SubtitleAppearance.DEFAULT,
@@ -262,6 +265,7 @@ class TvSettingsViewModel(
                     subtitleLanguage = snapshot.subtitleLanguage,
                     metadataLanguage = snapshot.metadataLanguage,
                     showForcedSubtitles = snapshot.showForcedSubtitles,
+                    preferEmbeddedSubtitles = snapshot.preferEmbeddedSubtitles,
                     audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
                     subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
                     metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
@@ -302,6 +306,7 @@ class TvSettingsViewModel(
                 subtitleLanguage = snapshot.subtitleLanguage,
                 metadataLanguage = snapshot.metadataLanguage,
                 showForcedSubtitles = snapshot.showForcedSubtitles,
+                preferEmbeddedSubtitles = snapshot.preferEmbeddedSubtitles,
                 audioLanguageSuggestions = snapshot.audioLanguageSuggestions,
                 subtitleLanguageSuggestions = snapshot.subtitleLanguageSuggestions,
                 metadataLanguageSuggestions = snapshot.metadataLanguageSuggestions,
@@ -560,6 +565,34 @@ class TvSettingsViewModel(
             } else {
                 applyResolved(result.snapshot, edited = enabled.toString()) {
                     it.showForcedSubtitles.toString()
+                }
+            }
+        }
+    }
+
+    /**
+     * Writes `playback.prefer_embedded_subtitles` at profile scope.
+     *
+     * Canonical-only, so unlike [onShowForcedSubtitlesChanged] there is nothing
+     * to mirror into a device store: playback reads the server's
+     * `effective_prefer_embedded_subtitles`, never a profile column.
+     */
+    fun onPreferEmbeddedSubtitlesChanged(enabled: Boolean) {
+        val previous = _uiState.value.preferEmbeddedSubtitles
+        _uiState.update { it.copy(preferEmbeddedSubtitles = enabled) }
+        viewModelScope.launch {
+            val result = profileSettings.setPreferEmbeddedSubtitles(enabled)
+            if (!result.succeeded) {
+                _uiState.update {
+                    if (it.preferEmbeddedSubtitles == enabled) {
+                        it.copy(preferEmbeddedSubtitles = previous)
+                    } else {
+                        it
+                    }
+                }
+            } else {
+                applyResolved(result.snapshot, edited = enabled.toString()) {
+                    it.preferEmbeddedSubtitles.toString()
                 }
             }
         }

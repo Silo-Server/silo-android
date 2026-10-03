@@ -153,6 +153,9 @@ data class TvItemDetailUiState(
     val preferredSubtitleLanguage: String? = null,
     val subtitleMode: String? = null,
     val showForcedSubtitles: Boolean = true,
+    // `playback.prefer_embedded_subtitles`, resolved alongside the rest; off
+    // unless the profile chose it.
+    val preferEmbeddedSubtitles: Boolean = false,
 )
 
 internal data class TvTrackSelectionPersistence(
@@ -432,6 +435,7 @@ class TvItemDetailViewModel(
                         preferredSubtitleLanguage = resolved.subtitleLanguage.ifBlank { null },
                         subtitleMode = resolved.subtitleMode,
                         showForcedSubtitles = resolved.showForcedSubtitles,
+                        preferEmbeddedSubtitles = resolved.preferEmbeddedSubtitles,
                     )
                 }
                 return@launch
@@ -442,6 +446,7 @@ class TvItemDetailViewModel(
                     preferredSubtitleLanguage = profile?.subtitleLanguage,
                     subtitleMode = profile?.subtitleMode,
                     showForcedSubtitles = profile?.showForcedSubtitles ?: true,
+                    preferEmbeddedSubtitles = false,
                 )
             }
         }

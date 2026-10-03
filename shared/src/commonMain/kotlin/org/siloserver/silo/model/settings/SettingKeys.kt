@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 16
+    const val REVISION = 17
 
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
@@ -64,6 +64,8 @@ object SettingKeys {
     const val PLAYBACK_MAX_BITRATE_KBPS = "playback.max_bitrate_kbps"
     /** Next up prompt */
     const val PLAYBACK_NEXT_UP_PROMPT_SECONDS = "playback.next_up_prompt_seconds"
+    /** Prefer embedded subtitles */
+    const val PLAYBACK_PREFER_EMBEDDED_SUBTITLES = "playback.prefer_embedded_subtitles"
     /** Preferred quality */
     const val PLAYBACK_PREFERRED_QUALITY = "playback.preferred_quality"
     /** Show forced subtitles */
@@ -178,6 +180,7 @@ object SettingKeys {
         PLAYBACK_INTRO_SKIP_MODE,
         PLAYBACK_MAX_BITRATE_KBPS,
         PLAYBACK_NEXT_UP_PROMPT_SECONDS,
+        PLAYBACK_PREFER_EMBEDDED_SUBTITLES,
         PLAYBACK_PREFERRED_QUALITY,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
         PLAYBACK_SUBTITLE_APPEARANCE,
@@ -254,6 +257,7 @@ object SettingKeys {
         PLAYBACK_AUTO_SKIP_CREDITS,
         PLAYBACK_AUTO_SKIP_INTRO,
         PLAYBACK_AUTO_SKIP_RECAP,
+        PLAYBACK_PREFER_EMBEDDED_SUBTITLES,
         PLAYBACK_SHOW_FORCED_SUBTITLES,
         PLAYER_DOLBY_VISION_ENABLED,
         PLAYER_DV_PROFILE7_HDR10_FALLBACK,

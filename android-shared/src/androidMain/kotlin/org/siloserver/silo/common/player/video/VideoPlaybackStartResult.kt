@@ -44,6 +44,12 @@ sealed interface VideoPlaybackStartResult {
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        /**
+         * `playback.prefer_embedded_subtitles` as the server resolves it for
+         * this profile and device. Absent on servers before settings contract
+         * revision 17, which must read as off.
+         */
+        val preferEmbeddedSubtitles: Boolean = false,
         val intro: TimeRange? = null,
         val credits: TimeRange? = null,
         val recap: TimeRange? = null,

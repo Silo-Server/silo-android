@@ -125,6 +125,42 @@ class TvItemDetailSubtitlePreferenceTest {
             assertEquals(false, state.showForcedSubtitles)
         }
 
+    @Test
+    fun `the auto preview carries the prefer-embedded preference`() =
+        runDetailTest {
+            // Canonical, like the rest: the preview has to resolve the SAME
+            // track the player starts on, so the flag travels with the state.
+            val viewModel = createViewModel(
+                settingsApi = FakeSettingsApi(
+                    effective = effectiveOf(
+                        SettingKeys.PLAYBACK_SUBTITLE_LANGUAGE to JsonPrimitive("en"),
+                        SettingKeys.PLAYBACK_SUBTITLE_MODE to JsonPrimitive("always"),
+                        SettingKeys.PLAYBACK_PREFER_EMBEDDED_SUBTITLES to JsonPrimitive(true),
+                    ),
+                ),
+                profileSubtitleLanguage = "en",
+            )
+            awaitState(viewModel) { it.subtitleMode == "always" }
+
+            assertEquals(true, viewModel.uiState.value.preferEmbeddedSubtitles)
+        }
+
+    @Test
+    fun `prefer-embedded reads off when the contract cannot be resolved`() =
+        runDetailTest {
+            // There is no profile column for this key, so the fallback branch
+            // has nothing to offer and must not invent a preference.
+            val viewModel = createViewModel(
+                settingsApi = FakeSettingsApi(
+                    capabilities = ApiResult.Error(404, "not_found", "404 page not found"),
+                ),
+                profileSubtitleLanguage = "en",
+            )
+            awaitState(viewModel) { it.preferredSubtitleLanguage != null }
+
+            assertEquals(false, viewModel.uiState.value.preferEmbeddedSubtitles)
+        }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<androidx.lifecycle.ViewModel>()

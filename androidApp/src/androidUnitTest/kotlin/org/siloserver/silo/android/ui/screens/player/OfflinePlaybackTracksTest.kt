@@ -106,6 +106,43 @@ class OfflinePlaybackTracksTest {
         )
     }
 
+    @Test
+    fun thePreferEmbeddedPreferenceReachesTheOfflineInventory() {
+        // Sidecars first, the way the server's combined inventory orders them.
+        val rows = offlineSidecarSubtitleRows(files) { true } + localEmbeddedSubtitleRows(mediaTracks)
+        val audio = listOf(AudioTrack(index = 0, codec = "aac", channels = 2, language = "jpn"))
+
+        // Both the sidecar and the file's own English text track are full,
+        // non-forced, non-SDH text in the requested language; the caller's
+        // order decides while the preference is off.
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audio,
+                0,
+                rows,
+                "eng",
+                null,
+                showForcedSubtitles = true,
+            ),
+        )
+        // With it on, the track inside the file wins — and it is still a TEXT
+        // track: the sidecar is not traded for the file's forced PGS.
+        val embedded = resolveMobileAutoSubtitleSelection(
+            audio,
+            0,
+            rows,
+            "eng",
+            null,
+            showForcedSubtitles = true,
+            preferEmbedded = true,
+        )
+        val row = rows[(embedded as MobileSubtitleAutoSelection.Select).ordinal]
+        assertEquals("embedded", row.source)
+        // The file's own full English text track, not its forced PGS track.
+        assertEquals(false, row.forced)
+    }
+
     private fun textTrack(
         index: Int,
         trackId: String,

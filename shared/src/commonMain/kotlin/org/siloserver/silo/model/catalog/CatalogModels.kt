@@ -570,6 +570,11 @@ data class WatchDetail(
     @SerialName("effective_subtitle_language") val effectiveSubtitleLanguage: String? = null,
     @SerialName("effective_subtitle_mode") val effectiveSubtitleMode: String? = null,
     @SerialName("effective_show_forced_subtitles") val effectiveShowForcedSubtitles: Boolean? = null,
+    /**
+     * `playback.prefer_embedded_subtitles` for this profile and device. Absent
+     * on servers before settings contract revision 17, which must read as off.
+     */
+    @SerialName("effective_prefer_embedded_subtitles") val effectivePreferEmbeddedSubtitles: Boolean? = null,
     // Optional forward-compatible artwork. Current servers expose these on
     // ItemDetail rather than WatchDetail, so playback clients must fall back
     // to the full catalog detail when these fields are absent.

@@ -92,6 +92,7 @@ internal fun TvPlaybackActionSelectors(
     preferredSubtitleLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    preferEmbeddedSubtitles: Boolean = false,
     onSelectVersion: (Int?) -> Unit,
     onSelectAudioTrack: (Int?) -> Unit,
     onSelectSubtitleTrack: (Int?) -> Unit,
@@ -208,6 +209,7 @@ internal fun TvPlaybackActionSelectors(
                     preferredLanguage = preferredSubtitleLanguage,
                     mode = subtitleMode,
                     showForced = showForcedSubtitles,
+                    preferEmbedded = preferEmbeddedSubtitles,
                     audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                         version,
                         selectedAudioTrackIndex,
@@ -281,6 +283,7 @@ fun TvPlaybackSelectorRow(
     preferredSubtitleLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    preferEmbeddedSubtitles: Boolean = false,
     onSelectVersion: (Int?) -> Unit,
     onSelectAudioTrack: (Int?) -> Unit,
     onSelectSubtitleTrack: (Int?) -> Unit,
@@ -426,6 +429,7 @@ fun TvPlaybackSelectorRow(
                 preferredLanguage = preferredSubtitleLanguage,
                 mode = subtitleMode,
                 showForced = showForcedSubtitles,
+                preferEmbedded = preferEmbeddedSubtitles,
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     currentVersion,
                     selectedAudioTrackIndex,
