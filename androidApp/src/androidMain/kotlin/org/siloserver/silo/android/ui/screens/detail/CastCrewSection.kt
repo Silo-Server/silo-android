@@ -1,17 +1,21 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -26,22 +30,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
+import org.siloserver.silo.common.ui.CastCrewCredit
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.model.catalog.CastMember
+import org.siloserver.silo.common.ui.components.verticalText
+import org.siloserver.silo.common.ui.personInitials
 
 /**
- * Horizontal scrolling row of cast members with circular portraits,
- * name, and character. Tappable rows route to person detail when a
- * `person_id` is available.
+ * The detail page's Cast & Crew row: directors (or series creators), then
+ * writers, then cast, separated by thin labelled dividers. Every credit uses
+ * the same [CastTile], so crew and cast cards stay the same size. Tappable
+ * cards route to person detail when a `person_id` is available.
  */
 @Composable
 fun CastCrewSection(
-    cast: List<CastMember>,
+    credits: List<CastCrewCredit>,
     onPersonClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (cast.isEmpty()) return
+    if (credits.isEmpty()) return
 
     // iOS PhoneCastRail: cardSpacing 14, cardWidth 96, photo 76.
     val rowState = rememberLazyListState()
@@ -52,20 +59,54 @@ fun CastCrewSection(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = modifier.fillMaxWidth(),
     ) {
-        items(
-            cast,
-            key = { "${it.name}_${it.character}_${it.order}" },
-            contentType = { "cast-member" },
-        ) { member ->
-            CastTile(
-                photoUrl = member.photoUrl,
-                photoThumbhash = member.photoThumbhash,
-                name = member.name,
-                role = member.character,
-                onClick = member.personId?.let { id -> { onPersonClick(id) } },
-            )
+        // A writer-director or actor-director can appear in two groups, so
+        // the name alone is not a unique key.
+        itemsIndexed(
+            credits,
+            key = { index, credit -> "${credit.group}_${index}_${credit.personId ?: credit.name}" },
+            contentType = { _, _ -> "cast-member" },
+        ) { _, credit ->
+            // The divider lives inside the card's item so it never becomes a
+            // tappable or separately keyed row entry.
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                credit.dividerLabel?.let { CastCrewDivider(label = it) }
+                CastTile(
+                    photoUrl = credit.photoUrl,
+                    photoThumbhash = credit.photoThumbhash,
+                    name = credit.name,
+                    role = credit.caption,
+                    onClick = credit.personId?.let { id -> { onPersonClick(id) } },
+                )
+            }
         }
     }
+    }
+}
+
+/** Thin vertical rule with a small rotated group label, e.g. "WRITERS". */
+@Composable
+private fun CastCrewDivider(label: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.height(76.dp),
+    ) {
+        Text(
+            text = label.uppercase(),
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.2.sp,
+            color = SiloSecondaryText,
+            maxLines = 1,
+            modifier = Modifier.verticalText(),
+        )
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight()
+                .background(Color.White.copy(alpha = 0.16f)),
+        )
     }
 }
 
@@ -99,6 +140,15 @@ private fun CastTile(
                     .fillMaxSize()
                     .clip(CircleShape),
             )
+            if (photoUrl.isNullOrBlank()) {
+                Text(
+                    text = personInitials(name),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = SiloSecondaryText,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
         }
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,

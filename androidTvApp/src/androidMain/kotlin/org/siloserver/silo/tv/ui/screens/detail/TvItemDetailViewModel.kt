@@ -19,7 +19,6 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.dolbyVisionPolicySnapshot
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.catalog.CastMember
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -486,11 +485,11 @@ class TvItemDetailViewModel(
         }
     }
 
-    fun openPerson(member: CastMember, onOpenPerson: (Long) -> Unit) {
-        member.personId?.trim()?.toLongOrNull()?.let(onOpenPerson) ?: viewModelScope.launch {
-            when (val result = catalogRepository.searchPeople(member.name)) {
+    fun openPerson(name: String, personId: String?, onOpenPerson: (Long) -> Unit) {
+        personId?.trim()?.toLongOrNull()?.let(onOpenPerson) ?: viewModelScope.launch {
+            when (val result = catalogRepository.searchPeople(name)) {
                 is ApiResult.Success -> {
-                    val resolved = result.data.firstOrNull { it.name.equals(member.name, ignoreCase = true) }
+                    val resolved = result.data.firstOrNull { it.name.equals(name, ignoreCase = true) }
                         ?: result.data.firstOrNull()
                     resolved?.id?.takeIf { it > 0L }?.let(onOpenPerson)
                 }
