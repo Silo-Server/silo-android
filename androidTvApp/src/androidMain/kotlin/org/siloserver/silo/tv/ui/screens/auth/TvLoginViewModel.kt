@@ -354,11 +354,14 @@ class TvLoginViewModel(
 
     /**
      * [attempt]'s button is free again, with [error], when given, shown where
-     * it was pressed. The device code's own handoff uses the form's slot.
+     * it was pressed. A null [attempt] is the device code's own handoff: its
+     * approval cancels whichever sign-in was under way, so both buttons are
+     * free again, and its error uses the form's slot.
      */
-    private fun TvLoginUiState.settled(attempt: TokenSignIn, error: TvLoginError? = null): TvLoginUiState = when (attempt) {
+    private fun TvLoginUiState.settled(attempt: TokenSignIn?, error: TvLoginError? = null): TvLoginUiState = when (attempt) {
         TokenSignIn.Password -> copy(isLoading = false, error = error ?: this.error)
         TokenSignIn.Network -> copy(networkBusy = false, networkError = error ?: networkError)
+        null -> copy(isLoading = false, networkBusy = false, error = error ?: this.error)
     }
 
     /**
@@ -665,6 +668,8 @@ class TvLoginViewModel(
             _deviceSignIn.value = TvDeviceSignInUi(status = TvSignInStatus.CouldntFinish)
             return
         }
+        // A password or network sign-in under way never settles now: this
+        // handoff frees its button when it ends (see settled).
         credentialLoginJob?.cancel()
         try {
             tokenManager.replaceAccountSession(
@@ -700,10 +705,11 @@ class TvLoginViewModel(
         )
         // Let "Signed in as …" register before the profile picker replaces it.
         delay(SIGNED_IN_DWELL_MS)
-        _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
+        _uiState.update { it.settled(null).copy(loginSuccess = true) }
     }
 
-    private fun handleIdentityChanged(attempt: TokenSignIn = TokenSignIn.Password) {
+    /** [attempt] null: the device code's approval, see [settled]. */
+    private fun handleIdentityChanged(attempt: TokenSignIn? = null) {
         // Only release this screen's attempt. Credentials now belong to the new identity.
         authCompleted = false
         _uiState.update {
@@ -714,7 +720,7 @@ class TvLoginViewModel(
     private suspend fun handleSessionPersistenceFailure(
         accessToken: String,
         refreshToken: String,
-        attempt: TokenSignIn = TokenSignIn.Password,
+        attempt: TokenSignIn? = null,
     ) {
         val committed = runCatching {
             tokenManager.getAccessToken() == accessToken &&

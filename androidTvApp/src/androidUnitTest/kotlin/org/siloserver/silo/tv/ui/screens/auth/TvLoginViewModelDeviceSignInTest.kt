@@ -603,6 +603,42 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals("qr-access", tokens.accessToken)
     }
 
+    /**
+     * A phone approves the code while "Continue as …" waits for the server:
+     * the approval takes the sign-in and cancels the network attempt. When
+     * that approval can't be saved, the button is free again, not left busy.
+     */
+    @Test
+    fun anApprovalThatCancelsContinueAsAndFailsFreesItsButton() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        signIn.networkDelayMs = 60_000L
+        val tokens = FakeTokens(failInstall = true)
+        val api = FakeDeviceApi()
+        api.approveWhen = { signIn.networkCalls.isNotEmpty() }
+        val vm = viewModel(tokens, api, registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertTrue(vm.uiState.value.networkBusy)
+
+        // The next poll is approved; saving it fails.
+        advanceTimeBy(5_001)
+        assertEquals(TvSignInStatus.CouldntFinish, vm.deviceSignIn.value.status)
+        assertEquals(TvLoginError.SaveFailed, vm.uiState.value.error)
+        assertFalse(vm.uiState.value.networkBusy, "the canceled network attempt doesn't hold its button")
+        assertFalse(vm.uiState.value.isLoading)
+
+        tokens.failInstall = false
+        signIn.networkDelayMs = 0L
+        signIn.networkAnswer = ApiResult.Success(
+            LoginResponse("net-access", "net-refresh", 3600, User(id = "1", username = "alice", email = "a@example.test", role = "user")),
+        )
+        vm.onNetworkSignInClick()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.loginSuccess)
+        assertEquals("net-access", tokens.accessToken)
+    }
+
     /** Off the provider's network the server stops listing it: the button and its refusal go. */
     @Test
     fun continueAsGoesWhenTheServerNoLongerListsIt() = runTest(dispatcher) {
@@ -800,6 +836,9 @@ class TvLoginViewModelDeviceSignInTest {
         /** What "Continue as …" answers, and where each one was sent (saved base, path). */
         var networkAnswer: ApiResult<LoginResponse> = ApiResult.Error(404, "not_found", "")
         val networkCalls = mutableListOf<Pair<String, String>>()
+
+        /** How long "Continue as …" waits for its answer. */
+        var networkDelayMs = 0L
         override suspend fun listProviders(serverUrl: String): ApiResult<SignInProviders> {
             asked += serverUrl
             return providers?.let { ApiResult.Success(it) } ?: ApiResult.Error(404, "not_found", "")
@@ -817,6 +856,7 @@ class TvLoginViewModelDeviceSignInTest {
         ) = error("unused")
         override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> {
             networkCalls += serverUrl to signInPath
+            if (networkDelayMs > 0) delay(networkDelayMs)
             return networkAnswer
         }
         override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String) =

@@ -113,7 +113,8 @@
     <string name="tv_signin_network_via">via %1$s</string>
     <string name="tv_signin_error_network_identity_required">Open this server at its %1$s address to sign in this way.</string>
     <string name="tv_signin_error_network_not_permitted">%1$s doesn\'t allow this device to sign in to this server.</string>
-    <string name="tv_signin_error_network_email_in_use">An account with your email already exists. Sign in with your password, then connect %1$s in Settings → Sign-in.</string>
+    <!-- The TV has no Sign-in settings: the phone app and the web app do. -->
+    <string name="tv_signin_error_network_email_in_use">An account with your email already exists. Sign in to it with Silo on your phone or on the web, connect %1$s in Sign-in settings, then try again.</string>
     <string name="tv_signin_error_network_provider_gone">%1$s is no longer available on this server.</string>
 
     <!-- Nearby phone setup and sign-in, shown on server setup and on the

@@ -290,7 +290,8 @@ fun AuroraPrimaryButton(
                 enabled = enabled,
                 onClick = onClick,
             )
-            .padding(horizontal = 30.dp, vertical = 18.dp),
+            // A second line trades vertical padding, so both pills stand about as tall.
+            .padding(horizontal = 30.dp, vertical = if (supportingText != null) 10.dp else 18.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {

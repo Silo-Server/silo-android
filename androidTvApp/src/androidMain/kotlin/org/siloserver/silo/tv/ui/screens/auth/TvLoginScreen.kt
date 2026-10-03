@@ -223,6 +223,13 @@ fun TvLoginScreen(
     BackHandler(enabled = passwordFormVisible && !device.passwordOnly && !isActivePairing, onBack = backToPhone)
     BackHandler(enabled = isActivePairing, onBack = pairingReceiver::cancelActiveSession)
 
+    // A server without device sign-in opens on the password form, so
+    // "Continue as …" shows there too, above the fields (Apple TV parity).
+    // It has its own focus key there, so focus is claimed again when the
+    // button moves from the code screen into the form.
+    val networkInForm = device.passwordOnly && state.networkProvider != null
+    val networkKey = if (passwordFormVisible) "formNetwork" else "network"
+
     // "Continue as …" takes focus whenever the server offers it: it is the
     // one-press way in. Otherwise focus moves to the state's action when the
     // code needs the person ("Try again" / "Show a new code"), to "Change
@@ -230,8 +237,8 @@ fun TvLoginScreen(
     // in with a password". "Can't reach" and "Too many requests" keep retrying
     // by themselves, so their "Try again" doesn't take focus (Apple TV parity).
     val focusTarget = when {
-        passwordFormVisible -> "username"
-        state.networkProvider != null -> "network"
+        passwordFormVisible && !networkInForm -> "username"
+        state.networkProvider != null -> networkKey
         device.status.actionTakesFocus() -> "action"
         device.status == TvSignInStatus.UpdateRequired -> "changeServer"
         device.status == TvSignInStatus.Unreachable || device.status == TvSignInStatus.TooManyRequests -> null
@@ -258,7 +265,7 @@ fun TvLoginScreen(
         }
         val target = when (focusTarget) {
             "username" -> usernameFocus
-            "network" -> networkFocus
+            "network", "formNetwork" -> networkFocus
             "action" -> actionFocus
             "changeServer" -> changeServerFocus
             else -> usePasswordFocus
@@ -278,6 +285,20 @@ fun TvLoginScreen(
         onChangeServer()
     }
     val serverName = state.serverName ?: state.serverHost.orEmpty()
+    val network = state.networkProvider?.let { provider ->
+        NetworkSignInAction(
+            provider = provider,
+            busy = state.networkBusy,
+            error = state.networkError?.message(
+                providerName = null,
+                directoryName = provider.displayName,
+                networkName = provider.displayName,
+            ),
+            focusRequester = networkFocus,
+            focusTracking = trackFocus(networkKey),
+            onClick = viewModel::onNetworkSignInClick,
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -373,6 +394,7 @@ fun TvLoginScreen(
                     onCreateAccount = onCreateAccount,
                     onBackToPhone = backToPhone,
                     onChangeServer = changeServer,
+                    network = network.takeIf { networkInForm },
                     modifier = Modifier
                         .align(Alignment.CenterHorizontally)
                         .width(520.dp),
@@ -383,7 +405,6 @@ fun TvLoginScreen(
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    val networkName = state.networkProvider?.displayName
                     SignInHero(
                         serverName = serverName,
                         activateText = device.code?.activateText ?: state.serverActivateText.orEmpty(),
@@ -394,20 +415,7 @@ fun TvLoginScreen(
                         onUsePassword = { showPasswordForm = true },
                         onChangeServer = changeServer,
                         showPasswordAction = state.passwordAvailable,
-                        network = state.networkProvider?.let { provider ->
-                            NetworkSignInAction(
-                                provider = provider,
-                                busy = state.networkBusy,
-                                focusRequester = networkFocus,
-                                focusTracking = trackFocus("network"),
-                                onClick = viewModel::onNetworkSignInClick,
-                            )
-                        },
-                        networkError = state.networkError?.message(
-                            providerName = null,
-                            directoryName = networkName,
-                            networkName = networkName,
-                        ),
+                        network = network,
                         modifier = Modifier.weight(1f),
                     )
                     DeviceCodePanel(
@@ -465,10 +473,15 @@ private fun StatusBanner(text: String) {
     )
 }
 
-/** "Continue as <owner>" through a network provider, for [SignInHero]. */
+/**
+ * "Continue as <owner>" through a network provider, for [SignInHero] and, on
+ * a server without device sign-in, [CredentialFormCard]. [error] is why the
+ * last press was refused.
+ */
 private class NetworkSignInAction(
     val provider: SignInProvider,
     val busy: Boolean,
+    val error: String?,
     val focusRequester: FocusRequester,
     val focusTracking: Modifier,
     val onClick: () -> Unit,
@@ -493,7 +506,6 @@ private fun SignInHero(
     modifier: Modifier = Modifier,
     showPasswordAction: Boolean = true,
     network: NetworkSignInAction? = null,
-    networkError: String? = null,
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -510,14 +522,6 @@ private fun SignInHero(
                 action = network,
                 // The steps between hold nothing focusable: name the way down.
                 below = if (showPasswordAction) usePasswordFocus else changeServerFocus,
-            )
-        }
-        networkError?.let { error ->
-            Text(
-                text = error,
-                style = TvLoginTextStyles.Error,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             )
         }
         AuroraStepRow(number = 1, text = stringResource(R.string.tv_signin_step_scan))
@@ -566,9 +570,10 @@ private fun SignInHero(
 /**
  * "Continue as <owner>" with "via <provider>" under it, or "Continue with
  * <provider>" when the provider named nobody: the screen's primary action
- * when offered. It stays focusable while signing in so focus doesn't jump;
- * the view model ignores a second press.
+ * when offered, with its refusal under it. It stays focusable while signing
+ * in so focus doesn't jump; the view model ignores a second press.
  */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequester) {
     val providerName = action.provider.displayName
@@ -586,6 +591,14 @@ private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequest
             .then(action.focusTracking)
             .focusProperties { down = below },
     )
+    action.error?.let { error ->
+        Text(
+            text = error,
+            style = TvLoginTextStyles.Error,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
+    }
 }
 
 /**
@@ -824,6 +837,7 @@ private fun CredentialFormCard(
     onBackToPhone: () -> Unit,
     onChangeServer: () -> Unit,
     modifier: Modifier = Modifier,
+    network: NetworkSignInAction? = null,
 ) {
     var passwordVisible by remember { mutableStateOf(false) }
     // Height budget, not taste: this card plus the screen chrome above it has
@@ -841,13 +855,14 @@ private fun CredentialFormCard(
             style = TvLoginTextStyles.Title,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        if (passwordOnly) {
+        if (passwordOnly && network == null) {
             Text(
                 text = stringResource(R.string.tv_signin_password_only),
                 style = TvLoginTextStyles.Body,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (network != null) NetworkSignInButton(action = network, below = usernameFocus)
 
         Column(
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -875,7 +890,8 @@ private fun CredentialFormCard(
                     .semantics { contentType = ContentType.Username }
                     .then(usernameFocusTracking)
                     .tvShowImeOnSelect()
-                    .focusRequester(usernameFocus),
+                    .focusRequester(usernameFocus)
+                    .focusProperties { if (network != null) up = network.focusRequester },
                 colors = tvOutlinedTextFieldColors(),
             )
         }
