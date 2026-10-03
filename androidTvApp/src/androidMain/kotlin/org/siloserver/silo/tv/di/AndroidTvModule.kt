@@ -450,6 +450,7 @@ val androidTvModule = module {
             libraryId = params.get(),
             libraryTitle = params.get(),
             libraryType = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
         )
     }
     viewModel { params ->
@@ -459,6 +460,8 @@ val androidTvModule = module {
             libraryId = params.get(),
             collectionId = params.get(),
             title = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
+            collectionSource = params.values.getOrNull(4) as? String ?: "library_collection",
         )
     }
     viewModel { TvSearchViewModel(get(), get(), get()) }

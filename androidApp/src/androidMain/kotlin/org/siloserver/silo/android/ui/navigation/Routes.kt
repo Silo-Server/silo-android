@@ -189,18 +189,20 @@ sealed class Route(val route: String) {
         val collectionId: String,
         val libraryId: Int? = null,
         val source: String? = null,
+        val mediaScope: String? = null,
     ) : Route(
         buildString {
             append("collection/${collectionId.routeEncode()}")
             val parameters = buildList {
                 libraryId?.let { add("libraryId=$it") }
                 source?.takeIf { it.isNotBlank() }?.let { add("source=${it.routeEncode()}") }
+                mediaScope?.let { add("mediaScope=${it.routeEncode()}") }
             }
             if (parameters.isNotEmpty()) append("?${parameters.joinToString("&")}")
         },
     ) {
         companion object {
-            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}&source={source}"
+            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}&source={source}&mediaScope={mediaScope}"
         }
     }
 
@@ -314,9 +316,11 @@ sealed class Route(val route: String) {
 fun libraryCollectionDetailRoute(
     collection: LibraryCollection,
     libraryId: Int,
+    mediaScope: String? = null,
 ): String = Route.CollectionDetail(
     collectionId = collection.id,
     libraryId = libraryId,
+    mediaScope = mediaScope,
     source = if (collection.kind == "user_collections") {
         "user_collection"
     } else {

@@ -66,7 +66,7 @@ class CollectionDetailViewModelTest {
         }
 
         val viewModel = fixture.viewModel(
-            SavedStateHandle(mapOf("libraryId" to "7", "source" to "user_collection")),
+            SavedStateHandle(mapOf("libraryId" to "7", "source" to "user_collection", "mediaScope" to "series")),
         )
         fixture.store.put("detail", viewModel)
         viewModel.initialize("user-1")
@@ -77,11 +77,12 @@ class CollectionDetailViewModelTest {
         assertFalse(viewModel.uiState.value.canManage)
 
         viewModel.loadMore()
-        awaitState(viewModel) { !it.isLoadingMore && !it.hasMore }
+        awaitState(viewModel) { !it.isLoadingMore }
+        assertFalse(viewModel.uiState.value.hasMore, "${viewModel.uiState.value.error}; requests=$requests")
 
         assertEquals(2, requests.count { it.path == "/api/v2/catalog" })
         assertTrue(requests.filter { it.path == "/api/v2/catalog" }.all {
-            it.parameters["source"] == "user_collection"
+            it.parameters["source"] == "user_collection" && it.parameters["type"] == "series"
         })
 
         viewModel.refresh()
@@ -91,6 +92,7 @@ class CollectionDetailViewModelTest {
 
         val refresh = requests.last { it.path == "/api/v2/catalog" }
         assertEquals("user_collection", refresh.parameters["source"])
+        assertEquals("series", refresh.parameters["type"])
         assertFalse("cursor" in refresh.parameters)
     }
 
@@ -107,6 +109,8 @@ class CollectionDetailViewModelTest {
                 "/api/v2/catalog" -> {
                     assertEquals("library_collection", parameters["source"])
                     assertEquals("regular-1", parameters["collection_id"])
+                    assertEquals("movie", parameters["type"])
+                    assertEquals("7", parameters["library_id"])
                     catalogBody(total = 1, hasMore = false)
                 }
                 else -> error("Unexpected path $path")
@@ -114,12 +118,13 @@ class CollectionDetailViewModelTest {
         }
 
         val viewModel = fixture.viewModel(
-            SavedStateHandle(mapOf("libraryId" to "7", "source" to "library_collection")),
+            SavedStateHandle(mapOf("libraryId" to "7", "source" to "library_collection", "mediaScope" to "movie")),
         )
         fixture.store.put("detail", viewModel)
         viewModel.initialize("regular-1")
         awaitState(viewModel) { !it.isLoading }
 
+        assertEquals(null, viewModel.uiState.value.error)
         assertEquals("Server Picks", viewModel.uiState.value.title)
         assertEquals(1, viewModel.uiState.value.total)
         assertFalse(viewModel.uiState.value.canManage)
@@ -223,7 +228,7 @@ class CollectionDetailViewModelTest {
         {
           "items":[],
           "page":{"has_more":$hasMore,"next_cursor":${nextCursor?.let { "\"$it\"" } ?: "null"}},
-          "total":$total
+          "total":$total,"total_exact":true,"window_cursor":"window"
         }
     """.trimIndent()
 

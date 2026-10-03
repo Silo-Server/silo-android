@@ -62,6 +62,148 @@ import kotlin.test.assertEquals
 @Config(sdk = [34], application = android.app.Application::class)
 class LibrariesViewModelTest {
     @Test
+    fun mixedLibraryBrowseUsesMovieScopeByDefault() = runTest {
+        val fixture = DeferredLibrariesFixture(emptySet(), firstLibraryType = "mixed")
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() }
+            assertEquals(listOf<String?>("movie"), fixture.catalogTypes)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun switchingMixedScopeRejectsOldPagesAndSeparatesSavedFilters() = runTest {
+        val fixture = DeferredLibrariesFixture(setOf("catalog:1:added_at:desc:movie"), firstLibraryType = "mixed")
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val registry = FakeServerRegistry()
+        val prefs = BrowsePrefsStore(ApplicationProvider.getApplicationContext(), registry)
+        prefs.setPreserveEnabled(1, false, "movie")
+        prefs.setPreserveEnabled(1, true, "movie")
+        prefs.setPreserveEnabled(1, false, "series")
+        prefs.setPreserveEnabled(1, true, "series")
+        val viewModel = fixture.viewModel(prefs)
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.uiState.first { !it.isLoadingSections }
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            fixture.awaitRequest("catalog:1:added_at:desc:movie")
+            val staleRequest = viewModel.onlyActiveRequest()
+            viewModel.selectMediaScope("series")
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() }
+            fixture.complete("catalog:1:added_at:desc:movie", catalogPageBody("stale", hasMore = true))
+            staleRequest.join()
+            assertEquals("series", viewModel.uiState.value.mediaScope)
+            assertEquals(listOf("immediate"), viewModel.uiState.value.catalogItems.map { it.contentId })
+            assertEquals(false, viewModel.uiState.value.catalogHasMore)
+            viewModel.selectBrowseSort(LibraryBrowseSort.Title)
+            viewModel.uiState.first { !it.isLoadingCatalog }
+            viewModel.selectMediaScope("movie")
+            assertEquals(LibraryBrowseSort.RecentlyAdded, viewModel.uiState.value.browseSort)
+            viewModel.selectMediaScope("series")
+            assertEquals(LibraryBrowseSort.Title, viewModel.uiState.value.browseSort)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun switchingLibraryStopsObsoleteRecommendationPagination() = runTest {
+        assertObsoleteRecommendationStops(switchScope = false)
+    }
+
+    @Test
+    fun switchingScopeStopsObsoleteRecommendationPagination() = runTest {
+        assertObsoleteRecommendationStops(switchScope = true)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.assertObsoleteRecommendationStops(switchScope: Boolean) {
+        val firstPage = "catalog:1:null:asc:null"
+        val fixture = DeferredLibrariesFixture(setOf(firstPage), firstLibraryType = "mixed", sectionResponse = """
+            {"sections":[{"id":"recent","section_type":"recently_added","title":"Recent","total_count":40,"items":[]}]}
+        """.trimIndent())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest(firstPage)
+            val oldRequest = viewModel.onlyActiveRequest()
+            if (switchScope) {
+                viewModel.selectTab(LibrariesSubtab.Browse)
+                viewModel.selectMediaScope("series")
+                viewModel.uiState.first { !it.isLoadingCatalog }
+            } else {
+                viewModel.selectLibrary(2)
+                viewModel.uiState.first { !it.isLoadingSections }
+            }
+            fixture.complete(firstPage, catalogPageBody("old-film", hasMore = true))
+            oldRequest.join()
+            // Unscoped catalog calls belong to the old shelf; the new Browse
+            // requests have a movie/series type. No second shelf page is allowed.
+            assertEquals(1, fixture.catalogQueries.count { it["type"] == null })
+            assertEquals(true, oldRequest.isCancelled)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun mixedRecommendationsSwitchTypesAndKeepEpisodeProgress() = runTest {
+        val fixture = DeferredLibrariesFixture(emptySet(), firstLibraryType = "mixed", sectionResponse = """
+            {"sections":[{"id":"recent","section_type":"recently_added","title":"Recent","total_count":2,"items":[
+            {"content_id":"film","type":"movie","title":"Film"},
+            {"content_id":"episode","type":"episode","title":"Episode","series_id":"show","position_seconds":12}]}]}
+        """.trimIndent())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            viewModel.uiState.first { it.sections.isNotEmpty() }
+            assertEquals(listOf("film"), viewModel.uiState.value.sections.flatMap { it.items }.map { it.contentId })
+            viewModel.selectMediaScope("series")
+            viewModel.uiState.first { it.sections.isNotEmpty() }
+            val episode = viewModel.uiState.value.sections.single().items.single()
+            assertEquals("episode", episode.contentId)
+            assertEquals("show", episode.seriesId)
+            assertEquals(12.0, episode.positionSeconds)
+            viewModel.selectLibrary(2)
+            assertEquals(null, viewModel.uiState.value.mediaScope)
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
+    fun mixedScopeRemainsOnAnyFilterQueriesAndTheirNextPage() = runTest {
+        val pageOne = "catalog:1:added_at:desc:series:filtered:0"
+        val pageTwo = "catalog:1:added_at:desc:series:filtered:1"
+        val fixture = DeferredLibrariesFixture(setOf(pageOne, pageTwo), firstLibraryType = "mixed")
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            viewModel.uiState.first { !it.isLoadingLibraries && !it.isLoadingSections }
+            viewModel.selectMediaScope("series")
+            viewModel.selectTab(LibrariesSubtab.Browse)
+            viewModel.uiState.first { it.catalogItems.isNotEmpty() }
+            viewModel.applyFilterState(CatalogFilterState(
+                selections = mapOf(CatalogFacet.Genre to setOf("Drama")), matchAll = false,
+            ))
+            fixture.awaitRequest(pageOne)
+            fixture.complete(pageOne, catalogPageBody("first", hasMore = true))
+            viewModel.uiState.first { it.catalogHasMore && !it.isLoadingCatalog }
+            viewModel.loadMoreCatalog()
+            fixture.awaitRequest(pageTwo)
+            fixture.complete(pageTwo, catalogPageBody("second", hasMore = false))
+            viewModel.uiState.first { !it.isLoadingMoreCatalog && it.catalogItems.size == 2 }
+            assertEquals(listOf("first", "second"), viewModel.uiState.value.catalogItems.map { it.contentId })
+            assertEquals(listOf(
+                mapOf("type" to "series", "library_id" to "1", "match" to "any", "cursor" to null),
+                mapOf("type" to "series", "library_id" to "1", "match" to "any", "cursor" to "1"),
+            ), fixture.catalogQueries.takeLast(2))
+        } finally { store.clear(); Dispatchers.resetMain(); fixture.close() }
+    }
+
+    @Test
     fun recommendedLatePinDoesNotPublish() = runTest {
         val fixture = DeferredLibrariesFixture(setOf("sections:1"))
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
@@ -344,9 +486,13 @@ class LibrariesViewModelTest {
 
     private class DeferredLibrariesFixture(
         private val deferredKeys: Set<String>,
+        private val firstLibraryType: String = "movies",
+        private val sectionResponse: String = """{"sections":[]}""",
     ) {
         var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
         private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
+        val catalogTypes = mutableListOf<String?>()
+        val catalogQueries = mutableListOf<Map<String, String?>>()
         private val requests = Channel<String>(Channel.UNLIMITED)
         private val pendingRequests = mutableListOf<String>()
         private val responses = deferredKeys.associateWith { CompletableDeferred<String>() }
@@ -362,10 +508,12 @@ class LibrariesViewModelTest {
                             ?.let { SiloJson.parseToJsonElement(it.text).jsonObject }
                         fun field(name: String): String? = body?.get(name)?.let { (it as? JsonPrimitive)?.contentOrNull }
                             ?: request.url.parameters[name]
+                        catalogTypes += field("type")
+                        catalogQueries += listOf("type", "library_id", "match", "cursor").associateWith { field(it) }
                         val rawSort = field("sort")
                         val sort = rawSort?.removePrefix("-")
                         val order = field("order") ?: if (rawSort?.startsWith("-") == true) "desc" else "asc"
-                        val baseKey = "catalog:${field("library_id")}:$sort:$order"
+                        val baseKey = "catalog:${field("library_id")}:$sort:$order" + if (firstLibraryType == "mixed") ":${field("type")}" else ""
                         val filterSuffix = if ((body?.get("groups") as? JsonArray)?.isNotEmpty() == true) {
                             ":filtered"
                         } else {
@@ -424,12 +572,12 @@ class LibrariesViewModelTest {
         private fun immediateBody(key: String): String = when {
             key == "libraries" -> """
                 {"items":[
-                  {"id":"1","name":"First","type":"movies","sort_order":0},
+                  {"id":"1","name":"First","type":"$firstLibraryType","sort_order":0},
                   {"id":"2","name":"Second","type":"movies","sort_order":1}
                 ],"page":{"has_more":false}}
             """.trimIndent()
             key == "filters" -> filtersBody(null)
-            key.startsWith("sections:") -> """{"sections":[]}"""
+            key.startsWith("sections:") -> sectionResponse
             key.startsWith("collections:") -> """{"library_id":"1","collections":[],"groups":[]}"""
             key.startsWith("catalog:") -> catalogBody("immediate")
             else -> error("Unexpected request key $key")

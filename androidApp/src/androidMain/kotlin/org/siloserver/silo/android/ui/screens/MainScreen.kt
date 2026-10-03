@@ -437,9 +437,9 @@ fun MainScreen(
                             onItemClick = { contentId, libraryId ->
                                 navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },
-                            onCollectionClick = { collection, libraryId ->
+                            onCollectionClick = { collection, libraryId, mediaScope ->
                                 navController.navigate(
-                                    libraryCollectionDetailRoute(collection, libraryId),
+                                    libraryCollectionDetailRoute(collection, libraryId, mediaScope),
                                 )
                             },
                             viewModel = requireNotNull(librariesViewModel),

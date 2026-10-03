@@ -51,6 +51,7 @@ class CollectionDetailViewModel(
     private var collectionId: String = ""
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val collectionSource: String? = savedStateHandle.get<String>("source")
+    private val mediaScope = savedStateHandle.get<String>("mediaScope")?.takeIf { it in setOf("movie", "series") }
     private val isLibraryUserCollection: Boolean
         get() = libraryId != null && collectionSource == "user_collection"
     private val pageSize = 40
@@ -139,7 +140,7 @@ class CollectionDetailViewModel(
                 }
             }
 
-            val itemsResult = if (isLibraryUserCollection) {
+            val itemsResult = if (isLibraryUserCollection && mediaScope == null) {
                 collectionRepository.getItems(
                     collectionId,
                     limit = pageSize,
@@ -152,6 +153,9 @@ class CollectionDetailViewModel(
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
                     limit = pageSize,
+                    mediaType = mediaScope,
+                    libraryId = libraryId,
+                    source = if (isLibraryUserCollection) "user_collection" else "library_collection",
                 ).map {
                     libraryContinuation = it.continuation
                     it
@@ -197,11 +201,14 @@ class CollectionDetailViewModel(
         pagingJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMore = true) }
             // Library paging is migrated separately; personal collections use opaque cursors.
-            val result = if (libraryId != null && !isLibraryUserCollection) {
+            val result = if (libraryId != null && (!isLibraryUserCollection || mediaScope != null)) {
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
                     continuation = libraryContinuation,
                     limit = pageSize,
+                    mediaType = mediaScope,
+                    libraryId = libraryId,
+                    source = if (isLibraryUserCollection) "user_collection" else "library_collection",
                 ).map { libraryContinuation = it.continuation; it }
             } else {
                 collectionRepository.getItems(

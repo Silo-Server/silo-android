@@ -810,9 +810,9 @@ fun TvAppNavigation(
                 onOpenWatchTogether = { room ->
                     navController.navigateToTvWatchTogether(room, lastPlaybackNavigation)
                 },
-                onOpenLibraryCollectionDetail = { libraryId, collectionId, title, libraryType ->
+                onOpenLibraryCollectionDetail = { libraryId, collectionId, title, libraryType, source, scope ->
                     navController.navigate(
-                        TvRoute.LibraryCollectionDetail(libraryId, collectionId, title, libraryType).route,
+                        TvRoute.LibraryCollectionDetail(libraryId, collectionId, title, libraryType, source, scope).route,
                     )
                 },
                 onOpenCollectionDetail = { collectionId, title ->
@@ -1313,6 +1313,14 @@ fun TvAppNavigation(
                     type = NavType.StringType
                     defaultValue = ""
                 },
+                navArgument(TvRoute.LibraryCollectionDetail.ARG_MEDIA_SCOPE) {
+                    type = NavType.StringType
+                    defaultValue = ""
+                },
+                navArgument(TvRoute.LibraryCollectionDetail.ARG_SOURCE) {
+                    type = NavType.StringType
+                    defaultValue = "library_collection"
+                },
                 navArgument(TvRoute.LibraryCollectionDetail.ARG_LIBRARY_TYPE) {
                     type = NavType.StringType
                     defaultValue = ""
@@ -1332,6 +1340,8 @@ fun TvAppNavigation(
                 ?.getString(TvRoute.LibraryCollectionDetail.ARG_LIBRARY_TYPE)
                 .orEmpty()
             TvLibraryCollectionDetailScreen(
+                mediaScope = backStack.arguments?.getString(TvRoute.LibraryCollectionDetail.ARG_MEDIA_SCOPE)?.takeIf { it in setOf("movie", "series") },
+                collectionSource = backStack.arguments?.getString(TvRoute.LibraryCollectionDetail.ARG_SOURCE) ?: "library_collection",
                 libraryId = libraryId,
                 collectionId = collectionId,
                 title = title,

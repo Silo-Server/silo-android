@@ -44,11 +44,13 @@ fun TvLibraryCollectionDetailScreen(
     collectionId: String,
     title: String,
     libraryType: String,
+    collectionSource: String = "library_collection",
+    mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onBack: () -> Unit,
     viewModel: TvLibraryCollectionDetailViewModel = koinViewModel(
-        key = "library-collection-$libraryId-$collectionId",
-        parameters = { parametersOf(libraryId, collectionId, title) },
+        key = "library-collection-$libraryId-$collectionId-$libraryType-$collectionSource-${mediaScope.orEmpty()}",
+        parameters = { parametersOf(libraryId, collectionId, title, mediaScope, collectionSource) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()

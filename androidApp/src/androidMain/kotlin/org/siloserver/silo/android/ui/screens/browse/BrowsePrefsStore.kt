@@ -21,35 +21,35 @@ class BrowsePrefsStore(
     private val prefs = context.getSharedPreferences("browse_prefs", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
 
-    private fun base(libraryId: Int?): String? {
+    private fun base(libraryId: Int?, mediaScope: String? = null): String? {
         val serverId = serverRegistry.activeServerId.value ?: "default"
         val profileId = serverRegistry.activeEntry.value?.profileId
             ?.takeIf { it.isNotBlank() } ?: return null
         val lib = libraryId?.toString() ?: "all"
-        return "android.browsePrefs.$serverId.$profileId.$lib"
+        return "android.browsePrefs.$serverId.$profileId.$lib" + (mediaScope?.let { ".type-$it" } ?: "")
     }
 
-    fun savedState(libraryId: Int?): CatalogFilterState? {
-        if (!preserveEnabled(libraryId)) return null
-        val key = base(libraryId) ?: return null
+    fun savedState(libraryId: Int?, mediaScope: String? = null): CatalogFilterState? {
+        if (!preserveEnabled(libraryId, mediaScope)) return null
+        val key = base(libraryId, mediaScope) ?: return null
         val raw = prefs.getString("$key.state", null) ?: return null
         return runCatching { json.decodeFromString<CatalogFilterState>(raw) }.getOrNull()
     }
 
-    fun saveState(libraryId: Int?, state: CatalogFilterState) {
-        if (!preserveEnabled(libraryId)) return
-        val key = base(libraryId) ?: return
+    fun saveState(libraryId: Int?, state: CatalogFilterState, mediaScope: String? = null) {
+        if (!preserveEnabled(libraryId, mediaScope)) return
+        val key = base(libraryId, mediaScope) ?: return
         prefs.edit().putString("$key.state", json.encodeToString(state)).apply()
     }
 
     /** Default ON when the key is absent (iOS parity). */
-    fun preserveEnabled(libraryId: Int?): Boolean {
-        val key = base(libraryId) ?: return false
+    fun preserveEnabled(libraryId: Int?, mediaScope: String? = null): Boolean {
+        val key = base(libraryId, mediaScope) ?: return false
         return prefs.getBoolean("$key.preserve", true)
     }
 
-    fun setPreserveEnabled(libraryId: Int?, enabled: Boolean) {
-        val key = base(libraryId) ?: return
+    fun setPreserveEnabled(libraryId: Int?, enabled: Boolean, mediaScope: String? = null) {
+        val key = base(libraryId, mediaScope) ?: return
         prefs.edit().apply {
             putBoolean("$key.preserve", enabled)
             if (!enabled) remove("$key.state")

@@ -71,12 +71,17 @@ enum class TvLibraryTabType {
     fun matches(library: UserLibrary): Boolean {
         val type = library.type.trim().lowercase()
         return when (this) {
-            Movies -> type in MOVIE_TYPES
-            Series -> type in SERIES_TYPES
+            Movies -> type in MOVIE_TYPES || type == "mixed"
+            Series -> type in SERIES_TYPES || type == "mixed"
             Music -> type in MUSIC_TYPES
             Audiobooks -> isAudiobookLikeLibraryType(library.type)
         }
     }
+
+    /** A mixed source keeps its server identity while each video tab has its own view. */
+    fun mediaScope(library: UserLibrary): String? =
+        if (!library.type.trim().equals("mixed", ignoreCase = true)) null
+        else when (this) { Movies -> "movie"; Series -> "series"; else -> null }
 
     companion object {
         // Subsets of the shared videoLibraryTypes set, split by tvOS's

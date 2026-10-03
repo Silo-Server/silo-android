@@ -37,6 +37,16 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
     suspend fun getLibrarySectionItems(libraryId: Int, sectionId: String, owner: AuthScopeSnapshot): ApiResult<HomeSectionItemsResponse> =
         sectionItems.read(libraryId, sectionId, owner)
 
+    suspend fun getLibrarySectionCatalogItems(libraryId: Int, sectionId: String,
+        owner: AuthScopeSnapshot, continuation: CatalogContinuationV2?): ApiResult<CatalogResponse> {
+        if (!sectionItems.current(owner)) return identityChanged()
+        val result = v2.browse(CatalogQueryV2(source = "section", scope = "library",
+            libraryId = libraryId.toString(), sectionId = sectionId, limit = 100), continuation)
+            .map { it.toCatalogResponse() }
+        if (!sectionItems.current(owner)) return identityChanged()
+        return result
+    }
+
     // --- Library Collections ---
 
     suspend fun getLibraryCollections(libraryId: Int): ApiResult<LibraryCollectionsResponse> =
@@ -70,8 +80,11 @@ class SectionApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         order: String? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
+        mediaType: String? = null,
+        libraryId: Int? = null,
+        source: String = "library_collection",
     ): ApiResult<CatalogResponse> = v2.browse(CatalogQueryV2(
-        source = "library_collection", collectionId = collectionId, limit = limit,
+        source = source, collectionId = collectionId, limit = limit, type = mediaType, libraryId = libraryId?.toString(),
         sort = sort, order = order.takeIf { sort != null }, groups = queryGroups.toV2Groups(), match = match,
     ), continuation).map { it.toCatalogResponse() }
 }
