@@ -63,7 +63,11 @@ class SiloCastMediaSessionService : MediaSessionService() {
         player = SiloCastRemotePlayer(Looper.getMainLooper(), controller)
         val bitmapLoader = SiloMediaSessionBitmapLoader(this)
         mediaSessionBitmapLoader = bitmapLoader
+        // The local player's service builds its own session in this process;
+        // Media3 refuses two sessions with the same (default empty) id, which
+        // crashed local playback started while a TV was playing.
         mediaSession = MediaSession.Builder(this, player)
+            .setId(SESSION_ID)
             .setBitmapLoader(bitmapLoader)
             .build()
             .also(::addSession)
@@ -140,6 +144,10 @@ class SiloCastMediaSessionService : MediaSessionService() {
         mediaSessionBitmapLoader = null
         player.release()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val SESSION_ID = "silocast-remote"
     }
 }
 
