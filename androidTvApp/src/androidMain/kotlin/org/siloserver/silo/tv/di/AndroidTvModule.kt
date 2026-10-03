@@ -368,7 +368,10 @@ val androidTvModule = module {
     }
 
     // Auth ViewModels
-    viewModel { TvServerSetupViewModel(get(), get()) }
+    viewModel {
+        val tokens = get<org.siloserver.silo.network.TokenManager>()
+        TvServerSetupViewModel(get(), get(), hasSession = { !tokens.getAccessToken().isNullOrBlank() })
+    }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSetupViewModel(get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSignupViewModel(get()) }
     viewModel { params ->

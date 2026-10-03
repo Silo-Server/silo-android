@@ -1,14 +1,11 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,22 +13,24 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Lan
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,41 +39,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.InputMode
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInputModeManager
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.ExperimentalTextApi
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.VerbatimTtsAnnotation
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.withAnnotation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -85,27 +73,32 @@ import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
-import org.siloserver.silo.model.auth.DeviceCodeFormat
+import org.siloserver.silo.common.ui.marquee.MarqueeColors
+import org.siloserver.silo.common.ui.marquee.MarqueeScene
+import org.siloserver.silo.common.ui.marquee.marqueeShake
+import org.siloserver.silo.common.ui.marquee.SignInHandoff
 import org.siloserver.silo.model.auth.SignInProvider
 import org.siloserver.silo.tv.R
-import org.siloserver.silo.tv.ui.components.AuroraEyebrow
-import org.siloserver.silo.tv.ui.components.AuroraGhostButton
-import org.siloserver.silo.tv.ui.components.AuroraJourneyProgress
-import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
-import org.siloserver.silo.tv.ui.components.AuroraStepRow
-import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
-import org.siloserver.silo.tv.ui.components.TvAuroraVariant
-import org.siloserver.silo.tv.ui.components.TvAuthFormDefaults
-import org.siloserver.silo.tv.ui.components.auroraGlass
-import org.siloserver.silo.tv.ui.components.auroraPanel
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCard
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCardSymbol
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCodeTiles
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeErrorText
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeField
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeHeadline
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeMetrics
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeScreen
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeServerCard
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeStatusChip
+import org.siloserver.silo.tv.ui.components.marquee.TvUsePhoneCard
+import org.siloserver.silo.tv.ui.components.marquee.rememberTvActiveServer
 import org.siloserver.silo.tv.ui.components.rememberTvImeAwareFormScrollState
 import org.siloserver.silo.tv.ui.components.tvImeAwareFieldContext
-import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
-import org.siloserver.silo.tv.ui.components.tvShowImeOnSelect
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
-import org.siloserver.silo.tv.ui.theme.Spacing
 
 /**
  * TV sign-in: every way in is visible at once — scan the QR, type
@@ -184,6 +177,8 @@ fun TvLoginScreen(
     val routeOnce = {
         if (!routed) {
             routed = true
+            // A one-profile household with no PIN goes straight to Home.
+            SignInHandoff.skipsSingleProfilePicker = true
             onLoginSuccess()
         }
     }
@@ -300,137 +295,188 @@ fun TvLoginScreen(
         )
     }
 
+    val server = rememberTvActiveServer()
+    LaunchedEffect(Unit) {
+        MarqueeScene.focus = MarqueeScene.Focus.Account
+        MarqueeScene.personalTint = null
+    }
+    val displayName = server?.name ?: serverName
+    // No code and no password on this server: "Continue as …" stands alone.
+    val networkOnly = device.passwordOnly && !state.passwordAvailable && network != null
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .imePadding(),
     ) {
-        TvAuroraBackdrop(variant = TvAuroraVariant.SignIn)
-
         if (isActivePairing) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(Spacing.xl),
-                contentAlignment = Alignment.Center,
-            ) {
-                ActivePairingPanel(
-                    status = pairingStatus,
-                    onCancel = pairingReceiver::cancelActiveSession,
-                    onContinue = routeOnce,
-                    onAllow = pairingReceiver::allowPendingServer,
-                    onDeny = pairingReceiver::denyPendingServer,
-                    onUseAlternate = pairingReceiver::useAlternateAddress,
-                    onRetryAddress = pairingReceiver::retryPushedAddress,
-                    signIn = true,
-                    modifier = Modifier.widthIn(max = 440.dp),
-                )
-            }
+            ActivePairingPanel(
+                status = pairingStatus,
+                onCancel = pairingReceiver::cancelActiveSession,
+                onContinue = routeOnce,
+                onAllow = pairingReceiver::allowPendingServer,
+                onDeny = pairingReceiver::denyPendingServer,
+                onUseAlternate = pairingReceiver::useAlternateAddress,
+                onRetryAddress = pairingReceiver::retryPushedAddress,
+                signIn = true,
+            )
             return@Box
         }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxSize()
-                // The scroll is an IME/odd-surface safety valve only. At the
-                // reference TV surface (1920x1080 @ 320dpi = 960x540dp) BOTH
-                // branches must measure shorter than the viewport, because a
-                // scrolled column takes the header chrome off the top with no
-                // D-pad way back.
-                .verticalScroll(formScrollState)
-                .padding(
-                    top = Spacing.safeAreaVertical,
-                    bottom = Spacing.safeAreaVertical,
-                    start = 54.dp,
-                    end = 54.dp,
-                ),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BrandHeader()
-                AuroraJourneyProgress(
-                    currentStep = 2,
-                    modifier = Modifier.width(215.dp),
+        val notices: @Composable () -> Unit = {
+            if (state.sessionExpired && displayName.isNotBlank()) {
+                TvMarqueeStatusChip(
+                    stringResource(R.string.tv_signin_session_expired, displayName),
+                    icon = Icons.Outlined.ErrorOutline,
+                    modifier = Modifier.padding(bottom = 15.dp).semantics { liveRegion = LiveRegionMode.Polite },
                 )
-            }
-
-            if (state.sessionExpired && serverName.isNotBlank()) {
-                Spacer(modifier = Modifier.height(Spacing.sm))
-                SessionExpiredBanner(serverName)
             }
             // A password refused because password sign-in is off closes the
             // form, the only place its error shows: say it here instead.
             if (state.passwordTurnedOff) {
-                Spacer(modifier = Modifier.height(Spacing.sm))
-                StatusBanner(stringResource(R.string.tv_signin_error_local_login_disabled))
+                TvMarqueeStatusChip(
+                    stringResource(R.string.tv_signin_error_local_login_disabled),
+                    icon = Icons.Outlined.ErrorOutline,
+                    modifier = Modifier.padding(bottom = 15.dp).semantics { liveRegion = LiveRegionMode.Polite },
+                )
             }
+            TvMarqueeServerCard(
+                name = displayName,
+                address = server?.hostLabel ?: state.serverHost.orEmpty(),
+                markUrl = server?.branding?.markUrl,
+                secure = server?.isSecure ?: false,
+            )
+        }
 
-            Spacer(modifier = Modifier.height(Spacing.sm))
+        when {
+            passwordFormVisible -> PasswordScreen(
+                state = state,
+                passwordOnly = device.passwordOnly,
+                serverName = displayName,
+                notices = notices,
+                usernameFocus = usernameFocus,
+                usernameFocusTracking = trackFocus("username"),
+                passwordFocus = passwordFocus,
+                signInFocus = signInFocus,
+                createAccountFocus = createAccountFocus,
+                backToPhoneFocus = backToPhoneFocus,
+                changeServerFocus = formChangeServerFocus,
+                onUsernameChanged = viewModel::onUsernameChanged,
+                onPasswordChanged = viewModel::onPasswordChanged,
+                onLoginClick = viewModel::onLoginClick,
+                signupEnabled = signupEnabled,
+                onCreateAccount = onCreateAccount,
+                onBackToPhone = backToPhone,
+                onChangeServer = changeServer,
+                network = network.takeIf { networkInForm },
+            )
 
-            if (passwordFormVisible) {
-                AuroraEyebrow(
-                    text = stringResource(R.string.tv_signin_eyebrow),
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-                Spacer(modifier = Modifier.height(Spacing.md))
-                CredentialFormCard(
-                    state = state,
-                    passwordOnly = device.passwordOnly,
-                    usernameFocus = usernameFocus,
-                    usernameFocusTracking = trackFocus("username"),
-                    passwordFocus = passwordFocus,
-                    signInFocus = signInFocus,
-                    createAccountFocus = createAccountFocus,
-                    backToPhoneFocus = backToPhoneFocus,
-                    changeServerFocus = formChangeServerFocus,
-                    onUsernameChanged = viewModel::onUsernameChanged,
-                    onPasswordChanged = viewModel::onPasswordChanged,
-                    onLoginClick = viewModel::onLoginClick,
-                    signupEnabled = signupEnabled,
-                    onCreateAccount = onCreateAccount,
-                    onBackToPhone = backToPhone,
-                    onChangeServer = changeServer,
-                    network = network.takeIf { networkInForm },
-                    modifier = Modifier
-                        .align(Alignment.CenterHorizontally)
-                        .width(520.dp),
-                )
-            } else {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(40.dp),
-                    verticalAlignment = Alignment.Top,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    SignInHero(
-                        serverName = serverName,
-                        activateText = device.code?.activateText ?: state.serverActivateText.orEmpty(),
+            networkOnly -> TvMarqueeScreen(
+                copy = {
+                    notices()
+                    TvMarqueeHeadline(stringResource(R.string.tv_signin_title, displayName), Modifier.padding(top = 22.dp))
+                    network?.let { NetworkSignInButton(it, below = changeServerFocus, modifier = Modifier.padding(top = 20.dp)) }
+                    TvMarqueeButton(
+                        text = stringResource(R.string.tv_signin_action_change_server),
+                        onClick = changeServer,
+                        kind = TvMarqueeButtonKind.Plain,
+                        focusRequester = changeServerFocus,
+                        modifier = Modifier
+                            .padding(top = 15.dp)
+                            .then(trackFocus("changeServer"))
+                            .focusProperties { network?.let { up = it.focusRequester } },
+                    )
+                },
+                card = {
+                    TvMarqueeCard {
+                        TvMarqueeCardSymbol(Icons.Outlined.Lan)
+                        Text(
+                            "No code needed",
+                            color = MarqueeColors.Ink,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 17.dp),
+                        )
+                        TvMarqueeBody(
+                            "This TV reached $displayName through ${network?.provider?.displayName ?: "its network"}, " +
+                                "which knows who it belongs to.",
+                            size = 14.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 7.dp),
+                        )
+                    }
+                },
+            )
+
+            else -> TvMarqueeScreen(
+                copy = {
+                    notices()
+                    TvMarqueeHeadline(stringResource(R.string.tv_signin_title, displayName), Modifier.padding(top = 22.dp))
+                    if (network != null) {
+                        NetworkSignInButton(
+                            action = network,
+                            // The copy between holds nothing focusable: name the way down.
+                            below = codeActionBelowNetwork(device.status, state.passwordAvailable, actionFocus, usePasswordFocus, changeServerFocus),
+                            modifier = Modifier.padding(top = 16.dp),
+                        )
+                        Text(
+                            "Or sign in with your phone",
+                            color = MarqueeColors.InkTertiary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(top = 15.dp),
+                        )
+                    }
+                    val activate = device.code?.activateText ?: state.serverActivateText.orEmpty()
+                    TvMarqueeBody(
+                        "Scan the code with your phone's camera, or go to " +
+                            (activate.ifBlank { "your server's /activate page" }) +
+                            " and enter it. Approve on your phone and this TV signs in by itself.",
+                        modifier = Modifier.padding(top = if (network == null) 13.dp else 6.dp),
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 12.dp),
+                    ) {
+                        Icon(Icons.Outlined.PhoneAndroid, contentDescription = null, tint = MarqueeColors.InkTertiary, modifier = Modifier.size(13.dp))
+                        Text(stringResource(R.string.tv_signin_nearby_hint), color = MarqueeColors.InkTertiary, fontSize = 14.sp)
+                    }
+                    CodeActions(
+                        status = device.status,
+                        showPasswordAction = state.passwordAvailable,
+                        network = network,
+                        actionFocus = actionFocus,
+                        actionTracking = trackFocus("action"),
                         usePasswordFocus = usePasswordFocus,
-                        changeServerFocus = changeServerFocus,
                         usePasswordTracking = trackFocus("usePassword"),
+                        changeServerFocus = changeServerFocus,
                         changeServerTracking = trackFocus("changeServer"),
+                        onAction = viewModel::restartDeviceLogin,
                         // The form would hide "Signing in…" while "Continue as …"
                         // waits, and its Sign in would do nothing until then.
                         onUsePassword = { if (!state.networkBusy) showPasswordForm = true },
                         onChangeServer = changeServer,
-                        showPasswordAction = state.passwordAvailable,
-                        network = network,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.padding(top = 24.dp),
                     )
-                    DeviceCodePanel(
-                        device = device,
-                        serverHost = state.serverHost.orEmpty(),
-                        actionFocus = actionFocus,
-                        actionTracking = trackFocus("action"),
-                        onAction = viewModel::restartDeviceLogin,
-                    )
-                }
-            }
+                },
+                card = { TvMarqueeCard { CodeCard(device = device, serverHost = state.serverHost.orEmpty()) } },
+            )
         }
     }
+}
+
+/** Where Down from "Continue as …" lands on the code screen: the first local action. */
+private fun codeActionBelowNetwork(
+    status: TvSignInStatus,
+    passwordAvailable: Boolean,
+    actionFocus: FocusRequester,
+    usePasswordFocus: FocusRequester,
+    changeServerFocus: FocusRequester,
+): FocusRequester = when {
+    status.action() != null -> actionFocus
+    passwordAvailable && status != TvSignInStatus.UpdateRequired -> usePasswordFocus
+    else -> changeServerFocus
 }
 
 /** The "Try again" / "Show a new code" action a status offers, if any. */
@@ -456,28 +502,9 @@ private fun TvSignInStatus.actionTakesFocus(): Boolean = when (this) {
     else -> false
 }
 
-@Composable
-private fun SessionExpiredBanner(serverName: String) =
-    StatusBanner(stringResource(R.string.tv_signin_session_expired, serverName))
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun StatusBanner(text: String) {
-    Text(
-        text = text,
-        style = TvLoginTextStyles.Body,
-        color = Color.White,
-        modifier = Modifier
-            .fillMaxWidth()
-            .auroraGlass(12.dp)
-            .padding(horizontal = Spacing.md, vertical = Spacing.sm)
-            .semantics { liveRegion = LiveRegionMode.Polite },
-    )
-}
-
 /**
- * "Continue as <owner>" through a network provider, for [SignInHero] and, on
- * a server without device sign-in, [CredentialFormCard]. [error] is why the
+ * "Continue as <owner>" through a network provider, for the code screen and,
+ * on a server without device sign-in, the password screen. [error] is why the
  * last press was refused.
  */
 private class NetworkSignInAction(
@@ -490,82 +517,68 @@ private class NetworkSignInAction(
 )
 
 /**
- * Left column: title, "Continue as <owner>" when a network provider offers
- * it, the three ways in, the nearby-phone hint, and the two local actions.
- * Mirrors tvOS `TVLoginView.heroColumn`.
+ * The state's action ("Try again" / "Show a new code"), "Sign in with a
+ * password" and "Change server" on one row, as on Apple TV. Controls stay
+ * enabled while work runs so focus doesn't drop; the actions ignore repeats.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SignInHero(
-    serverName: String,
-    activateText: String,
+private fun CodeActions(
+    status: TvSignInStatus,
+    showPasswordAction: Boolean,
+    network: NetworkSignInAction?,
+    actionFocus: FocusRequester,
+    actionTracking: Modifier,
     usePasswordFocus: FocusRequester,
-    changeServerFocus: FocusRequester,
     usePasswordTracking: Modifier,
+    changeServerFocus: FocusRequester,
     changeServerTracking: Modifier,
+    onAction: () -> Unit,
     onUsePassword: () -> Unit,
     onChangeServer: () -> Unit,
     modifier: Modifier = Modifier,
-    showPasswordAction: Boolean = true,
-    network: NetworkSignInAction? = null,
 ) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-        modifier = modifier,
-    ) {
-        AuroraEyebrow(text = stringResource(R.string.tv_signin_eyebrow))
-        Text(
-            text = stringResource(R.string.tv_signin_title, serverName),
-            style = TvLoginTextStyles.Hero,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        if (network != null) {
-            NetworkSignInButton(
-                action = network,
-                // The steps between hold nothing focusable: name the way down.
-                below = if (showPasswordAction) usePasswordFocus else changeServerFocus,
+    val upTo = network?.focusRequester
+    // An update requirement hides the password button: no password can help.
+    val offersPassword = showPasswordAction && status != TvSignInStatus.UpdateRequired
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+        status.action()?.let { label ->
+            TvMarqueeButton(
+                text = stringResource(label),
+                onClick = onAction,
+                icon = Icons.Filled.Refresh,
+                focusRequester = actionFocus,
+                modifier = Modifier
+                    .then(actionTracking)
+                    .focusProperties { upTo?.let { up = it } },
             )
         }
-        AuroraStepRow(number = 1, text = stringResource(R.string.tv_signin_step_scan))
-        AuroraStepRow(number = 2, text = stringResource(R.string.tv_signin_step_url, activateText))
-        AuroraStepRow(number = 3, text = stringResource(R.string.tv_signin_step_approve))
-        Text(
-            text = stringResource(R.string.tv_signin_nearby_hint),
-            style = TvLoginTextStyles.Body,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            if (showPasswordAction) {
-                AuroraGhostButton(
-                    label = stringResource(R.string.tv_signin_action_password),
-                    onClick = onUsePassword,
-                    fontSize = 17.sp,
-                    horizontalPadding = 16.dp,
-                    verticalPadding = 8.dp,
-                    modifier = Modifier
-                        .then(usePasswordTracking)
-                        .focusRequester(usePasswordFocus)
-                        .focusProperties {
-                            right = changeServerFocus
-                            if (network != null) up = network.focusRequester
-                        },
-                )
-            }
-            AuroraGhostButton(
-                label = stringResource(R.string.tv_signin_action_change_server),
-                onClick = onChangeServer,
-                fontSize = 17.sp,
-                horizontalPadding = 16.dp,
-                verticalPadding = 8.dp,
+        if (offersPassword) {
+            TvMarqueeButton(
+                text = stringResource(R.string.tv_signin_action_password),
+                onClick = onUsePassword,
+                kind = TvMarqueeButtonKind.Glass,
+                icon = Icons.Outlined.Key,
+                focusRequester = usePasswordFocus,
                 modifier = Modifier
-                    .then(changeServerTracking)
-                    .focusRequester(changeServerFocus)
+                    .then(usePasswordTracking)
                     .focusProperties {
-                        if (showPasswordAction) left = usePasswordFocus
-                        if (network != null) up = network.focusRequester
+                        right = changeServerFocus
+                        upTo?.let { up = it }
                     },
             )
         }
+        TvMarqueeButton(
+            text = stringResource(R.string.tv_signin_action_change_server),
+            onClick = onChangeServer,
+            kind = TvMarqueeButtonKind.Plain,
+            focusRequester = changeServerFocus,
+            modifier = Modifier
+                .then(changeServerTracking)
+                .focusProperties {
+                    if (offersPassword) left = usePasswordFocus
+                    upTo?.let { up = it }
+                },
+        )
     }
 }
 
@@ -575,117 +588,115 @@ private fun SignInHero(
  * when offered, with its refusal under it. It stays focusable while signing
  * in so focus doesn't jump; the view model ignores a second press.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequester) {
+private fun NetworkSignInButton(action: NetworkSignInAction, below: FocusRequester, modifier: Modifier = Modifier) {
     val providerName = action.provider.displayName
     val owner = action.provider.networkIdentity?.label
-    AuroraPrimaryButton(
-        label = when {
-            action.busy -> stringResource(R.string.tv_signin_form_submitting)
-            owner != null -> stringResource(R.string.tv_signin_network_continue_as, owner)
-            else -> stringResource(R.string.tv_signin_network_continue_with, providerName)
-        },
-        supportingText = owner?.let { stringResource(R.string.tv_signin_network_via, providerName) },
-        onClick = action.onClick,
-        focusRequester = action.focusRequester,
-        modifier = Modifier
-            .then(action.focusTracking)
-            .focusProperties { down = below },
-    )
-    action.error?.let { error ->
-        Text(
-            text = error,
-            style = TvLoginTextStyles.Error,
-            color = MaterialTheme.colorScheme.error,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        )
+    val title = when {
+        action.busy -> stringResource(R.string.tv_signin_form_submitting)
+        owner != null -> stringResource(R.string.tv_signin_network_continue_as, owner)
+        else -> stringResource(R.string.tv_signin_network_continue_with, providerName)
+    }
+    val via = owner?.takeIf { !action.busy }?.let { stringResource(R.string.tv_signin_network_via, providerName) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        TvMarqueeButton(
+            onClick = action.onClick,
+            isLoading = action.busy,
+            focusRequester = action.focusRequester,
+            modifier = Modifier
+                .height(if (via != null) 52.dp else TvMarqueeMetrics.ButtonHeight)
+                .then(action.focusTracking)
+                .focusProperties { down = below },
+        ) { ink ->
+            if (!action.busy) TvProviderMark(action.provider)
+            Column {
+                Text(title, color = ink, maxLines = 1)
+                if (via != null) Text(via, color = ink.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            }
+        }
+        action.error?.let { error ->
+            TvMarqueeErrorText(error, Modifier.width(380.dp).semantics { liveRegion = LiveRegionMode.Polite })
+        }
+    }
+}
+
+/** A provider's initial on a warm gradient, beside "Continue as …". */
+@Composable
+private fun TvProviderMark(provider: SignInProvider) {
+    Box(
+        Modifier
+            .size(24.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFFFD4B2D), Color(0xFFA21D5C)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(provider.displayName.firstOrNull()?.lowercase() ?: "s", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
     }
 }
 
 /**
- * Right panel: the QR (at least a third of the screen height, dark on white,
- * 4-module quiet zone), the code in large monospace grouped 4+4, the typed-URL
- * form, and a polite live status line. No countdown: codes renew in place.
+ * The card: the QR (dark on white, quiet zone), the code as tiles, the
+ * typed-URL form, and a polite live status line. No countdown: codes renew
+ * in place.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun DeviceCodePanel(
-    device: TvDeviceSignInUi,
-    serverHost: String,
-    actionFocus: FocusRequester,
-    actionTracking: Modifier,
-    onAction: () -> Unit,
-) {
-    val qrSize = maxOf(MinQrSize, (LocalConfiguration.current.screenHeightDp / 3).dp)
+private fun CodeCard(device: TvDeviceSignInUi, serverHost: String) {
     val code = device.code
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-        modifier = Modifier
-            .width(qrSize + 72.dp)
-            .auroraGlass(15.dp)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-    ) {
-        if (code != null) {
+    when {
+        code != null -> {
             val qrHost = code.activateText.removeSuffix("/activate")
-            QrCodePanel(
-                content = code.qrContent,
-                size = qrSize,
-                description = stringResource(R.string.tv_signin_qr_description, qrHost, code.spokenCode),
-            )
-            SignInCodeText(
-                code = code.userCode,
-                spokenCode = code.spokenCode,
-                style = TvSignInCodeStyle,
-            )
-            Text(
-                text = code.activateText,
-                style = TvLoginTextStyles.Body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        } else {
             Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .size(qrSize)
-                    .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(8.dp))
-                    .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(8.dp)),
+                Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White)
+                    .padding(10.dp),
             ) {
-                if (device.status == TvSignInStatus.GettingCode) {
-                    CircularProgressIndicator(
-                        color = Color.White.copy(alpha = 0.7f),
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
+                QrCodePanel(
+                    content = code.qrContent,
+                    size = QrSize,
+                    description = stringResource(R.string.tv_signin_qr_description, qrHost, code.spokenCode),
+                )
+            }
+            TvMarqueeCodeTiles(code = code.userCode, modifier = Modifier.padding(top = 17.dp))
+            Text(
+                code.activateText,
+                color = MarqueeColors.InkSecondary,
+                fontSize = 14.sp,
+                maxLines = 2,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 9.dp),
+            )
+        }
+        device.status == TvSignInStatus.SignedIn -> TvMarqueeCardSymbol(Icons.Filled.Check, tint = MarqueeColors.Live, size = 70.dp)
+        device.status.isProblem() -> TvMarqueeCardSymbol(Icons.Outlined.ErrorOutline, tint = MarqueeColors.Warning)
+        else -> Box(
+            Modifier
+                .size(QrSize + 20.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color.White),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (device.status == TvSignInStatus.GettingCode) {
+                CircularProgressIndicator(color = Color.Black.copy(alpha = 0.5f), strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
             }
         }
-
-        Text(
-            text = device.statusText(serverHost),
-            style = TvLoginTextStyles.Status,
-            color = if (device.status.isProblem()) MaterialTheme.colorScheme.error else Color.White,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-        )
-
-        device.status.action()?.let { label ->
-            // Ghost style at a compact size so "Show a new code" fits the
-            // panel on one line; focus fills it like the other actions.
-            AuroraGhostButton(
-                label = stringResource(label),
-                onClick = onAction,
-                fontSize = 18.sp,
-                horizontalPadding = 14.dp,
-                verticalPadding = 8.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(actionTracking)
-                    .focusRequester(actionFocus),
-            )
+    }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(top = 12.dp)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+    ) {
+        if (device.status == TvSignInStatus.Waiting || device.status == TvSignInStatus.Opened || device.status == TvSignInStatus.GettingCode) {
+            CircularProgressIndicator(color = MarqueeColors.InkSecondary, strokeWidth = 2.dp, modifier = Modifier.size(13.dp))
         }
+        Text(
+            device.statusText(serverHost),
+            color = if (device.status.isProblem()) MarqueeColors.Error else MarqueeColors.InkSecondary,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
@@ -715,54 +726,6 @@ private fun TvDeviceSignInUi.statusText(serverHost: String): String = when (stat
     TvSignInStatus.Paused -> stringResource(R.string.tv_signin_status_paused)
     TvSignInStatus.Failed -> stringResource(R.string.tv_signin_status_failed)
     TvSignInStatus.UpdateRequired -> stringResource(R.string.tv_signin_status_update_required)
-}
-
-/**
- * The sign-in code as ONE element TalkBack reads character by character
- * (`TtsSpan.TYPE_VERBATIM`), so `4821 7730` is never read as a number.
- */
-@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalTextApi::class)
-@Composable
-internal fun SignInCodeText(
-    code: String,
-    spokenCode: String,
-    style: TextStyle,
-    modifier: Modifier = Modifier,
-    label: String? = null,
-) {
-    val annotated = remember(code) {
-        buildAnnotatedString {
-            withAnnotation(VerbatimTtsAnnotation(DeviceCodeFormat.normalize(code))) { append(code) }
-        }
-    }
-    val description = label?.let { "$it, $spokenCode" }
-    Text(
-        text = annotated,
-        style = style,
-        color = Color.White,
-        textAlign = TextAlign.Center,
-        modifier = modifier.semantics(mergeDescendants = true) {
-            if (description != null) contentDescription = description
-        },
-    )
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun BrandHeader() {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-    ) {
-        Image(
-            painter = painterResource(id = R.drawable.silo_wordmark),
-            contentDescription = "Silo",
-            modifier = Modifier
-                .width(66.dp)
-                .height(35.dp),
-            contentScale = ContentScale.Fit,
-        )
-    }
 }
 
 /**
@@ -804,11 +767,17 @@ private fun TvLoginError.message(providerName: String?, externalName: String?): 
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
+/**
+ * Username and password on the left, laid out like Apple TV's password
+ * screen; the card beside them says a nearby phone can sign in instead.
+ */
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
-private fun CredentialFormCard(
+private fun PasswordScreen(
     state: TvLoginUiState,
     passwordOnly: Boolean,
+    serverName: String,
+    notices: @Composable () -> Unit,
     usernameFocus: FocusRequester,
     usernameFocusTracking: Modifier,
     passwordFocus: FocusRequester,
@@ -823,303 +792,189 @@ private fun CredentialFormCard(
     onCreateAccount: () -> Unit,
     onBackToPhone: () -> Unit,
     onChangeServer: () -> Unit,
-    modifier: Modifier = Modifier,
     network: NetworkSignInAction? = null,
 ) {
+    // Each rejected password shakes the fields and puts focus back on the
+    // password: the fields were disabled while it was checked, so focus left.
+    var failures by remember { mutableIntStateOf(0) }
+    var passwordFocused by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
-    // Height budget, not taste: this card plus the screen chrome above it has
-    // to measure under 540dp (the 1920x1080 @ 320dpi TV surface) with the 24dp
-    // overscan inset intact, or the root Column starts scrolling and the header
-    // chrome leaves the screen unreachably.
-    Column(
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-        modifier = modifier
-            .auroraPanel(20.dp)
-            .padding(horizontal = 24.dp, vertical = 14.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.tv_signin_form_title),
-            style = TvLoginTextStyles.Title,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        if (passwordOnly && network == null) {
-            Text(
-                text = stringResource(R.string.tv_signin_password_only),
-                style = TvLoginTextStyles.Body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        val firstSecondary = when {
-            signupEnabled -> createAccountFocus
-            !passwordOnly -> backToPhoneFocus
-            else -> changeServerFocus
-        }
-        // While either sign-in waits, the fields and Sign in are disabled and
-        // can't take focus: "Continue as …" (which keeps focus while it waits)
-        // and the secondary actions reach each other directly.
-        val aboveSecondary = if (state.signingIn && network != null) network.focusRequester else signInFocus
-        if (network != null) {
-            NetworkSignInButton(action = network, below = if (state.signingIn) firstSecondary else usernameFocus)
-        }
-
-        Column(
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-            modifier = Modifier.tvImeAwareFieldContext(),
-        ) {
-            Text(
-                text = stringResource(R.string.tv_signin_form_username),
-                style = TvLoginTextStyles.InputLabel,
-                color = Color.White.copy(alpha = 0.52f),
-            )
-            OutlinedTextField(
-                value = state.username,
-                onValueChange = onUsernameChanged,
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Text,
-                    imeAction = ImeAction.Next,
-                    showKeyboardOnFocus = false,
-                ),
-                enabled = !state.signingIn,
-                textStyle = TvLoginTextStyles.Field,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(TvAuthFormDefaults.FieldHeight)
-                    .semantics { contentType = ContentType.Username }
-                    .then(usernameFocusTracking)
-                    .tvShowImeOnSelect()
-                    .focusRequester(usernameFocus)
-                    .focusProperties { if (network != null) up = network.focusRequester },
-                colors = tvOutlinedTextFieldColors(),
-            )
-        }
-
-        Column(
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-            modifier = Modifier.tvImeAwareFieldContext(),
-        ) {
-            Text(
-                text = stringResource(R.string.tv_signin_form_password),
-                style = TvLoginTextStyles.InputLabel,
-                color = Color.White.copy(alpha = 0.52f),
-            )
-            OutlinedTextField(
-                value = state.password,
-                onValueChange = onPasswordChanged,
-                singleLine = true,
-                visualTransformation = if (passwordVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                trailingIcon = {
-                    IconButton(
-                        onClick = { passwordVisible = !passwordVisible },
-                        enabled = !state.signingIn,
-                    ) {
-                        Icon(
-                            imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                            contentDescription = stringResource(
-                                if (passwordVisible) R.string.tv_signin_form_hide_password else R.string.tv_signin_form_show_password,
-                            ),
-                        )
-                    }
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction = ImeAction.Done,
-                    showKeyboardOnFocus = false,
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        if (canSubmitTvCredentialLogin(state.username, state.password, state.signingIn)) {
-                            onLoginClick()
-                        }
-                    },
-                ),
-                enabled = !state.signingIn,
-                textStyle = TvLoginTextStyles.Field,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(TvAuthFormDefaults.FieldHeight)
-                    .semantics { contentType = ContentType.Password }
-                    .tvShowImeOnSelect()
-                    .focusRequester(passwordFocus),
-                colors = tvOutlinedTextFieldColors(),
-            )
-        }
-
-        state.error?.let { error ->
-            Text(
-                text = error.message(state.providerName, state.directoryName),
-                style = TvLoginTextStyles.Error,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-            )
-        }
-        // An account that signs in with the server's provider has no password
-        // here (silo-apple parity). The 401 message says the same, so the hint
-        // steps aside while that message shows.
-        state.providerName?.takeIf { state.error != TvLoginError.InvalidCredentials }?.let { provider ->
-            Text(
-                text = stringResource(R.string.tv_signin_form_provider_hint, provider),
-                style = TvLoginTextStyles.Body,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        AuroraPrimaryButton(
-            label = stringResource(if (state.isLoading) R.string.tv_signin_form_submitting else R.string.tv_signin_form_submit),
-            icon = Icons.AutoMirrored.Filled.Login,
-            onClick = onLoginClick,
-            focusRequester = signInFocus,
-            focusHalo = false,
-            filledAtRest = false,
-            neutralFocusFill = true,
-            enabled = !state.signingIn,
-            modifier = Modifier
-                // Explicit chain: the label Texts are not focusable, so there
-                // is no default search to fall back on.
-                .focusProperties { down = firstSecondary }
-                .fillMaxWidth()
-                .height(TvAuthFormDefaults.PrimaryButtonHeight),
-        )
-
-        // Secondary actions on ONE row, not stacked: three full-width ghost
-        // buttons would cost ~120dp of the 540dp viewport.
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (signupEnabled) {
-                AuroraGhostButton(
-                    label = stringResource(R.string.tv_signin_form_create_account),
-                    onClick = onCreateAccount,
-                    fontSize = TvLoginSecondaryActionFontSize,
-                    horizontalPadding = TvLoginSecondaryActionPadding,
-                    verticalPadding = 8.dp,
-                    modifier = Modifier
-                        .focusRequester(createAccountFocus)
-                        .focusProperties {
-                            up = aboveSecondary
-                            right = if (passwordOnly) changeServerFocus else backToPhoneFocus
-                        }
-                        .weight(1f),
-                )
-            }
-            if (!passwordOnly) {
-                // Back to the device code (a fresh one if the old one lapsed).
-                AuroraGhostButton(
-                    label = stringResource(R.string.tv_signin_form_use_phone),
-                    onClick = onBackToPhone,
-                    fontSize = TvLoginSecondaryActionFontSize,
-                    horizontalPadding = TvLoginSecondaryActionPadding,
-                    verticalPadding = 8.dp,
-                    modifier = Modifier
-                        .focusRequester(backToPhoneFocus)
-                        .focusProperties {
-                            up = aboveSecondary
-                            if (signupEnabled) left = createAccountFocus
-                            right = changeServerFocus
-                        }
-                        .weight(1f),
-                )
-            }
-            AuroraGhostButton(
-                label = stringResource(R.string.tv_signin_action_change_server),
-                onClick = onChangeServer,
-                fontSize = TvLoginSecondaryActionFontSize,
-                horizontalPadding = TvLoginSecondaryActionPadding,
-                verticalPadding = 8.dp,
-                modifier = Modifier
-                    .focusRequester(changeServerFocus)
-                    .focusProperties {
-                        up = aboveSecondary
-                        left = when {
-                            !passwordOnly -> backToPhoneFocus
-                            signupEnabled -> createAccountFocus
-                            else -> signInFocus
-                        }
-                    }
-                    .weight(1f),
+    LaunchedEffect(state.error) {
+        if (state.error != null && state.password.isNotEmpty()) {
+            failures++
+            requestFocusUntilObserved(
+                maxAttempts = TvContentInitialFocusMaxAttempts,
+                awaitAttempt = { withFrameNanos { } },
+                requestFocus = passwordFocus::requestFocus,
+                isFocused = { passwordFocused },
             )
         }
     }
+    TvMarqueeScreen(
+        copyScroll = rememberTvImeAwareFormScrollState(),
+        copy = {
+            Column {
+                notices()
+                TvMarqueeHeadline("Sign in with\na password", Modifier.padding(top = 22.dp))
+                TvMarqueeBody(
+                    if (passwordOnly && network == null) {
+                        stringResource(R.string.tv_signin_password_only)
+                    } else {
+                        "Use your $serverName username and password."
+                    },
+                    modifier = Modifier.padding(top = 11.dp),
+                )
+                val firstSecondary = when {
+                    signupEnabled -> createAccountFocus
+                    !passwordOnly -> backToPhoneFocus
+                    else -> changeServerFocus
+                }
+                // While either sign-in waits, the fields and Sign in are disabled and
+                // can't take focus: "Continue as …" (which keeps focus while it waits)
+                // and the secondary actions reach each other directly.
+                val aboveSecondary = if (state.signingIn && network != null) network.focusRequester else signInFocus
+                if (network != null) {
+                    NetworkSignInButton(
+                        action = network,
+                        below = if (state.signingIn) firstSecondary else usernameFocus,
+                        modifier = Modifier.padding(top = 15.dp),
+                    )
+                }
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .width(380.dp)
+                        .padding(top = 20.dp)
+                        .marqueeShake(failures),
+                ) {
+                    Box(Modifier.tvImeAwareFieldContext()) {
+                        TvMarqueeField(
+                            value = state.username,
+                            onValueChange = onUsernameChanged,
+                            icon = Icons.Outlined.Person,
+                            placeholder = stringResource(R.string.tv_signin_form_username_placeholder),
+                            enabled = !state.signingIn,
+                            focusRequester = usernameFocus,
+                            modifier = Modifier
+                                .semantics { contentType = ContentType.Username }
+                                .then(usernameFocusTracking)
+                                .focusProperties { if (network != null) up = network.focusRequester },
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f).tvImeAwareFieldContext()) {
+                            TvMarqueeField(
+                                value = state.password,
+                                onValueChange = onPasswordChanged,
+                                icon = Icons.Outlined.Lock,
+                                placeholder = stringResource(R.string.tv_signin_form_password_placeholder),
+                                isSecure = true,
+                                revealed = passwordVisible,
+                                isError = state.error != null,
+                                imeAction = ImeAction.Done,
+                                onImeAction = {
+                                    if (canSubmitTvCredentialLogin(state.username, state.password, state.signingIn)) onLoginClick()
+                                },
+                                enabled = !state.signingIn,
+                                focusRequester = passwordFocus,
+                                onFocusChange = { passwordFocused = it },
+                                modifier = Modifier.semantics { contentType = ContentType.Password },
+                            )
+                        }
+                        TvMarqueeButton(
+                            onClick = { passwordVisible = !passwordVisible },
+                            kind = TvMarqueeButtonKind.Glass,
+                            enabled = !state.signingIn,
+                            modifier = Modifier.semantics {
+                                contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                            },
+                        ) { ink ->
+                            Icon(
+                                if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                                contentDescription = null,
+                                tint = ink,
+                                modifier = Modifier.size(16.dp),
+                            )
+                        }
+                    }
+                }
+                state.error?.let { error ->
+                    TvMarqueeErrorText(
+                        error.message(state.providerName, state.directoryName),
+                        Modifier
+                            .width(380.dp)
+                            .padding(top = 8.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                    )
+                }
+                // An account that signs in with the server's provider has no password
+                // here (silo-apple parity). The 401 message says the same, so the hint
+                // steps aside while that message shows.
+                state.providerName?.takeIf { state.error != TvLoginError.InvalidCredentials }?.let { provider ->
+                    TvMarqueeBody(
+                        stringResource(R.string.tv_signin_form_provider_hint, provider),
+                        size = 14.sp,
+                        color = MarqueeColors.InkTertiary,
+                        modifier = Modifier.width(380.dp).padding(top = 8.dp),
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(11.dp),
+                ) {
+                    TvMarqueeButton(
+                        text = stringResource(if (state.isLoading) R.string.tv_signin_form_submitting else R.string.tv_signin_form_submit),
+                        onClick = onLoginClick,
+                        isLoading = state.isLoading,
+                        focusRequester = signInFocus,
+                        enabled = !state.signingIn,
+                        modifier = Modifier.focusProperties { down = firstSecondary },
+                    )
+                    if (signupEnabled) {
+                        TvMarqueeButton(
+                            text = stringResource(R.string.tv_signin_form_create_account),
+                            onClick = onCreateAccount,
+                            kind = TvMarqueeButtonKind.Plain,
+                            focusRequester = createAccountFocus,
+                            modifier = Modifier.focusProperties { up = aboveSecondary },
+                        )
+                    }
+                    if (!passwordOnly) {
+                        // Back to the device code (a fresh one if the old one lapsed).
+                        TvMarqueeButton(
+                            text = stringResource(R.string.tv_signin_form_use_phone),
+                            onClick = onBackToPhone,
+                            kind = TvMarqueeButtonKind.Plain,
+                            focusRequester = backToPhoneFocus,
+                            modifier = Modifier.focusProperties { up = aboveSecondary },
+                        )
+                    }
+                    TvMarqueeButton(
+                        text = stringResource(R.string.tv_signin_action_change_server),
+                        onClick = onChangeServer,
+                        kind = TvMarqueeButtonKind.Plain,
+                        focusRequester = changeServerFocus,
+                        modifier = Modifier.focusProperties { up = aboveSecondary },
+                    )
+                }
+            }
+        },
+        card = {
+            TvUsePhoneCard(
+                if (passwordOnly) {
+                    "Signed in to Silo on your phone? Open it on the same Wi‑Fi and it can sign this TV in for you."
+                } else {
+                    "Choose \"Use your phone instead\" to scan a code and approve on your phone. Nothing to type with the remote."
+                },
+            )
+        },
+    )
 }
 
-/** The sign-in code in large monospace, grouped 4+4; shared with the nearby-phone panel. */
-internal val TvSignInCodeStyle = TextStyle(
-    fontFamily = FontFamily.Monospace,
-    fontWeight = FontWeight.Bold,
-    fontSize = 34.sp,
-    lineHeight = 40.sp,
-    letterSpacing = 2.sp,
-)
-
-/** A QR at least a third of the 540dp reference surface. */
-private val MinQrSize: Dp = 180.dp
-
-/**
- * Type and inset for the sign-in card's side-by-side secondary actions. Branch
- * -local on purpose: [TvAuthFormDefaults] is shared with server setup, sign-up
- * and first-run setup, and those screens have no reason to shrink.
- */
-private val TvLoginSecondaryActionFontSize = 16.sp
-private val TvLoginSecondaryActionPadding = 10.dp
-
-private object TvLoginTextStyles {
-    val Hero = TextStyle(
-        fontWeight = FontWeight.Bold,
-        fontSize = 26.sp,
-        lineHeight = 30.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val Title = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 26.sp,
-        lineHeight = 32.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val Body = TextStyle(
-        fontWeight = FontWeight.Normal,
-        fontSize = 16.sp,
-        lineHeight = 22.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val Status = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
-        letterSpacing = 0.sp,
-    )
-
-    val Field = TextStyle(
-        fontWeight = FontWeight.Normal,
-        fontSize = 17.sp,
-        lineHeight = 22.sp,
-        letterSpacing = 0.sp,
-        color = Color.White,
-    )
-
-    /** Mono uppercase caption that labels each input — mirrors server setup. */
-    val InputLabel = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 19.sp,
-        letterSpacing = 3.sp,
-    )
-
-    val Error = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
-        letterSpacing = 0.sp,
-    )
-}
+/** The QR, at least a third of the 540dp reference surface with its frame. */
+private val QrSize: Dp = 170.dp
 
 /** How long a finished sign-in waits for a nearby phone's session to wrap up before routing on. */
 private const val NEARBY_RESULT_WAIT_MS = 5_000L

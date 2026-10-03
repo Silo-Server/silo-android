@@ -3,6 +3,7 @@ package org.siloserver.silo.tv.ui.navigation
 import androidx.compose.foundation.layout.fillMaxWidth
 import android.net.Uri
 import android.util.Log
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,6 +24,7 @@ import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
@@ -329,6 +331,15 @@ private val preMainAuthRoutes: Set<String> = setOf(
     TvRoute.EditProfile.ROUTE,
 )
 
+/** First-run routes, drawn transparent over the shared [MarqueeBackdrop]. */
+private val tvMarqueeRoutes: Set<String> = setOf(
+    TvRoute.ServerSetup.route,
+    TvRoute.Setup.route,
+    TvRoute.Signup.route,
+    TvRoute.Login.ROUTE,
+    TvRoute.ProfileSelection.route,
+)
+
 /**
  * Page-to-page cross-fade duration (ms). A middle ground between Compose Nav's
  * sluggish 700ms default and a phone-snappy 200ms — a touch more deliberate for
@@ -569,6 +580,16 @@ fun TvAppNavigation(
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
     ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
+    // The first-run screens draw over one shared brand-light backdrop that
+    // lives outside the destinations, so it keeps moving while they fade.
+    // Mirrored: TV copy sits on the left, so the light pools behind the card.
+    AnimatedVisibility(
+        visible = currentEntry?.destination?.route in tvMarqueeRoutes,
+        enter = fadeIn(tween(TvPageFadeDurationMs)),
+        exit = fadeOut(tween(TvPageFadeDurationMs)),
+    ) {
+        MarqueeBackdrop(mirrored = true)
+    }
     NavHost(
         navController = navController,
         startDestination = startDestination,

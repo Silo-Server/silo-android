@@ -76,14 +76,14 @@ class TvLoginScreenNetworkSignInTest {
     @Test
     fun thePasswordFormOffersContinueAsAndFocusesIt() {
         show(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
-        composeRule.onNodeWithText("USERNAME").assertIsDisplayed()
+        composeRule.onAllNodes(TEXT_FIELD).assertCountEquals(2)
         composeRule.onNodeWithText(CONTINUE_AS).assertIsDisplayed().assertIsFocused()
     }
 
     @Test
     fun aServerWithOnlyNetworkSignInStillOffersContinueAs() {
         show(SignInProviders(listOf(TAILSCALE), passwordLogin = false))
-        composeRule.onNodeWithText("USERNAME").assertDoesNotExist()
+        composeRule.onAllNodes(TEXT_FIELD).assertCountEquals(0)
         composeRule.onNodeWithText(CONTINUE_AS).assertIsDisplayed().assertIsFocused()
     }
 
@@ -92,11 +92,11 @@ class TvLoginScreenNetworkSignInTest {
     fun focusFollowsContinueAsIntoTheForm() {
         val deviceCheck = CompletableDeferred<Unit>()
         show(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true), deviceCheck)
-        composeRule.onNodeWithText("USERNAME").assertDoesNotExist()
+        composeRule.onAllNodes(TEXT_FIELD).assertCountEquals(0)
         composeRule.onNodeWithText(CONTINUE_AS).assertIsFocused()
 
         deviceCheck.complete(Unit)
-        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("USERNAME").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodes(TEXT_FIELD).fetchSemanticsNodes().isNotEmpty() }
         composeRule.waitForIdle()
         composeRule.onNodeWithText(CONTINUE_AS).assertIsFocused()
     }

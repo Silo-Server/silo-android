@@ -76,8 +76,8 @@
 
     <!-- TV password sign-in form -->
     <string name="tv_signin_form_title">Sign in with a password</string>
-    <string name="tv_signin_form_username">USERNAME</string>
-    <string name="tv_signin_form_password">PASSWORD</string>
+    <string name="tv_signin_form_username_placeholder">Username</string>
+    <string name="tv_signin_form_password_placeholder">Password</string>
     <string name="tv_signin_form_submit">Sign in</string>
     <string name="tv_signin_form_submitting">Signing in…</string>
     <string name="tv_signin_form_create_account">Create Account</string>

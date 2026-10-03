@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionLayout
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
+import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
 import androidx.lifecycle.DEFAULT_ARGS_KEY
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.core.os.bundleOf
@@ -139,6 +141,17 @@ internal fun currentPlayerTargetOrNull(
     }
     return registration.target()
 }
+
+/** First-run routes, drawn transparent over the shared [MarqueeBackdrop]. */
+private val MarqueeRoutes = setOf(
+    Route.ServerSetup.route,
+    Route.ServerSetupPrefilled.ROUTE,
+    Route.Login.route,
+    Route.Setup.route,
+    Route.Signup.route,
+    Route.InviteClaim.ROUTE,
+    Route.ProfileSelection.route,
+)
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -330,6 +343,15 @@ fun AppNavigation(
         LocalHeroSourceHandoff provides heroSourceHandoff,
     ) {
     Box(modifier = Modifier.fillMaxSize()) {
+    // The first-run screens draw over one shared brand-light backdrop that
+    // lives outside the destinations, so it keeps moving while they fade.
+    AnimatedVisibility(
+        visible = currentEntry?.destination?.route in MarqueeRoutes,
+        enter = fadeIn(tween(PageFadeDurationMs)),
+        exit = fadeOut(tween(PageFadeDurationMs)),
+    ) {
+        MarqueeBackdrop()
+    }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -359,6 +381,11 @@ fun AppNavigation(
                         popUpTo(Route.ServerSetup.route) { inclusive = true }
                     }
                 },
+                onNavigateToProfiles = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(Route.ServerSetup.route) { inclusive = true }
+                    }
+                },
             )
         }
         composable(
@@ -374,6 +401,11 @@ fun AppNavigation(
                 },
                 onNavigateToLogin = { _ ->
                     navController.navigate(Route.Login.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
+                    }
+                },
+                onNavigateToProfiles = {
+                    navController.navigate(Route.ProfileSelection.route) {
                         popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
                     }
                 },
@@ -750,6 +782,15 @@ fun AppNavigation(
                 },
                 onNavigateToEditProfile = { profileId ->
                     navController.navigate(Route.EditProfile(profileId).route)
+                },
+                onChangeServer = { navController.navigate(Route.ServerList.route) },
+                onSignOut = {
+                    navScope.launch {
+                        signOutTeardown.signOut()
+                        navController.navigate(Route.Login.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
                 },
             )
         }

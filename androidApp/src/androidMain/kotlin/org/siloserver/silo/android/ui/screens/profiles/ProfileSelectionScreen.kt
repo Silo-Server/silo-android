@@ -1,91 +1,144 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.ManageAccounts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.screens.auth.AuthColors
-import org.siloserver.silo.android.ui.screens.auth.AuthErrorBanner
-import org.siloserver.silo.android.ui.components.aurora.AuroraBackdrop
-import org.siloserver.silo.android.ui.components.aurora.AuroraScrim
-import org.siloserver.silo.android.ui.components.aurora.AuroraVariant
-import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.avatarRef
-import org.siloserver.silo.common.ui.components.isEmojiAvatar
-import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
-import org.siloserver.silo.model.profile.Profile
-import androidx.compose.runtime.remember
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
+import org.siloserver.silo.android.ui.components.marquee.MarqueeButtonKind
+import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorHaptic
+import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorText
+import org.siloserver.silo.android.ui.components.marquee.MarqueeHeadline
+import org.siloserver.silo.android.ui.components.marquee.MarqueeMetrics
+import org.siloserver.silo.android.ui.components.marquee.MarqueeServerChip
+import org.siloserver.silo.android.ui.components.marquee.MarqueeTopBarSpacer
+import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
+import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.ui.marquee.MarqueeColors
+import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
+import org.siloserver.silo.common.ui.marquee.MarqueeScene
+import org.siloserver.silo.common.ui.marquee.MarqueeScrim
+import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
+import org.siloserver.silo.common.ui.marquee.ProfileTilePalette
+import org.siloserver.silo.common.ui.marquee.ServerBrandingLoader
+import org.siloserver.silo.common.ui.marquee.rememberSignInServer
+import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.network.ServerRegistry
+
+private val TopGap = 24.dp
+private val GridGap = 36.dp
+private val FooterGap = 32.dp
+private val BottomGap = 20.dp
 
 /**
- * Grid of profile avatars shown after login.
+ * "Who's watching?" (silo-apple `ProfileSelectionView`): round avatars sized
+ * to the household, centered between the title and small utilities (change
+ * server, sign out, and for admins, manage profiles). Pressing a profile
+ * tints the backdrop with that person's color; a PIN prompt opens full
+ * screen over the same light.
  *
  * @param onNavigateToHome Called after a profile is selected.
- * @param onNavigateToCreateProfile Called when the "Add Profile" card is tapped.
- * @param onNavigateToEditProfile Called when the edit icon is tapped in manage mode.
+ * @param onNavigateToCreateProfile Called when "Add profile" is tapped.
+ * @param onNavigateToEditProfile Called when a profile is tapped in manage mode.
+ * @param onChangeServer "Change server" from the footer or the server chip.
+ * @param onSignOut "Sign out" from the footer.
  */
 @Composable
 fun ProfileSelectionScreen(
     onNavigateToHome: () -> Unit,
     onNavigateToCreateProfile: () -> Unit,
     onNavigateToEditProfile: (profileId: String) -> Unit,
+    onChangeServer: () -> Unit,
+    onSignOut: () -> Unit,
     viewModel: ProfileSelectionViewModel = koinViewModel(),
+    brandingLoader: ServerBrandingLoader = koinInject(),
+    serverRegistry: ServerRegistry = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val activeEntry by serverRegistry.activeEntry.collectAsState()
+    val server = rememberSignInServer(
+        serverUrl = activeEntry?.url.orEmpty(),
+        savedName = activeEntry?.fetchedName,
+        loader = brandingLoader,
+    )
+    var pressedProfileId by remember { mutableStateOf<String?>(null) }
 
     // Reload on resume so a profile created/edited on a pushed screen is
-    // reflected when we return (the VM otherwise only loads in init) — the
-    // TvProfileSelectionScreen pattern.
+    // reflected when we return (the VM otherwise only loads in init).
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -95,6 +148,14 @@ fun ProfileSelectionScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    LaunchedEffect(Unit) { MarqueeScene.focus = MarqueeScene.Focus.Profiles }
+    // The profile under a finger, then the one asking for a PIN, tints the light.
+    val tintedProfileId = state.pinDialogProfile?.id ?: pressedProfileId
+    LaunchedEffect(tintedProfileId) {
+        MarqueeScene.personalTint = tintedProfileId?.let(ProfileTilePalette::tint)
+    }
+    DisposableEffect(Unit) { onDispose { MarqueeScene.personalTint = null } }
+
     // Navigate after a profile is selected.
     LaunchedEffect(state.selectedProfileId) {
         if (state.selectedProfileId != null) {
@@ -102,6 +163,7 @@ fun ProfileSelectionScreen(
             onNavigateToHome()
         }
     }
+    MarqueeErrorHaptic(state.pinErrorCount)
 
     state.deleteDialogProfile?.let { profile ->
         val deletingActive = profile.id == state.activeProfileId
@@ -131,85 +193,186 @@ fun ProfileSelectionScreen(
         )
     }
 
-    // PIN entry dialog
-    state.pinDialogProfile?.let { profile ->
-        PINEntryDialog(
-            profileName = profile.name,
-            profileAvatar = profile.avatarRef(),
-            isLoading = state.pinIsVerifying,
-            error = state.pinError,
-            onPinComplete = viewModel::onPinEntered,
-            onDismiss = viewModel::dismissPinDialog,
-        )
-    }
+    val pinOpen = state.pinDialogProfile != null
+    val pickerAlpha by animateFloatAsState(if (pinOpen || state.openingOnlyProfile) 0f else 1f, label = "pickerAlpha")
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        AuroraBackdrop(variant = AuroraVariant.Profile, scrim = AuroraScrim.Soft)
-        // Vertical scroll on the whole page, mirroring iOS phone's
-        // `ScrollView { LazyVGrid(adaptive(min: 140, max: 180)) }` pattern at
-        // `ProfileSelectionView.swift:119`. The previous implementation
-        // capped the grid at a fixed 220.dp, which scrolled internally as
-        // soon as profiles spilled to a third row. Now the grid is a
-        // non-lazy FlowRow that grows naturally; only the page scrolls if
-        // content exceeds the viewport.
+    Box(Modifier.fillMaxSize()) {
+        MarqueeScrim(MarqueeScrimStyle.Ambient)
         Column(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .statusBarsPadding()
-                .padding(top = 24.dp, bottom = 40.dp),
+                .alpha(pickerAlpha)
+                // Behind the PIN prompt the picker is gone for TalkBack too.
+                .then(if (pinOpen) Modifier.clearAndSetSemantics {} else Modifier)
+                .windowInsetsPadding(WindowInsets.statusBars),
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .padding(start = 24.dp, end = 24.dp, top = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MarqueeWordmark()
+                MarqueeTopBarSpacer()
+                MarqueeServerChip(
+                    name = server.name,
+                    hostLabel = server.hostLabel,
+                    markUrl = server.branding?.markUrl,
+                    actionLabel = "Change server",
+                    onAction = onChangeServer,
+                    enabled = !pinOpen && !state.openingOnlyProfile,
+                )
+            }
+            Picker(
+                state = state,
+                enabled = !pinOpen && !state.openingOnlyProfile,
+                onPressChange = { profile, pressed ->
+                    pressedProfileId = if (pressed) profile.id else pressedProfileId.takeIf { it != profile.id }
+                },
+                onProfileTap = { profile ->
+                    if (state.isManageMode) onNavigateToEditProfile(profile.id) else viewModel.onProfileTapped(profile)
+                },
+                onProfileDelete = viewModel::requestDeleteProfile,
+                onAddProfile = onNavigateToCreateProfile,
+                onChangeServer = onChangeServer,
+                onSignOut = onSignOut,
+                onToggleManage = viewModel::toggleManageMode,
+                modifier = Modifier.weight(1f).windowInsetsPadding(WindowInsets.navigationBars),
+            )
+        }
+
+        AnimatedVisibility(visible = pinOpen, enter = fadeIn(), exit = fadeOut()) {
+            // Keep the last profile while the prompt fades out.
+            var shown by remember { mutableStateOf(state.pinDialogProfile) }
+            state.pinDialogProfile?.let { shown = it }
+            shown?.let { profile ->
+                PINEntryOverlay(
+                    profile = profile,
+                    isVerifying = state.pinIsVerifying,
+                    error = state.pinError,
+                    errorCount = state.pinErrorCount,
+                    onPinComplete = viewModel::onPinEntered,
+                    onDismiss = viewModel::dismissPinDialog,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun Picker(
+    state: ProfileSelectionUiState,
+    enabled: Boolean,
+    onPressChange: (Profile, Boolean) -> Unit,
+    onProfileTap: (Profile) -> Unit,
+    onProfileDelete: (Profile) -> Unit,
+    onAddProfile: () -> Unit,
+    onChangeServer: () -> Unit,
+    onSignOut: () -> Unit,
+    onToggleManage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    var headerHeight by remember { mutableStateOf(0) }
+    var footerHeight by remember { mutableStateOf(0) }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val viewportHeight = maxHeight
+        val tileCount = state.profiles.size + if (state.canManageProfiles) 1 else 0
+        // The room between the title and the footer decides how many avatars
+        // share a row and how large they are. Nothing draws until it's
+        // measured, so tiles never render at a placeholder size and jump.
+        val layout = if (headerHeight > 0 && footerHeight > 0) {
+            with(density) {
+                ProfilePickerLayout.of(
+                    tileCount = tileCount,
+                    width = minOf(maxWidth.value, 440f) - 48f,
+                    height = viewportHeight.value - headerHeight.toDp().value - footerHeight.toDp().value -
+                        (TopGap + GridGap + FooterGap + BottomGap).value,
+                )
+            }
+        } else {
+            null
+        }
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            // Header: title + subtitle, spacing 6 (iOS titleBlock).
-            Text(
-                text = "Who's watching?",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = (-0.5).sp,
-                color = AuthColors.OnBackground,
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Text(
-                text = "Select your profile",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Normal,
-                color = AuthColors.OnSurfaceVariant,
-            )
-
-            state.error?.let { error ->
-                Spacer(modifier = Modifier.height(16.dp))
-                AuthErrorBanner(message = error)
-            }
-
-            if (state.isLoading) {
-                Spacer(modifier = Modifier.height(36.dp))
-                CircularProgressIndicator(color = AuthColors.Primary)
-            } else {
-                // VStack(spacing: 36) between header and tile grid.
-                Spacer(modifier = Modifier.height(36.dp))
-
-                ProfileFlow(
-                    profiles = state.profiles,
-                    canAddProfile = state.canManageProfiles,
-                    isManageMode = state.isManageMode,
-                    onProfileTap = { viewModel.onProfileTapped(it) },
-                    onProfileEdit = { onNavigateToEditProfile(it.id) },
-                    onProfileDelete = { viewModel.requestDeleteProfile(it) },
-                    onAddProfile = onNavigateToCreateProfile,
-                )
-
-                if (state.canManageProfiles) {
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    TextButton(onClick = viewModel::toggleManageMode) {
-                        Text(
-                            text = if (state.isManageMode) "Done" else "Manage Profiles",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = AuthColors.OnBackground,
+            Column(
+                Modifier
+                    .heightIn(min = viewportHeight)
+                    .widthIn(max = 440.dp)
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, bottom = BottomGap),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(TopGap))
+                Column(
+                    Modifier.onSizeChanged { headerHeight = it.height },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    MarqueeHeadline("Who's watching?", centered = true)
+                    // Keeps its height while the account loads so the picker doesn't shift.
+                    Text(
+                        state.accountName?.let { "Signed in as $it" } ?: " ",
+                        color = MarqueeColors.InkSecondary,
+                        fontSize = MarqueeMetrics.LeadFont,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    state.error?.let { MarqueeErrorText(it) }
+                }
+                Spacer(Modifier.height(GridGap))
+                if (state.isLoading && state.profiles.isEmpty()) {
+                    CircularProgressIndicator(color = MarqueeColors.Ink, strokeWidth = 2.dp, modifier = Modifier.size(28.dp))
+                } else {
+                    TileRows(
+                        state = state,
+                        layout = layout,
+                        enabled = enabled,
+                        onPressChange = onPressChange,
+                        onProfileTap = onProfileTap,
+                        onProfileDelete = onProfileDelete,
+                        onAddProfile = onAddProfile,
+                    )
+                }
+                Spacer(Modifier.height(FooterGap))
+                Spacer(Modifier.weight(1f))
+                // Changing server and signing out are utilities, kept small and below the people.
+                Row(
+                    Modifier.onSizeChanged { footerHeight = it.height },
+                    horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+                ) {
+                    MarqueeButton(
+                        text = "Change server",
+                        onClick = onChangeServer,
+                        kind = MarqueeButtonKind.Plain,
+                        fullWidth = false,
+                        compact = true,
+                        icon = Icons.Outlined.Dns,
+                        enabled = enabled,
+                    )
+                    MarqueeButton(
+                        text = "Sign out",
+                        onClick = onSignOut,
+                        kind = MarqueeButtonKind.Plain,
+                        fullWidth = false,
+                        compact = true,
+                        icon = Icons.AutoMirrored.Outlined.Logout,
+                        enabled = enabled,
+                    )
+                    if (state.canManageProfiles) {
+                        MarqueeButton(
+                            text = if (state.isManageMode) "Done" else "Manage",
+                            onClick = onToggleManage,
+                            kind = MarqueeButtonKind.Plain,
+                            fullWidth = false,
+                            compact = true,
+                            icon = if (state.isManageMode) null else Icons.Outlined.ManageAccounts,
+                            enabled = enabled,
                         )
                     }
                 }
@@ -218,278 +381,164 @@ fun ProfileSelectionScreen(
     }
 }
 
-/**
- * Non-lazy wrapping grid of profile tiles + the AddProfile tile. Uses
- * [FlowRow] so the row count grows naturally with the profile count —
- * the parent scroll handles overflow only when content exceeds the
- * viewport, matching iOS phone's `ScrollView { LazyVGrid }` pattern.
- */
-@OptIn(ExperimentalLayoutApi::class)
+private sealed interface PickerItem {
+    data class Person(val profile: Profile) : PickerItem
+    data object Add : PickerItem
+}
+
+/** Rows are centered, so a short last row sits in the middle instead of hanging off the left. */
 @Composable
-private fun ProfileFlow(
-    profiles: List<Profile>,
-    canAddProfile: Boolean,
-    isManageMode: Boolean,
+private fun TileRows(
+    state: ProfileSelectionUiState,
+    layout: ProfilePickerLayout?,
+    enabled: Boolean,
+    onPressChange: (Profile, Boolean) -> Unit,
     onProfileTap: (Profile) -> Unit,
-    onProfileEdit: (Profile) -> Unit,
     onProfileDelete: (Profile) -> Unit,
     onAddProfile: () -> Unit,
 ) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        // iOS adaptive grid: tileSpacing 16, rowSpacing 28.
-        horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(28.dp),
+    val items = state.profiles.map(PickerItem::Person) + if (state.canManageProfiles) listOf(PickerItem.Add) else emptyList()
+    val perRow = layout?.perRow ?: 3
+    Column(
+        Modifier.fillMaxWidth().alpha(if (layout == null) 0f else 1f),
+        verticalArrangement = Arrangement.spacedBy((layout?.rowSpacing ?: 0f).dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        profiles.forEach { profile ->
-            ProfileCard(
-                profile = profile,
-                isManageMode = isManageMode,
-                onTap = { onProfileTap(profile) },
-                onEdit = { onProfileEdit(profile) },
-                onDelete = { onProfileDelete(profile) },
-            )
-        }
-        if (canAddProfile) {
-            AddProfileCard(onClick = onAddProfile)
+        items.chunked(perRow).forEach { row ->
+            // Top-aligned so a "Last used" caption doesn't lift its avatar above the rest.
+            Row(verticalAlignment = Alignment.Top) {
+                row.forEach { item ->
+                    Box(Modifier.width((layout?.columnWidth ?: 0f).dp), contentAlignment = Alignment.TopCenter) {
+                        when (item) {
+                            is PickerItem.Person -> ProfileTile(
+                                profile = item.profile,
+                                size = (layout?.avatarSize ?: 0f).dp,
+                                isLastUsed = item.profile.id == state.activeProfileId,
+                                isManageMode = state.isManageMode,
+                                enabled = enabled,
+                                onPressChange = { onPressChange(item.profile, it) },
+                                onTap = { onProfileTap(item.profile) },
+                                onDelete = { onProfileDelete(item.profile) },
+                            )
+                            PickerItem.Add -> AddProfileTile(size = (layout?.addSize ?: 0f).dp, enabled = enabled, onClick = onAddProfile)
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
-// iOS phone ProfileTile sizing.
-private val TileSize = 140.dp
-private val TileCornerRadius = 18.dp
-private const val TileEmojiSize = 72f
-private const val TileInitialSize = 56f
-private val TileNameSize = 17.sp
+/** Names grow more slowly than avatars so large avatars keep short labels. */
+private fun nameSize(avatar: Float) = 15f * (1f + (avatar / 92f - 1f) * 0.35f)
 
 @Composable
-private fun ProfileCard(
+private fun ProfileTile(
     profile: Profile,
+    size: androidx.compose.ui.unit.Dp,
+    isLastUsed: Boolean,
     isManageMode: Boolean,
+    enabled: Boolean,
+    onPressChange: (Boolean) -> Unit,
     onTap: () -> Unit,
-    onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val tint = ProfileTilePalette.tint(profile.id)
-
-    Box(contentAlignment = Alignment.TopEnd) {
-        // VStack(spacing: 20) tile + name.
-        Column(
-            modifier = Modifier
-                .clickable(onClick = if (isManageMode) onEdit else onTap),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            ProfileTileBody(profile = profile, tint = tint)
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = profile.name,
-                fontSize = TileNameSize,
-                fontWeight = FontWeight.Medium,
-                color = Color.White.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-            )
-        }
-
-        // Manage mode overlays (Android management affordance).
-        if (isManageMode) {
-            IconButton(
-                onClick = onEdit,
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.White),
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Edit,
-                    contentDescription = "Edit profile",
-                    tint = Color.Black,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
-
-            // The server never deletes the primary profile (409
-            // primary_profile_protected), so don't offer it.
-            if (!profile.isPrimary) {
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(AuthColors.Error),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Delete profile",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Square tinted profile tile body matching iOS phone `ProfileTile`:
- * tinted fill, top-edge highlight stroke, avatar (image fills the tile,
- * emoji/initials sit on the tint), and lock/child badges top-right.
- */
-@Composable
-private fun ProfileTileBody(profile: Profile, tint: Color) {
-    val shape = RoundedCornerShape(TileCornerRadius)
-    val avatar = profile.avatarRef()
-    val avatarImage = rememberProfileAvatarImage(avatar)
-
-    Box(
-        modifier = Modifier
-            .size(TileSize)
-            .clip(shape)
-            .background(tint)
-            // Top-edge highlight so the tile reads as a physical surface.
-            .border(
-                width = 1.dp,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.22f),
-                        Color.White.copy(alpha = 0.04f),
-                    ),
-                ),
-                shape = shape,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (avatarImage != null) {
-            ThumbhashImage(
-                url = avatarImage.url,
-                thumbhash = null,
-                contentDescription = "${profile.name} avatar",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(shape),
-                contentScale = ContentScale.Crop,
-                transparent = true,
-                cacheKey = avatarImage.cacheKey,
-                onError = avatarImage.onLoadFailed,
-            )
-        } else if (isEmojiAvatar(avatar)) {
-            Text(
-                text = avatar.avatar.orEmpty().trim(),
-                fontSize = TileEmojiSize.sp,
-            )
-        } else {
-            Text(
-                text = profileAvatarDisplayText(avatar = avatar, name = profile.name),
-                fontSize = TileInitialSize.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color.White.copy(alpha = 0.92f),
-            )
-        }
-
-        // Primary / child / lock badges ride the top-right corner.
-        if (profile.isPrimary || profile.hasPin || profile.isChild) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (profile.isPrimary) {
-                    TileBadge(Icons.Filled.WorkspacePremium, contentDescription = "Primary profile")
-                }
-                if (profile.isChild) {
-                    TileBadge(Icons.Filled.Eco)
-                }
-                if (profile.hasPin) {
-                    TileBadge(Icons.Filled.Lock)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TileBadge(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String? = null,
-) {
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.35f))
-            .padding(8.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White,
-            modifier = Modifier.size(16.dp),
-        )
-    }
-}
-
-@Composable
-private fun AddProfileCard(onClick: () -> Unit) {
-    val shape = RoundedCornerShape(TileCornerRadius)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    LaunchedEffect(pressed) { onPressChange(pressed) }
     Column(
-        modifier = Modifier.clickable(onClick = onClick),
+        Modifier
+            .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onTap)
+            .marqueePressHaptic(interaction)
+            .alpha(if (pressed) 0.8f else 1f)
+            .semantics(mergeDescendants = true) {
+                contentDescription = profile.name
+                // The tile merges its children, so the delete badge is
+                // reached as an action rather than its own node.
+                if (isManageMode && !profile.isPrimary) {
+                    customActions = listOf(CustomAccessibilityAction("Delete ${profile.name}") { onDelete(); true })
+                }
+                stateDescription = listOfNotNull(
+                    "Last used".takeIf { isLastUsed },
+                    "PIN protected".takeIf { profile.hasPin },
+                    "Kids profile".takeIf { profile.isChild },
+                    "Edit".takeIf { isManageMode },
+                ).joinToString(", ")
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box {
+            MarqueeProfileAvatar(profile, size = size, modifier = Modifier.alpha(if (isManageMode) 0.6f else 1f))
+            if (isManageMode) {
+                Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.28f))
+                }
+                // The server never deletes the primary profile (409
+                // primary_profile_protected), so don't offer it.
+                if (!profile.isPrimary) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(MarqueeColors.Error)
+                            .clickable(role = Role.Button, onClick = onDelete)
+                            .semantics { contentDescription = "Delete ${profile.name}" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+        Text(
+            profile.name,
+            color = MarqueeColors.Ink,
+            fontSize = nameSize(size.value).sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 10.dp, start = 4.dp, end = 4.dp),
+        )
+        if (isLastUsed) {
+            Text("Last used", color = MarqueeColors.InkTertiary, fontSize = 12.sp, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+        }
+    }
+}
+
+@Composable
+private fun AddProfileTile(size: androidx.compose.ui.unit.Dp, enabled: Boolean, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        Modifier
+            .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick)
+            .marqueePressHaptic(interaction)
+            .semantics(mergeDescendants = true) { contentDescription = "Add profile" },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            modifier = Modifier
-                .size(TileSize)
-                .clip(shape)
-                .background(Color.White.copy(alpha = 0.06f))
-                .border(width = 2.dp, color = Color.White.copy(alpha = 0.28f), shape = shape),
+            Modifier
+                .size(size)
+                .drawBehind {
+                    val stroke = 2.dp.toPx()
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.25f),
+                        radius = this.size.minDimension / 2f - stroke / 2f,
+                        center = Offset(this.size.width / 2f, this.size.height / 2f),
+                        style = Stroke(width = stroke, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6.dp.toPx(), 5.dp.toPx()))),
+                    )
+                },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = Icons.Filled.Add,
-                contentDescription = "Add profile",
-                tint = Color.White.copy(alpha = 0.6f),
-                modifier = Modifier.size(84.dp),
-            )
+            Icon(Icons.Filled.Add, contentDescription = null, tint = MarqueeColors.InkTertiary, modifier = Modifier.size(size * 0.3f))
         }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
         Text(
-            text = "Add Profile",
-            fontSize = TileNameSize,
-            fontWeight = FontWeight.Medium,
-            color = Color.White.copy(alpha = 0.55f),
-            textAlign = TextAlign.Center,
+            "Add profile",
+            color = MarqueeColors.InkSecondary,
+            fontSize = nameSize(size.value).sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 10.dp),
         )
-    }
-}
-
-/**
- * Warm tile palette mirroring iOS `ProfileTilePalette`. Tint is derived
- * from the profile id via DJB2 so a profile always gets the same color.
- */
-private object ProfileTilePalette {
-    private val colors = listOf(
-        Color(red = 0.850f, green = 0.460f, blue = 0.380f), // coral
-        Color(red = 0.400f, green = 0.560f, blue = 0.720f), // slate blue
-        Color(red = 0.690f, green = 0.540f, blue = 0.400f), // warm tan
-        Color(red = 0.460f, green = 0.620f, blue = 0.520f), // sage
-        Color(red = 0.780f, green = 0.480f, blue = 0.520f), // dusty rose
-        Color(red = 0.560f, green = 0.480f, blue = 0.720f), // lavender
-        Color(red = 0.360f, green = 0.580f, blue = 0.620f), // teal
-        Color(red = 0.780f, green = 0.640f, blue = 0.380f), // amber
-    )
-
-    fun tint(profileId: String): Color {
-        var h = 5381UL
-        for (byte in profileId.encodeToByteArray()) {
-            h = ((h shl 5) + h) + byte.toUByte().toULong()
-        }
-        return colors[(h % colors.size.toULong()).toInt()]
     }
 }

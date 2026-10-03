@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.ui.marquee.SignInHandoff
 
 data class TvProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
@@ -31,6 +32,10 @@ data class TvProfileSelectionUiState(
     // Profile pending delete confirmation (manage mode).
     val deleteCandidate: Profile? = null,
     val isDeleting: Boolean = false,
+    /** The signed-in account's username, shown under the title; null until read. */
+    val accountName: String? = null,
+    /** A one-profile household is being opened straight after sign-in; the picker stays hidden. */
+    val openingOnlyProfile: Boolean = false,
 )
 
 /**
@@ -41,6 +46,7 @@ data class TvProfileSelectionUiState(
 class TvProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository? = null,
+    private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvProfileSelectionUiState())
@@ -51,6 +57,12 @@ class TvProfileSelectionViewModel(
 
     /** Monotonic generation for profile-list loads; see [loadProfiles]. */
     private var loadAttempt: Int = 0
+
+    /**
+     * Read once, on the first load: a sign-in that just finished asked to
+     * skip a one-person picker (see [SignInHandoff]).
+     */
+    private var skipsSingleProfile: Boolean? = null
 
     init {
         loadProfiles()
@@ -95,7 +107,9 @@ class TvProfileSelectionViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             val scope = profileRepository.captureIdentityScope()
-            val isAdmin = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data?.role?.equals("admin", ignoreCase = true) == true
+            val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
+            val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
+            val isAdmin = user?.role?.equals("admin", ignoreCase = true) == true
             val listed = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -121,15 +135,22 @@ class TvProfileSelectionViewModel(
                     // failed reload under a NEW identity left the OLD grid
                     // qualified by the NEW scope.
                     gridScope = scope
+                    // A household with one profile and no PIN doesn't need a
+                    // picker after signing in: open it, once.
+                    val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
+                    skipsSingleProfile = false
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            openingOnlyProfile = only != null,
+                            accountName = user?.username ?: it.accountName,
                             profiles = result.data,
                             canManageProfiles = isAdmin,
                             isManageMode = if (isAdmin) it.isManageMode else false,
                             deleteCandidate = if (isAdmin) it.deleteCandidate else null,
                         )
                     }
+                    if (only != null) onProfileSelected(only)
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
@@ -226,7 +247,7 @@ class TvProfileSelectionViewModel(
                         commitSelection(profile, token, scope)
                         _uiState.update { it.copy(pinProfile = null, isVerifyingPin = false) }
                     } else {
-                        _uiState.update { it.copy(isVerifyingPin = false, pinError = "Incorrect PIN") }
+                        _uiState.update { it.copy(isVerifyingPin = false, pinError = "Wrong PIN. Try again.") }
                     }
                 }
                 is ApiResult.Error -> _uiState.update {
@@ -252,6 +273,7 @@ class TvProfileSelectionViewModel(
     ) {
         viewModelScope.launch {
             val result = profileRepository.selectProfile(profile.id, profileToken, expectedScope)
+            if (result != ProfileCommitResult.Committed) _uiState.update { it.copy(openingOnlyProfile = false) }
             if (result == ProfileCommitResult.ScopeChanged) {
                 // Identity moved under us — don't route into this profile, and
                 // drop the grid with it. A retained grid keeps D-pad focus on

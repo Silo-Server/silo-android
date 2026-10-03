@@ -1,16 +1,12 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -21,35 +17,41 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
 import org.siloserver.silo.model.auth.DeviceCodeFormat
 import org.siloserver.silo.pairing.PairingFailureCode
 import org.siloserver.silo.tv.R
-import org.siloserver.silo.tv.ui.components.AuroraEyebrow
-import org.siloserver.silo.tv.ui.components.AuroraGhostButton
-import org.siloserver.silo.tv.ui.components.AuroraPrimaryButton
-import org.siloserver.silo.tv.ui.components.auroraGlass
+import org.siloserver.silo.common.ui.marquee.MarqueeColors
+import org.siloserver.silo.common.ui.marquee.rememberReduceMotion
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeBody
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCard
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCardSymbol
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeCodeTiles
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeHeadline
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeScreen
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeStatusChip
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import kotlinx.coroutines.delay
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
-import org.siloserver.silo.tv.ui.theme.Spacing
 
 /** Whether the receiver is in a phone session the TV should show in place of its own screen. */
 internal val PairingReceiverStatus.isActivePairing: Boolean
@@ -85,7 +87,8 @@ internal fun ActivePairingPanel(
     val primaryFocus = remember { FocusRequester() }
     var panelHasFocus by remember { mutableStateOf(false) }
     // Every state with a decision puts focus on it; a prompt whose button
-    // never takes focus can't be answered from a remote at all.
+    // never takes focus can't be answered from a remote at all. Waiting
+    // states don't, so a stray Select can't cancel the phone's session.
     val focusKey = when (status) {
         is PairingReceiverStatus.ConsentRequested -> "consent"
         is PairingReceiverStatus.Unreachable -> "unreachable"
@@ -103,188 +106,204 @@ internal fun ActivePairingPanel(
             )
         }
     }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.md),
-        modifier = modifier
-            .onFocusChanged { panelHasFocus = it.hasFocus }
-            .fillMaxWidth(),
-    ) {
-        when (status) {
-            PairingReceiverStatus.Connected -> {
-                AuroraEyebrow(text = stringResource(if (signIn) R.string.tv_pairing_eyebrow_signin else R.string.tv_pairing_eyebrow_connect))
-                PanelTitle(stringResource(R.string.tv_pairing_connected_title))
-                WaitingDots()
-                PanelDetail(
-                    stringResource(
-                        if (signIn) R.string.tv_pairing_connected_detail_signin else R.string.tv_pairing_connected_detail,
-                    ),
-                )
-                AuroraGhostButton(label = stringResource(R.string.tv_pairing_cancel), onClick = onCancel)
-            }
-            is PairingReceiverStatus.ConsentRequested -> {
-                AuroraEyebrow(text = stringResource(if (signIn) R.string.tv_pairing_eyebrow_signin else R.string.tv_pairing_eyebrow_connect))
-                PanelTitle(
-                    stringResource(if (signIn) R.string.tv_pairing_consent_title_signin else R.string.tv_pairing_consent_title),
-                )
-                PanelDetail(stringResource(R.string.tv_pairing_consent_detail, status.serverName))
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                    modifier = Modifier.padding(top = Spacing.sm),
-                ) {
-                    AuroraPrimaryButton(
-                        label = stringResource(R.string.tv_pairing_allow),
-                        onClick = onAllow,
-                        focusRequester = primaryFocus,
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(60.dp),
-                    )
-                    AuroraGhostButton(
-                        label = stringResource(R.string.tv_pairing_dont_allow),
-                        onClick = onDeny,
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(60.dp),
-                    )
-                }
-            }
-            is PairingReceiverStatus.Pairing -> {
-                AuroraEyebrow(text = stringResource(R.string.tv_pairing_eyebrow_almost))
-                PanelTitle(
-                    stringResource(if (signIn) R.string.tv_pairing_starting_title_signin else R.string.tv_pairing_starting_title),
-                )
-                ServerNameLabel(status.serverName, signIn)
-                WaitingDots(compact = true)
-                PanelDetail(stringResource(R.string.tv_pairing_starting_detail))
-                AuroraGhostButton(label = stringResource(R.string.tv_pairing_cancel), onClick = onCancel)
-            }
-            is PairingReceiverStatus.Unreachable -> {
-                AuroraEyebrow(text = stringResource(R.string.tv_pairing_eyebrow_almost))
-                PanelTitle(stringResource(R.string.tv_pairing_unreachable_title, status.serverName))
-                val providerName = status.providerName
-                PanelDetail(
-                    if (providerName != null) {
-                        stringResource(R.string.tv_pairing_unreachable_provider, status.serverName, providerName)
-                    } else {
+    val eyebrow = when (status) {
+        is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed -> R.string.tv_pairing_eyebrow_done
+        is PairingReceiverStatus.Pairing, is PairingReceiverStatus.Unreachable, is PairingReceiverStatus.AwaitingApproval ->
+            R.string.tv_pairing_eyebrow_almost
+        else -> if (signIn) R.string.tv_pairing_eyebrow_signin else R.string.tv_pairing_eyebrow_connect
+    }
+    TvMarqueeScreen(
+        modifier = modifier.onFocusChanged { panelHasFocus = it.hasFocus },
+        copy = {
+            TvMarqueeStatusChip(stringResource(eyebrow), icon = Icons.Outlined.PhoneAndroid, modifier = Modifier.padding(bottom = 18.dp))
+            when (status) {
+                PairingReceiverStatus.Connected -> {
+                    PanelTitle(stringResource(R.string.tv_pairing_connected_title))
+                    PanelDetail(
                         stringResource(
-                            R.string.tv_pairing_unreachable_public,
-                            status.serverName,
-                            DeviceCodeFormat.host(status.serverURL),
-                        )
-                    },
-                )
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-                ) {
-                    val alternate = status.alternateUrl
-                    if (alternate != null) {
-                        AuroraPrimaryButton(
-                            label = stringResource(R.string.tv_pairing_use_alternate, DeviceCodeFormat.host(alternate)),
-                            onClick = onUseAlternate,
+                            if (signIn) R.string.tv_pairing_connected_detail_signin else R.string.tv_pairing_connected_detail,
+                        ),
+                    )
+                    PanelActions { CancelButton(onCancel, primaryFocus) }
+                }
+                is PairingReceiverStatus.ConsentRequested -> {
+                    PanelTitle(
+                        stringResource(if (signIn) R.string.tv_pairing_consent_title_signin else R.string.tv_pairing_consent_title),
+                    )
+                    PanelDetail(stringResource(R.string.tv_pairing_consent_detail, status.serverName))
+                    PanelActions {
+                        TvMarqueeButton(text = stringResource(R.string.tv_pairing_allow), onClick = onAllow, focusRequester = primaryFocus)
+                        TvMarqueeButton(text = stringResource(R.string.tv_pairing_dont_allow), onClick = onDeny, kind = TvMarqueeButtonKind.Plain)
+                    }
+                }
+                is PairingReceiverStatus.Pairing -> {
+                    PanelTitle(
+                        stringResource(if (signIn) R.string.tv_pairing_starting_title_signin else R.string.tv_pairing_starting_title),
+                    )
+                    PanelDetail(stringResource(R.string.tv_pairing_starting_detail))
+                    PanelActions { CancelButton(onCancel, primaryFocus) }
+                }
+                is PairingReceiverStatus.Unreachable -> {
+                    PanelTitle(stringResource(R.string.tv_pairing_unreachable_title, status.serverName))
+                    val providerName = status.providerName
+                    PanelDetail(
+                        if (providerName != null) {
+                            stringResource(R.string.tv_pairing_unreachable_provider, status.serverName, providerName)
+                        } else {
+                            stringResource(
+                                R.string.tv_pairing_unreachable_public,
+                                status.serverName,
+                                DeviceCodeFormat.host(status.serverURL),
+                            )
+                        },
+                    )
+                    PanelActions {
+                        val alternate = status.alternateUrl
+                        if (alternate != null) {
+                            TvMarqueeButton(
+                                text = stringResource(R.string.tv_pairing_use_alternate, DeviceCodeFormat.host(alternate)),
+                                onClick = onUseAlternate,
+                                focusRequester = primaryFocus,
+                            )
+                            TvMarqueeButton(
+                                text = stringResource(R.string.tv_pairing_try_again),
+                                onClick = onRetryAddress,
+                                kind = TvMarqueeButtonKind.Glass,
+                            )
+                        } else {
+                            TvMarqueeButton(
+                                text = stringResource(R.string.tv_pairing_try_again),
+                                onClick = onRetryAddress,
+                                focusRequester = primaryFocus,
+                            )
+                        }
+                        CancelButton(onCancel)
+                    }
+                }
+                is PairingReceiverStatus.AwaitingApproval -> {
+                    PanelTitle(
+                        stringResource(
+                            if (status.automatic) R.string.tv_pairing_confirm_title_automatic else R.string.tv_pairing_confirm_title,
+                        ),
+                    )
+                    PanelDetail(
+                        stringResource(
+                            if (status.automatic) R.string.tv_pairing_confirm_detail_automatic else R.string.tv_pairing_confirm_detail,
+                        ),
+                    )
+                    PanelActions { CancelButton(onCancel, primaryFocus) }
+                }
+                is PairingReceiverStatus.SignedIn -> {
+                    PanelTitle(
+                        if (status.serverCount <= 1) {
+                            stringResource(R.string.tv_pairing_signed_in)
+                        } else {
+                            stringResource(R.string.tv_pairing_signed_in_count, status.serverCount)
+                        },
+                    )
+                    PanelDetail(stringResource(R.string.tv_pairing_finishing))
+                }
+                is PairingReceiverStatus.Completed -> {
+                    PanelTitle(stringResource(R.string.tv_pairing_completed_title))
+                    PanelDetail(
+                        if (status.serverNames.isEmpty()) {
+                            stringResource(R.string.tv_pairing_completed_none)
+                        } else {
+                            stringResource(R.string.tv_pairing_completed_named, status.serverNames.joinToString(", "))
+                        },
+                    )
+                    PanelActions {
+                        TvMarqueeButton(
+                            text = stringResource(R.string.tv_pairing_continue),
+                            icon = Icons.AutoMirrored.Filled.ArrowForward,
+                            onClick = onContinue,
                             focusRequester = primaryFocus,
-                            modifier = Modifier.width(320.dp),
-                        )
-                        AuroraGhostButton(
-                            label = stringResource(R.string.tv_pairing_try_again),
-                            onClick = onRetryAddress,
-                            modifier = Modifier.width(320.dp),
-                        )
-                    } else {
-                        AuroraPrimaryButton(
-                            label = stringResource(R.string.tv_pairing_try_again),
-                            onClick = onRetryAddress,
-                            focusRequester = primaryFocus,
-                            modifier = Modifier.width(320.dp),
                         )
                     }
-                    AuroraGhostButton(
-                        label = stringResource(R.string.tv_pairing_cancel),
-                        onClick = onCancel,
-                        modifier = Modifier.width(320.dp),
-                    )
                 }
-            }
-            is PairingReceiverStatus.AwaitingApproval -> {
-                AuroraEyebrow(text = stringResource(R.string.tv_pairing_eyebrow_almost))
-                PanelTitle(
-                    stringResource(
-                        if (status.automatic) R.string.tv_pairing_confirm_title_automatic else R.string.tv_pairing_confirm_title,
-                    ),
-                )
-                SignInCodeCard(userCode = status.userCode)
-                olderPhonesMatchWords(status)?.let { words ->
+                is PairingReceiverStatus.Failed -> {
+                    PanelTitle(
+                        stringResource(if (signIn) R.string.tv_pairing_failed_title_signin else R.string.tv_pairing_failed_title),
+                    )
                     Text(
-                        text = stringResource(R.string.tv_pairing_confirm_older_phones, words),
-                        style = TvPairingTextStyles.Caption,
-                        color = Color.White.copy(alpha = 0.48f),
-                        textAlign = TextAlign.Center,
+                        text = stringResource(status.code.messageRes(), status.serverName),
+                        color = MarqueeColors.Error,
+                        fontSize = 14.sp,
+                        lineHeight = 19.sp,
+                        modifier = Modifier.padding(top = 13.dp),
                     )
+                    PanelActions {
+                        TvMarqueeButton(
+                            text = stringResource(R.string.tv_pairing_try_again),
+                            onClick = onCancel,
+                            focusRequester = primaryFocus,
+                        )
+                    }
                 }
-                ServerNameLabel(status.serverName, signIn)
-                WaitingDots(compact = true)
-                PanelDetail(
-                    stringResource(
-                        if (status.automatic) R.string.tv_pairing_confirm_detail_automatic else R.string.tv_pairing_confirm_detail,
-                    ),
-                )
-                AuroraGhostButton(label = stringResource(R.string.tv_pairing_cancel), onClick = onCancel)
+                else -> Unit
             }
-            is PairingReceiverStatus.SignedIn -> {
-                AuroraEyebrow(text = stringResource(R.string.tv_pairing_eyebrow_done))
-                SuccessMark()
-                PanelTitle(
-                    if (status.serverCount <= 1) {
-                        stringResource(R.string.tv_pairing_signed_in)
-                    } else {
-                        stringResource(R.string.tv_pairing_signed_in_count, status.serverCount)
-                    },
-                )
-                WaitingDots(compact = true)
-                PanelDetail(stringResource(R.string.tv_pairing_finishing))
+        },
+        card = {
+            TvMarqueeCard {
+                when (status) {
+                    is PairingReceiverStatus.AwaitingApproval -> {
+                        if (status.userCode.isNotBlank()) {
+                            Text(
+                                stringResource(R.string.tv_signin_code_label),
+                                color = MarqueeColors.InkTertiary,
+                                fontSize = 14.sp,
+                            )
+                            TvMarqueeCodeTiles(DeviceCodeFormat.display(status.userCode), Modifier.padding(top = 11.dp))
+                        }
+                        olderPhonesMatchWords(status)?.let { words ->
+                            Text(
+                                text = stringResource(R.string.tv_pairing_confirm_older_phones, words),
+                                color = MarqueeColors.InkTertiary,
+                                fontSize = 14.sp,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(top = 11.dp),
+                            )
+                        }
+                        ServerNameLabel(status.serverName, signIn)
+                        WaitingDots(Modifier.padding(top = 15.dp))
+                    }
+                    is PairingReceiverStatus.Pairing -> {
+                        ServerNameLabel(status.serverName, signIn)
+                        WaitingDots(Modifier.padding(top = 15.dp))
+                    }
+                    is PairingReceiverStatus.SignedIn, is PairingReceiverStatus.Completed ->
+                        TvMarqueeCardSymbol(Icons.Filled.Check, tint = MarqueeColors.Live, size = 70.dp)
+                    is PairingReceiverStatus.Failed, is PairingReceiverStatus.Unreachable ->
+                        TvMarqueeCardSymbol(Icons.Outlined.ErrorOutline, tint = MarqueeColors.Warning, size = 70.dp)
+                    else -> {
+                        TvMarqueeCardSymbol(Icons.Outlined.PhoneAndroid, size = 70.dp)
+                        WaitingDots(Modifier.padding(top = 17.dp))
+                    }
+                }
             }
-            is PairingReceiverStatus.Completed -> {
-                AuroraEyebrow(text = stringResource(R.string.tv_pairing_eyebrow_done))
-                SuccessMark()
-                PanelTitle(stringResource(R.string.tv_pairing_completed_title))
-                PanelDetail(
-                    if (status.serverNames.isEmpty()) {
-                        stringResource(R.string.tv_pairing_completed_none)
-                    } else {
-                        stringResource(R.string.tv_pairing_completed_named, status.serverNames.joinToString(", "))
-                    },
-                )
-                AuroraPrimaryButton(
-                    label = stringResource(R.string.tv_pairing_continue),
-                    icon = Icons.AutoMirrored.Filled.ArrowForward,
-                    onClick = onContinue,
-                    focusRequester = primaryFocus,
-                    modifier = Modifier.width(320.dp),
-                )
-            }
-            is PairingReceiverStatus.Failed -> {
-                AuroraEyebrow(text = stringResource(if (signIn) R.string.tv_pairing_eyebrow_signin else R.string.tv_pairing_eyebrow_connect))
-                PanelTitle(
-                    stringResource(if (signIn) R.string.tv_pairing_failed_title_signin else R.string.tv_pairing_failed_title),
-                )
-                Text(
-                    text = stringResource(status.code.messageRes(), status.serverName),
-                    style = TvPairingTextStyles.Detail,
-                    color = MaterialTheme.colorScheme.error,
-                    textAlign = TextAlign.Center,
-                )
-                AuroraPrimaryButton(
-                    label = stringResource(R.string.tv_pairing_try_again),
-                    onClick = onCancel,
-                    focusRequester = primaryFocus,
-                    modifier = Modifier.width(320.dp),
-                )
-            }
-            else -> Unit
-        }
-    }
+        },
+    )
+}
+
+@Composable
+private fun PanelActions(content: @Composable RowScope.() -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(11.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun CancelButton(onCancel: () -> Unit, focusRequester: FocusRequester? = null) {
+    TvMarqueeButton(
+        text = stringResource(R.string.tv_pairing_cancel),
+        onClick = onCancel,
+        kind = TvMarqueeButtonKind.Glass,
+        focusRequester = focusRequester,
+    )
 }
 
 /**
@@ -304,117 +323,56 @@ private fun PairingFailureCode.messageRes(): Int = when (this) {
     PairingFailureCode.AuthFailed -> R.string.tv_pairing_failed_generic
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun PanelTitle(text: String) {
-    Text(
-        text = text,
-        style = TvPairingTextStyles.Title,
-        color = Color.White,
-        textAlign = TextAlign.Center,
-        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-    )
+    TvMarqueeHeadline(text, Modifier.semantics { liveRegion = LiveRegionMode.Polite })
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun PanelDetail(text: String) {
+    TvMarqueeBody(text, size = 16.sp, modifier = Modifier.padding(top = 13.dp))
+}
+
+@Composable
+private fun ServerNameLabel(serverName: String, signIn: Boolean) {
     Text(
-        text = text,
-        style = TvPairingTextStyles.Detail,
-        color = Color.White.copy(alpha = 0.72f),
+        text = stringResource(if (signIn) R.string.tv_pairing_server_label_signin else R.string.tv_pairing_server_label),
+        color = MarqueeColors.InkTertiary,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.5.sp,
+        modifier = Modifier.padding(top = 17.dp),
+    )
+    Text(
+        text = serverName,
+        color = MarqueeColors.Ink,
+        fontSize = 18.sp,
+        fontWeight = FontWeight.Bold,
         textAlign = TextAlign.Center,
+        modifier = Modifier.padding(top = 4.dp),
     )
 }
 
-/**
- * The TV's sign-in code, grouped 4+4, the same code the phone asks the person
- * to check. Read to TalkBack character by character.
- */
-@OptIn(ExperimentalTvMaterial3Api::class)
+/** Pulsing dots while something happens on the phone. */
 @Composable
-private fun SignInCodeCard(userCode: String) {
-    if (userCode.isBlank()) return
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-        modifier = Modifier
-            .fillMaxWidth()
-            .auroraGlass(12.dp)
-            .padding(horizontal = Spacing.md, vertical = Spacing.md),
-    ) {
-        SignInCodeText(
-            code = DeviceCodeFormat.display(userCode),
-            spokenCode = DeviceCodeFormat.spoken(userCode),
-            label = stringResource(R.string.tv_signin_code_label),
-            style = TvSignInCodeStyle,
-        )
+private fun WaitingDots(modifier: Modifier = Modifier, count: Int = 5) {
+    val reduceMotion = rememberReduceMotion()
+    var phase by remember { mutableStateOf(if (reduceMotion) count / 2 else 0) }
+    if (!reduceMotion) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(280)
+                phase = (phase + 1) % (count + 1)
+            }
+        }
     }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun ServerNameLabel(serverName: String, signIn: Boolean) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-    ) {
-        Text(
-            text = stringResource(if (signIn) R.string.tv_pairing_server_label_signin else R.string.tv_pairing_server_label),
-            style = TvPairingTextStyles.Label,
-            color = Color.White.copy(alpha = 0.48f),
-        )
-        Text(
-            text = serverName,
-            style = TvPairingTextStyles.Headline,
-            color = Color.White,
-        )
-    }
-}
-
-@Composable
-private fun WaitingDots(compact: Boolean = false) {
-    val dotSize = if (compact) 8.dp else 12.dp
-    Row(horizontalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
-        repeat(3) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(count) { index ->
             Box(
-                modifier = Modifier
-                    .size(dotSize)
-                    .background(Color.White.copy(alpha = 0.82f), RoundedCornerShape(999.dp)),
+                Modifier
+                    .size(6.dp)
+                    .background(MarqueeColors.Ink.copy(alpha = if (index <= phase) 0.9f else 0.22f), RoundedCornerShape(999.dp)),
             )
         }
     }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun SuccessMark() {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .size(74.dp)
-            .background(Color(0xFF22C55E).copy(alpha = 0.18f), RoundedCornerShape(999.dp))
-            .border(2.dp, Color(0xFF22C55E).copy(alpha = 0.68f), RoundedCornerShape(999.dp)),
-    ) {
-        Text(
-            text = "✓",
-            style = TvPairingTextStyles.SuccessMark,
-            color = Color(0xFF86EFAC),
-        )
-    }
-}
-
-private object TvPairingTextStyles {
-    val Title = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 24.sp, lineHeight = 30.sp)
-    val Detail = TextStyle(fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 22.sp)
-    val Caption = TextStyle(fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 20.sp)
-    val Headline = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 26.sp)
-    val Label = TextStyle(
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 16.sp,
-        lineHeight = 20.sp,
-        letterSpacing = 2.sp,
-    )
-    val SuccessMark = TextStyle(fontWeight = FontWeight.Bold, fontSize = 38.sp, lineHeight = 38.sp)
 }
