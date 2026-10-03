@@ -489,8 +489,9 @@ class TvItemDetailViewModel(
         personId?.trim()?.toLongOrNull()?.let(onOpenPerson) ?: viewModelScope.launch {
             when (val result = catalogRepository.searchPeople(name)) {
                 is ApiResult.Success -> {
+                    // Only an exact name match identifies the person. Opening the
+                    // first search result could land on someone unrelated.
                     val resolved = result.data.firstOrNull { it.name.equals(name, ignoreCase = true) }
-                        ?: result.data.firstOrNull()
                     resolved?.id?.takeIf { it > 0L }?.let(onOpenPerson)
                 }
                 is ApiResult.Error,

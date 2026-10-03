@@ -119,6 +119,9 @@ fun TvCastCrewSection(
     // the LazyRow interval on every focus move. Movie and series credits are
     // already capped well below this; it bounds plain episode cast rows.
     val visibleCast = remember(credits) { credits.take(24) }
+    // A divider widens the first card of its group, so a rail with dividers
+    // can't extrapolate offscreen card positions from a neighbour.
+    val uniformItems = remember(visibleCast) { visibleCast.none { it.dividerLabel != null } }
     val rememberedEntryIndex = restoredRailIndex(lastFocusedIndex, visibleCast.size)
 
     Column(
@@ -201,7 +204,12 @@ fun TvCastCrewSection(
                                 Modifier
                             },
                         )
-                        .tvRailPinOnFocus(castListState, index, horizontalContentPadding)
+                        .tvRailPinOnFocus(
+                            castListState,
+                            index,
+                            horizontalContentPadding,
+                            uniformItems = uniformItems,
+                        )
                         .onFocusChanged { state ->
                             if (state.isFocused) {
                                 lastFocusedIndex = index

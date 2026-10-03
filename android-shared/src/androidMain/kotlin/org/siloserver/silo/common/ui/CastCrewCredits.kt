@@ -54,11 +54,13 @@ fun castCrewCredits(
     crew: List<CrewMember>,
     isSeries: Boolean,
 ): List<CastCrewCredit> {
-    val leads = crew
+    val directors = crew
         .filter { it.hasJob("Director") }
         .distinctCrew()
-        .take(CAST_CREW_MAX_LEADS)
-    val leadKeys = leads.mapTo(HashSet()) { it.creditKey() }
+    // Exclude every director from the writers, not just the ones shown, so a
+    // writer-director past the lead cap doesn't reappear as a writer.
+    val leadKeys = directors.mapTo(HashSet()) { it.creditKey() }
+    val leads = directors.take(CAST_CREW_MAX_LEADS)
     val writers = crew
         .filter { it.hasJob("Writer") || it.hasJob("Screenplay") }
         .distinctCrew()

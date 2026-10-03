@@ -102,6 +102,24 @@ class CastCrewCreditsTest {
     }
 
     @Test
+    fun directorPastTheLeadCapIsNotShownAsAWriter() {
+        val credits = castCrewCredits(
+            cast = emptyList(),
+            crew = listOf(
+                CrewMember(name = "Director A", job = "Director", personId = "1"),
+                CrewMember(name = "Director B", job = "Director", personId = "2"),
+                CrewMember(name = "Director C", job = "Director", personId = "3"),
+                CrewMember(name = "Director C", job = "Writer", personId = "3"),
+                CrewMember(name = "Writer", job = "Writer", personId = "4"),
+            ),
+            isSeries = false,
+        )
+
+        assertEquals(listOf("Director A", "Director B"), credits.namesIn(CastCrewGroup.Lead))
+        assertEquals(listOf("Writer"), credits.namesIn(CastCrewGroup.Writers))
+    }
+
+    @Test
     fun seriesCaptionsDirectorCreditsAsCreator() {
         val detail = ItemDetail(
             contentId = "series-1",
