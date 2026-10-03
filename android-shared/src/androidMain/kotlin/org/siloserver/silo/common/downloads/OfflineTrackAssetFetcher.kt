@@ -30,6 +30,7 @@ import org.siloserver.silo.model.download.isOfflineArtworkFetchUrl
 import org.siloserver.silo.model.download.isOfflineSubtitleFetchUrl
 import org.siloserver.silo.model.download.offlineSubtitleExtension
 import org.siloserver.silo.model.download.offlineSubtitleFormat
+import org.siloserver.silo.model.download.subtitlesWithNewRevision
 import org.siloserver.silo.model.download.toOfflineTrackInfo
 import org.siloserver.silo.playback.orNullIfBlank
 import java.io.File
@@ -94,8 +95,9 @@ internal class OfflineTrackAssetFetcher(
     private suspend fun fetchManifestBody(
         downloadId: String,
         configure: HttpRequestBuilder.() -> Unit,
+        attempts: Int = MANIFEST_ATTEMPTS,
     ): String? {
-        repeat(MANIFEST_ATTEMPTS) { attempt ->
+        repeat(attempts) { attempt ->
             if (attempt > 0) delay(manifestRetryDelayMs * attempt)
             try {
                 val response = httpClient.get("/api/v2/downloads/${downloadId.encodeURLPathPart()}/manifest") {
@@ -219,10 +221,76 @@ internal class OfflineTrackAssetFetcher(
             return null
         }
         val target = File(directory, "$ordinal.${offlineSubtitleExtension(format)}")
-        val partial = File(directory, "$ordinal.part")
         return try {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("could not create $directory")
-            httpClient.prepareGet(subtitle.fetchUrl.trim()) {
+            downloadSubtitle(subtitle.fetchUrl.trim(), target, configure)
+            OfflineSubtitleFile(
+                path = target.absolutePath,
+                format = format,
+                language = subtitle.language.orNullIfBlank(),
+                title = subtitle.title.orNullIfBlank(),
+                forced = subtitle.forced,
+                hearingImpaired = subtitle.hearingImpaired,
+                fetchUrl = subtitle.fetchUrl.trim(),
+                revision = subtitle.revision,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "subtitle fetch failed id=$downloadId ordinal=$ordinal format=$format", e)
+            target.delete()
+            null
+        }
+    }
+
+    /**
+     * Re-fetches the saved sidecars whose stored subtitle the server has
+     * retimed since they were saved (its manifest `revision` changed), each
+     * replacing its file in place. Returns the track data with the new
+     * revisions, or null when nothing changed or the manifest is unavailable.
+     * A sidecar that fails to fetch keeps its old file and revision, so the
+     * next refresh tries it again.
+     */
+    suspend fun refreshSubtitles(
+        downloadId: String,
+        tracks: OfflineTrackInfo,
+        configure: HttpRequestBuilder.() -> Unit,
+    ): OfflineTrackInfo? {
+        if (tracks.subtitles.none { it.fetchUrl != null }) return null
+        val manifest = fetchManifestBody(downloadId, configure, attempts = 1)
+            ?.let(::decodeOfflineManifestTracks)
+            ?: return null
+        val refreshed = tracks.subtitlesWithNewRevision(manifest).mapNotNull { (saved, revision) ->
+            val url = saved.fetchUrl ?: return@mapNotNull null
+            if (!isOfflineSubtitleFetchUrl(url)) return@mapNotNull null
+            try {
+                downloadSubtitle(url, File(saved.path), configure)
+                Log.i(TAG, "subtitle refreshed id=$downloadId revision=$revision")
+                saved.path to revision
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "subtitle refresh failed id=$downloadId", e)
+                null
+            }
+        }.toMap()
+        if (refreshed.isEmpty()) return null
+        return tracks.copy(
+            subtitles = tracks.subtitles.map { saved ->
+                refreshed[saved.path]?.let { saved.copy(revision = it) } ?: saved
+            },
+        )
+    }
+
+    /** Streams [url] into [target] through a sibling partial file, replacing it only once complete. */
+    private suspend fun downloadSubtitle(
+        url: String,
+        target: File,
+        configure: HttpRequestBuilder.() -> Unit,
+    ) {
+        val partial = File(target.parentFile, "${target.nameWithoutExtension}.part")
+        try {
+            httpClient.prepareGet(url) {
                 configure()
                 // Embedded ASS/PGS sidecars are extracted from the source on
                 // demand, so the first byte can take a while; keep only an idle
@@ -239,22 +307,8 @@ internal class OfflineTrackAssetFetcher(
                 if (written == 0L) throw IOException("empty subtitle")
             }
             if (!partial.renameTo(target)) throw IOException("could not publish $target")
-            OfflineSubtitleFile(
-                path = target.absolutePath,
-                format = format,
-                language = subtitle.language.orNullIfBlank(),
-                title = subtitle.title.orNullIfBlank(),
-                forced = subtitle.forced,
-                hearingImpaired = subtitle.hearingImpaired,
-            )
-        } catch (e: CancellationException) {
+        } finally {
             partial.delete()
-            throw e
-        } catch (e: Exception) {
-            Log.w(TAG, "subtitle fetch failed id=$downloadId ordinal=$ordinal format=$format", e)
-            partial.delete()
-            target.delete()
-            null
         }
     }
 
