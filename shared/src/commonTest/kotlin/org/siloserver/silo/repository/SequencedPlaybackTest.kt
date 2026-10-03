@@ -555,6 +555,33 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
+    @Test fun remotePlaybackIdentityEndingDuringAProgressRetryIsAnIdentityChange() = runTest {
+        val identity = remotePlaybackIdentity()
+        var progressCalls = 0
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> reply(adoptedDecision, HttpStatusCode.Created)
+            "/api/v2/playback/session-1/progress" -> {
+                progressCalls++
+                // The first sample's reply is lost, so the next call retries it first.
+                if (progressCalls == 1) throw IllegalStateException("lost reply")
+                // The TV restores its own login while the retry is in flight.
+                identity.temporary = false
+                identity.scope = identity.scope.copy(credentialGenerationId = null, identityGeneration = 2)
+                reply("""{"outcome":"applied","accepted":{"sequence":1,"position":12.0,"is_paused":false}}""")
+            }
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            assertIs<ApiResult.NetworkError>(runtime.progress("session-1", 12.0, false))
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.progress("session-1", 13.0, false)).error)
+            assertEquals(2, progressCalls)
+        } finally { c.close() }
+    }
+
     @Test fun endedRemotePlaybackIdentityCannotActForItsAttempt() = runTest {
         val identity = remotePlaybackIdentity()
         val store = Store()

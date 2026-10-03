@@ -419,7 +419,8 @@ class SequencedPlayback(
         if (entry.progress != null) {
             val retry = sendProgress(entry, captured)
             if (retry !is ApiResult.Success) return@withLock retry
-            entry = load().first { it.attemptId == entry.attemptId }
+            // Gone when the retry's save() pruned it: its temporary identity ended in flight.
+            entry = load().find { it.attemptId == entry.attemptId } ?: return@withLock authorityChanged()
         }
         if (entry.sequence == Long.MAX_VALUE) return@withLock failure("sequence_exhausted", "Playback sample sequence exhausted.")
         val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused)
