@@ -1,17 +1,32 @@
 package org.siloserver.silo.tv.ui.screens.auth
 
 import android.app.Application
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertAll
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.isEnabled
+import androidx.compose.ui.test.isNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.pressKey
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondBadRequest
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Rule
 import org.junit.Test
@@ -24,6 +39,7 @@ import org.siloserver.silo.common.pairing.PairingDeviceIdentity
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.TvPairingAdvertiser
 import org.siloserver.silo.model.auth.DeviceLoginCapabilityResponse
+import org.siloserver.silo.model.auth.LoginResponse
 import org.siloserver.silo.model.auth.NetworkIdentity
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInProvider
@@ -85,6 +101,32 @@ class TvLoginScreenNetworkSignInTest {
         composeRule.onNodeWithText(CONTINUE_AS).assertIsFocused()
     }
 
+    /**
+     * While "Continue as …" waits, the password form takes nothing either: its
+     * fields and Sign in are disabled, focus stays on the waiting button, and
+     * the D-pad steps past the disabled controls to the secondary actions.
+     */
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun continueAsInProgressDisablesThePasswordForm() {
+        show(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        composeRule.onAllNodes(TEXT_FIELD).assertCountEquals(2).assertAll(isEnabled())
+        composeRule.onNodeWithText(SIGN_IN).assertIsEnabled()
+
+        composeRule.onNodeWithText(CONTINUE_AS).performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(SIGNING_IN).assertIsFocused()
+        composeRule.onAllNodes(TEXT_FIELD).assertCountEquals(2).assertAll(isNotEnabled())
+        composeRule.onNodeWithText(SIGN_IN).assertIsNotEnabled()
+
+        composeRule.onNodeWithText(SIGNING_IN).performKeyInput { pressKey(Key.DirectionDown) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(CHANGE_SERVER).assertIsFocused()
+        composeRule.onNodeWithText(CHANGE_SERVER).performKeyInput { pressKey(Key.DirectionUp) }
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText(SIGNING_IN).assertIsFocused()
+    }
+
     private fun show(providers: SignInProviders, deviceCheck: CompletableDeferred<Unit> = CompletableDeferred(Unit)) {
         // D-pad, not touch: the screen claims focus only for remote users.
         InstrumentationRegistry.getInstrumentation().setInTouchMode(false)
@@ -132,7 +174,9 @@ class TvLoginScreenNetworkSignInTest {
         override suspend fun oauthCapabilities(serverUrl: String) = ApiResult.Success(OAuthHandshakeCapabilities.None)
         override suspend fun externalSignInCapabilities(scope: AuthScopeSnapshot) = error("unused")
         override suspend fun completeOAuthLogin(serverUrl: String, code: String, codeVerifier: String) = error("unused")
-        override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String) = error("unused")
+        // Waits like a server that hasn't answered yet.
+        override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> =
+            awaitCancellation()
         override suspend fun listIdentities(scope: AuthScopeSnapshot) = error("unused")
         override suspend fun deleteIdentity(scope: AuthScopeSnapshot, identityId: String) = error("unused")
         override suspend fun createLinkTicket(scope: AuthScopeSnapshot, installationId: String, password: String) = error("unused")
@@ -166,6 +210,10 @@ class TvLoginScreenNetworkSignInTest {
 
     private companion object {
         const val CONTINUE_AS = "Continue as Alice Example"
+        const val SIGNING_IN = "Signing in…"
+        const val SIGN_IN = "Sign in"
+        const val CHANGE_SERVER = "Change server"
+        val TEXT_FIELD = SemanticsMatcher.keyIsDefined(SemanticsProperties.EditableText)
         val SERVER = ServerEntry(id = "entry-1", url = "https://silo.test", fetchedName = "Silo")
         val LOCAL = SignInProvider("local", "Silo account", SignInProvider.Mode.Credentials, true, null, null, null)
         val TAILSCALE = SignInProvider(

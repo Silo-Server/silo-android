@@ -849,7 +849,18 @@ private fun CredentialFormCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (network != null) NetworkSignInButton(action = network, below = usernameFocus)
+        val firstSecondary = when {
+            signupEnabled -> createAccountFocus
+            !passwordOnly -> backToPhoneFocus
+            else -> changeServerFocus
+        }
+        // While either sign-in waits, the fields and Sign in are disabled and
+        // can't take focus: "Continue as …" (which keeps focus while it waits)
+        // and the secondary actions reach each other directly.
+        val aboveSecondary = if (state.signingIn && network != null) network.focusRequester else signInFocus
+        if (network != null) {
+            NetworkSignInButton(action = network, below = if (state.signingIn) firstSecondary else usernameFocus)
+        }
 
         Column(
             verticalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -869,7 +880,7 @@ private fun CredentialFormCard(
                     imeAction = ImeAction.Next,
                     showKeyboardOnFocus = false,
                 ),
-                enabled = !state.isLoading,
+                enabled = !state.signingIn,
                 textStyle = TvLoginTextStyles.Field,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -904,7 +915,7 @@ private fun CredentialFormCard(
                 trailingIcon = {
                     IconButton(
                         onClick = { passwordVisible = !passwordVisible },
-                        enabled = !state.isLoading,
+                        enabled = !state.signingIn,
                     ) {
                         Icon(
                             imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -921,12 +932,12 @@ private fun CredentialFormCard(
                 ),
                 keyboardActions = KeyboardActions(
                     onDone = {
-                        if (canSubmitTvCredentialLogin(state.username, state.password, state.isLoading)) {
+                        if (canSubmitTvCredentialLogin(state.username, state.password, state.signingIn)) {
                             onLoginClick()
                         }
                     },
                 ),
-                enabled = !state.isLoading,
+                enabled = !state.signingIn,
                 textStyle = TvLoginTextStyles.Field,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -957,11 +968,6 @@ private fun CredentialFormCard(
             )
         }
 
-        val firstSecondary = when {
-            signupEnabled -> createAccountFocus
-            !passwordOnly -> backToPhoneFocus
-            else -> changeServerFocus
-        }
         AuroraPrimaryButton(
             label = stringResource(if (state.isLoading) R.string.tv_signin_form_submitting else R.string.tv_signin_form_submit),
             icon = Icons.AutoMirrored.Filled.Login,
@@ -970,7 +976,7 @@ private fun CredentialFormCard(
             focusHalo = false,
             filledAtRest = false,
             neutralFocusFill = true,
-            enabled = !state.isLoading,
+            enabled = !state.signingIn,
             modifier = Modifier
                 // Explicit chain: the label Texts are not focusable, so there
                 // is no default search to fall back on.
@@ -995,7 +1001,7 @@ private fun CredentialFormCard(
                     modifier = Modifier
                         .focusRequester(createAccountFocus)
                         .focusProperties {
-                            up = signInFocus
+                            up = aboveSecondary
                             right = if (passwordOnly) changeServerFocus else backToPhoneFocus
                         }
                         .weight(1f),
@@ -1012,7 +1018,7 @@ private fun CredentialFormCard(
                     modifier = Modifier
                         .focusRequester(backToPhoneFocus)
                         .focusProperties {
-                            up = signInFocus
+                            up = aboveSecondary
                             if (signupEnabled) left = createAccountFocus
                             right = changeServerFocus
                         }
@@ -1028,7 +1034,7 @@ private fun CredentialFormCard(
                 modifier = Modifier
                     .focusRequester(changeServerFocus)
                     .focusProperties {
-                        up = signInFocus
+                        up = aboveSecondary
                         left = when {
                             !passwordOnly -> backToPhoneFocus
                             signupEnabled -> createAccountFocus

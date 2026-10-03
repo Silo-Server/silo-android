@@ -176,6 +176,13 @@ data class TvLoginUiState(
      * other place the refusal could show.
      */
     val passwordTurnedOff: Boolean get() = error == TvLoginError.LocalLoginDisabled && !passwordAvailable
+
+    /**
+     * A password or "Continue as …" sign-in is waiting for the server. Neither
+     * button takes another press until it answers, so the password form's
+     * fields and Sign in are disabled with it.
+     */
+    val signingIn: Boolean get() = isLoading || networkBusy
 }
 
 /** What the device-code panel shows. */
@@ -317,7 +324,7 @@ class TvLoginViewModel(
     fun onPasswordChanged(v: String) = _uiState.update { it.copy(password = v, error = null) }
 
     fun onLoginClick() {
-        if (_uiState.value.isLoading || _uiState.value.networkBusy) return
+        if (_uiState.value.signingIn) return
         val s = _uiState.value
         if (s.username.isBlank()) {
             _uiState.update { it.copy(error = TvLoginError.UsernameRequired) }
@@ -342,7 +349,7 @@ class TvLoginViewModel(
         val s = _uiState.value
         val discovery = externalSignIn ?: return
         val path = s.networkProvider?.networkSignInPath ?: return
-        if (s.isLoading || s.networkBusy) return
+        if (s.signingIn) return
         _uiState.update { it.copy(networkBusy = true, networkError = null) }
         signInWithTokens(TokenSignIn.Network) { expected ->
             authRepository.tokensFor(expected) { serverUrl -> discovery.signInWithNetworkIdentity(serverUrl, path) }
