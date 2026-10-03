@@ -311,6 +311,9 @@ private fun AddressEntry(
                     imeAction = ImeAction.Go,
                     onImeAction = connect,
                     isError = state.error != null,
+                    // Fixed while the address is probed, so what's shown is
+                    // what's connecting.
+                    enabled = !state.isLoading,
                     focusRequester = fieldFocus,
                     onFocusChange = { fieldFocused = it },
                 )
