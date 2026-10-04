@@ -74,19 +74,21 @@ class OfflineSubtitleRefreshWorker(
                 // the owner and the download are the ones the refresh read: a
                 // replaced or deleted download keeps whatever it has now. The
                 // slot lock keeps a capture or a delete from landing between
-                // the check and the writes.
+                // the check and the writes, and the conditional update keeps a
+                // replacement download enqueued meanwhile from being overwritten.
                 DownloadSlotLocks.of(scope.serverId, profileId, fileId).withLock {
                     transitions.withCurrentGeneration(scope.identityGeneration) {
-                        if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration
-                        val current = metadataStore.readSidecar(scope.serverId, profileId, fileId)
-                            ?.takeIf { it.record.id == downloadId && it.offlineTracks == tracks }
-                            ?: return@withCurrentGeneration
-                        val refreshed = staged.publish() ?: return@withCurrentGeneration
-                        metadataStore.writeSidecar(
+                        if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration false
+                        metadataStore.updateSidecarIf(
                             scope.serverId,
                             profileId,
-                            current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis()),
-                        )
+                            fileId,
+                            matches = { it.record.id == downloadId && it.offlineTracks == tracks },
+                        ) { current ->
+                            staged.publish()?.let { refreshed ->
+                                current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis())
+                            }
+                        }
                     }
                 }
             } finally {
