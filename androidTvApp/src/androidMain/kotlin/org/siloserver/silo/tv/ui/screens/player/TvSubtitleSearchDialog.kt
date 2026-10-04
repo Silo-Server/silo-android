@@ -73,6 +73,19 @@ internal fun tvSubtitleLanguageIndex(code: String?): Int =
     TvSubtitleLanguageOptions.indexOf(LanguageNames.searchCode(code))
         .takeIf { it >= 0 } ?: TvSubtitleLanguageOptions.indexOf("en")
 
+/**
+ * Whether a track's 2- or 3-letter code names the same language as a picker
+ * code ("bul" vs "bg"). Unknown or missing source codes never match, since
+ * [LanguageNames.searchCode] would otherwise map them to English.
+ */
+internal fun tvIsSameLanguage(source: String?, target: String): Boolean {
+    val code = source?.trim()?.lowercase().orEmpty()
+    if (code.isEmpty()) return false
+    val normalized = LanguageNames.searchCode(code)
+    if (normalized == "en" && LanguageNames.displayName(code) != "English") return false
+    return normalized == LanguageNames.searchCode(target)
+}
+
 /** Display name for a 2- or 3-letter code, fallback uppercased code. */
 internal fun tvLanguageDisplayName(code: String): String = LanguageNames.displayName(code)
 
