@@ -1,4 +1,4 @@
-package org.siloserver.silo.android.ui.util
+package org.siloserver.silo.common.ui
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

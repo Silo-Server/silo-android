@@ -1,4 +1,4 @@
-package org.siloserver.silo.android.ui.util
+package org.siloserver.silo.common.ui
 
 /**
  * ISO 639 language code → English display name, mirroring the web player's
