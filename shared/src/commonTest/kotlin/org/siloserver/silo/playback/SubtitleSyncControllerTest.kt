@@ -1,5 +1,6 @@
 package org.siloserver.silo.playback
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -31,6 +32,8 @@ class SubtitleSyncControllerTest {
         val reads = mutableListOf<String>()
         var readError: ApiResult.Error? = null
         var startError: ApiResult.Error? = null
+        /** When set, a start request waits for it before answering. */
+        var startGate: CompletableDeferred<Unit>? = null
         var jobs = 0
 
         override suspend fun syncCapability() = ApiResult.Success(capability)
@@ -43,7 +46,9 @@ class SubtitleSyncControllerTest {
         override suspend fun startSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> {
             startError?.let { return it }
             val job = SubtitleSyncJob(id = "j${++jobs}", status = SubtitleSyncJob.PENDING, trigger = "manual", phase = "queued", progress = 0.0)
-            return ApiResult.Success(states.getValue(key).copy(sync = job).also { states[key] = it })
+            val response = states.getValue(key).copy(sync = job).also { states[key] = it }
+            startGate?.await()
+            return ApiResult.Success(response)
         }
         override suspend fun resetTiming(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
             ApiResult.Success(states.getValue(key).copy(timing = SubtitleTiming()).also { states[key] = it })
@@ -142,6 +147,50 @@ class SubtitleSyncControllerTest {
         sync.syncUpdated(update(job.copy(status = SubtitleSyncJob.SYNCED, phase = null, progress = null, result = corrected), corrected))
         assertEquals(listOf(sidecar), changes)
         assertEquals("j1", sync.state.value.watchedEntry()?.state?.sync?.id)
+    }
+
+    @Test
+    fun aStartResponseThatArrivesAfterTheRealtimeOutcomeDoesNotRewindIt() = runTest {
+        val source = FakeSource().apply { states[sidecar] = sidecarState() }
+        val changes = mutableListOf<String>()
+        val sync = controller(source, changes)
+        sync.bind(1, setOf(sidecar))
+        runCurrent()
+
+        source.startGate = CompletableDeferred()
+        sync.requestSync(sidecar)
+        runCurrent()
+        // The job ran on cached speech: its outcome arrives before the POST answers.
+        val finished = SubtitleSyncJob(id = "j1", status = SubtitleSyncJob.SYNCED, trigger = "manual", result = corrected)
+        sync.syncUpdated(update(finished, corrected))
+        assertEquals(listOf(sidecar), changes)
+
+        source.startGate!!.complete(Unit)
+        runCurrent()
+        val entry = sync.state.value.entries.getValue(sidecar)
+        assertEquals(SubtitleSyncJob.SYNCED, entry.state.sync?.status)
+        assertEquals(corrected, entry.state.timing)
+        assertEquals("j1", entry.watchedJobId)
+        assertEquals(listOf(sidecar), changes, "no second reload for the stale response")
+    }
+
+    @Test
+    fun anOlderJobsSnapshotDoesNotReplaceANewerJob() = runTest {
+        val older = SubtitleSyncJob(id = "1", status = SubtitleSyncJob.SYNCED, createdAt = "2026-10-04T02:00:00.000Z", result = corrected)
+        val newer = SubtitleSyncJob(id = "2", status = SubtitleSyncJob.RUNNING, progress = 0.3, createdAt = "2026-10-04T02:05:00.000Z")
+        val source = FakeSource().apply { states[sidecar] = sidecarState(corrected).copy(sync = older) }
+        val sync = controller(source, mutableListOf())
+        sync.bind(1, setOf(sidecar))
+        runCurrent()
+
+        sync.syncUpdated(update(newer, corrected))
+        // A read that left before the new job was queued answers with the old one.
+        sync.timingChanged(sidecar)
+        runCurrent()
+        assertEquals("2", sync.state.value.entries.getValue(sidecar).state.sync?.id)
+        // The same job going back in progress is stale too.
+        sync.syncUpdated(update(newer.copy(progress = 0.1), corrected))
+        assertEquals(0.3, sync.state.value.entries.getValue(sidecar).state.sync?.progress)
     }
 
     @Test

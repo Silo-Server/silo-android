@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.subtitles.DownloadedSubtitle
+import org.siloserver.silo.model.subtitles.SubtitleSyncJob
 import org.siloserver.silo.model.subtitles.SubtitleSyncResultLine
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.model.subtitles.SubtitleTiming
@@ -332,6 +333,14 @@ class SubtitleSyncController(
     /** Records a fresh server view of a subtitle; [watch] marks a job this viewer started. */
     private fun observe(state: SubtitleSyncState, watch: String? = null) {
         val key = state.key
+        val known = _state.value.entries[key]
+        if (known != null && isOlderJob(state.sync, known.state.sync)) {
+            // A response that left before a newer realtime update arrived after
+            // it: keep what the update said, but still follow the job if this
+            // viewer started it.
+            if (watch != null && watch == known.state.sync?.id) patch(key) { it.copy(watchedJobId = watch) }
+            return
+        }
         val previous = loadedTiming.put(key, state.timing)
         val forced = reloadOnNextRead.remove(key)
         val inProgress = state.sync?.inProgress == true
@@ -351,6 +360,23 @@ class SubtitleSyncController(
         // that follows a realtime update carrying the new timing is a no-op.
         if (if (previous == null) forced else previous != state.timing) onTimingChanged(key)
     }
+
+    /**
+     * True when [incoming] describes an earlier point than [current]: an older
+     * job, or the same job further back (running after it finished, or at
+     * less progress). The server does not sequence its responses and realtime
+     * updates, so a response can arrive after an update that is newer.
+     */
+    private fun isOlderJob(incoming: SubtitleSyncJob?, current: SubtitleSyncJob?): Boolean {
+        if (incoming == null || current == null) return false
+        if (incoming.id != current.id) {
+            return incoming.createdAt.isNotEmpty() && current.createdAt.isNotEmpty() && incoming.createdAt < current.createdAt
+        }
+        return jobStep(incoming) < jobStep(current)
+    }
+
+    /** How far a job has got: its progress while active, past every progress once finished. */
+    private fun jobStep(job: SubtitleSyncJob): Double = if (job.inProgress) job.progress ?: 0.0 else 2.0
 
     private fun patch(key: String, change: (SubtitleSyncEntry) -> SubtitleSyncEntry) {
         _state.update { current ->
