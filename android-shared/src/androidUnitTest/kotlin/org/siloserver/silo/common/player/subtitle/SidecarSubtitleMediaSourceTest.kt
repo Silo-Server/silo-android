@@ -97,6 +97,29 @@ class SidecarSubtitleMediaSourceTest {
         assertEquals(3_000_000L, delegate.continueLoadingCalls.last().playbackPositionUs)
     }
 
+    /**
+     * A remount that reselects the same subtitle disables the sidecar's track
+     * and enables it again before the cancelled load lands. Its continue
+     * request then finds no pending reset, which a prepared
+     * ProgressiveMediaPeriod asserts on (a player crash). The wrapper restarts
+     * the load from the playhead instead.
+     */
+    @Test
+    fun restartsFromThePlayheadWhenACancelledLoadHasNoPendingReset() {
+        val delegate = FakePeriod().apply { requirePendingReset = true }
+        val floor = SidecarPlaybackFloor()
+        val period = NonGatingSidecarPeriod(delegate, floor)
+        val upstream = RecordingCallback()
+        period.prepare(upstream, 0L)
+        floor.set(42_000_000L)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        assertEquals(42_000_000L, delegate.lastSeekUs)
+        assertEquals(2, delegate.continueLoadingCalls.size)
+        assertSame(period, upstream.continueLoadingRequestedFrom.single())
+    }
+
     @Test
     fun publishesTheLivePositionAndSeeksAsTheFloor() {
         val delegate = FakePeriod()
@@ -145,6 +168,9 @@ class SidecarSubtitleMediaSourceTest {
         var loading = false
         var lastSeekUs = C.TIME_UNSET
         val continueLoadingCalls = mutableListOf<LoadingInfo>()
+        /** Models a prepared ProgressiveMediaPeriod: a new load needs a pending reset. */
+        var requirePendingReset = false
+        private var pendingReset = false
 
         override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
             this.callback = callback
@@ -164,6 +190,7 @@ class SidecarSubtitleMediaSourceTest {
         override fun readDiscontinuity(): Long = C.TIME_UNSET
         override fun seekToUs(positionUs: Long): Long {
             lastSeekUs = positionUs
+            pendingReset = true
             return positionUs
         }
 
@@ -174,6 +201,8 @@ class SidecarSubtitleMediaSourceTest {
         override fun getNextLoadPositionUs(): Long = 0L
         override fun continueLoading(loadingInfo: LoadingInfo): Boolean {
             continueLoadingCalls += loadingInfo
+            check(!requirePendingReset || pendingReset)
+            pendingReset = false
             return true
         }
 

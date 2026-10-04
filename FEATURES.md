@@ -33,6 +33,7 @@ File pointers are repository-relative.
 | HDMI EDID-driven display mode | ➖ | ✅ | `HdrDisplayController` |
 | Subtitle selection + styling (font/bg/position) | ✅ | ✅ | Media3 `SubtitleManager`; server plans render, convert, or burn-in fidelity |
 | Subtitle sync offset (±10s) / audio sync (±5s) | ✅ | ✅ | Per-profile |
+| Server subtitle sync to audio (stored and sidecar subtitles) | ✅ | ✅ | Server-gated; per-track status, progress card, reset; retimed tracks reload in place; phone offline copies refresh. `SubtitleSyncController` |
 | Subtitle provider search + download | ✅ | ✅ | |
 | AI subtitle transcription / translation (quota-tracked) | ✅ | ✅ | TV: `TvAiTranslateDialog` |
 | AI description translation (on-view, server-gated) | ✅ | ✅ | `DescriptionTranslationController`; gated by `/api/v1/metadata/ai/status`; metadata-language setting in Settings |

@@ -352,6 +352,18 @@ val androidModule = module {
             profileRepository = get(),
         )
     }
+    worker {
+        org.siloserver.silo.common.downloads.OfflineSubtitleRefreshWorker(
+            appContext = androidContext(),
+            params = get(),
+            metadataStore = get(),
+            storage = get(),
+            httpClient = get(),
+            authorities = get(),
+            transitions = get(),
+            gate = get(),
+        )
+    }
     // Kept for consistency, but DEAD AT RUNTIME: Koin's WorkManager factory
     // returns null on WM 2.10 + Koin 4.1.0, so AppWorkerFactory does the real
     // injection (see AppWorkerFactory). Update both if SyncWorker's deps change.

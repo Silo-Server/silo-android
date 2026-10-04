@@ -47,7 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
-import org.siloserver.silo.playback.StoredSubtitleTimingActions
+import org.siloserver.silo.playback.SubtitleTimingActions
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 
 /** Combined audio and subtitle picker with adaptive phone and foldable layouts. */
@@ -67,9 +67,9 @@ fun TracksSheet(
     onSearchSubtitles: () -> Unit = {},
     onTranslateWithAi: () -> Unit = {},
     subtitleStatus: (PlayerSubtitleInfo) -> String? = { null },
-    timingActions: StoredSubtitleTimingActions? = null,
-    onSyncSubtitle: (Int) -> Unit = {},
-    onResetTiming: (Int) -> Unit = {},
+    timingActions: SubtitleTimingActions? = null,
+    onSyncSubtitle: (String) -> Unit = {},
+    onResetTiming: (String) -> Unit = {},
     tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
@@ -228,9 +228,9 @@ private fun SubtitleTrackCard(
     onSearchSubtitles: () -> Unit,
     onTranslateWithAi: () -> Unit,
     subtitleStatus: (PlayerSubtitleInfo) -> String?,
-    timingActions: StoredSubtitleTimingActions?,
-    onSyncSubtitle: (Int) -> Unit,
-    onResetTiming: (Int) -> Unit,
+    timingActions: SubtitleTimingActions?,
+    onSyncSubtitle: (String) -> Unit,
+    onResetTiming: (String) -> Unit,
     scrollContent: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -259,8 +259,8 @@ private fun SubtitleTrackCard(
             PlayerSheetDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
             SubtitleTimingSection(
                 actions = timingActions,
-                onSync = { onSyncSubtitle(timingActions.subtitleId) },
-                onReset = { onResetTiming(timingActions.subtitleId) },
+                onSync = { onSyncSubtitle(timingActions.key) },
+                onReset = { onResetTiming(timingActions.key) },
             )
         }
         if (showSearchAction || showTranslateAction) {
@@ -284,13 +284,14 @@ private fun SubtitleTrackCard(
 }
 
 /**
- * "Sync subtitle" and "Reset timing" for the selected stored subtitle. The
- * server allows them only for the account that added it or an admin; after a
- * refusal the actions give way to a short explanation.
+ * "Sync to audio" and "Reset timing" for the selected subtitle, stored or a
+ * file next to the media, with a running sync's progress and the last result.
+ * Anyone who can play the file may retime it; after a refusal (demo mode) the
+ * actions give way to a short explanation.
  */
 @Composable
 private fun SubtitleTimingSection(
-    actions: StoredSubtitleTimingActions,
+    actions: SubtitleTimingActions,
     onSync: () -> Unit,
     onReset: () -> Unit,
 ) {
@@ -302,15 +303,22 @@ private fun SubtitleTimingSection(
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
     )
     if (actions.forbidden) {
-        TimingMessage(StoredSubtitleTimingActions.FORBIDDEN_MESSAGE, isError = false)
+        TimingMessage(SubtitleTimingActions.FORBIDDEN_MESSAGE)
         return
     }
     if (actions.canSync) {
         ActionRow(
             icon = Icons.Filled.Sync,
-            label = if (actions.inProgress) "Syncing…" else "Sync subtitle",
+            label = if (actions.inProgress) "Syncing…" else "Sync to audio",
             onClick = onSync,
             enabled = actions.actionsEnabled,
+        )
+    }
+    if (actions.inProgress) {
+        SyncProgressRow(
+            percent = actions.percent ?: 0,
+            label = actions.phaseLabel,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
         )
     }
     if (actions.canReset) {
@@ -321,14 +329,18 @@ private fun SubtitleTimingSection(
             enabled = actions.actionsEnabled,
         )
     }
-    actions.error?.let { TimingMessage(it, isError = true) }
+    actions.result?.let { TimingMessage(it.text, color = if (it.warning) TimingWarningColor else null) }
+    actions.note?.let { TimingMessage(it, color = Color.White.copy(alpha = 0.40f)) }
+    actions.error?.let { TimingMessage(it, color = MaterialTheme.colorScheme.error) }
 }
 
+private val TimingWarningColor = Color(0xFFFDE68A).copy(alpha = 0.85f)
+
 @Composable
-private fun TimingMessage(text: String, isError: Boolean) {
+private fun TimingMessage(text: String, color: Color? = null) {
     Text(
         text = text,
-        color = if (isError) MaterialTheme.colorScheme.error else Color.White.copy(alpha = 0.50f),
+        color = color ?: Color.White.copy(alpha = 0.50f),
         fontSize = 12.sp,
         modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
     )

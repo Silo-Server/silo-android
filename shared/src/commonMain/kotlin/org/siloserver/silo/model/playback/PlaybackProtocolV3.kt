@@ -378,6 +378,11 @@ data class PlaybackSubtitleInventoryItemV3(
     val delivery: String = "",
     val url: String? = null,
     @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
+    /**
+     * Opaque name of this track for the subtitle sync operations, present on
+     * external and downloaded tracks whose timing the server can correct.
+     */
+    @SerialName("sync_key") val syncKey: String? = null,
 )
 
 /** Resolves the optional ordinal from the stable server track identity. */
