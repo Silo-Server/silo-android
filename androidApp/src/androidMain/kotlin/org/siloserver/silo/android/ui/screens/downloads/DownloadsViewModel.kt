@@ -7,6 +7,7 @@ import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadReclaimCandidate
 import org.siloserver.silo.common.downloads.DownloadReclaimPlan
 import org.siloserver.silo.common.downloads.DownloadReclaimPlanner
+import org.siloserver.silo.common.downloads.DownloadSlotLocks
 import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.tileArtwork
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -474,10 +476,12 @@ class DownloadsViewModel(
             .getOrElse { emptyList() }
         for (p in pending) {
             val fileId = p.mediaFileId ?: continue
-            metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
-                withContext(Dispatchers.IO) {
-                    storage.delete(p.serverId, p.profileId, fileId) ||
-                        !storage.exists(p.serverId, p.profileId, fileId)
+            DownloadSlotLocks.of(p.serverId, p.profileId, fileId).withLock {
+                metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
+                    withContext(Dispatchers.IO) {
+                        storage.delete(p.serverId, p.profileId, fileId) ||
+                            !storage.exists(p.serverId, p.profileId, fileId)
+                    }
                 }
             }
         }
@@ -557,10 +561,14 @@ class DownloadsViewModel(
             try {
                 repository.enqueueDurableDelete(serverId, profileId, id, fileId)
                 if (fileId != null) {
-                    withContext(Dispatchers.IO) {
-                        storage.delete(serverId, profileId, fileId)
+                    // A subtitle refresh rewrites this slot's files and row
+                    // under the same lock, so it cannot write the row back.
+                    DownloadSlotLocks.of(serverId, profileId, fileId).withLock {
+                        withContext(Dispatchers.IO) {
+                            storage.delete(serverId, profileId, fileId)
+                        }
+                        metadataStore.deleteSidecar(serverId, profileId, fileId)
                     }
-                    metadataStore.deleteSidecar(serverId, profileId, fileId)
                 }
             } finally {
                 // Also covers the fileId == null branch, which never reaches

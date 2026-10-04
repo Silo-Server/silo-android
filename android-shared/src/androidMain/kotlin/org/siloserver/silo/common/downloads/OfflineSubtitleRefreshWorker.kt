@@ -12,6 +12,7 @@ import androidx.work.WorkerParameters
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.download.statusEnum
@@ -72,18 +73,22 @@ class OfflineSubtitleRefreshWorker(
             try {
                 // Replace the saved files and record their revisions only while
                 // the owner and the download are the ones the refresh read: a
-                // replaced or deleted download keeps whatever it has now.
-                transitions.withCurrentGeneration(scope.identityGeneration) {
-                    if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration
-                    val current = metadataStore.readSidecar(scope.serverId, profileId, fileId)
-                        ?.takeIf { it.record.id == downloadId && it.offlineTracks == tracks }
-                        ?: return@withCurrentGeneration
-                    val refreshed = staged.publish() ?: return@withCurrentGeneration
-                    metadataStore.writeSidecar(
-                        scope.serverId,
-                        profileId,
-                        current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis()),
-                    )
+                // replaced or deleted download keeps whatever it has now. The
+                // slot lock keeps a capture or a delete from landing between
+                // the check and the writes.
+                DownloadSlotLocks.of(scope.serverId, profileId, fileId).withLock {
+                    transitions.withCurrentGeneration(scope.identityGeneration) {
+                        if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration
+                        val current = metadataStore.readSidecar(scope.serverId, profileId, fileId)
+                            ?.takeIf { it.record.id == downloadId && it.offlineTracks == tracks }
+                            ?: return@withCurrentGeneration
+                        val refreshed = staged.publish() ?: return@withCurrentGeneration
+                        metadataStore.writeSidecar(
+                            scope.serverId,
+                            profileId,
+                            current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis()),
+                        )
+                    }
                 }
             } finally {
                 staged.discard()
