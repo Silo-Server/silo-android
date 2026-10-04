@@ -245,41 +245,63 @@ internal class OfflineTrackAssetFetcher(
 
     /**
      * Re-fetches the saved sidecars whose subtitle the server has retimed
-     * since they were saved (its manifest `revision` changed), each
-     * replacing its file in place. Returns the track data with the new
-     * revisions, or null when nothing changed or the manifest is unavailable.
-     * A sidecar that fails to fetch keeps its old file and revision, so the
-     * next refresh tries it again.
+     * since they were saved (its manifest `revision` changed) into staging
+     * files beside them. Nothing is replaced until the caller has confirmed
+     * the download is still the one [tracks] describes and calls
+     * [StagedSubtitleRefresh.publish]. Returns null when nothing changed or the
+     * manifest is unavailable. A sidecar that fails to fetch keeps its old file
+     * and revision, so the next refresh tries it again.
      */
-    suspend fun refreshSubtitles(
+    suspend fun stageSubtitleRefresh(
         downloadId: String,
         tracks: OfflineTrackInfo,
         configure: HttpRequestBuilder.() -> Unit,
-    ): OfflineTrackInfo? {
+    ): StagedSubtitleRefresh? {
         if (tracks.subtitles.none { it.fetchUrl != null }) return null
         val manifest = fetchManifestBody(downloadId, configure, attempts = 1)
             ?.let(::decodeOfflineManifestTracks)
             ?: return null
-        val refreshed = tracks.subtitlesWithNewRevision(manifest).mapNotNull { (saved, revision) ->
-            val url = saved.fetchUrl ?: return@mapNotNull null
-            if (!isOfflineSubtitleFetchUrl(url)) return@mapNotNull null
-            try {
-                downloadSubtitle(url, File(saved.path), configure)
-                Log.i(TAG, "subtitle refreshed id=$downloadId revision=$revision")
-                saved.path to revision
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "subtitle refresh failed id=$downloadId", e)
-                null
+        val staged = mutableListOf<StagedSubtitleRefresh.Sidecar>()
+        try {
+            for ((saved, revision) in tracks.subtitlesWithNewRevision(manifest)) {
+                stageSidecar(downloadId, saved, revision, configure)?.let(staged::add)
             }
-        }.toMap()
-        if (refreshed.isEmpty()) return null
-        return tracks.copy(
-            subtitles = tracks.subtitles.map { saved ->
-                refreshed[saved.path]?.let { saved.copy(revision = it) } ?: saved
-            },
+        } catch (e: CancellationException) {
+            staged.forEach { it.staging.delete() }
+            throw e
+        }
+        return if (staged.isEmpty()) null else StagedSubtitleRefresh(downloadId, tracks, staged)
+    }
+
+    /** Fetches one retimed sidecar into a staging file beside [saved], or null when it cannot. */
+    private suspend fun stageSidecar(
+        downloadId: String,
+        saved: OfflineSubtitleFile,
+        revision: String,
+        configure: HttpRequestBuilder.() -> Unit,
+    ): StagedSubtitleRefresh.Sidecar? {
+        val url = saved.fetchUrl?.takeIf(::isOfflineSubtitleFetchUrl) ?: return null
+        val target = File(saved.path)
+        if (!target.isFile) return null
+        // The copy this refresh replaces, as it is now: if anything rewrites it
+        // before publishing, the staged file is dropped.
+        val sidecar = StagedSubtitleRefresh.Sidecar(
+            path = saved.path,
+            revision = revision,
+            staging = File(target.parentFile, "${target.nameWithoutExtension}.refresh.${target.extension}"),
+            savedLength = target.length(),
+            savedModifiedMs = target.lastModified(),
         )
+        return try {
+            downloadSubtitle(url, sidecar.staging, configure)
+            sidecar
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "subtitle refresh failed id=$downloadId", e)
+            sidecar.staging.delete()
+            null
+        }
     }
 
     /** Streams [url] into [target] through a sibling partial file, replacing it only once complete. */
@@ -332,5 +354,59 @@ internal class OfflineTrackAssetFetcher(
                 DownloadMediaType.Movie, DownloadMediaType.TvShow, DownloadMediaType.Unknown -> true
                 DownloadMediaType.Audiobook, DownloadMediaType.Ebook -> false
             }
+    }
+}
+
+/**
+ * Sidecars fetched again into staging files beside their saved copies, not
+ * yet in place. [publish] moves them over the saved copies; [discard] removes
+ * whatever was not published.
+ */
+internal class StagedSubtitleRefresh(
+    private val downloadId: String,
+    private val tracks: OfflineTrackInfo,
+    private val sidecars: List<Sidecar>,
+) {
+    class Sidecar(
+        val path: String,
+        val revision: String,
+        val staging: File,
+        val savedLength: Long,
+        val savedModifiedMs: Long,
+    )
+
+    /**
+     * Replaces each saved copy that is still the one this refresh was staged
+     * against, and returns [tracks] with the published revisions, or null when
+     * none was published. A copy something rewrote or removed meanwhile (a
+     * new capture for the same file) keeps its new contents.
+     */
+    fun publish(): OfflineTrackInfo? {
+        val published = sidecars.mapNotNull { sidecar ->
+            val target = File(sidecar.path)
+            val unchanged = target.isFile &&
+                target.length() == sidecar.savedLength &&
+                target.lastModified() == sidecar.savedModifiedMs
+            if (unchanged && sidecar.staging.renameTo(target)) {
+                Log.i(TAG, "subtitle refreshed id=$downloadId revision=${sidecar.revision}")
+                sidecar.path to sidecar.revision
+            } else {
+                null
+            }
+        }.toMap()
+        if (published.isEmpty()) return null
+        return tracks.copy(
+            subtitles = tracks.subtitles.map { saved ->
+                published[saved.path]?.let { saved.copy(revision = it) } ?: saved
+            },
+        )
+    }
+
+    fun discard() {
+        sidecars.forEach { it.staging.delete() }
+    }
+
+    private companion object {
+        const val TAG = "OfflineTrackAssets"
     }
 }
