@@ -34,6 +34,8 @@ class SubtitleSyncControllerTest {
         var startError: ApiResult.Error? = null
         /** When set, a start request waits for it before answering. */
         var startGate: CompletableDeferred<Unit>? = null
+        /** When set, the next read takes its answer, then waits for it before returning. */
+        var readGate: CompletableDeferred<Unit>? = null
         var jobs = 0
 
         override suspend fun syncCapability() = ApiResult.Success(capability)
@@ -41,7 +43,9 @@ class SubtitleSyncControllerTest {
         override suspend fun readSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> {
             reads += key
             readError?.let { return it }
-            return states[key]?.let { ApiResult.Success(it) } ?: ApiResult.Error(404, "not_found", "")
+            val response = states[key]?.let { ApiResult.Success(it) } ?: ApiResult.Error(404, "not_found", "")
+            readGate?.also { readGate = null }?.await()
+            return response
         }
         override suspend fun startSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> {
             startError?.let { return it }
@@ -191,6 +195,30 @@ class SubtitleSyncControllerTest {
         // The same job going back in progress is stale too.
         sync.syncUpdated(update(newer.copy(progress = 0.1), corrected))
         assertEquals(0.3, sync.state.value.entries.getValue(sidecar).state.sync?.progress)
+    }
+
+    @Test
+    fun aReadSentBeforeANewerOneDoesNotRestoreItsTiming() = runTest {
+        val source = FakeSource().apply { states[sidecar] = sidecarState() }
+        val changes = mutableListOf<String>()
+        val sync = controller(source, changes)
+        sync.bind(1, setOf(sidecar))
+        runCurrent()
+
+        // Timing set to +0.5 s elsewhere; that event's read answers slowly.
+        source.states[sidecar] = sidecarState(SubtitleTiming(offsetMs = 500))
+        val slowRead = CompletableDeferred<Unit>().also { source.readGate = it }
+        sync.timingChanged(sidecar)
+        runCurrent()
+        // Then reset; this event's read answers first.
+        source.states[sidecar] = sidecarState()
+        sync.timingChanged(sidecar)
+        runCurrent()
+
+        slowRead.complete(Unit)
+        runCurrent()
+        assertEquals(SubtitleTiming(), sync.state.value.entries.getValue(sidecar).state.timing)
+        assertEquals(emptyList(), changes, "the cues on screen already have the current timing")
     }
 
     @Test

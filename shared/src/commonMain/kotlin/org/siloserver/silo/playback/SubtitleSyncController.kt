@@ -184,6 +184,10 @@ class SubtitleSyncController(
     private val pushedSincePoll = mutableSetOf<String>()
     /** How long each running job has been polled. */
     private val polledMs = mutableMapOf<String, Long>()
+    /** Numbers every read as it is sent and every realtime update as it arrives. */
+    private var sequence = 0L
+    /** The number of the read or update each subtitle's entry shows. */
+    private val shownSequence = mutableMapOf<String, Long>()
 
     /**
      * Follows the playing file and its inventory's sync keys. A new file (or
@@ -201,6 +205,7 @@ class SubtitleSyncController(
             reloadOnNextRead.clear()
             pushedSincePoll.clear()
             polledMs.clear()
+            shownSequence.clear()
             _state.value = SubtitleSyncUiState()
             if (mediaFileId != null && syncKeys.isNotEmpty()) reload()
             return
@@ -222,6 +227,7 @@ class SubtitleSyncController(
         loadJob?.cancel()
         loadJob = scope.launch {
             val capability = (repository.syncCapability() as? ApiResult.Success)?.data
+            val sent = ++sequence
             val listed = (repository.listSync(fileId) as? ApiResult.Success)?.data
             if (owner != generation) return@launch
             // A probe that failed keeps what the last one said.
@@ -230,7 +236,7 @@ class SubtitleSyncController(
                     it.copy(available = capability.available, externalAvailable = capability.available && capability.external)
                 }
             }
-            listed?.forEach { observe(it) }
+            listed?.forEach { observe(it, sent) }
             startPolling()
         }
     }
@@ -240,7 +246,7 @@ class SubtitleSyncController(
         if (subtitle.mediaFileId != mediaFileId) return
         val state = subtitle.syncState()
         polledMs.remove(state.key)
-        observe(state, watch = state.sync?.takeIf { it.inProgress }?.id)
+        observe(state, ++sequence, watch = state.sync?.takeIf { it.inProgress }?.id)
         startPolling()
     }
 
@@ -253,11 +259,12 @@ class SubtitleSyncController(
         val owner = generation
         reloadOnNextRead += key
         scope.launch {
+            val sent = ++sequence
             val read = repository.readSync(fileId, key)
             if (owner != generation) return@launch
             when (read) {
                 is ApiResult.Success -> {
-                    observe(read.data)
+                    observe(read.data, sent)
                     startPolling()
                 }
                 // The event is authoritative enough to reload on its own.
@@ -276,7 +283,7 @@ class SubtitleSyncController(
             return
         }
         pushedSincePoll += update.syncKey
-        observe(entry.state.copy(timing = update.timing, sync = update.job))
+        observe(entry.state.copy(timing = update.timing, sync = update.job), ++sequence)
         startPolling()
     }
 
@@ -287,11 +294,12 @@ class SubtitleSyncController(
         polledMs.remove(key)
         patch(key) { it.copy(busy = true, error = null, pollExpired = false) }
         scope.launch {
+            val sent = ++sequence
             val result = repository.startSync(fileId, key)
             if (owner != generation) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    observe(result.data, watch = result.data.sync?.id)
+                    observe(result.data, sent, watch = result.data.sync?.id)
                     patch(key) { it.copy(busy = false) }
                     startPolling()
                 }
@@ -306,11 +314,12 @@ class SubtitleSyncController(
         val owner = generation
         patch(key) { it.copy(busy = true, error = null) }
         scope.launch {
+            val sent = ++sequence
             val result = repository.resetTiming(fileId, key)
             if (owner != generation) return@launch
             when (result) {
                 is ApiResult.Success -> {
-                    observe(result.data)
+                    observe(result.data, sent)
                     patch(key) { it.copy(busy = false) }
                 }
                 else -> fail(key, result, "Couldn't reset timing")
@@ -330,17 +339,20 @@ class SubtitleSyncController(
         }
     }
 
-    /** Records a fresh server view of a subtitle; [watch] marks a job this viewer started. */
-    private fun observe(state: SubtitleSyncState, watch: String? = null) {
+    /**
+     * Records a server view of a subtitle from the read sent, or the update
+     * received, as number [sent]; [watch] marks a job this viewer started.
+     */
+    private fun observe(state: SubtitleSyncState, sent: Long, watch: String? = null) {
         val key = state.key
         val known = _state.value.entries[key]
-        if (known != null && isOlderJob(state.sync, known.state.sync)) {
-            // A response that left before a newer realtime update arrived after
-            // it: keep what the update said, but still follow the job if this
-            // viewer started it.
+        if (known != null && isStale(state.sync, sent, known)) {
+            // A response that arrived after a newer one: keep what the newer
+            // one said, but still follow the job if this viewer started it.
             if (watch != null && watch == known.state.sync?.id) patch(key) { it.copy(watchedJobId = watch) }
             return
         }
+        shownSequence[key] = sent
         val previous = loadedTiming.put(key, state.timing)
         val forced = reloadOnNextRead.remove(key)
         val inProgress = state.sync?.inProgress == true
@@ -362,10 +374,25 @@ class SubtitleSyncController(
     }
 
     /**
+     * True when a view reporting [incoming], from read or update number [sent],
+     * is older than [known]. The server does not sequence its responses and
+     * realtime updates, so a response can arrive after a newer one. A view of
+     * an older job is stale. So is one from a read sent before [known] arrived,
+     * unless it reports a job [known] has not reached, which the server can only
+     * have produced later.
+     */
+    private fun isStale(incoming: SubtitleSyncJob?, sent: Long, known: SubtitleSyncEntry): Boolean {
+        val current = known.state.sync
+        if (isOlderJob(incoming, current)) return true
+        val sentBefore = sent < (shownSequence[known.state.key] ?: 0L)
+        val laterJob = incoming != null && (current == null || isOlderJob(current, incoming))
+        return sentBefore && !laterJob
+    }
+
+    /**
      * True when [incoming] describes an earlier point than [current]: an older
      * job, or the same job further back (running after it finished, or at
-     * less progress). The server does not sequence its responses and realtime
-     * updates, so a response can arrive after an update that is newer.
+     * less progress).
      */
     private fun isOlderJob(incoming: SubtitleSyncJob?, current: SubtitleSyncJob?): Boolean {
         if (incoming == null || current == null) return false
@@ -408,8 +435,9 @@ class SubtitleSyncController(
                         continue
                     }
                     if (pushedSincePoll.remove(key)) continue
+                    val sent = ++sequence
                     when (val read = repository.readSync(fileId, key)) {
-                        is ApiResult.Success -> if (owner == generation) observe(read.data)
+                        is ApiResult.Success -> if (owner == generation) observe(read.data, sent)
                         // A subtitle the server stops answering for (deleted,
                         // access lost) is not polled again until a reload.
                         is ApiResult.Error -> if (owner == generation) patch(key) { it.copy(pollExpired = true) }
