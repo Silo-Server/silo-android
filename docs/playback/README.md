@@ -80,10 +80,16 @@ includes a `native_embedded` capability. Both supported entries use
   with its attached fonts; when they are false and the user prefers preserved
   styling, the server keeps ASS on its sidecar path.
 
-The server records Matroska track numbers from Silo-Server/silo-server#1890
-onward. Files scanned earlier get them from a startup backfill; until then they
-have no ID and keep using sidecars. MKV WebVTT (`S_TEXT/WEBVTT`) gets no ID
-because FFmpeg does not recognize that codec, so it is not advertised.
+The server must record each Matroska subtitle's `TrackNumber` as
+`container_track_id` (proposed in Silo-Server/silo-server#1890). Tracks without
+a recorded ID keep using sidecars. MKV WebVTT (`S_TEXT/WEBVTT`) is not
+advertised because FFmpeg does not recognize that codec, so the server cannot
+identify those tracks.
+
+Known costs of the stream path: Media3 does not recognize the legacy `S_ASS`
+and `S_SSA` codec IDs, so such a track fails native selection and is recovered
+through `subtitle_embedded_failed`. After a seek or resume, a cue that began
+before the cluster Media3 resumes from stays hidden until the next cue.
 
 A plan's `subtitle.embedded` selects the exact container track. Inventory URLs
 remain fallback descriptions and are not mounted alongside that selection.
