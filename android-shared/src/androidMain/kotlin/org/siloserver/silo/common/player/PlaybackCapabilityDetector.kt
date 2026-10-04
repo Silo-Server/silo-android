@@ -32,6 +32,7 @@ import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
+import org.siloserver.silo.model.playback.NATIVE_EMBEDDED_SUBTITLE_CODECS
 import org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability
 import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
 import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
@@ -529,26 +530,22 @@ class PlaybackCapabilityDetector(
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
                     subtitles = DeliverySubtitleCapabilities(
-                        nativeEmbedded = listOf(
+                        // MP4 and MatroskaExtractor both set each track's
+                        // Format.id to the container track ID the server
+                        // records. libass's Matroska extractor subclass
+                        // forwards formats unchanged, so ASS keeps the same
+                        // identity; its flags tell the planner whether the
+                        // stream path keeps styling and attached fonts.
+                        nativeEmbedded = NATIVE_EMBEDDED_SUBTITLE_CODECS.map { (container, codecs) ->
+                            val ass = "ass" in codecs
                             NativeEmbeddedSubtitleCapability(
-                                container = "mp4",
-                                codecs = listOf("mov_text"),
+                                container = container,
+                                codecs = codecs,
                                 trackIdentity = "container_track_id",
-                            ),
-                            // MatroskaExtractor sets each track's Format.id to
-                            // its TrackNumber, which the server records as
-                            // container_track_id. libass's extractor subclass
-                            // forwards formats unchanged, so ASS keeps the same
-                            // identity; its flags tell the planner whether the
-                            // stream path keeps styling and attached fonts.
-                            NativeEmbeddedSubtitleCapability(
-                                container = "mkv",
-                                codecs = listOf("subrip", "ass"),
-                                trackIdentity = "container_track_id",
-                                assStyling = libassDirectFidelity,
-                                fontAttachments = libassEmbeddedFonts,
-                            ),
-                        ),
+                                assStyling = ass && libassDirectFidelity,
+                                fontAttachments = ass && libassEmbeddedFonts,
+                            )
+                        },
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,

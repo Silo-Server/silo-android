@@ -499,17 +499,31 @@ sealed interface PlaybackV3Validation {
 }
 
 /**
- * The container/codec pairs Android advertises under `native_embedded`. Both
- * use `container_track_id`: MP4 `mov_text` maps to the `tkhd` track ID and MKV
- * SubRip/ASS to the Matroska TrackNumber, which Media3 sets as `Format.id`.
+ * Subtitle codecs, by source container, that Android selects natively from an
+ * original-HTTP stream by `container_track_id`. MP4 `mov_text` maps to the
+ * `tkhd` track ID and MKV SubRip/ASS to the Matroska TrackNumber, both of which
+ * Media3 sets as `Format.id`. The capability detector advertises exactly these
+ * pairs and [validateForMedia3] accepts exactly these, so the two cannot drift.
  */
-private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Boolean {
-    val normalizedCodec = codec?.trim()?.lowercase()
-    return when (container?.trim()?.lowercase()) {
-        "mp4", "mov", "m4v" -> normalizedCodec == "mov_text"
-        "mkv" -> normalizedCodec == "subrip" || normalizedCodec == "ass"
-        else -> false
+val NATIVE_EMBEDDED_SUBTITLE_CODECS: Map<String, List<String>> = mapOf(
+    "mp4" to listOf("mov_text"),
+    "mkv" to listOf("subrip", "ass"),
+)
+
+/**
+ * Normalizes a subtitle codec name the way the server does when it matches a
+ * native capability, so a plan it issues for an alias is not rejected here.
+ */
+private fun nativeEmbeddedSubtitleCodec(codec: String?): String? =
+    when (val normalized = codec?.trim()?.lowercase()) {
+        "srt" -> "subrip"
+        "tx3g" -> "mov_text"
+        else -> normalized
     }
+
+private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Boolean {
+    val codecs = NATIVE_EMBEDDED_SUBTITLE_CODECS[container?.trim()?.lowercase()] ?: return false
+    return nativeEmbeddedSubtitleCodec(codec) in codecs
 }
 
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {

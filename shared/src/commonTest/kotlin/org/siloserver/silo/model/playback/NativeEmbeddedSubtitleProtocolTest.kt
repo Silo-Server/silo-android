@@ -46,6 +46,7 @@ class NativeEmbeddedSubtitleProtocolTest {
         )
         assertIs<PlaybackV3Validation.Playable>(validate(mkv("subrip")))
         assertIs<PlaybackV3Validation.Playable>(validate(mkv("ass")))
+        assertIs<PlaybackV3Validation.Playable>(validate(mkv("srt")))
         assertIs<PlaybackV3Validation.ReplanRequired>(validate(mkv("webvtt")))
         assertIs<PlaybackV3Validation.ReplanRequired>(validate(plan.copy(
             subtitle = plan.subtitle.copy(inventory = listOf(track.copy(codec = "subrip"))),
