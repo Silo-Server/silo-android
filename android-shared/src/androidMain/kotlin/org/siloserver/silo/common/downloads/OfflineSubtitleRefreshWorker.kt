@@ -27,8 +27,8 @@ import java.util.concurrent.TimeUnit
  * A completed video download keeps the subtitle sidecars it fetched when it
  * finished. When the server later retimes a stored subtitle (an automatic or
  * manual sync, or a timing reset), the download's manifest lists that subtitle
- * at a new `revision`; this worker re-fetches those sidecars in place so the
- * next offline playback uses the corrected timing.
+ * at a new `revision`; this worker re-fetches those sidecars and replaces the
+ * saved copies, so the next offline playback uses the corrected timing.
  *
  * It runs periodically while the device has a network, for the downloads of
  * the login and profile that are active when it fires, like
@@ -60,26 +60,32 @@ class OfflineSubtitleRefreshWorker(
             val tracks = sidecar.offlineTracks ?: continue
             val downloadId = sidecar.record.id
             val fileId = sidecar.record.mediaFileId
-            val refreshed = try {
-                fetcher.refreshSubtitles(downloadId, tracks) { managedDownloadAuth(scope) }
+            val staged = try {
+                fetcher.stageSubtitleRefresh(downloadId, tracks) { managedDownloadAuth(scope) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "subtitle refresh failed id=$downloadId", e)
                 null
             } ?: continue
-            // The files are already replaced; record their revisions unless the
-            // owner changed or the download was replaced or deleted meanwhile.
-            transitions.withCurrentGeneration(scope.identityGeneration) {
-                if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration
-                val current = metadataStore.readSidecar(scope.serverId, profileId, fileId)
-                    ?.takeIf { it.record.id == downloadId && it.offlineTracks == tracks }
-                    ?: return@withCurrentGeneration
-                metadataStore.writeSidecar(
-                    scope.serverId,
-                    profileId,
-                    current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis()),
-                )
+            try {
+                // Replace the saved files and record their revisions only while
+                // the owner and the download are the ones the refresh read: a
+                // replaced or deleted download keeps whatever it has now.
+                transitions.withCurrentGeneration(scope.identityGeneration) {
+                    if (authorities.snapshotDurableLoginAuthority() != authority) return@withCurrentGeneration
+                    val current = metadataStore.readSidecar(scope.serverId, profileId, fileId)
+                        ?.takeIf { it.record.id == downloadId && it.offlineTracks == tracks }
+                        ?: return@withCurrentGeneration
+                    val refreshed = staged.publish() ?: return@withCurrentGeneration
+                    metadataStore.writeSidecar(
+                        scope.serverId,
+                        profileId,
+                        current.copy(offlineTracks = refreshed, updatedAtMs = System.currentTimeMillis()),
+                    )
+                }
+            } finally {
+                staged.discard()
             }
         }
         return Result.success()
