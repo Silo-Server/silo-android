@@ -130,8 +130,13 @@ fun List<PlayerSubtitleInfo>.syncKeyFor(identity: SubtitleIdentity?): String? = 
     else -> null
 }
 
-/** The sync key of the subtitle a mounted list plays, or null when none can be synced. */
-fun List<PlayerSubtitleInfo>.mountedSyncKey(): String? = firstNotNullOfOrNull { it.syncKey }
+/**
+ * The sync key of the subtitle on screen: the [selected] one, when the player
+ * has it mounted. A legacy session mounts every row, so the first mounted key
+ * is not necessarily the one showing.
+ */
+fun List<PlayerSubtitleInfo>.activeSyncKey(selected: SubtitleIdentity?, mounted: List<PlayerSubtitleInfo>): String? =
+    syncKeyFor(selected)?.takeIf(mounted::includesSyncKey)
 
 /**
  * True when [rows] include the subtitle named by [key]: by its inventory sync

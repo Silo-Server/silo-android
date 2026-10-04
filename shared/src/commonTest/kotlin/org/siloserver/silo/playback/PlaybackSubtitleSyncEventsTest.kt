@@ -91,6 +91,9 @@ class PlaybackSubtitleSyncEventsTest {
         assertEquals(listOf(sidecarKey, "stored-9"), rows.map { it.syncKey })
         assertEquals("stored-9", rows.syncKeyFor(SubtitleIdentity.ServerSidecar(1)))
         assertNull(rows.syncKeyFor(SubtitleIdentity.Off))
-        assertEquals(sidecarKey, rows.mountedSyncKey())
+        // The selected track is the active one only while it is mounted; a
+        // legacy session mounts every row.
+        assertEquals("stored-9", rows.activeSyncKey(SubtitleIdentity.ServerSidecar(1), mounted = rows))
+        assertNull(rows.activeSyncKey(SubtitleIdentity.ServerSidecar(1), mounted = rows.take(1)))
     }
 }

@@ -84,7 +84,7 @@ import org.siloserver.silo.playback.SubtitleSyncNotice
 import org.siloserver.silo.playback.SubtitleSyncUiState
 import org.siloserver.silo.playback.feedbackInput
 import org.siloserver.silo.playback.includesSyncKey
-import org.siloserver.silo.playback.mountedSyncKey
+import org.siloserver.silo.playback.activeSyncKey
 import org.siloserver.silo.model.subtitles.SubtitleSyncState
 import org.siloserver.silo.common.player.subtitleSyncName
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
@@ -847,8 +847,10 @@ class PlayerViewModel(
     val subtitleSyncState: StateFlow<SubtitleSyncUiState> = subtitleSync.state
     private val subtitleSyncFeedback = SubtitleSyncFeedbackTracker(viewModelScope)
     val subtitleSyncNotice: StateFlow<SubtitleSyncNotice?> = subtitleSyncFeedback.notice
-    /** The cue revision of each sync key whose cues the player last mounted. */
+    /** The cue revision of each sync key whose cues the player has in use. */
     private val loadedSubtitleCueRevisions = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** Cue revisions of the last subtitle mount, until Media3 selects its subtitle track. */
+    private var mountedSubtitleCueRevisions: Map<String, Int> = emptyMap()
 
     fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
 
@@ -856,9 +858,21 @@ class PlayerViewModel(
 
     fun dismissSubtitleSyncNotice() = subtitleSyncFeedback.dismiss()
 
-    /** The player mounted subtitles built from a state carrying [revisions]. */
+    /**
+     * The player mounted subtitles built from a state carrying [revisions].
+     * Media3 fetches them after the mount returns, so they count as loaded
+     * only once [onMountedSubtitleSelected] reports the track in use.
+     */
     internal fun onSubtitleCuesMounted(revisions: Map<String, Int>) {
-        if (revisions.isNotEmpty()) loadedSubtitleCueRevisions.update { it + revisions }
+        mountedSubtitleCueRevisions = revisions
+    }
+
+    /** Media3 selected the mounted subtitle track on the live player: its cues are in use. */
+    internal fun onMountedSubtitleSelected() {
+        val revisions = mountedSubtitleCueRevisions
+        if (revisions.isEmpty()) return
+        mountedSubtitleCueRevisions = emptyMap()
+        loadedSubtitleCueRevisions.update { it + revisions }
     }
 
     private var aiStatusFetched = false
@@ -927,11 +941,15 @@ class PlayerViewModel(
             val screen = _uiState
                 .map { state ->
                     val activeKey = state.sessionId?.let {
-                        subtitlesForVideoMediaMount(
-                            subtitles = state.subtitleTracks,
-                            playbackPlan = state.playbackPlan,
-                            subtitleIdentity = state.localSubtitleMountIdentity ?: state.committedSubtitleIdentity,
-                        ).mountedSyncKey()
+                        val selected = state.localSubtitleMountIdentity ?: state.committedSubtitleIdentity
+                        state.subtitleTracks.activeSyncKey(
+                            selected,
+                            mounted = subtitlesForVideoMediaMount(
+                                subtitles = state.subtitleTracks,
+                                playbackPlan = state.playbackPlan,
+                                subtitleIdentity = selected,
+                            ),
+                        )
                     }
                     Triple(activeKey, state.subtitleCueRevisions, state.subtitleTracks)
                 }

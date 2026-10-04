@@ -1570,6 +1570,11 @@ fun TvPlayerScreen(
                     // Quality is a server-transcode ladder built by the VM at
                     // session load (tvOS parity), not the adaptive variants.
                     viewModel.onTracksChanged(audio, subtitle, video)
+                    // Read the live tracks, not the event's: a callback queued
+                    // before a remount still describes the outgoing item.
+                    if (controller.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT && it.isSelected }) {
+                        viewModel.onMountedSubtitleSelected()
+                    }
                 }
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
                     // MediaController doesn't expose ExoPlayer's `videoFormat`

@@ -110,7 +110,7 @@ import org.siloserver.silo.playback.SubtitleSyncFeedbackTracker
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import org.siloserver.silo.playback.feedbackInput
 import org.siloserver.silo.playback.includesSyncKey
-import org.siloserver.silo.playback.mountedSyncKey
+import org.siloserver.silo.playback.activeSyncKey
 import org.siloserver.silo.playback.statusLabelFor
 import org.siloserver.silo.playback.syncKeyFor
 import org.siloserver.silo.playback.timingActionsFor
@@ -1389,16 +1389,30 @@ class TvPlayerViewModel(
     // The card that follows a sync this viewer started.
     private val subtitleSyncFeedback = SubtitleSyncFeedbackTracker(viewModelScope)
     val subtitleSyncNotice: StateFlow<SubtitleSyncNotice?> = subtitleSyncFeedback.notice
-    /** The cue revision of each sync key whose cues the player last mounted. */
+    /** The cue revision of each sync key whose cues the player has in use. */
     private val loadedSubtitleCueRevisions = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** Cue revisions of the last subtitle mount, until Media3 selects its subtitle track. */
+    private var mountedSubtitleCueRevisions: Map<String, Int> = emptyMap()
 
     fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
 
     fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
 
-    /** The player mounted subtitles built from a state carrying [revisions]. */
+    /**
+     * The player mounted subtitles built from a state carrying [revisions].
+     * Media3 fetches them after the mount returns, so they count as loaded
+     * only once [onMountedSubtitleSelected] reports the track in use.
+     */
     internal fun onSubtitleCuesMounted(revisions: Map<String, Int>) {
-        if (revisions.isNotEmpty()) loadedSubtitleCueRevisions.update { it + revisions }
+        mountedSubtitleCueRevisions = revisions
+    }
+
+    /** Media3 selected the mounted subtitle track on the live player: its cues are in use. */
+    internal fun onMountedSubtitleSelected() {
+        val revisions = mountedSubtitleCueRevisions
+        if (revisions.isEmpty()) return
+        mountedSubtitleCueRevisions = emptyMap()
+        loadedSubtitleCueRevisions.update { it + revisions }
     }
 
     /**
@@ -1518,7 +1532,7 @@ class TvPlayerViewModel(
         viewModelScope.launch {
             val screen = _uiState
                 .map { state ->
-                    Triple(mountedSubtitleSyncKey(state), state.subtitleCueRevisions, state.subtitleUrls)
+                    Triple(activeSubtitleSyncKey(state), state.subtitleCueRevisions, state.subtitleUrls)
                 }
                 .distinctUntilChanged()
             combine(subtitleSync.state, screen, loadedSubtitleCueRevisions) { sync, (activeKey, revisions, tracks), loaded ->
@@ -5177,7 +5191,11 @@ class TvPlayerViewModel(
             )
         }
 
-    private fun mountedSubtitleSyncKey(state: UiState): String? = mountedSubtitles(state).mountedSyncKey()
+    private fun activeSubtitleSyncKey(state: UiState): String? =
+        state.subtitleUrls.activeSyncKey(
+            state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity,
+            mounted = mountedSubtitles(state),
+        )
 
     /**
      * A syncable subtitle's timing changed. Media3 keeps the cues it already

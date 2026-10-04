@@ -1055,6 +1055,7 @@ fun PlayerScreen(
                     val targetIdentity = pendingIdentity ?: liveState.committedSubtitleIdentity
                     val accepted = backend.selectMountedSubtitle(identity = targetIdentity)
                     val selected = isSubtitleSelected(currentTracks, targetIdentity)
+                    if (selected) viewModel.onMountedSubtitleSelected()
                     if (pendingIdentity != null) {
                         viewModel.onPendingSubtitleMountResult(
                             mount = mount,
