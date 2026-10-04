@@ -1379,11 +1379,11 @@ class TvPlayerViewModel(
             .map { state -> state.subtitleUrls to (state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity) }
             .distinctUntilChanged(),
     ) { sync, (rows, selected) ->
+        val statuses = rows.mapNotNull { row -> sync.statusLabelFor(row)?.let { row to it } }
         TvHudSubtitleSync(
             timing = sync.timingActionsFor(rows.syncKeyFor(selected)),
-            statusByServerIndex = rows.mapNotNull { row ->
-                sync.statusLabelFor(row)?.let { row.index to it }
-            }.toMap(),
+            statusByServerIndex = statuses.associate { (row, status) -> row.index to status },
+            statusByDownloadId = statuses.mapNotNull { (row, status) -> row.downloadId?.let { it to status } }.toMap(),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, TvHudSubtitleSync())
     // The card that follows a sync this viewer started.

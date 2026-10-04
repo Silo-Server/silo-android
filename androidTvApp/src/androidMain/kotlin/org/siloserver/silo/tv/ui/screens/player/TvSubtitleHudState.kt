@@ -27,15 +27,20 @@ internal data class TvSubtitleHudRow(
 
 /**
  * What the HUD's Subtitles pane shows about subtitle sync: the selected
- * track's timing actions, and each server track's status line by ordinal.
+ * track's timing actions, and each track's status line, by ordinal for
+ * server tracks and by stored ID for rows merged from the stored list.
  * Built by the view model, so the player screen passes one value through.
  */
 internal data class TvHudSubtitleSync(
     val timing: SubtitleTimingActions? = null,
     val statusByServerIndex: Map<Int, String> = emptyMap(),
+    val statusByDownloadId: Map<Int, String> = emptyMap(),
 ) {
-    fun statusFor(identity: SubtitleIdentity): String? =
-        (identity as? SubtitleIdentity.ServerSidecar)?.serverIndex?.let(statusByServerIndex::get)
+    fun statusFor(identity: SubtitleIdentity): String? = when (identity) {
+        is SubtitleIdentity.ServerSidecar -> statusByServerIndex[identity.serverIndex]
+        is SubtitleIdentity.Downloaded -> statusByDownloadId[identity.downloadId]
+        else -> null
+    }
 }
 
 internal data class TvSubtitleHudPresentation(
