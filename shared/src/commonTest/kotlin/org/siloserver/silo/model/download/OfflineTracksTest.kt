@@ -179,7 +179,10 @@ class OfflineTracksTest {
                 {"subtitles": [
                   {"language": "en", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:0", "revision": "x2"},
                   {"language": "de", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:1", "revision": "y2"},
-                  {"language": "es", "format": "ass", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:2", "revision": "z2"}
+                  {"language": "es", "format": "ass", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:2", "revision": "z2"},
+                  {"language": "en", "format": "srt", "title": "Commentary", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:3", "revision": "t2"},
+                  {"language": "en", "format": "srt", "hearing_impaired": true, "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:4", "revision": "h2"},
+                  {"language": "fr", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/downloaded:9", "revision": "d2"}
                 ]}
                 """.trimIndent(),
             ),
@@ -191,8 +194,13 @@ class OfflineTracksTest {
         // external:1 was French when saved; another file now sits at that position.
         val shifted = english.copy(path = "/d/1.srt", language = "fr", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:1", revision = "y1")
         val reformatted = english.copy(path = "/d/2.srt", language = "es", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:2", revision = "z1")
-        val tracks = OfflineTrackInfo(subtitles = listOf(english, shifted, reformatted))
+        // Same language and format, but the row now lists another title or SDH flag.
+        val retitled = english.copy(path = "/d/3.srt", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:3", revision = "t1")
+        val nowSdh = english.copy(path = "/d/4.srt", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:4", revision = "h1")
+        // A stored subtitle's ref is stable, so its edited metadata does not block a refresh.
+        val stored = english.copy(path = "/d/5.srt", fetchUrl = "/api/v2/downloads/dl_1/subtitles/downloaded:9", revision = "d1")
+        val tracks = OfflineTrackInfo(subtitles = listOf(english, shifted, reformatted, retitled, nowSdh, stored))
 
-        assertEquals(listOf(english to "x2"), tracks.subtitlesWithNewRevision(manifest))
+        assertEquals(listOf(english to "x2", stored to "d2"), tracks.subtitlesWithNewRevision(manifest))
     }
 }
