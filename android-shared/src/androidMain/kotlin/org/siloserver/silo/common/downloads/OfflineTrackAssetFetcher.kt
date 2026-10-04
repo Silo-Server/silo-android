@@ -379,7 +379,8 @@ internal class StagedSubtitleRefresh(
      * Replaces each saved copy that is still the one this refresh was staged
      * against, and returns [tracks] with the published revisions, or null when
      * none was published. A copy something rewrote or removed meanwhile (a
-     * new capture for the same file) keeps its new contents.
+     * new capture for the same file) keeps its new contents. Call it holding
+     * the download's [DownloadSlotLocks] lock, after checking its row.
      */
     fun publish(): OfflineTrackInfo? {
         val published = sidecars.mapNotNull { sidecar ->
