@@ -502,8 +502,10 @@ sealed interface PlaybackV3Validation {
  * Subtitle codecs, by source container, that Android selects natively from an
  * original-HTTP stream by `container_track_id`. MP4 `mov_text` maps to the
  * `tkhd` track ID and MKV SubRip/ASS to the Matroska TrackNumber, both of which
- * Media3 sets as `Format.id`. The capability detector advertises exactly these
- * pairs and [validateForMedia3] accepts exactly these, so the two cannot drift.
+ * Media3 sets as `Format.id`. The capability detector advertises these pairs
+ * and [validateForMedia3] accepts them, so the two share one container/codec
+ * list. Both also assume every entry is identified by `container_track_id`:
+ * only add a pair whose Media3 track ID is the container's own track ID.
  */
 val NATIVE_EMBEDDED_SUBTITLE_CODECS: Map<String, List<String>> = mapOf(
     "mp4" to listOf("mov_text"),
