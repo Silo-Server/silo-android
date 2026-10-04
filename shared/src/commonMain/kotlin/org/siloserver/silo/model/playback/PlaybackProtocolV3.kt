@@ -498,6 +498,20 @@ sealed interface PlaybackV3Validation {
     data class ReplanRequired(val reason: String, val plan: PlaybackPlanV3, val sessionId: String) : PlaybackV3Validation
 }
 
+/**
+ * The container/codec pairs Android advertises under `native_embedded`. Both
+ * use `container_track_id`: MP4 `mov_text` maps to the `tkhd` track ID and MKV
+ * SubRip/ASS to the Matroska TrackNumber, which Media3 sets as `Format.id`.
+ */
+private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Boolean {
+    val normalizedCodec = codec?.trim()?.lowercase()
+    return when (container?.trim()?.lowercase()) {
+        "mp4", "mov", "m4v" -> normalizedCodec == "mov_text"
+        "mkv" -> normalizedCodec == "subrip" || normalizedCodec == "ass"
+        else -> false
+    }
+}
+
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
         PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
@@ -564,8 +578,8 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         if (plan.delivery != PlaybackDelivery.ORIGINAL_HTTP || plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER ||
             plan.subtitle.artifact != null || native.streamIndex < 0 ||
             nativeId == null || nativeId !in 1..Int.MAX_VALUE.toLong() || native.containerTrackId != nativeId.toString() ||
-            selectedSubtitle?.source != "embedded" || selectedSubtitle.codec != "mov_text" ||
-            plan.source.container?.lowercase() !in setOf("mp4", "mov", "m4v") ||
+            selectedSubtitle?.source != "embedded" ||
+            !isNativeEmbeddedSubtitlePair(plan.source.container, selectedSubtitle.codec) ||
             plan.subtitle.trackId != plan.selectedTracks.subtitle?.id
         ) return PlaybackV3Validation.ReplanRequired("subtitle_embedded_failed", plan, resolvedSessionId)
     }
