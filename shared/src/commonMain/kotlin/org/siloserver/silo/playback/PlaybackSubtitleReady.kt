@@ -72,6 +72,7 @@ fun applyAuthoritativeSubtitleReadyTrack(
         downloadId = update.subtitleId.takeIf { item.source == SUBTITLE_SOURCE_DOWNLOADED },
         serverTrackId = item.trackId,
         serverDelivery = item.delivery,
+        syncKey = item.syncKey,
     )
     val rows = (existing.filterNot {
         it.serverTrackId == item.trackId || it.index == item.combinedIndex

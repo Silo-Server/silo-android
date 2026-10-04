@@ -244,8 +244,8 @@ internal class OfflineTrackAssetFetcher(
     }
 
     /**
-     * Re-fetches the saved sidecars whose stored subtitle the server has
-     * retimed since they were saved (its manifest `revision` changed), each
+     * Re-fetches the saved sidecars whose subtitle the server has retimed
+     * since they were saved (its manifest `revision` changed), each
      * replacing its file in place. Returns the track data with the new
      * revisions, or null when nothing changed or the manifest is unavailable.
      * A sidecar that fails to fetch keeps its old file and revision, so the

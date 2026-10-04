@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.player
 
-import org.siloserver.silo.playback.StoredSubtitleTimingActions
+import org.siloserver.silo.playback.SubtitleTimingActions
 import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateContentSize
@@ -92,6 +92,7 @@ import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
@@ -210,9 +211,9 @@ internal fun TvPlayerHud(
     onSubtitlesPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
-    subtitleTiming: StoredSubtitleTimingActions? = null,
-    onSyncSubtitle: (Int) -> Unit = {},
-    onResetSubtitleTiming: (Int) -> Unit = {},
+    subtitleSync: TvHudSubtitleSync = TvHudSubtitleSync(),
+    onSyncSubtitle: (String) -> Unit = {},
+    onResetSubtitleTiming: (String) -> Unit = {},
     hdrEnabled: Boolean,
     onHdrEnabledChanged: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
@@ -321,17 +322,20 @@ internal fun TvPlayerHud(
     }
 
     // Keep an open subtitle picker synchronized with reducer state while
-    // retaining the same stable focused row through Applying -> committed.
-    LaunchedEffect(subtitlePresentation, activePicker?.title) {
+    // retaining the same stable focused row through Applying -> committed,
+    // and with each track's sync status as a sync runs.
+    val subtitleSyncStatuses = subtitlePresentation.rows.map { row -> subtitleSync.statusFor(row.identity) }
+    LaunchedEffect(subtitlePresentation, subtitleSyncStatuses, activePicker?.title) {
         val current = activePicker
         if (current?.title == "Subtitle Track") {
             val checkedRow = subtitlePresentation.rows.firstOrNull { it.checked }
             val focusedRow = subtitlePresentation.rows.firstOrNull { it.focused }
             activePicker = current.copy(
-                options = subtitlePresentation.rows.map { row ->
+                options = subtitlePresentation.rows.mapIndexed { index, row ->
                     HudPickerOption(
                         id = row.stableId,
                         label = if (row.applying) "${row.label} · Applying…" else row.label,
+                        detail = subtitleSyncStatuses.getOrNull(index),
                     )
                 },
                 selectedId = checkedRow?.stableId
@@ -556,7 +560,8 @@ internal fun TvPlayerHud(
                         onPaneShown = onSubtitlesPaneShown,
                         onSearchSubtitles = onSearchSubtitles,
                         onTranslateWithAi = onTranslateWithAi,
-                        timing = subtitleTiming,
+                        timing = subtitleSync.timing,
+                        syncStatus = subtitleSync::statusFor,
                         onSyncSubtitle = onSyncSubtitle,
                         onResetTiming = onResetSubtitleTiming,
                         entryFocusRequester = paneEntryFocus,
@@ -1496,9 +1501,10 @@ private fun HudSubtitlesPane(
     onPaneShown: () -> Unit,
     onSearchSubtitles: (() -> Unit)?,
     onTranslateWithAi: (() -> Unit)?,
-    timing: StoredSubtitleTimingActions?,
-    onSyncSubtitle: (Int) -> Unit,
-    onResetTiming: (Int) -> Unit,
+    timing: SubtitleTimingActions?,
+    syncStatus: (SubtitleIdentity) -> String?,
+    onSyncSubtitle: (String) -> Unit,
+    onResetTiming: (String) -> Unit,
     entryFocusRequester: FocusRequester,
     enabled: Boolean,
     onPresentPicker: (HudPickerPresentation) -> Unit,
@@ -1555,6 +1561,7 @@ private fun HudSubtitlesPane(
                                         } else {
                                             row.label
                                         },
+                                        detail = syncStatus(row.identity),
                                     )
                                 },
                                 selectedId = checkedRow?.stableId
@@ -1601,29 +1608,35 @@ private fun HudSubtitlesPane(
                     HudFocusedSettingRow(
                         label = "Timing",
                         value = subtitleTimingValue(timing),
-                        enabled = enabled && !timing.forbidden && timing.actionsEnabled &&
-                            (timing.canSync || timing.canReset),
+                        // Swallow, not disable: the picker hands focus back to
+                        // this row, and a disabled row is not focusable, so a
+                        // running sync or a refusal would strand focus.
+                        enabled = enabled,
                         rightFocusRequester = subtitleTextColorFocus,
-                        onActivate = {
+                        onActivate = activate@{
+                            if (timing.forbidden || !timing.actionsEnabled || !(timing.canSync || timing.canReset)) {
+                                return@activate
+                            }
                             onPresentPicker(
                                 HudPickerPresentation(
                                     title = "Subtitle Timing",
                                     options = listOfNotNull(
-                                        HudPickerOption(TIMING_SYNC, "Sync subtitle").takeIf { timing.canSync },
+                                        HudPickerOption(TIMING_SYNC, "Sync to audio").takeIf { timing.canSync },
                                         HudPickerOption(TIMING_RESET, "Reset timing").takeIf { timing.canReset },
                                     ),
                                     selectedId = "",
                                     focusedId = if (timing.canSync) TIMING_SYNC else TIMING_RESET,
                                     onSelect = { id ->
                                         when (id) {
-                                            TIMING_SYNC -> onSyncSubtitle(timing.subtitleId)
-                                            TIMING_RESET -> onResetTiming(timing.subtitleId)
+                                            TIMING_SYNC -> onSyncSubtitle(timing.key)
+                                            TIMING_RESET -> onResetTiming(timing.key)
                                         }
                                     },
                                 ),
                             )
                         },
                     )
+                    HudSubtitleTimingDetail(timing)
                 }
 
                 HudFocusedSettingRow(
@@ -2267,6 +2280,8 @@ internal data class HudPickerOption(
     val id: String,
     val label: String,
     val colorHex: String? = null,
+    /** A short second line under the label, such as a subtitle's sync status. */
+    val detail: String? = null,
 )
 
 /**
@@ -2288,13 +2303,47 @@ private const val TIMING_RESET = "reset"
 
 /**
  * The Timing row's value: the refusal or failure when there is one, else the
- * sync state. The refusal is shortened to fit the row; the phone sheet says it
- * in full.
+ * sync state. The refusal is shortened to fit the row; the line under it says
+ * it in full.
  */
-private fun subtitleTimingValue(timing: StoredSubtitleTimingActions): String = when {
-    timing.forbidden -> "Only the uploader or an admin"
+private fun subtitleTimingValue(timing: SubtitleTimingActions): String = when {
+    timing.forbidden -> "Not allowed"
     timing.busy -> "Working…"
     else -> timing.error ?: timing.statusLabel ?: "Not synced"
+}
+
+/**
+ * What the Timing row cannot fit: a running sync's progress and phase, the
+ * last result, what a sync does, or why the actions are missing. It never
+ * takes focus.
+ */
+@Composable
+private fun HudSubtitleTimingDetail(timing: SubtitleTimingActions) {
+    val modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp)
+    val percent = timing.percent
+    if (timing.inProgress && percent != null) {
+        Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            TvSyncProgressBar(percent = percent)
+            timing.phaseLabel?.let { HudTimingText(it) }
+        }
+    }
+    val message = when {
+        timing.forbidden -> SubtitleTimingActions.FORBIDDEN_MESSAGE to null
+        timing.error != null -> timing.error.orEmpty() to Color(0xFFFCA5A5)
+        timing.result != null -> timing.result?.let { it.text to if (it.warning) Color(0xFFFDE68A) else null }
+        else -> timing.note?.let { it to null }
+    }
+    message?.let { (text, color) -> HudTimingText(text, color, modifier) }
+}
+
+@Composable
+private fun HudTimingText(text: String, color: Color? = null, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        color = color ?: Color.White.copy(alpha = 0.55f),
+        style = MaterialTheme.typography.bodyMedium.copy(fontSize = HudMetaTextSize),
+        modifier = modifier,
+    )
 }
 
 private fun delayPicker(
@@ -2575,18 +2624,28 @@ private fun HudPickerOptionRow(
                     .border(0.5.dp, Color.White.copy(alpha = 0.45f), CircleShape),
             )
         }
-        Text(
-            text = option.label,
-            color = fg,
-            style = MaterialTheme.typography.bodyLarge.copy(
-                fontSize = HudBodyTextSize,
-                lineHeight = HudBodyLineHeight,
-                fontWeight = FontWeight.Medium,
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = option.label,
+                color = fg,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = HudBodyTextSize,
+                    lineHeight = HudBodyLineHeight,
+                    fontWeight = FontWeight.Medium,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            option.detail?.let { detail ->
+                Text(
+                    text = detail,
+                    color = fg.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = HudMetaTextSize),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (isSelected) {
             Icon(
                 imageVector = Icons.Filled.Check,

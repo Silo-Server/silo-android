@@ -170,4 +170,29 @@ class OfflineTracksTest {
         val unversioned = OfflineTrackInfo(subtitles = listOf(current.copy(revision = null)))
         assertEquals(listOf(current.copy(revision = null) to "1"), unversioned.subtitlesWithNewRevision(manifest))
     }
+
+    @Test
+    fun refreshesSavedExternalSidecarsButNotOnesWhosePositionNowNamesAnotherFile() {
+        val manifest = requireNotNull(
+            decodeOfflineManifestTracks(
+                """
+                {"subtitles": [
+                  {"language": "en", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:0", "revision": "x2"},
+                  {"language": "de", "format": "srt", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:1", "revision": "y2"},
+                  {"language": "es", "format": "ass", "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:2", "revision": "z2"}
+                ]}
+                """.trimIndent(),
+            ),
+        )
+        val english = OfflineSubtitleFile(
+            path = "/d/0.srt", format = "srt", language = "en",
+            fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:0", revision = "x1",
+        )
+        // external:1 was French when saved; another file now sits at that position.
+        val shifted = english.copy(path = "/d/1.srt", language = "fr", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:1", revision = "y1")
+        val reformatted = english.copy(path = "/d/2.srt", language = "es", fetchUrl = "/api/v2/downloads/dl_1/subtitles/external:2", revision = "z1")
+        val tracks = OfflineTrackInfo(subtitles = listOf(english, shifted, reformatted))
+
+        assertEquals(listOf(english to "x2"), tracks.subtitlesWithNewRevision(manifest))
+    }
 }

@@ -25,10 +25,11 @@ import java.util.concurrent.TimeUnit
  * Keeps saved subtitle sidecars in step with the server's timing corrections.
  *
  * A completed video download keeps the subtitle sidecars it fetched when it
- * finished. When the server later retimes a stored subtitle (an automatic or
- * manual sync, or a timing reset), the download's manifest lists that subtitle
- * at a new `revision`; this worker re-fetches those sidecars in place so the
- * next offline playback uses the corrected timing.
+ * finished. When the server later retimes one of its subtitles, stored or a
+ * file next to the media (an automatic or manual sync, or a timing set or
+ * reset), the download's manifest lists that subtitle at a new `revision`;
+ * this worker re-fetches those sidecars in place so the next offline playback
+ * uses the corrected timing.
  *
  * It runs periodically while the device has a network, for the downloads of
  * the login and profile that are active when it fires, like

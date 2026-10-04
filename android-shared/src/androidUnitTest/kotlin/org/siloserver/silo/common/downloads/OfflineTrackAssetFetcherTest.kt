@@ -99,6 +99,53 @@ class OfflineTrackAssetFetcherTest {
         defaultRequest { url("https://silo.example/") }
     }
 
+    /**
+     * A sidecar next to the media is served with its timing correction
+     * applied. When the server retimes it after the download, the manifest
+     * lists it at a new revision and a refresh replaces the saved file.
+     */
+    @Test
+    fun refreshesASavedExternalSidecarTheServerRetimed() = runBlocking {
+        var revision = "r1"
+        var cue = "00:00:42,148 --> 00:00:44,517"
+        val subtitleFetches = mutableListOf<String>()
+        val http = HttpClient(
+            MockEngine { request ->
+                val path = request.url.encodedPath
+                when {
+                    path.endsWith("/manifest") -> respond(
+                        """{"subtitles": [{"language": "en", "format": "srt", "external": true,
+                           "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:0", "revision": "$revision"}]}""",
+                        HttpStatusCode.OK,
+                    )
+                    path.endsWith("/subtitles/external:0") -> {
+                        subtitleFetches += revision
+                        respond("1\n$cue\nFor a moment, everyone was silent.\n")
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(HttpTimeout)
+            defaultRequest { url("https://silo.example/") }
+        }
+        val fetcher = OfflineTrackAssetFetcher(http, DownloadStorage(tmp.newFolder("filesDir")))
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        assertEquals("r1", saved.subtitles.single().revision)
+
+        // Nothing changed on the server: nothing is fetched.
+        assertNull(fetcher.refreshSubtitles("dl_1", saved) {})
+        assertEquals(listOf("r1"), subtitleFetches)
+
+        revision = "r2"
+        cue = "00:00:39,138 --> 00:00:41,507"
+        val refreshed = assertNotNull(fetcher.refreshSubtitles("dl_1", saved) {})
+        assertEquals("r2", refreshed.subtitles.single().revision)
+        assertEquals(saved.subtitles.single().path, refreshed.subtitles.single().path)
+        assertTrue(File(refreshed.subtitles.single().path).readText().contains(cue))
+        http.close()
+    }
+
     @Test
     fun capturesAudioTracksAndSavesEveryFetchableSidecar() = runBlocking {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))

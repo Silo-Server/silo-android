@@ -113,13 +113,24 @@ internal class NonGatingSidecarPeriod(
      */
     private fun kickDelegate(reason: String) {
         if (delegate.isLoading) return
-        val continued = delegate.continueLoading(
-            LoadingInfo.Builder()
-                .setPlaybackPositionUs(floor.get())
-                .setPlaybackSpeed(1f)
-                .setLastRebufferRealtimeMs(C.TIME_UNSET)
-                .build(),
-        )
+        val loadingInfo = LoadingInfo.Builder()
+            .setPlaybackPositionUs(floor.get())
+            .setPlaybackSpeed(1f)
+            .setLastRebufferRealtimeMs(C.TIME_UNSET)
+            .build()
+        val continued = try {
+            delegate.continueLoading(loadingInfo)
+        } catch (_: IllegalStateException) {
+            // A prepared ProgressiveMediaPeriod only starts a new load from a
+            // pending reset. A load cancelled because its track was disabled
+            // has none, and when the track is enabled again before that
+            // cancel lands (a subtitle remount reselecting the same track),
+            // the cancel's continue request reaches here without one. Restart
+            // the load from the playhead, as a seek would.
+            org.siloserver.silo.common.player.SubDiag.log("sidecar restart($reason) floor=${floor.get() / 1000}ms")
+            delegate.seekToUs(floor.get())
+            delegate.continueLoading(loadingInfo)
+        }
         org.siloserver.silo.common.player.SubDiag.log(
             "sidecar kick($reason) continued=$continued floor=${floor.get() / 1000}ms",
         )

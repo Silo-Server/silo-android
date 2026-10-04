@@ -777,6 +777,7 @@ fun PlayerScreen(
         viewModel.onSubtitleMediaMountChanging()
         backend.mount(mediaSpec, playWhenReady = !viewModel.uiState.value.isPaused)
         viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
+        viewModel.onSubtitleCuesMounted(uiState.subtitleCueRevisions)
         viewModel.onMediaMountApplied(uiState.mediaMountGeneration)
     }
 
@@ -845,6 +846,7 @@ fun PlayerScreen(
         viewModel.onSubtitleMediaMountChanging()
         backend.refresh(mediaSpec)
         viewModel.onSubtitleMediaMountApplied(MobileSubtitleMount(uiState.mediaMountGeneration, uiState.subtitleRefreshNonce))
+        viewModel.onSubtitleCuesMounted(uiState.subtitleCueRevisions)
     }
 
     // Sync play/pause from ViewModel to player without reclassifying this

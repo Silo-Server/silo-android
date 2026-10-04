@@ -7,14 +7,19 @@ import kotlinx.serialization.Serializable
 import org.siloserver.silo.model.subtitles.*
 import org.siloserver.silo.network.*
 
-@Serializable private data class SyncJobEnvelopeV2(val job: SubtitleSyncJob)
-@Serializable private data class StoredSubtitleEnvelopeV2(val subtitle: StoredSubtitleV2)
+@Serializable private data class SyncListEnvelopeV2(val subtitles: List<SubtitleSyncState>)
+@Serializable private data class SyncStateEnvelopeV2(val subtitle: SubtitleSyncState)
+
+/** The server's sync key grammar; anything else is refused before it reaches a URL. */
+private val syncKeyPattern = Regex("^(stored-[1-9][0-9]*|external-[0-9a-f]{64})$")
+
+fun isSubtitleSyncKey(key: String): Boolean = syncKeyPattern.matches(key)
 
 /**
- * Stored-subtitle sync (silo-server "Stored subtitle sync"): the capability
- * probe, starting a sync, reading its progress, and resetting the timing.
- * Starting a sync or changing the timing needs the account that added the
- * subtitle or an administrator; anyone else gets 403.
+ * Subtitle sync (silo-server "Subtitle sync"): the capability probe, and the
+ * operations on one media file's syncable subtitles, each named by the sync
+ * key the playback inventory publishes. Anyone who can play the file may
+ * start a sync or set the timing; demo mode answers 403.
  */
 class SubtitleSyncV2Api(private val client: HttpClient, private val tokens: TokenManager, private val gate: ApiV2Gate) {
 
@@ -26,51 +31,74 @@ class SubtitleSyncV2Api(private val client: HttpClient, private val tokens: Toke
         }) { it }
     }
 
-    /** POST /api/v2/subtitles/stored/{id}/sync: 202 with a new job or the subtitle's active one. */
-    suspend fun requestSync(id: Int): ApiResult<SubtitleSyncJob> {
+    /** GET /api/v2/subtitles/{media_file_id}/sync: every syncable subtitle of the file. */
+    suspend fun list(mediaFileId: Int): ApiResult<List<SubtitleSyncState>> {
         val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
-        if (id <= 0) return ApiResult.Error(0, "invalid_subtitle", "A stored subtitle is required.")
-        return ownedV2Call<SyncJobEnvelopeV2, SubtitleSyncJob>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.Accepted, { owner ->
-            client.post("/api/v2/subtitles/stored/$id/sync") { authScope(owner!!); requireSiloAuth(); singleAttempt() }
-        }) { it.job }
+        if (mediaFileId <= 0) return invalidFile()
+        return ownedV2Call<SyncListEnvelopeV2, List<SubtitleSyncState>>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.get("/api/v2/subtitles/$mediaFileId/sync") { authScope(owner!!); requireSiloAuth() }
+        }) { body -> body.subtitles.onEach { requireFile(it, mediaFileId) } }
     }
 
-    /** GET /api/v2/subtitles/stored/{id}/sync: the subtitle with its timing and latest job. */
-    suspend fun read(id: Int, mediaFileId: Int): ApiResult<DownloadedSubtitle> {
+    /** GET /api/v2/subtitles/{media_file_id}/sync/{key}: one subtitle with its timing and latest job. */
+    suspend fun read(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
+        readWithValidator(mediaFileId, key).map { it.first }
+
+    /** POST /api/v2/subtitles/{media_file_id}/sync/{key}: 202 with the subtitle and its new or active job. */
+    suspend fun start(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> {
         val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
-        if (id <= 0) return ApiResult.Error(0, "invalid_subtitle", "A stored subtitle is required.")
-        return ownedV2Call<StoredSubtitleEnvelopeV2, DownloadedSubtitle>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
-            client.get("/api/v2/subtitles/stored/$id/sync") { authScope(owner!!); requireSiloAuth() }
-        }) { it.subtitle.project(mediaFileId) }
+        invalidTarget(mediaFileId, key)?.let { return it }
+        return ownedV2Call<SyncStateEnvelopeV2, SubtitleSyncState>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.Accepted, { owner ->
+            client.post(syncPath(mediaFileId, key)) { authScope(owner!!); requireSiloAuth(); singleAttempt() }
+        }) { requireFile(it.subtitle, mediaFileId, key) }
     }
 
     /**
-     * Resets the timing to `{offset_ms: 0, scale: 1}`. The PUT needs the
-     * validator from GET /api/v2/subtitles/stored/{id}/metadata; a stale one
-     * returns 412.
+     * PUT /api/v2/subtitles/{media_file_id}/sync/{key}/timing. The PUT needs
+     * the validator a read returns; a stale one answers 412. `{0, 1}` restores
+     * the original timing.
      */
-    suspend fun resetTiming(id: Int, mediaFileId: Int): ApiResult<DownloadedSubtitle> {
+    suspend fun setTiming(mediaFileId: Int, key: String, timing: SubtitleTiming): ApiResult<SubtitleSyncState> {
         val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
-        if (id <= 0) return ApiResult.Error(0, "invalid_subtitle", "A stored subtitle is required.")
-        var etag: String? = null
-        val metadata = ownedV2Call<Unit, Unit>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
-            client.get("/api/v2/subtitles/stored/$id/metadata") { authScope(owner!!); requireSiloAuth() }
-                .also { etag = it.headers[HttpHeaders.ETag] }
-        }) { }
-        when (metadata) {
-            is ApiResult.Error -> return metadata
-            is ApiResult.NetworkError -> return metadata
-            is ApiResult.Success -> Unit
+        val validator = when (val read = readWithValidator(mediaFileId, key)) {
+            is ApiResult.Success -> read.data.second
+                ?: return ApiResult.Error(0, "missing_etag", "Couldn't read the subtitle's current version.")
+            is ApiResult.Error -> return read
+            is ApiResult.NetworkError -> return read
         }
-        val validator = etag?.takeIf { it.isNotBlank() }
-            ?: return ApiResult.Error(0, "missing_etag", "Couldn't read the subtitle's current version.")
-        return ownedV2Call<StoredSubtitleEnvelopeV2, DownloadedSubtitle>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
-            client.put("/api/v2/subtitles/stored/$id/timing") {
+        return ownedV2Call<SyncStateEnvelopeV2, SubtitleSyncState>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.put("${syncPath(mediaFileId, key)}/timing") {
                 authScope(owner!!); requireSiloAuth(); singleAttempt()
                 header(HttpHeaders.IfMatch, validator)
                 contentType(ContentType.Application.Json)
-                setBody(SubtitleTiming())
+                setBody(timing)
             }
-        }) { it.subtitle.project(mediaFileId) }
+        }) { requireFile(it.subtitle, mediaFileId, key) }
+    }
+
+    private suspend fun readWithValidator(mediaFileId: Int, key: String): ApiResult<Pair<SubtitleSyncState, String?>> {
+        val scope = tokens.snapshotCurrentScope() ?: return identityChanged()
+        invalidTarget(mediaFileId, key)?.let { return it }
+        var etag: String? = null
+        return ownedV2Call<SyncStateEnvelopeV2, Pair<SubtitleSyncState, String?>>(gate, tokens, scope, OwnerPolicy.IDENTITY, HttpStatusCode.OK, { owner ->
+            client.get(syncPath(mediaFileId, key)) { authScope(owner!!); requireSiloAuth() }
+                .also { etag = it.headers[HttpHeaders.ETag]?.takeIf(String::isNotBlank) }
+        }) { requireFile(it.subtitle, mediaFileId, key) to etag }
+    }
+
+    private fun syncPath(mediaFileId: Int, key: String) = "/api/v2/subtitles/$mediaFileId/sync/$key"
+
+    private fun invalidTarget(mediaFileId: Int, key: String): ApiResult.Error? = when {
+        mediaFileId <= 0 -> invalidFile()
+        !isSubtitleSyncKey(key) -> ApiResult.Error(0, "invalid_sync_key", "This subtitle can't be synced.")
+        else -> null
+    }
+
+    private fun invalidFile() = ApiResult.Error(0, "invalid_media_file", "A media file is required.")
+
+    private fun requireFile(state: SubtitleSyncState, mediaFileId: Int, key: String? = null): SubtitleSyncState {
+        require(state.mediaFileId == mediaFileId.toString()) { "The subtitle belongs to another file." }
+        require(key == null || state.key == key) { "The server answered for another subtitle." }
+        return state
     }
 }

@@ -31,9 +31,11 @@ data class OfflineManifestSubtitle(
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     @SerialName("fetch_url") val fetchUrl: String = "",
     /**
-     * Opaque revision of a stored (`downloaded:{id}`) subtitle. It changes when
-     * the server retimes the subtitle (a sync or a timing reset), which changes
-     * the bytes [fetchUrl] serves. Absent for embedded and external tracks.
+     * Opaque revision of a stored (`downloaded:{id}`) or external
+     * (`external:{index}`) subtitle. It changes whenever the bytes [fetchUrl]
+     * serves can change: the server retimed the subtitle (a sync, or a timing
+     * set or reset), or an external file was edited on disk. Absent for
+     * embedded tracks and for an external file the server cannot read.
      */
     val revision: String? = null,
 )
@@ -88,9 +90,12 @@ data class OfflineSubtitleFile(
 )
 
 /**
- * Saved sidecars whose stored subtitle the [manifest] lists at a different
- * revision, paired with that revision. Captures that predate [OfflineSubtitleFile.fetchUrl]
- * cannot be matched to a manifest row and are never refreshed.
+ * Saved sidecars whose subtitle the [manifest] lists at a different revision,
+ * paired with that revision. Captures that predate [OfflineSubtitleFile.fetchUrl]
+ * cannot be matched to a manifest row and are never refreshed. An external
+ * ref names a sidecar by its position, which shifts when the files next to the
+ * media change, so a row whose language or format no longer matches the saved
+ * file is left alone.
  */
 fun OfflineTrackInfo.subtitlesWithNewRevision(
     manifest: OfflineManifestTracks,
@@ -99,7 +104,14 @@ fun OfflineTrackInfo.subtitlesWithNewRevision(
         .filter { it.revision != null }
         .associateBy { it.fetchUrl.trim() }
     return subtitles.mapNotNull { saved ->
-        val revision = saved.fetchUrl?.let(listed::get)?.revision ?: return@mapNotNull null
+        val row = saved.fetchUrl?.let(listed::get) ?: return@mapNotNull null
+        val revision = row.revision ?: return@mapNotNull null
+        if (!saved.language.isNullOrBlank() && !row.language.isNullOrBlank() &&
+            !saved.language.equals(row.language, ignoreCase = true)
+        ) {
+            return@mapNotNull null
+        }
+        if (offlineSubtitleFormat(row.format)?.let { it != saved.format } == true) return@mapNotNull null
         if (revision == saved.revision) null else saved to revision
     }
 }

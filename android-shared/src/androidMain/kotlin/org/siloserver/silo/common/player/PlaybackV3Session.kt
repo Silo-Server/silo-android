@@ -114,6 +114,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
                     it == SUBTITLE_DELIVERY_SIDECAR ||
                         it == SUBTITLE_DELIVERY_BURN_IN_ONLY
                 },
+                syncKey = item.syncKey,
             )
         }
         .distinctBy(PlayerSubtitleInfo::index)

@@ -5,6 +5,7 @@ import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.playback.encodeSubtitleIdentityPreference
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.subtitleMediaIdentityOrNull
+import org.siloserver.silo.playback.SubtitleTimingActions
 
 internal data class TvSubtitleHudOption(
     val stableId: String,
@@ -22,6 +23,19 @@ internal data class TvSubtitleHudRow(
 ) {
     val status: String?
         get() = if (applying) "Applying…" else null
+}
+
+/**
+ * What the HUD's Subtitles pane shows about subtitle sync: the selected
+ * track's timing actions, and each server track's status line by ordinal.
+ * Built by the view model, so the player screen passes one value through.
+ */
+internal data class TvHudSubtitleSync(
+    val timing: SubtitleTimingActions? = null,
+    val statusByServerIndex: Map<Int, String> = emptyMap(),
+) {
+    fun statusFor(identity: SubtitleIdentity): String? =
+        (identity as? SubtitleIdentity.ServerSidecar)?.serverIndex?.let(statusByServerIndex::get)
 }
 
 internal data class TvSubtitleHudPresentation(
