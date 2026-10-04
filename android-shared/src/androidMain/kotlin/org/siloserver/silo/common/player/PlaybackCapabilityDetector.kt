@@ -528,11 +528,26 @@ class PlaybackCapabilityDetector(
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
                     subtitles = DeliverySubtitleCapabilities(
-                        nativeEmbedded = listOf(org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability(
-                            container = "mp4",
-                            codecs = listOf("mov_text"),
-                            trackIdentity = "container_track_id",
-                        )),
+                        nativeEmbedded = listOf(
+                            org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability(
+                                container = "mp4",
+                                codecs = listOf("mov_text"),
+                                trackIdentity = "container_track_id",
+                            ),
+                            // MatroskaExtractor sets each track's Format.id to
+                            // its TrackNumber, which the server records as
+                            // container_track_id. libass's extractor subclass
+                            // forwards formats unchanged, so ASS keeps the same
+                            // identity; its flags tell the planner whether the
+                            // stream path keeps styling and attached fonts.
+                            org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability(
+                                container = "mkv",
+                                codecs = listOf("subrip", "ass"),
+                                trackIdentity = "container_track_id",
+                                assStyling = libassDirectFidelity,
+                                fontAttachments = libassEmbeddedFonts,
+                            ),
+                        ),
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,

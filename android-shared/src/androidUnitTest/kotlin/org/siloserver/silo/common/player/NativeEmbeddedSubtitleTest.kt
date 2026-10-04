@@ -43,6 +43,16 @@ class NativeEmbeddedSubtitleTest {
         assertNull(resolveMountedSubtitle(identity, listOf(track("1:silo-subtitle:0", 0))))
     }
 
+    @Test fun gapNumberedMatroskaTracksResolveByTrackNumberNotStreamIndex() {
+        // A remux with track numbers 1 (video), 4 (audio), 5 and 6 (subtitles):
+        // the second subtitle is FFmpeg stream 3 but Matroska track 6.
+        val identity = SubtitleIdentity.Embedded(1, SubtitleMediaIdentity(language = "eng", codecFamily = "subrip"), "6")
+        fun track(id: String, index: Int) = MountedSubtitleTrack(index, id, null, "eng", "application/x-subrip", false, false)
+        val mounted = listOf(track("0:5", 0), track("0:6", 1))
+        assertEquals(1, resolveMountedSubtitle(identity, mounted)?.track?.index)
+        assertNull(resolveMountedSubtitle(identity, listOf(track("0:4", 0), track("0:5", 1))))
+    }
+
     @Test fun declaredV3SidecarNeverSkipsMountForHeuristicMuxedMatch() {
         val response = plan.copy(subtitle = plan.subtitle.copy(embedded = null,
             artifact = PlaybackSubtitleArtifactV3(row.url!!, "text/vtt", "vtt")))
