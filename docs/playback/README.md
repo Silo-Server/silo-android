@@ -84,12 +84,12 @@ The server must record each Matroska subtitle's `TrackNumber` as
 `container_track_id` (proposed in Silo-Server/silo-server#1890). Tracks without
 a recorded ID keep using sidecars. MKV WebVTT (`S_TEXT/WEBVTT`) is not
 advertised because FFmpeg does not recognize that codec, so the server cannot
-identify those tracks.
+identify those tracks. Media3 drops tracks with the legacy `S_ASS` and `S_SSA`
+codec IDs, which FFmpeg still reports as `ass`; the server records no ID for
+them, so they stay on sidecars too.
 
-Known costs of the stream path: Media3 does not recognize the legacy `S_ASS`
-and `S_SSA` codec IDs, so such a track fails native selection and is recovered
-through `subtitle_embedded_failed`. After a seek or resume, a cue that began
-before the cluster Media3 resumes from stays hidden until the next cue.
+Known cost of the stream path: after a seek or resume, a cue that began before
+the cluster Media3 resumes from stays hidden until the next cue.
 
 A plan's `subtitle.embedded` selects the exact container track. Inventory URLs
 remain fallback descriptions and are not mounted alongside that selection.
