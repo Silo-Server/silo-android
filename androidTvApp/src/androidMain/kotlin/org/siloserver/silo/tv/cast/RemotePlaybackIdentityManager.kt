@@ -161,6 +161,17 @@ class RemotePlaybackIdentityManager(
 
     suspend fun end() = mutex.withLock { endLocked() }
 
+    /**
+     * Ends the identity only if [generationId] is still the active one. The
+     * check runs under the same lock as [prepare], so a delayed cleanup can
+     * never end a replacement identity installed after it was scheduled.
+     */
+    suspend fun end(generationId: String): Boolean = mutex.withLock {
+        if (activeIdentity?.generationId != generationId) return@withLock false
+        endLocked()
+        true
+    }
+
     private suspend fun endLocked() {
         val active = activeIdentity
         try {
