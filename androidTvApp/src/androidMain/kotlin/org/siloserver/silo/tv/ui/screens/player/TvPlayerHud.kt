@@ -1084,14 +1084,9 @@ private fun HudVideoPane(
                 .verticalScroll(rememberScrollState()),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Quality — derived from the real per-format video variants
-                // (resolution / bitrate) flattened from the video group. This is
-                // a genuine Media3 track override (setOverrideForType on the
-                // video group), not a no-op. When there is only one real variant
-                // (Auto + 0 or 1 format) there is nothing to switch, so the row
-                // is shown disabled with an "Auto" value rather than faking it.
-                // (videoQualities, when present, always contains a synthetic
-                // "Auto" entry, so a genuine choice means size > 2.)
+                // Quality — the server's transcode ladder for this session;
+                // choosing a rung re-requests the session at that rung
+                // (switchQuality).
                 // Version — the server's file versions (4K / 1080p encodes).
                 // Switching restarts the session on that file at the current
                 // position (QA 2026-07-08 / tvOS parity).
@@ -1128,30 +1123,30 @@ private fun HudVideoPane(
                     )
                 }
 
-                // The server-transcode quality ladder always offers at least
-                // Auto + Original (plus downscale rungs below the source), so the
-                // row is enabled whenever there is more than one option.
-                val hasQualityChoice = videoQualities.size > 1
-                val selectedQuality = videoQualities.firstOrNull { it.isSelected }
-                val qualityValue = selectedQuality?.label ?: "Auto"
-                HudFocusedSettingRow(
-                    label = "Quality",
-                    value = qualityValue,
-                    enabled = enabled && hasQualityChoice,
-                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
-                    onActivate = {
-                        onPresentPicker(
-                            HudPickerPresentation(
-                                title = "Quality",
-                                options = videoQualities.map {
-                                    HudPickerOption(id = it.id, label = it.label)
-                                },
-                                selectedId = (selectedQuality?.id ?: VIDEO_QUALITY_AUTO_ID),
-                                onSelect = { id -> onSelectVideoQuality(id) },
-                            ),
-                        )
-                    },
-                )
+                // The server's quality menu, verbatim. With fewer than two
+                // options there is nothing to switch, so the row is left out,
+                // as Version is above (#374).
+                if (hasQualityRow) {
+                    val selectedQuality = videoQualities.firstOrNull { it.isSelected }
+                    HudFocusedSettingRow(
+                        label = "Quality",
+                        value = selectedQuality?.label ?: "Auto",
+                        enabled = enabled,
+                        entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Quality",
+                                    options = videoQualities.map {
+                                        HudPickerOption(id = it.id, label = it.label)
+                                    },
+                                    selectedId = (selectedQuality?.id ?: VIDEO_QUALITY_AUTO_ID),
+                                    onSelect = { id -> onSelectVideoQuality(id) },
+                                ),
+                            )
+                        },
+                    )
+                }
 
                 if (speedRowVisible) {
                     HudFocusedSettingRow(

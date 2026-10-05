@@ -112,6 +112,9 @@ fun PlayerOverlay(
     // guest seeks regardless of policy), so the scrubber, skips, chapters, and
     // the intro pill are disabled for ALL guests — even one under
     // guest_play_pause, who keeps play/pause. Solo playback enables both.
+    // One rule for every quality entry: nothing to pick with one version (#374),
+    // and a party plays exactly the room's file.
+    val showQuality = state.versions.size > 1 && !inRoom
     val seekEnabled = !inRoom || roomTransportAuthorized(roomSnapshot, RoomTransportIntent.Seek)
     val playPauseEnabled = !inRoom ||
         roomSuspended ||
@@ -386,8 +389,7 @@ fun PlayerOverlay(
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
-                // A party plays exactly the room's file: no version picker.
-                hasMultipleVersions = state.versions.size > 1 && !inRoom,
+                hasMultipleVersions = showQuality,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
@@ -629,7 +631,7 @@ fun PlayerOverlay(
         onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
         // A party hides speed (session-only 1x) and the version picker.
         showPlaybackSpeed = !inRoom,
-        showQuality = !inRoom,
+        showQuality = showQuality,
         qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
         onOpenQuality = {
             settingsSheetVisible = false

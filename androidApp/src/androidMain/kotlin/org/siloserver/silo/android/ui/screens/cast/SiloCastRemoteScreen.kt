@@ -863,7 +863,8 @@ private fun RemoteSecondaryControls(
         verticalAlignment = Alignment.Top,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        if (playback.qualityOptions.isNotEmpty()) {
+        // A single option is nothing to choose, as on the TV itself (#374).
+        if (playback.qualityOptions.size > 1) {
             RemoteChipMenu(
                 icon = Icons.Outlined.Tune,
                 caption = "Quality",
