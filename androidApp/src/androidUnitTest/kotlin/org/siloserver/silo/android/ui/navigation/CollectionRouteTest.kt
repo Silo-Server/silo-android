@@ -57,4 +57,19 @@ class CollectionRouteTest {
 
         assertEquals(1, Regex("navArgument\\(\"source\"\\)").findAll(collectionDestination).count())
     }
+
+    @Test
+    fun collectionItemsOpenWithoutALibraryScope() {
+        val collectionDestination = appNavigationSource.substringAfter(
+            "route = Route.CollectionDetail.ROUTE",
+        ).substringBefore(
+            "// ---- Detail screens ----",
+        )
+
+        // A library-scoped read 404s for an item filed in another library.
+        assertEquals(
+            0,
+            Regex("Route\\.ItemDetail\\([^)]*libraryId").findAll(collectionDestination).count(),
+        )
+    }
 }

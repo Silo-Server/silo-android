@@ -1106,13 +1106,11 @@ fun AppNavigation(
             CollectionDetailScreen(
                 collectionId = backStackEntry.arguments?.getString("collectionId") ?: "",
                 onBackClick = { navController.popBackStack() },
+                // Collection items can live in other libraries, and a
+                // library-scoped item read 404s for those. Open them unscoped,
+                // like the web client.
                 onItemClick = { contentId ->
-                    navController.navigate(
-                        Route.ItemDetail(
-                            contentId,
-                            libraryId = backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
-                        ).route,
-                    )
+                    navController.navigate(Route.ItemDetail(contentId).route)
                 },
             )
         }

@@ -1357,8 +1357,11 @@ fun TvAppNavigation(
                 collectionId = collectionId,
                 title = title,
                 libraryType = libraryType,
+                // Collection items can live in other libraries, and a
+                // library-scoped item read 404s for those. Open them unscoped,
+                // like the web client.
                 onItemClick = { contentId ->
-                    navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
+                    navController.navigateToTvItemDetail(contentId)
                 },
                 onBack = { navController.popBackStack() },
             )
