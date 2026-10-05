@@ -49,7 +49,7 @@ class DevicePairingUiStateTest {
         val state = DevicePairingUiState(
             token = "tok_abc",
             lookup = null,
-            error = "That code has expired.",
+            error = DevicePairingError.Expired,
         )
         assertFalse(state.canDecide)
     }

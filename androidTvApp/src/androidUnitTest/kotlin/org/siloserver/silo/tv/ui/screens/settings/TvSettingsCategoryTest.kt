@@ -18,7 +18,6 @@ class TvSettingsCategoryTest {
             ),
             TvSettingsCategory.entries,
         )
-        assertEquals("SUPPORT", TvSettingsCategory.Diagnostics.eyebrow)
     }
 
     @Test

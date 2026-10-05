@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.siloserver.silo.common.ui.marquee.SignInHandoff
 
 data class ProfileSelectionUiState(
     val profiles: List<Profile> = emptyList(),
@@ -26,6 +27,12 @@ data class ProfileSelectionUiState(
     val pinDialogProfile: Profile? = null,
     val pinIsVerifying: Boolean = false,
     val pinError: String? = null,
+    /** Bumped on each rejected PIN so the dots shake and the entry clears. */
+    val pinErrorCount: Int = 0,
+    /** The signed-in account's username, shown under the title; null until read. */
+    val accountName: String? = null,
+    /** A one-profile household is being opened straight after sign-in; the picker stays hidden. */
+    val openingOnlyProfile: Boolean = false,
     /** Set after a profile is successfully selected. */
     val selectedProfileId: String? = null,
     /** Non-null when a delete was requested and the confirm dialog should show. */
@@ -38,6 +45,7 @@ data class ProfileSelectionUiState(
 class ProfileSelectionViewModel(
     private val profileRepository: ProfileRepository,
     private val authRepository: AuthRepository? = null,
+    private val consumeSkipsSingleProfile: () -> Boolean = SignInHandoff::consumeSkipsSingleProfilePicker,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ProfileSelectionUiState())
@@ -48,6 +56,12 @@ class ProfileSelectionViewModel(
 
     /** Monotonic generation for profile-list loads; see [loadProfiles]. */
     private var loadAttempt: Int = 0
+
+    /**
+     * Read once, on the first load: a sign-in that just finished asked to
+     * skip a one-person picker (see [SignInHandoff]).
+     */
+    private var skipsSingleProfile: Boolean? = null
 
     init {
         loadProfiles()
@@ -97,7 +111,9 @@ class ProfileSelectionViewModel(
 
             val scope = profileRepository.captureIdentityScope()
             val activeId = profileRepository.getActiveProfileId()
-            val isAdmin = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data?.role?.equals("admin", ignoreCase = true) == true
+            val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
+            val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
+            val isAdmin = user?.role?.equals("admin", ignoreCase = true) == true
             val result = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -130,9 +146,15 @@ class ProfileSelectionViewModel(
                     // accepted as belonging to the new one. That is worse than
                     // the unguarded commit this was meant to fix.
                     gridScope = scope
+                    // A household with one profile and no PIN doesn't need a
+                    // picker after signing in: open it, once.
+                    val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
+                    skipsSingleProfile = false
                     _uiState.update {
                         it.copy(
                             isLoading = false,
+                            openingOnlyProfile = only != null,
+                            accountName = user?.username ?: it.accountName,
                             profiles = result.data,
                             activeProfileId = activeId,
                             canManageProfiles = isAdmin,
@@ -140,6 +162,7 @@ class ProfileSelectionViewModel(
                             deleteDialogProfile = if (isAdmin) it.deleteDialogProfile else null,
                         )
                     }
+                    if (only != null) onProfileTapped(only)
                 }
 
                 is ApiResult.Error -> {
@@ -231,7 +254,7 @@ class ProfileSelectionViewModel(
                         selectProfile(profile.id, token, scope)
                     } else {
                         _uiState.update {
-                            it.copy(pinIsVerifying = false, pinError = "Incorrect PIN")
+                            it.copy(pinIsVerifying = false, pinError = "Wrong PIN. Try again.", pinErrorCount = it.pinErrorCount + 1)
                         }
                     }
                 }
@@ -241,13 +264,14 @@ class ProfileSelectionViewModel(
                         it.copy(
                             pinIsVerifying = false,
                             pinError = result.message.ifBlank { "Verification failed" },
+                            pinErrorCount = it.pinErrorCount + 1,
                         )
                     }
                 }
 
                 is ApiResult.NetworkError -> {
                     _uiState.update {
-                        it.copy(pinIsVerifying = false, pinError = "Network error")
+                        it.copy(pinIsVerifying = false, pinError = "Network error", pinErrorCount = it.pinErrorCount + 1)
                     }
                 }
             }
@@ -317,6 +341,7 @@ class ProfileSelectionViewModel(
     ) {
         viewModelScope.launch {
             val result = profileRepository.selectProfile(profileId, profileToken, expectedScope)
+            if (result != ProfileCommitResult.Committed) _uiState.update { it.copy(openingOnlyProfile = false) }
             if (result == ProfileCommitResult.ScopeChanged) {
                 // Someone else owns the identity now. Drop everything bound to
                 // the identity we no longer have — a retained grid would let

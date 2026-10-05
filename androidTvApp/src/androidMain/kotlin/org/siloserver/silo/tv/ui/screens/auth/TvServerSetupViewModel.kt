@@ -42,6 +42,9 @@ data class TvServerSetupUiState(
 sealed class TvServerSetupDestination {
     data object Setup : TvServerSetupDestination()
     data class Login(val signupEnabled: Boolean) : TvServerSetupDestination()
+
+    /** A saved server this TV is still signed in to: straight to its profiles. */
+    data object Profiles : TvServerSetupDestination()
 }
 
 internal sealed class TvServerSetupProbeResult {
@@ -83,6 +86,8 @@ class TvServerSetupViewModel(
     private val probeContract: suspend (String) -> ApiV2ProbeResult? = {
         authRepository.probeServerContract(it)
     },
+    /** Whether the now-active server already has a signed-in session. */
+    private val hasSession: suspend () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerSetupUiState())
@@ -216,12 +221,19 @@ class TvServerSetupViewModel(
         contract: ServerContract?,
     ) {
         authRepository.setServerUrl(serverUrl, contract)
+        // A saved server that is still signed in goes straight to its
+        // profiles; only a server without a session needs sign-in.
+        val next = if (destination is TvServerSetupDestination.Login && hasSession()) {
+            TvServerSetupDestination.Profiles
+        } else {
+            destination
+        }
         _uiState.update {
             it.copy(
                 serverUrl = serverUrl,
                 isLoading = false,
                 pendingCleartextUrl = null,
-                navigateTo = destination,
+                navigateTo = next,
             )
         }
     }

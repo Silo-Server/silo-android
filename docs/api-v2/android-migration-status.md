@@ -7,7 +7,9 @@ and the server ledger `contracts/api/v2/migration.json` (silo-server `origin/api
 | Endpoint family | v2 paths | Status |
 | --- | --- | --- |
 | Auth | `/api/v2/auth/{login,setup,signup,logout,refresh}`, `/api/v2/system/setup`, `/api/v2/account/me`, `/api/v2/system/info` | migrated |
-| Device sign-in | `/api/v2/auth/device`, `/api/v2/auth/device/{start,poll,capability,approve,approve-handoff,deny}` | migrated |
+| Device sign-in | `/api/v2/auth/device`, `/api/v2/auth/device/{start,poll,cancel,capability,approve,approve-handoff,deny}` | migrated |
+| Server identity | `/api/v2/system/identity`, `/api/v2/system/connections` | migrated |
+| External sign-in | `/api/v2/auth/providers`, `/api/v2/auth/oauth/capabilities`, `/api/v2/auth/oauth/{install_id}/native/start` (browser), `/api/v2/auth/oauth/complete`, `/api/v2/auth/external-sign-in/capabilities`, `/api/v2/account/identities`, `/api/v2/account/identities/{id}`, `/api/v2/account/identities/{link-ticket,link-complete,link-credentials}` | migrated |
 | Invitations | `/api/v2/invitations/capabilities`, `/api/v2/invitations/{token}`, `/api/v2/invitations/{token}/accept` | migrated |
 | Onboarding | `/api/v2/onboarding/{flow,state,progress}` | migrated |
 | Profiles | `/api/v2/profiles`, `/api/v2/profiles/{id}`, `/api/v2/profiles/{id}/verify-pin` | migrated |

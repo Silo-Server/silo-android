@@ -20,9 +20,11 @@ import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.network.api.DefaultDeviceLoginApi
 import org.siloserver.silo.network.api.ProfileApi
 
 /** A failed v2 mutation is never replayed against another API major, and the update-server state blocks it outright. */
@@ -103,6 +105,30 @@ class ApiV2NoFallbackTest {
     }
 
     @Test
+    fun aCallScopedToAnotherSavedServerIsGatedOnThatServersVerdict() = runTest {
+        val cabinCurrent = ServerEntry(id = "cabin", url = "https://cabin.example", contract = ServerContract.V2)
+        val staleActive = ApiV2Gate(ContractRegistry(ServerContract.UPDATE_REQUIRED, listOf(cabinCurrent)))
+        assertEquals(null, staleActive.forServer("cabin").blocked(), "the active server's verdict says nothing about cabin")
+        assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, staleActive.blocked()?.error)
+
+        val cabinOutdated = cabinCurrent.copy(contract = ServerContract.UPDATE_REQUIRED)
+        val currentActive = ApiV2Gate(ContractRegistry(ServerContract.V2, listOf(cabinOutdated)))
+        assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, currentActive.forServer("cabin").blocked()?.error)
+        assertEquals(null, currentActive.blocked())
+
+        // Through the scoped device-login approval: cabin is reached although
+        // the active server needs an update.
+        val recorded = mutableListOf<String>()
+        val api = DefaultDeviceLoginApi(client(recorded, HttpStatusCode.OK, "{}"), staleActive)
+        api.lookupDeviceLoginForScope(AuthScopeSnapshot("cabin", null, "https://cabin.example", null), "48217730")
+        assertEquals(listOf("GET /api/v2/auth/device"), recorded)
+        val blocked = DefaultDeviceLoginApi(client(recorded, HttpStatusCode.OK, "{}"), currentActive)
+            .approveDeviceLoginForScope(AuthScopeSnapshot("cabin", null, "https://cabin.example", null), "48217730")
+        assertEquals(ApiV2Gate.UPDATE_REQUIRED_ERROR, assertIs<ApiResult.Error>(blocked).error)
+        assertEquals(1, recorded.size, "an outdated target is never called")
+    }
+
+    @Test
     fun unknownAndV2StatesDoNotBlock() {
         assertEquals(null, ApiV2Gate(ContractRegistry(ServerContract.UNKNOWN)).blocked())
         assertEquals(null, ApiV2Gate(ContractRegistry(ServerContract.V2)).blocked())
@@ -110,9 +136,13 @@ class ApiV2NoFallbackTest {
     }
 }
 
-private class ContractRegistry(contract: ServerContract) : ServerRegistry {
+private class ContractRegistry(
+    contract: ServerContract,
+    /** Other saved servers, which scoped calls may target without switching. */
+    others: List<ServerEntry> = emptyList(),
+) : ServerRegistry {
     private val entry = ServerEntry(id = "active", url = "https://silo.example", contract = contract)
-    override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(listOf(entry))
+    override val entries: StateFlow<List<ServerEntry>> = MutableStateFlow(listOf(entry) + others)
     override val activeServerId: StateFlow<String?> = MutableStateFlow("active")
     override val activeEntry: StateFlow<ServerEntry?> = MutableStateFlow(entry)
     override suspend fun addOrUpdate(url: String, fetchedName: String?): String = "active"

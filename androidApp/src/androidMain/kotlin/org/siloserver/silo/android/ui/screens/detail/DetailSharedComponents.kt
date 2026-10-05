@@ -82,6 +82,7 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -439,7 +440,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
         return
     }
 
-    val logoUrl = detail.logoUrl
+    val logoUrl = titleLogoUrl(detail.logoUrl)
     if (!logoUrl.isNullOrBlank()) {
         ThumbhashImage(
             url = logoUrl,
@@ -823,7 +824,7 @@ private fun HeroTitle(detail: ItemDetail) {
         return
     }
 
-    val logoUrl = detail.logoUrl
+    val logoUrl = titleLogoUrl(detail.logoUrl)
     if (!logoUrl.isNullOrBlank()) {
         // iOS hero logo height — 160pt on compact phones, full width.
         ThumbhashImage(

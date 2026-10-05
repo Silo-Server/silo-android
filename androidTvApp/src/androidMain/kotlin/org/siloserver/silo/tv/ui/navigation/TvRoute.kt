@@ -26,11 +26,16 @@ sealed class TvRoute(val route: String) {
     /** Invite-code signup, reachable from Login when the server allows signups. */
     data object Signup : TvRoute("signup")
 
-    data class Login(val signupEnabled: Boolean = false) :
-        TvRoute("login?signupEnabled=$signupEnabled") {
+    /**
+     * [sessionExpired]: arrived because the session ended elsewhere (refresh
+     * failed); the screen explains it with a "You were signed out" banner.
+     */
+    data class Login(val signupEnabled: Boolean = false, val sessionExpired: Boolean = false) :
+        TvRoute("login?signupEnabled=$signupEnabled&sessionExpired=$sessionExpired") {
         companion object {
-            const val ROUTE = "login?signupEnabled={signupEnabled}"
+            const val ROUTE = "login?signupEnabled={signupEnabled}&sessionExpired={sessionExpired}"
             const val ARG_SIGNUP_ENABLED = "signupEnabled"
+            const val ARG_SESSION_EXPIRED = "sessionExpired"
         }
     }
 

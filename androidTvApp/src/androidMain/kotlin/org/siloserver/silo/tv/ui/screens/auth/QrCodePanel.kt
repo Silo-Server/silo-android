@@ -12,6 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.google.zxing.BarcodeFormat
@@ -33,6 +35,8 @@ fun QrCodePanel(
     foreground: Color = Color.Black,
     background: Color = Color.White,
     modifier: Modifier = Modifier,
+    /** Spoken label; the QR is otherwise invisible to TalkBack. */
+    description: String? = null,
 ) {
     val matrix = remember(content) {
         val writer = QRCodeWriter()
@@ -47,7 +51,14 @@ fun QrCodePanel(
     Box(
         modifier = modifier
             .size(size)
-            .background(background),
+            .background(background)
+            .then(
+                if (description != null) {
+                    Modifier.semantics { contentDescription = description }
+                } else {
+                    Modifier
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {

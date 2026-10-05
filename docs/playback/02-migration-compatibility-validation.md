@@ -210,7 +210,8 @@ least:
 | Fixture | Required observation |
 | --- | --- |
 | H.264/HEVC SDR in MP4, MKV, and AVI | Direct play only for extractor/codec/seek combinations that pass; otherwise declared adaptation. |
-| MOV/QT and TS/M2TS | Test direct, seeking, tracks, subtitles, and recovery; do not force remux solely from the extension. |
+| MOV/QT and TS | Test direct, seeking, tracks, subtitles, and recovery; do not force remux solely from the extension. |
+| M2TS/MTS (BDAV, 192-byte packets) | Expect server adaptation (remux), not direct play: Media3 cannot read 192-byte packets, so the client does not claim these containers. Test seeking, tracks, subtitles, and recovery on the adapted stream. |
 | HDR10, HDR10+, and HLG | A claimed HDR output requires correct planned delivery plus display/TV evidence, including after server adaptation. Without external evidence, record only planned/effective range. |
 | DV P5, P7 MEL, P7 FEL, and every P8 variant advertised by the server | The fixture manifest enumerates each claimed variant; initially include P8.1, P8.2, and P8.4 if advertised. Test decoder, plan, display mode, and visible output separately. Unsupported cases use a validated server transformation or `adaptation_unavailable`. |
 | E-AC-3/JOC, TrueHD/Atmos, DTS-HD, AC-3, and AAC | Pass when an advertised encoding/layout produces AVR-confirmed bitstream; otherwise the plan must declare PCM or server adaptation with no unclassified failure. |

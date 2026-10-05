@@ -1,8 +1,14 @@
 repository=https://github.com/Silo-Server/silo-server
 path=contracts/api/v2/fixtures
-commit=83ac7a9b3da25914a04176185fe4f3a0a98eab45
-ref=HEAD
+commit=85e1690fbec9e0dd78151487ef6b0f8e7b00fc1a
+ref=t3code/tsidp-oidc-feasibility
+snapshot=committed
 api_major=2
+
+snapshot=uncommitted means the bodies were copied from a server checkout with
+uncommitted fixture changes on top of that commit, so the commit alone does
+not reproduce them. Re-vendor from a server commit that contains them before
+relying on this record.
 
 Byte-identical copies of a subset of the server's native API v2 contract
 fixtures; do not hand-edit any of them. The server generates them through its

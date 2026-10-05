@@ -8,9 +8,30 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.network.apiv2.ApiV2Fixtures.plusUnknown
 import org.siloserver.silo.network.apiv2.ApiV2Fixtures.with
+import org.siloserver.silo.model.auth.DeviceLoginCancelResponse
+import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
+import org.siloserver.silo.model.auth.DeviceLoginStartResponse
+import org.siloserver.silo.network.api.DeviceCapabilityV2
+import org.siloserver.silo.network.api.DevicePollV2
+import org.siloserver.silo.network.api.ServerConnectionsV2
+import org.siloserver.silo.network.api.ServerIdentityV2
+import org.siloserver.silo.network.api.AccountIdentityCollectionV2
+import org.siloserver.silo.network.api.AccountIdentityV2
+import org.siloserver.silo.network.api.AuthProviderCollectionV2
+import org.siloserver.silo.network.api.DefaultExternalSignInApi
+import org.siloserver.silo.network.api.ExternalSignInCapabilitiesV2
+import org.siloserver.silo.network.api.LinkTicketV2
+import org.siloserver.silo.network.api.OAuthHandshakeCapabilitiesV2
+import org.siloserver.silo.network.api.TokenPairV2
+import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
+import org.siloserver.silo.model.auth.SignInOptions
+import org.siloserver.silo.model.auth.SignInProvider
+import org.siloserver.silo.model.auth.SignInProviders
+import org.siloserver.silo.pairing.PairingEndpoint
 
 /**
  * Decodes every vendored API v2 fixture with the production `SiloJson` and
@@ -39,13 +60,28 @@ class ApiV2ContractTest {
                 assertEquals(entry.expectedStatus, problem.status, entry.name)
                 assertTrue(problem.code.isNotBlank(), entry.name)
             } else {
-                assertEquals(200, entry.expectedStatus, entry.name)
+                assertTrue(entry.expectedStatus in 200..299, entry.name)
                 when (entry.operationId) {
                     "getSetupStatus" -> ApiV2Fixtures.decode<SetupStatus>(body)
                     "getCurrentUser" -> ApiV2Fixtures.decode<Account>(body)
                     "listProgress" -> Unit // Android does not read /api/v2/progress.
                     "updateProfile" -> ApiV2Fixtures.decode<ProfileV2>(body)
                     "getSystemInfo" -> ApiV2Fixtures.decode<SystemInfo>(body)
+                    "startDeviceLogin" -> ApiV2Fixtures.decode<DeviceLoginStartResponse>(body)
+                    "pollDeviceLogin" -> ApiV2Fixtures.decode<DevicePollV2>(body)
+                    "cancelDeviceLogin" -> ApiV2Fixtures.decode<DeviceLoginCancelResponse>(body)
+                    "getDeviceLogin" -> ApiV2Fixtures.decode<DeviceLoginLookupResponse>(body)
+                    "getDeviceLoginCapability" -> ApiV2Fixtures.decode<DeviceCapabilityV2>(body)
+                    "getServerIdentity" -> ApiV2Fixtures.decode<ServerIdentityV2>(body)
+                    "getServerConnections" -> ApiV2Fixtures.decode<ServerConnectionsV2>(body)
+                    "listAuthProviders" -> ApiV2Fixtures.decode<AuthProviderCollectionV2>(body)
+                    "getOAuthHandshakeCapabilities" -> ApiV2Fixtures.decode<OAuthHandshakeCapabilitiesV2>(body)
+                    "getExternalSignInCapabilities" -> ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(body)
+                    "completeOAuthLogin" -> ApiV2Fixtures.decode<TokenPairV2>(body)
+                    "listAccountIdentities" -> ApiV2Fixtures.decode<AccountIdentityCollectionV2>(body)
+                    "createAccountIdentityLinkTicket" -> ApiV2Fixtures.decode<LinkTicketV2>(body)
+                    "signInWithNetworkIdentity" -> ApiV2Fixtures.decode<TokenPairV2>(body)
+                    "linkAccountIdentityWithNetwork" -> ApiV2Fixtures.decode<AccountIdentityV2>(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
                 }
             }
@@ -252,5 +288,325 @@ class ApiV2ContractTest {
         assertNull(problem.instance)
         assertEquals(emptyList(), problem.errors)
         assertEquals("x", problem.code)
+    }
+
+    // --- Device sign-in (TV) ---
+
+    @Test
+    fun deviceLoginStartFixtureCarriesTheDigitCodeAndActivateLink() {
+        val start = ApiV2Fixtures.decode<DeviceLoginStartResponse>(ApiV2Fixtures.bodyObject("start_device_login_ok").plusUnknown())
+        assertEquals("4821-7730", start.userCode)
+        assertEquals("https://silo.example.test/activate", start.verificationUri)
+        assertEquals("https://silo.example.test/activate?code=48217730", start.verificationUriComplete)
+        assertEquals(900, start.expiresIn)
+    }
+
+    @Test
+    fun deviceLoginPollFixturesCarryOpenedAndTokens() {
+        val opened = ApiV2Fixtures.decode<DevicePollV2>(ApiV2Fixtures.bodyObject("poll_device_login_opened")).domain()
+        assertEquals("pending", opened.status)
+        assertTrue(opened.opened)
+        assertNull(opened.accessToken)
+        assertEquals("2026-01-02T03:14:05.678Z", opened.expiresAt, "a pending poll carries the current expiry")
+
+        val approved = ApiV2Fixtures.decode<DevicePollV2>(ApiV2Fixtures.bodyObject("poll_device_login_ok")).domain()
+        assertEquals("approved", approved.status)
+        assertFalse(approved.opened)
+        assertEquals("acc", approved.accessToken)
+        assertEquals("ref", approved.refreshToken)
+
+        // Servers that predate the opened signal omit it.
+        val legacy = ApiV2Fixtures.decode<DevicePollV2>(
+            ApiV2Fixtures.bodyObject("poll_device_login_opened").let { body ->
+                kotlinx.serialization.json.JsonObject(body.filterKeys { it != "opened" })
+            },
+        ).domain()
+        assertFalse(legacy.opened)
+    }
+
+    @Test
+    fun deviceLoginCancelLookupAndCapabilityFixtures() {
+        assertEquals("canceled", ApiV2Fixtures.decode<DeviceLoginCancelResponse>(ApiV2Fixtures.bodyObject("cancel_device_login_ok")).status)
+
+        val lookup = ApiV2Fixtures.decode<DeviceLoginLookupResponse>(ApiV2Fixtures.bodyObject("get_device_login_ok"))
+        assertEquals("3f2a9d5e-6b1c-4c7e-9a0d-2f4b8c1e7a35", lookup.serverId)
+        assertEquals("2026-01-02T03:04:05.678Z", lookup.requestedAt)
+        assertEquals("Silo", lookup.serverName)
+        assertEquals("4821-7730", lookup.userCode)
+
+        val capability = ApiV2Fixtures.decode<DeviceCapabilityV2>(ApiV2Fixtures.bodyObject("get_device_login_capability_ok")).domain()
+        assertTrue(capability.deviceLoginAvailable)
+        assertTrue(capability.cancel)
+        assertTrue(capability.openedSignal)
+
+        val unconfigured = ApiV2Fixtures.decode<DeviceCapabilityV2>(
+            with(ApiV2Fixtures.bodyObject("get_device_login_capability_ok"), "state" to JsonPrimitive("not_configured")),
+        ).domain()
+        assertFalse(unconfigured.deviceLoginAvailable)
+        assertFalse(unconfigured.cancel)
+    }
+
+    @Test
+    fun serverIdentityAndConnectionsFixtures() {
+        assertEquals(
+            "3f2a9d5e-6b1c-4c7e-9a0d-2f4b8c1e7a35",
+            ApiV2Fixtures.decode<ServerIdentityV2>(ApiV2Fixtures.bodyObject("server_identity_ok")).serverId,
+        )
+        val connections = ApiV2Fixtures.decode<ServerConnectionsV2>(ApiV2Fixtures.bodyObject("server_connections_ok"))
+        assertTrue(connections.isAvailable)
+        // The provider without a URL (plugin not running) is not offered.
+        assertEquals(
+            listOf(
+                PairingEndpoint.of("https://silo.example.test", PairingEndpoint.Kind.Public),
+                PairingEndpoint.of(
+                    "https://silo.overlay.example.test",
+                    PairingEndpoint.Kind.Provider,
+                    provider = "stub",
+                    displayName = "Stub Overlay",
+                ),
+            ),
+            connections.domain().endpoints,
+        )
+    }
+
+    // --- External sign-in (listAuthProviders, OAuth handshake, identities) ---
+
+    @Test
+    fun authProvidersFixtureResolvesTheNativeStartAndIcon() {
+        val providers = ApiV2Fixtures.decode<AuthProviderCollectionV2>(ApiV2Fixtures.bodyObject("list_auth_providers_ok").plusUnknown())
+            .domain("https://silo.lan:8080")
+        assertTrue(providers.passwordLogin)
+        val (local, sso) = providers.providers
+        assertEquals("local", local.id)
+        assertEquals(SignInProvider.Mode.Credentials, local.mode)
+        assertNull(local.installationId)
+        assertNull(local.nativeStartPath)
+        assertEquals(SignInProvider.Mode.OAuth, sso.mode)
+        assertEquals("Example SSO", sso.displayName)
+        assertEquals("3", sso.installationId)
+        // Only the path is kept: apps open it on their own saved base, never on the listed origin.
+        assertEquals("/api/v2/auth/oauth/3/native/start", sso.nativeStartPath)
+        assertEquals("https://plugins.example.test/icon.svg", sso.iconUrl)
+    }
+
+    @Test
+    fun authProviderRelativeIconResolvesAgainstTheListingServer() {
+        val body = ApiV2Fixtures.json.parseToJsonElement(
+            """{"items":[{"id":"plugin:3:oidc","display_name":"SSO","mode":"oauth","default":false,
+               "icon_url":"/api/v2/plugin-content/3/assets/sso.svg","installation_id":"3"}],
+               "password_login":false}""",
+        ).jsonObject
+        val provider = ApiV2Fixtures.decode<AuthProviderCollectionV2>(body).domain("https://silo.lan:8080/").providers.single()
+        assertEquals("https://silo.lan:8080/api/v2/plugin-content/3/assets/sso.svg", provider.iconUrl)
+        assertNull(provider.nativeStartPath, "no native_start_path offers no native sign-in")
+    }
+
+    /**
+     * Whatever path prefix the listing names, apps get the start relative to
+     * the server base, to resolve against their saved base URL. Only
+     * `native_start_path` enables native sign-in.
+     */
+    @Test
+    fun authProviderNativeStartIsReducedToTheBaseRelativePath() {
+        fun path(fields: String) = ApiV2Fixtures.decode<AuthProviderCollectionV2>(
+            ApiV2Fixtures.json.parseToJsonElement(
+                """{"items":[{"id":"plugin:3:oidc","display_name":"SSO","mode":"oauth","installation_id":"3"$fields}]}""",
+            ).jsonObject,
+        ).domain("http://192.168.1.10:8096").providers.single().nativeStartPath
+        val route = "/api/v2/auth/oauth/3/native/start"
+        assertEquals(route, path(""","native_start_path":"/api/v2/auth/oauth/3/native/start""""))
+        assertEquals(route, path(""","native_start_path":"/silo/api/v2/auth/oauth/3/native/start#x""""))
+        assertEquals("$route?x=1", path(""","native_start_path":"/api/v2/auth/oauth/3/native/start?x=1""""))
+        listOf(
+            ""","native_start_path":"/api/v2/auth/oauth/3/other"""",
+            ""","native_start_path":"//evil.example.test/api/v2/auth/oauth/3/native/start"""",
+            ""","native_start_path":"https://public.example.test/api/v2/auth/oauth/3/native/start"""",
+            ""","native_start_path":"/?next=/api/v2/auth/oauth/3/native/start"""",
+            "",
+        ).forEach { assertNull(path(it), it) }
+    }
+
+    @Test
+    fun oauthHandshakeFixtureServesAppsAndLinking() {
+        val handshake = ApiV2Fixtures.decode<OAuthHandshakeCapabilitiesV2>(
+            ApiV2Fixtures.bodyObject("get_oauth_handshake_capabilities_ok").plusUnknown(),
+        ).domain()
+        assertTrue(handshake.available)
+        assertTrue(handshake.native)
+        assertTrue(handshake.linking)
+        assertTrue(handshake.selectAccount)
+
+        // An older server's body without the newer members: absent means not served.
+        val older = ApiV2Fixtures.decode<OAuthHandshakeCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_oauth_handshake_capabilities_ok"), "select_account" to null),
+        ).domain()
+        assertTrue(older.native)
+        assertFalse(older.selectAccount, "absent select_account means sign-in starts don't take it")
+
+        val disabled = ApiV2Fixtures.decode<OAuthHandshakeCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_oauth_handshake_capabilities_ok"), "state" to JsonPrimitive("disabled")),
+        ).domain()
+        assertFalse(disabled.native)
+        assertFalse(disabled.linking)
+    }
+
+    @Test
+    fun externalSignInCapabilitiesFixtureServesIdentities() {
+        val capabilities = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok").plusUnknown(),
+        ).domain()
+        assertTrue(capabilities.identities)
+        // Directory linking needs no OAuth handshake, so this document reports it.
+        assertTrue(capabilities.credentialsLinking)
+        val older = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "credentials_linking" to null),
+        ).domain()
+        assertFalse(older.credentialsLinking, "absent credentials_linking means the operation isn't served")
+        assertTrue(capabilities.networkSignIn)
+        val beforeNetwork = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "network_sign_in" to null),
+        ).domain()
+        assertFalse(beforeNetwork.networkSignIn, "absent network_sign_in means the operations aren't served")
+        assertTrue(beforeNetwork.credentialsLinking)
+        val unsupported = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "state" to JsonPrimitive("unsupported")),
+        ).domain()
+        assertFalse(unsupported.identities)
+        assertFalse(unsupported.credentialsLinking)
+        assertFalse(unsupported.networkSignIn)
+    }
+
+    // --- Network identity (signInWithNetworkIdentity, linkAccountIdentityWithNetwork) ---
+
+    @Test
+    fun networkSignInFixtureCarriesTheTokenPairLoginAnswers() {
+        val login = ApiV2Fixtures.decode<TokenPairV2>(ApiV2Fixtures.bodyObject("sign_in_with_network_identity_ok").plusUnknown()).domain()
+        assertEquals("acc", login.accessToken)
+        assertEquals("ref", login.refreshToken)
+        assertEquals(3600L, login.expiresIn)
+        assertEquals("laura", login.user.username)
+        // The contract's request is the one the app sends: a POST of an empty JSON object.
+        val request = ApiV2Fixtures.index.fixtures.single { it.name == "sign_in_with_network_identity_ok" }.request
+        assertEquals("POST", request.method)
+        assertEquals("{}", request.body)
+        assertEquals("/api/v2/auth/network/5/sign-in", org.siloserver.silo.network.api.networkSignInPath(request.path))
+    }
+
+    @Test
+    fun networkSignInOffTheOverlayIsNetworkIdentityRequired() {
+        val problem = ApiV2Fixtures.decode<Problem>(ApiV2Fixtures.bodyObject("sign_in_with_network_identity_off_overlay"))
+        assertEquals(403, problem.status)
+        assertEquals("network_identity_required", problem.code)
+        assertEquals(
+            org.siloserver.silo.model.auth.NetworkSignInFailure.NetworkIdentityRequired,
+            org.siloserver.silo.model.auth.NetworkSignInFailure.of(problem.status, problem.code),
+        )
+    }
+
+    @Test
+    fun networkLinkFixtureIsTheLinkedIdentity() {
+        val identity = ApiV2Fixtures.decode<AccountIdentityV2>(
+            ApiV2Fixtures.bodyObject("link_account_identity_with_network_ok").plusUnknown(),
+        ).domain()
+        assertEquals("8", identity.id)
+        assertEquals("5", identity.installationId)
+        assertEquals("Tailscale", identity.providerName)
+        assertEquals("alice@example.test", identity.accountLabel)
+        assertNull(identity.lastSignInAt)
+    }
+
+    /**
+     * A network provider as `listAuthProviders` lists it over its own network
+     * (the provider list fixture is read off it, so it shows none): apps get
+     * the sign-in route relative to the server base, like the native start.
+     */
+    @Test
+    fun networkProviderSignInPathIsReducedToTheBaseRelativeRoute() {
+        fun provider(fields: String) = ApiV2Fixtures.decode<AuthProviderCollectionV2>(
+            ApiV2Fixtures.json.parseToJsonElement(
+                """{"items":[{"id":"plugin:5:tailscale","display_name":"Tailscale","mode":"network","default":false,
+                   "installation_id":"5"$fields}],"password_login":true}""",
+            ).jsonObject,
+        ).domain("https://silo.tailnet.ts.net").providers.single()
+        val route = "/api/v2/auth/network/5/sign-in"
+        val listed = provider(
+            ""","network_sign_in_path":"$route","network_identity":{"display_name":"","username":"alice@example.test"}""",
+        )
+        assertEquals(SignInProvider.Mode.Network, listed.mode)
+        assertEquals(route, listed.networkSignInPath)
+        assertEquals("alice@example.test", listed.networkIdentity?.label)
+        assertEquals(route, provider(""","network_sign_in_path":"/silo/api/v2/auth/network/5/sign-in"""").networkSignInPath)
+        assertNull(provider("").networkIdentity)
+        listOf(
+            "",
+            ""","network_sign_in_path":"/api/v2/auth/network/5/other"""",
+            ""","network_sign_in_path":"//evil.example.test/api/v2/auth/network/5/sign-in"""",
+            ""","network_sign_in_path":"https://public.example.test/api/v2/auth/network/5/sign-in"""",
+            ""","network_sign_in_path":"/api/v2/auth/oauth/5/native/start"""",
+        ).forEach { assertNull(provider(it).networkSignInPath, it) }
+        // Without its path the provider offers nothing.
+        assertNull(SignInOptions.of(SignInProviders(listOf(provider("")), true), OAuthHandshakeCapabilities.None).networkProvider)
+    }
+
+    @Test
+    fun nativeCompletionFixtureCarriesTokensAndUser() {
+        val login = ApiV2Fixtures.decode<TokenPairV2>(ApiV2Fixtures.bodyObject("complete_oauth_login_native_ok").plusUnknown()).domain()
+        assertEquals("acc", login.accessToken)
+        assertEquals("ref", login.refreshToken)
+        assertEquals(3600L, login.expiresIn)
+        assertEquals("laura", login.user.username)
+    }
+
+    @Test
+    fun accountIdentitiesAndLinkTicketFixtures() {
+        val collection = ApiV2Fixtures.decode<AccountIdentityCollectionV2>(
+            ApiV2Fixtures.bodyObject("list_account_identities_ok").plusUnknown(),
+        )
+        // The only identity and no local password: Disconnect is not offered.
+        assertEquals(false, collection.canUnlink)
+        val identity = collection.items.single().domain()
+        assertEquals("4", identity.id)
+        assertEquals("3", identity.installationId)
+        assertEquals("Company SSO", identity.providerName)
+        assertEquals("alice", identity.accountLabel)
+        assertEquals("2026-01-03T04:05:06.000Z", identity.lastSignInAt)
+
+        val ticket = ApiV2Fixtures.decode<LinkTicketV2>(ApiV2Fixtures.bodyObject("create_account_identity_link_ticket_ok"))
+        assertTrue(ticket.ticket.isNotBlank())
+        assertFalse(ticket.toString().contains(ticket.ticket), "the ticket never reaches a log line")
+    }
+
+    @Test
+    fun externalSignInProblemFixturesMapToTheirCodes() {
+        fun raw(name: String) = ApiV2Fixtures.bodyObject(name).toString()
+        val wrongPassword = DefaultExternalSignInApi.locatedError(422, raw("create_account_identity_link_ticket_wrong_password"))
+        assertEquals(DefaultExternalSignInApi.WRONG_PASSWORD, wrongPassword.error)
+        assertEquals(
+            "last_sign_in_method",
+            DefaultExternalSignInApi.locatedError(409, raw("delete_account_identity_last_sign_in_method")).error,
+        )
+        assertEquals("invalid_grant", ApiV2Fixtures.decode<Problem>(ApiV2Fixtures.bodyObject("complete_oauth_login_invalid_grant")).code)
+        assertEquals(
+            "invalid_grant",
+            ApiV2Fixtures.decode<Problem>(ApiV2Fixtures.bodyObject("complete_account_identity_link_invalid_grant")).code,
+        )
+        assertEquals(
+            "provider_unavailable",
+            ApiV2Fixtures.decode<Problem>(ApiV2Fixtures.bodyObject("refresh_session_provider_unavailable")).code,
+        )
+    }
+
+    @Test
+    fun signInOptionsFromTheProvidersFixture() {
+        val providers = ApiV2Fixtures.decode<AuthProviderCollectionV2>(ApiV2Fixtures.bodyObject("list_auth_providers_ok"))
+            .domain("https://silo.example.test")
+        val handshake = ApiV2Fixtures.decode<OAuthHandshakeCapabilitiesV2>(
+            ApiV2Fixtures.bodyObject("get_oauth_handshake_capabilities_ok"),
+        ).domain()
+        val options = SignInOptions.of(providers, handshake)
+        assertTrue(options.showPasswordForm)
+        assertEquals(listOf("Example SSO"), options.oauthProviders.map { it.displayName })
+        assertNull(options.directoryProvider)
+        assertNull(options.networkProvider, "a listing that didn't come through a network provider offers none")
     }
 }

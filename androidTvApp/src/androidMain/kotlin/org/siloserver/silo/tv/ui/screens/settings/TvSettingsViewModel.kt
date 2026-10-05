@@ -23,6 +23,8 @@ import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
@@ -86,7 +88,7 @@ class TvSettingsViewModel(
         val userError: String? = null,
         // Active profile identity for the tappable account header row.
         val profileName: String? = null,
-        val profileAvatar: String? = null,
+        val profileAvatar: ProfileAvatarRef = ProfileAvatarRef.None,
         val serverUrl: String = "",
         val serverName: String = "",
         // Whether the canonical settings probe succeeded; playback is
@@ -185,7 +187,7 @@ class TvSettingsViewModel(
                                 userLoading = false,
                                 userError = null,
                                 profileName = profile?.name,
-                                profileAvatar = profile?.avatar,
+                                profileAvatar = profile?.avatarRef() ?: ProfileAvatarRef.None,
                             )
                         }
                         return@launch

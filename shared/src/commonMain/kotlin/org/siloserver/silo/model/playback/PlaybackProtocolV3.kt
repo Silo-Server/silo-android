@@ -503,6 +503,36 @@ sealed interface PlaybackV3Validation {
     data class ReplanRequired(val reason: String, val plan: PlaybackPlanV3, val sessionId: String) : PlaybackV3Validation
 }
 
+/**
+ * Subtitle codecs, by source container, that Android selects natively from an
+ * original-HTTP stream by `container_track_id`. MP4 `mov_text` maps to the
+ * `tkhd` track ID and MKV SubRip/ASS to the Matroska TrackNumber, both of which
+ * Media3 sets as `Format.id`. The capability detector advertises these pairs
+ * and [validateForMedia3] accepts them, so the two share one container/codec
+ * list. Both also assume every entry is identified by `container_track_id`:
+ * only add a pair whose Media3 track ID is the container's own track ID.
+ */
+val NATIVE_EMBEDDED_SUBTITLE_CODECS: Map<String, List<String>> = mapOf(
+    "mp4" to listOf("mov_text"),
+    "mkv" to listOf("subrip", "ass"),
+)
+
+/**
+ * Normalizes a subtitle codec name the way the server does when it matches a
+ * native capability, so a plan it issues for an alias is not rejected here.
+ */
+private fun nativeEmbeddedSubtitleCodec(codec: String?): String? =
+    when (val normalized = codec?.trim()?.lowercase()) {
+        "srt" -> "subrip"
+        "tx3g" -> "mov_text"
+        else -> normalized
+    }
+
+private fun isNativeEmbeddedSubtitlePair(container: String?, codec: String?): Boolean {
+    val codecs = NATIVE_EMBEDDED_SUBTITLE_CODECS[container?.trim()?.lowercase()] ?: return false
+    return nativeEmbeddedSubtitleCodec(codec) in codecs
+}
+
 fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
     if (protocolVersion != PLAYBACK_PROTOCOL_V3 ||
         PLAYBACK_PLAN_V3_FEATURE !in serverFeatures ||
@@ -569,8 +599,8 @@ fun PlaybackDecisionResponseV3.validateForMedia3(): PlaybackV3Validation {
         if (plan.delivery != PlaybackDelivery.ORIGINAL_HTTP || plan.subtitle.mode != PlaybackSubtitleModeV3.RENDER ||
             plan.subtitle.artifact != null || native.streamIndex < 0 ||
             nativeId == null || nativeId !in 1..Int.MAX_VALUE.toLong() || native.containerTrackId != nativeId.toString() ||
-            selectedSubtitle?.source != "embedded" || selectedSubtitle.codec != "mov_text" ||
-            plan.source.container?.lowercase() !in setOf("mp4", "mov", "m4v") ||
+            selectedSubtitle?.source != "embedded" ||
+            !isNativeEmbeddedSubtitlePair(plan.source.container, selectedSubtitle.codec) ||
             plan.subtitle.trackId != plan.selectedTracks.subtitle?.id
         ) return PlaybackV3Validation.ReplanRequired("subtitle_embedded_failed", plan, resolvedSessionId)
     }

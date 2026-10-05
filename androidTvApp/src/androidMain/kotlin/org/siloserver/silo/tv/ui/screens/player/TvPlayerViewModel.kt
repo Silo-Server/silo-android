@@ -40,6 +40,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.MountedSubtitleTrack
 import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.backend.VideoBackendCapabilities
@@ -4933,8 +4934,7 @@ class TvPlayerViewModel(
     }
 
     fun openSubtitleSearchDialog() {
-        val defaultLang = _uiState.value.preferredTextLanguage
-            ?.takeIf { it.isNotBlank() }?.take(2)?.lowercase() ?: "en"
+        val defaultLang = LanguageNames.searchCode(_uiState.value.preferredTextLanguage)
         _subtitleSearch.update {
             // Keep prior results/language when reopening mid-session.
             if (it.hasSearched) it else it.copy(language = defaultLang)

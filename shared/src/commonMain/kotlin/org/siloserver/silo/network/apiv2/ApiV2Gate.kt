@@ -9,12 +9,24 @@ import org.siloserver.silo.network.ServerRegistry
  * [ServerContract.UPDATE_REQUIRED] state. The state comes from the registry
  * entry (set by [ApiV2Probe] on connect); nothing here ever performs a
  * request.
+ *
+ * A call scoped to one saved server, which need not be the active one, is
+ * gated on that server's own entry instead: [forServer].
  */
-class ApiV2Gate(private val registry: ServerRegistry? = null) {
+class ApiV2Gate(
+    private val registry: ServerRegistry? = null,
+    /** The saved server this gate checks; null for the active one. */
+    private val serverId: String? = null,
+) {
 
     /** The error to return instead of calling the server, or null when the call may proceed. */
-    fun blocked(): ApiResult.Error? =
-        if (registry?.activeEntry?.value?.contract == ServerContract.UPDATE_REQUIRED) {
+    fun blocked(): ApiResult.Error? {
+        val entry = if (serverId == null) {
+            registry?.activeEntry?.value
+        } else {
+            registry?.entries?.value?.firstOrNull { it.id == serverId }
+        }
+        return if (entry?.contract == ServerContract.UPDATE_REQUIRED) {
             ApiResult.Error(
                 code = 0, // no HTTP exchange happened; distinguishes the gate from any server status
                 error = UPDATE_REQUIRED_ERROR,
@@ -23,6 +35,13 @@ class ApiV2Gate(private val registry: ServerRegistry? = null) {
         } else {
             null
         }
+    }
+
+    /**
+     * The gate for a call scoped to [serverId]'s saved server: that entry's
+     * verdict applies, not the active server's.
+     */
+    fun forServer(serverId: String): ApiV2Gate = ApiV2Gate(registry, serverId)
 
     companion object {
         const val UPDATE_REQUIRED_ERROR = "update_server"

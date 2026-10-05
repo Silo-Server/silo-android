@@ -3,11 +3,10 @@ package org.siloserver.silo.android.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
-import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
-import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -15,6 +14,7 @@ import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
@@ -26,6 +26,7 @@ import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +57,10 @@ data class SettingsUiState(
     // Account
     val user: User? = null,
     val serverUrl: String = "",
+    // The account card shows the active profile's name and avatar, and the
+    // Server row the server's display name, as the Apple apps do.
+    val activeProfile: Profile? = null,
+    val serverName: String = "",
     val isLoadingUser: Boolean = false,
     val loggedOut: Boolean = false,
 
@@ -83,6 +88,13 @@ data class SettingsUiState(
     val subtitleMatchesDevice: Boolean = false,
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
+        org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /**
+     * What playback draws: [subtitleAppearance], or the device caption style
+     * while Use Device Settings is on. The preview shows this; the editors
+     * edit [subtitleAppearance].
+     */
+    val effectiveSubtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
     /** False when the server is known to discard subtitle text opacity. */
     val subtitleTextOpacitySupported: Boolean = true,
@@ -131,15 +143,15 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val authRepository: AuthRepository,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
-    private val overlayPrefsStore: OverlayPrefsStore,
     private val activeProfileStore: ActiveProfileStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
+    private val signOutTeardown: SignOutTeardown,
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
+    private val serverRegistry: ServerRegistry? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -157,12 +169,24 @@ class SettingsViewModel(
 
     init {
         loadUserInfo()
+        observeAccountCard()
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
         observeCardPresentation()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
+    }
+
+    private fun observeAccountCard() {
+        activeProfileStore.activeProfile.onEach { profile ->
+            _uiState.update { it.copy(activeProfile = profile) }
+        }.launchIn(viewModelScope)
+        serverRegistry?.activeEntry?.onEach { entry ->
+            _uiState.update { it.copy(serverName = entry?.displayName.orEmpty()) }
+        }?.launchIn(viewModelScope)
+        // Cached after the first fetch, so this is cheap on every later visit.
+        viewModelScope.launch { activeProfileStore.refresh() }
     }
 
     private fun loadUserInfo() {
@@ -281,6 +305,9 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.effectiveSubtitleAppearanceFlow.onEach { appearance ->
+            _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
             _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
@@ -459,16 +486,9 @@ class SettingsViewModel(
 
     fun logout() {
         viewModelScope.launch {
-            // Push any in-flight settings before tearing down the session.
-            playerSettingsStore.flushPendingDeviceSettings()
-            authRepository.logout()
-            // Drop per-profile cached prefs so the next user doesn't see
-            // stale rows flash before the fresh fetch lands.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
+            // Pushes in-flight settings, then drops per-profile cached prefs so
+            // the next user doesn't see stale rows flash before the fresh fetch.
+            signOutTeardown.signOut()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }
