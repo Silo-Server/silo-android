@@ -37,6 +37,8 @@ class RemotePlaybackIdentityManager(
         val controllerDeviceId: String,
         val controllerDeviceName: String?,
         val expiresAtEpochMs: Long,
+        /** Bumped each time a handoff reuses this identity. */
+        val claim: Int = 0,
     )
 
     private val mutex = Mutex()
@@ -61,7 +63,9 @@ class RemotePlaybackIdentityManager(
         validateOffer(offer)
 
         activeIdentity?.takeIf { matches(offer, controllerDeviceId) }?.let { active ->
-            return@withLock active.toReady(offer.requestId, reused = true)
+            val reclaimed = active.copy(claim = active.claim + 1)
+            activeIdentity = reclaimed
+            return@withLock reclaimed.toReady(offer.requestId, reused = true)
         }
 
         endLocked()
@@ -168,6 +172,18 @@ class RemotePlaybackIdentityManager(
      */
     suspend fun end(generationId: String): Boolean = mutex.withLock {
         if (activeIdentity?.generationId != generationId) return@withLock false
+        endLocked()
+        true
+    }
+
+    /**
+     * Ends the identity only if it is still exactly [expected]: same
+     * generation and not reused by a handoff since. A same-phone handoff keeps
+     * the generation, so the generation check alone would let a delayed
+     * cleanup revoke the identity that handoff just claimed.
+     */
+    suspend fun endUnclaimed(expected: ActiveIdentity): Boolean = mutex.withLock {
+        if (activeIdentity != expected) return@withLock false
         endLocked()
         true
     }

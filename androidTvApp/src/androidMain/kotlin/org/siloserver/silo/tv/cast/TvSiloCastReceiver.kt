@@ -150,7 +150,7 @@ class TvSiloCastReceiver(
     fun stop() {
         DiagnosticsCastLogger.event("TV cast receiver stopped")
         advertiser.stop()
-        val identityGeneration = identityManager.activeIdentity?.generationId
+        val identity = identityManager.activeIdentity
         pendingPlayerIdentityGeneration = null
         identityEndJob = null
         // Close the session directly (not via closePreviousController, which
@@ -166,7 +166,7 @@ class TvSiloCastReceiver(
         serverSocket = null
         scope?.cancel()
         scope = null
-        if (identityGeneration != null) {
+        if (identity != null) {
             identityCleanupScope.launch {
                 // The player's ON_STOP observer runs before this (Activity
                 // onStop) and has already queued its final progress report and
@@ -177,9 +177,11 @@ class TvSiloCastReceiver(
                 // queued teardown (bounded, so the identity is always ended),
                 // then end it.
                 withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
-                // Exact-generation guard: a rapid stop/start/new handoff must
-                // not let the old shutdown clean up the replacement identity.
-                identityManager.end(identityGeneration)
+                // Exact-identity guard: a rapid stop/start/new handoff must not
+                // let the old shutdown end the replacement identity, nor the
+                // same one if a returning phone's handoff reused it meanwhile.
+                // An offer that fails before claiming it leaves it to us.
+                identityManager.endUnclaimed(identity)
             }
         }
     }
