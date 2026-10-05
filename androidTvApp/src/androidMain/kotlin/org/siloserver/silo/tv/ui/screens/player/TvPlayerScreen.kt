@@ -51,9 +51,11 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -353,6 +355,7 @@ fun TvPlayerScreen(
     val hdrEnabled by viewModel.hdrEnabled.collectAsState()
     val dolbyVisionEnabled by viewModel.dolbyVisionEnabled.collectAsState()
     val forceHdrPassthrough by viewModel.forceHdrPassthrough.collectAsState()
+    val trueBlackBars by viewModel.trueBlackBars.collectAsState()
     val dolbyVisionSwitchInFlight by viewModel.dolbyVisionSwitchInFlight.collectAsState()
     val subtitleSearch by viewModel.subtitleSearch.collectAsState()
     val aiTranslate by viewModel.aiTranslate.collectAsState()
@@ -394,6 +397,9 @@ fun TvPlayerScreen(
     // the inflated subtitleView after the AndroidView factory runs. Mirrors
     // the phone PlayerScreen's `playerViewRef` pattern.
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+    // Latched on the first rendered frame and kept for this screen's life, so
+    // remounts (subtitle changes, recovery) don't repaint the bars.
+    var pictureShown by remember { mutableStateOf(false) }
     var idleOverlayFocusRequest by remember { mutableStateOf(TvIdleOverlayFocusRequest()) }
     val cleanPlaybackSeekScope = rememberCoroutineScope()
     var pendingCleanSeekDirection by remember { mutableStateOf(0) }
@@ -1416,6 +1422,7 @@ fun TvPlayerScreen(
                 ) {
                     val mountToken = eventTime.videoMountToken() ?: return
                     if (mountToken != viewModel.uiState.value.transportMountNonce) return
+                    pictureShown = true
                     startupStallDetector.onFirstFrameRendered()
                     postResumeStallDetector.onFirstFrameRendered()
                     viewModel.onFirstVideoFrameRendered(mountToken)
@@ -1925,10 +1932,25 @@ fun TvPlayerScreen(
         }
     }
 
+    // True Black Bars (silo-android#475): once the picture is up, clear the
+    // player to transparent instead of painting it black, so anything not drawn
+    // over (the bars, Up Next, an error) shows the output's own black. Clearing,
+    // not just skipping the plate, also wipes the window's theme background and
+    // stale pixels nothing else repaints, such as the HUD after it hides. The
+    // plate stays until the first frame so the previous screen can't show
+    // through the Navigation cross-fade.
+    val clearBars = trueBlackBars && pictureShown
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .then(
+                if (clearBars) {
+                    Modifier.drawBehind { drawRect(Color.Transparent, blendMode = BlendMode.Clear) }
+                } else {
+                    Modifier.background(Color.Black)
+                },
+            )
             .onGloballyPositioned { playerRootBounds = it.videoViewportBounds() }
             .focusRequester(rootFocus)
             .onFocusChanged { playerRootHasFocus = it.isFocused }
