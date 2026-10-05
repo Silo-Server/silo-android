@@ -57,6 +57,17 @@ data class DeviceLoginPollResponse(
     @SerialName("profile_token") val profileToken: String? = null,
     val temporary: Boolean? = null,
     @SerialName("session_expires_at") val sessionExpiresAt: String? = null,
+    /**
+     * A pending request an approver has looked up. Servers that predate the
+     * opened signal never send it, so absent reads as not opened.
+     */
+    val opened: Boolean = false,
+    /**
+     * The request's current expiry on a pending answer. A lookup on the
+     * approving device extends it, so the device moves its local deadline to
+     * it rather than replacing a code someone is approving.
+     */
+    @SerialName("expires_at") val expiresAt: String? = null,
 )
 
 @Serializable
@@ -68,14 +79,34 @@ data class DeviceLoginLookupResponse(
     @SerialName("device_platform") val devicePlatform: String? = null,
     @SerialName("ip_address_hint") val ipAddressHint: String? = null,
     @SerialName("expires_at") val expiresAt: String? = null,
+    /** When the TV asked, for the approval card's "just now". */
+    @SerialName("requested_at") val requestedAt: String? = null,
     @SerialName("client_purpose") val clientPurpose: String? = null,
     val temporary: Boolean? = null,
+    /** Deployment identity of the issuing server, when it knows one. */
+    @SerialName("server_id") val serverId: String? = null,
+    /** Display name of the issuing server, for the approval card. */
+    @SerialName("server_name") val serverName: String? = null,
 )
 
+/**
+ * `GET /auth/device/capability`. [deviceLoginAvailable] is false when the
+ * server reports device sign-in is not configured; [cancel] and
+ * [openedSignal] report the two Phase 1 additions and read false on servers
+ * that predate them.
+ */
 @Serializable
 data class DeviceLoginCapabilityResponse(
     @SerialName("remote_playback_handoff") val remotePlaybackHandoff: Boolean = false,
     @SerialName("protocol_versions") val protocolVersions: List<Int> = emptyList(),
+    val deviceLoginAvailable: Boolean = true,
+    val cancel: Boolean = false,
+    val openedSignal: Boolean = false,
+)
+
+@Serializable
+data class DeviceLoginCancelResponse(
+    val status: String,
 )
 
 @Serializable
@@ -90,7 +121,7 @@ data class DeviceLoginDecisionResponse(
 )
 
 enum class DeviceLoginStatus {
-    Pending, Approved, Denied, Expired, Consumed, Unknown;
+    Pending, Approved, Denied, Expired, Consumed, Canceled, Unknown;
 
     companion object {
         fun fromWire(raw: String): DeviceLoginStatus = when (raw) {
@@ -99,6 +130,7 @@ enum class DeviceLoginStatus {
             "denied" -> Denied
             "expired" -> Expired
             "consumed" -> Consumed
+            "canceled" -> Canceled
             else -> Unknown
         }
     }

@@ -24,7 +24,7 @@ data class SettingPresentation(
 )
 
 object SettingKeys {
-    const val REVISION = 14
+    const val REVISION = 16
 
     /** Metadata language */
     const val CATALOG_METADATA_LANGUAGE = "catalog.metadata_language"
@@ -110,6 +110,8 @@ object SettingKeys {
     const val PLAYER_VIDEO_SKIP_BACK_SECONDS = "player.video_skip_back_seconds"
     /** Video fast-forward interval */
     const val PLAYER_VIDEO_SKIP_FORWARD_SECONDS = "player.video_skip_forward_seconds"
+    /** Request titles I add to my watchlist */
+    const val REQUESTS_WATCHLIST_AUTO_REQUEST = "requests.watchlist_auto_request"
     /** Search scope */
     const val SEARCH_MEDIA_SCOPE = "search.media_scope"
     /** Match device caption settings */
@@ -156,6 +158,8 @@ object SettingKeys {
     const val UI_THEME_MUSIC_LOOP = "ui.theme_music_loop"
     /** Time format */
     const val UI_TIME_FORMAT = "ui.time_format"
+    /** Show title art */
+    const val UI_TITLE_ART = "ui.title_art"
 
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
@@ -194,6 +198,7 @@ object SettingKeys {
         PLAYER_VIDEO_GRAVITY,
         PLAYER_VIDEO_SKIP_BACK_SECONDS,
         PLAYER_VIDEO_SKIP_FORWARD_SECONDS,
+        REQUESTS_WATCHLIST_AUTO_REQUEST,
         SEARCH_MEDIA_SCOPE,
         UI_CARD_OVERLAYS,
         UI_CARD_OVERLAYS_ENABLED,
@@ -216,6 +221,7 @@ object SettingKeys {
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
         UI_TIME_FORMAT,
+        UI_TITLE_ART,
     )
 
     /** Contract-known keys that never leave the device. */
@@ -254,12 +260,14 @@ object SettingKeys {
         PLAYER_HDR_ENABLED,
         PLAYER_MATCH_FRAME_RATE,
         PLAYER_SEEK_CACHE_ENABLED,
+        REQUESTS_WATCHLIST_AUTO_REQUEST,
         UI_CARD_OVERLAYS_ENABLED,
         UI_CARD_QUICK_ACTIONS_ENABLED,
         UI_HIGH_CONTRAST,
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
+        UI_TITLE_ART,
     )
 
     val INT_KEYS: Set<String> = setOf(

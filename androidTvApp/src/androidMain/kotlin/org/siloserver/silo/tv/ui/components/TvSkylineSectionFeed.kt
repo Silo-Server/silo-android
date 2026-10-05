@@ -47,6 +47,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.ui.focus.TvReturnResolution
@@ -428,7 +429,8 @@ fun TvSkylineSectionFeed(
             ?.let { row -> focusedContentId?.let { contentId -> "${row.id}#$contentId" } },
         settledMarqueeId = marquee.content?.id,
     )
-    LaunchedEffect(rows, settledFocus, fetchDetail) {
+    val prefetchLogos = LocalShowTitleArt.current
+    LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos) {
         val focus = settledFocus ?: return@LaunchedEffect
         val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
         val window = settledPrefetchItems(
@@ -453,7 +455,8 @@ fun TvSkylineSectionFeed(
                                         .build(),
                                 )
                             }
-                            item.logoUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                            // No logo is drawn with title art off; don't fetch one.
+                            item.logoUrl?.takeIf { prefetchLogos && it.isNotBlank() }?.let { url ->
                                 add(
                                     ImageRequest.Builder(context)
                                         .data(url)

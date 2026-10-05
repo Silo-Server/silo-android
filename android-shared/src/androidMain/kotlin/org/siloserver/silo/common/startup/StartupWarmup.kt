@@ -45,6 +45,8 @@ data class StartupArtworkPlan(
      * immediately.
      */
     val warmFirstRowHeroArt: Boolean = false,
+    /** With [warmFirstRowHeroArt]: also warm the first item's logo. */
+    val warmFirstRowLogo: Boolean = warmFirstRowHeroArt,
 ) {
     companion object {
         /**
@@ -90,6 +92,12 @@ suspend fun warmAuthenticatedStartup(
     identityTransitions: IdentityTransitionBarrier,
     serverUrl: String?,
     artworkPlan: StartupArtworkPlan,
+    /**
+     * Whether Home will draw title logos (`ui.title_art`). Asked only when the
+     * artwork is warmed, after Home has loaded; false skips the logo fetch.
+     * Must not suspend on the network: it gates every first-row warm.
+     */
+    showTitleArt: () -> Boolean = { true },
 ) {
     val homeGeneration = identityTransitions.generation.value
     val homeOwner = sectionRepository.captureHomeAuthority()
@@ -117,7 +125,14 @@ suspend fun warmAuthenticatedStartup(
                     if (homeOwner != null) warmStartupHomeSections(
                         sectionRepository, homeCache, homeOwner,
                         stillCurrent = { homeGeneration == identityTransitions.generation.value },
-                    ) { sections, mayWarm -> warmHomeArtwork(context, sections, artworkPlan, mayWarm) }
+                    ) { sections, mayWarm ->
+                        val plan = if (artworkPlan.warmFirstRowHeroArt && !showTitleArt()) {
+                            artworkPlan.copy(warmFirstRowLogo = false)
+                        } else {
+                            artworkPlan
+                        }
+                        warmHomeArtwork(context, sections, plan, mayWarm)
+                    }
                 }
                 Unit
             },
@@ -197,7 +212,7 @@ private suspend fun warmHomeArtwork(
     val contentSections = sections.filter { it.items.isNotEmpty() }
     contentSections.firstOrNull()?.let { firstRow ->
         val episodeRow = firstRow.rendersEpisodeStills()
-        if (plan.warmFirstRowHeroArt) {
+        if (plan.warmFirstRowHeroArt && plan.warmFirstRowLogo) {
             append(firstRow.items.firstOrNull()?.logoUrl, plan.logoWidthPx, plan.logoHeightPx)
         }
         for (item in firstRow.items) {

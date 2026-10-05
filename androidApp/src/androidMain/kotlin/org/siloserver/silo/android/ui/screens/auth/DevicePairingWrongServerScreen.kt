@@ -36,7 +36,7 @@ fun DevicePairingWrongServerScreen(
 ) {
     DevicePairingNoticeStage(
         title = "Different server",
-        body = "This pairing request is for $serverName. Switch to it to continue.",
+        body = "This TV is signing in to $serverName. Switch to it to continue.",
         primaryLabel = "Switch to $serverName",
         onPrimary = onSwitch,
         onCancel = onCancel,
@@ -52,7 +52,7 @@ fun DevicePairingUnknownServerScreen(
 ) {
     DevicePairingNoticeStage(
         title = "Unknown server",
-        body = "This pairing request is for $origin, which isn't one of your servers. " +
+        body = "This TV is signing in to $origin, which isn't one of your servers. " +
             "Add it to continue.",
         primaryLabel = "Add server",
         onPrimary = onAddServer,

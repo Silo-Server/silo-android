@@ -11,6 +11,12 @@ package org.siloserver.silo.network
  *   is already torn down. The access token may still have time left, which is
  *   exactly the danger: the server could honour a write for a session the app
  *   has ended.
+ * - [PROVIDER_UNAVAILABLE] — a request that needs a fresh bearer
+ *   ([freshSiloAuth]: approving or declining a TV, a link ticket, a link's
+ *   confirmation, linking with directory credentials) found its access token
+ *   expired, and the refresh was refused with 503 `provider_unavailable`: the
+ *   sign-in provider couldn't re-check the session. The session stays; the
+ *   caller says so and the person retries.
  *
  * Subclasses [IllegalStateException] because that is what the required-auth
  * path has always thrown, so existing handlers keep working. Callers that
@@ -23,5 +29,13 @@ class SiloAuthUnavailableException(val reason: String) : IllegalStateException(r
     companion object {
         const val REQUIRED_AUTH_UNAVAILABLE = "required_silo_auth_unavailable"
         const val CREDENTIALS_REPUDIATED = "silo_auth_credentials_repudiated"
+        const val PROVIDER_UNAVAILABLE = "silo_auth_provider_unavailable"
+
+        /** The v2 problem code the refresh answers. */
+        const val PROVIDER_UNAVAILABLE_PROBLEM = "provider_unavailable"
+
+        /** Whether [error] is a [PROVIDER_UNAVAILABLE] refusal. */
+        fun isProviderUnavailable(error: Throwable?): Boolean =
+            (error as? SiloAuthUnavailableException)?.reason == PROVIDER_UNAVAILABLE
     }
 }

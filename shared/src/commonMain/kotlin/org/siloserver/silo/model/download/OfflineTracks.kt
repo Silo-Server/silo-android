@@ -30,6 +30,12 @@ data class OfflineManifestSubtitle(
     val forced: Boolean = false,
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     @SerialName("fetch_url") val fetchUrl: String = "",
+    /**
+     * Opaque revision of a stored (`downloaded:{id}`) subtitle. It changes when
+     * the server retimes the subtitle (a sync or a timing reset), which changes
+     * the bytes [fetchUrl] serves. Absent for embedded and external tracks.
+     */
+    val revision: String? = null,
 )
 
 /**
@@ -75,7 +81,28 @@ data class OfflineSubtitleFile(
     val title: String? = null,
     val forced: Boolean = false,
     val hearingImpaired: Boolean = false,
+    /** The manifest `fetch_url` the file came from; null on captures older than this field. */
+    val fetchUrl: String? = null,
+    /** The manifest `revision` of the fetched bytes, when the manifest gave one. */
+    val revision: String? = null,
 )
+
+/**
+ * Saved sidecars whose stored subtitle the [manifest] lists at a different
+ * revision, paired with that revision. Captures that predate [OfflineSubtitleFile.fetchUrl]
+ * cannot be matched to a manifest row and are never refreshed.
+ */
+fun OfflineTrackInfo.subtitlesWithNewRevision(
+    manifest: OfflineManifestTracks,
+): List<Pair<OfflineSubtitleFile, String>> {
+    val listed = manifest.subtitles
+        .filter { it.revision != null }
+        .associateBy { it.fetchUrl.trim() }
+    return subtitles.mapNotNull { saved ->
+        val revision = saved.fetchUrl?.let(listed::get)?.revision ?: return@mapNotNull null
+        if (revision == saved.revision) null else saved to revision
+    }
+}
 
 private val offlineManifestJson = Json {
     ignoreUnknownKeys = true

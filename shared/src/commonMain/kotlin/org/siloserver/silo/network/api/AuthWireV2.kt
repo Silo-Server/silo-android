@@ -50,9 +50,12 @@ internal data class DevicePollV2(
     val temporary: Boolean,
     val tokens: TokenPairV2? = null,
     @SerialName("session_expires_at") val sessionExpiresAt: String? = null,
+    val opened: Boolean = false,
+    @SerialName("expires_at") val expiresAt: String? = null,
 ) {
     fun domain() = DeviceLoginPollResponse(status, pollAfter, tokens?.accessToken, tokens?.refreshToken,
-        tokens?.expiresIn, tokens?.user?.domain(), profileId, profileToken, temporary, sessionExpiresAt)
+        tokens?.expiresIn, tokens?.user?.domain(), profileId, profileToken, temporary, sessionExpiresAt, opened,
+        expiresAt = expiresAt)
 }
 
 @Serializable
@@ -61,8 +64,16 @@ internal data class DeviceCapabilityV2(
     val state: String,
     @SerialName("remote_playback_handoff") val handoff: Boolean,
     @SerialName("protocol_versions") val protocols: List<Int>,
+    val cancel: Boolean = false,
+    @SerialName("opened_signal") val openedSignal: Boolean = false,
 ) {
-    fun domain() = DeviceLoginCapabilityResponse(state == "available" && handoff, protocols)
+    fun domain() = DeviceLoginCapabilityResponse(
+        remotePlaybackHandoff = state == "available" && handoff,
+        protocolVersions = protocols,
+        deviceLoginAvailable = state == "available",
+        cancel = state == "available" && cancel,
+        openedSignal = state == "available" && openedSignal,
+    )
 }
 
 internal fun HttpResponse.requireAuthStatus(expected: Int): HttpResponse = also {

@@ -62,6 +62,8 @@ val repositoryModule = module {
     }
     single { OnboardingRepository(get()) }
     single { DeviceLoginRepository(get()) }
+    single { org.siloserver.silo.repository.ServerIdentityRepository(get(), get()) }
+    single { org.siloserver.silo.repository.ExternalSignInRepository(get()) }
     single {
         CatalogRepository(
             catalogApi = get(),

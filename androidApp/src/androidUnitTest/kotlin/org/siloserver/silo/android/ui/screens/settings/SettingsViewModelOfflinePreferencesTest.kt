@@ -26,7 +26,16 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import org.siloserver.silo.android.auth.InMemoryAccountChoiceStore
+import org.siloserver.silo.android.auth.InMemoryPendingNativeSignInStore
+import org.siloserver.silo.android.auth.NativeSignInCompleter
+import org.siloserver.silo.android.auth.NativeSignInCoordinator
+import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.player.AudiobookSettingsStore
+import org.siloserver.silo.model.feature.MetadataAiFeatureStore
+import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.repository.MetadataAiRepository
+import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.common.settings.CardPresentationUiState
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.profile.ActiveProfileStore
@@ -130,11 +139,10 @@ class SettingsViewModelOfflinePreferencesTest {
             override suspend fun listProfiles() = ApiResult.Success(listOf(Profile(id = "p1", name = "Test", subtitleMode = "auto")))
         })
         profiles.refresh()
+        val authRepository = AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens)
         val vm = SettingsViewModel(
-            authRepository = AuthRepository(AuthApi(client, ApiV2Gate.Unrestricted), tokens),
+            authRepository = authRepository,
             playerSettingsStore = idleStore(),
-            libraryPlaybackPrefsStore = idleStore(),
-            overlayPrefsStore = idleStore(),
             activeProfileStore = profiles,
             notificationsRepository = NotificationsRepository(NotificationsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
             profileSettings = ProfileSettingsController(SettingsRepository(api)),
@@ -143,6 +151,25 @@ class SettingsViewModelOfflinePreferencesTest {
                 "getState" to MutableStateFlow(SeekIntervalState()),
                 "getLastError" to MutableStateFlow<String?>(null),
             )),
+            signOutTeardown = SignOutTeardown(
+                authRepository = authRepository,
+                playerSettingsStore = idleStore(),
+                libraryPlaybackPrefsStore = idleStore(),
+                overlayPrefsStore = idleStore(),
+                activeProfileStore = profiles,
+                cardPresentationStore = idleStore(),
+                seekIntervalStore = idleStore(),
+                titleArtStore = idleStore(),
+                requestsFeatureStore = RequestsFeatureStore(RequestsRepository(idleStore())),
+                metadataAiFeatureStore = MetadataAiFeatureStore(MetadataAiRepository(idleStore())),
+                serverRegistry = idleStore(mapOf("getActiveServerId" to MutableStateFlow<String?>(null))),
+                nativeSignIn = NativeSignInCoordinator(
+                    InMemoryPendingNativeSignInStore(),
+                    idleStore<NativeSignInCompleter>(),
+                    backgroundScope,
+                    InMemoryAccountChoiceStore(),
+                ),
+            ),
             audiobookSettingsStore = AudiobookSettingsStore(RuntimeEnvironment.getApplication(), { null }),
         )
         try {

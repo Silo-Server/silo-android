@@ -56,6 +56,12 @@ interface ServerRegistry {
      */
     suspend fun setContract(serverId: String, contract: ServerContract) {}
 
+    /**
+     * Records the deployment identity verified at [serverId]'s URL. Default is
+     * a no-op so single-purpose fakes need not track it.
+     */
+    suspend fun setVerifiedServerId(serverId: String, verifiedServerId: String?) {}
+
     /** Remove an entry entirely. If it was active, fall back to the next-MRU server. */
     suspend fun remove(serverId: String)
 
@@ -72,4 +78,16 @@ interface ServerRegistry {
 
     /** Bump the active server's lastUsedAt — call after a successful API hit. */
     suspend fun touchActive()
+}
+
+/**
+ * Saved servers this device holds an access token for, the active one first,
+ * then most recently used: the servers a phone can approve a TV on or push to
+ * a nearby one.
+ */
+suspend fun ServerRegistry.signedInEntries(tokenManager: TokenManager): List<ServerEntry> {
+    val activeId = activeServerId.value
+    return entries.value
+        .filter { it.url.isNotBlank() && !tokenManager.getAccessTokenForScope(it.id).isNullOrBlank() }
+        .sortedWith(compareByDescending<ServerEntry> { it.id == activeId }.thenByDescending { it.lastUsedAtEpochMs })
 }

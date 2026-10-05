@@ -1,6 +1,8 @@
 package org.siloserver.silo.pairing
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -40,6 +42,74 @@ enum class PairingServerStatus(val wire: String) {
     }
 }
 
+/**
+ * Why a pushed server failed on the TV. Carried in [PairingMessage.ServerResult.error]
+ * so the phone can say what to fix. Older TVs send only [AuthFailed] (or, on
+ * older Android TVs, free text), and any value this build doesn't know reads
+ * as that generic failure. Mirrors silo-apple `PairingFailureCode`.
+ */
+enum class PairingFailureCode(val wire: String) {
+    /** Device authorization could not be started or completed; the legacy catch-all. */
+    AuthFailed("auth_failed"),
+
+    /** The phone's user declined the request, or the server refused it. */
+    Denied("denied"),
+
+    /** The device code expired before approval, or was already used. */
+    Expired("expired"),
+
+    /** The TV could not reach the pushed address, and no offered alternative worked. */
+    Unreachable("unreachable"),
+
+    /** An address answered with a different deployment identity. */
+    IdentityMismatch("identity_mismatch"),
+
+    /** The server is v1-only, or no longer accepts this app version. */
+    UpdateRequired("update_required");
+
+    companion object {
+        fun fromWire(value: String?): PairingFailureCode =
+            entries.firstOrNull { it.wire == value } ?: AuthFailed
+    }
+}
+
+/**
+ * One address a deployment offers. The same value crosses the
+ * `system/connections` document and the pairing push, so a TV that can't reach
+ * the phone's address can verify and use one it can. Mirrors silo-apple
+ * `ServerEndpoint`. Build it with [of] so [url] carries no trailing slash.
+ */
+data class PairingEndpoint(
+    val url: String,
+    val kind: Kind,
+    /** Provider slug for [Kind.Provider], e.g. `tailscale`. */
+    val provider: String? = null,
+    /** Provider display name from its manifest; never derived from the hostname. */
+    val displayName: String? = null,
+) {
+    enum class Kind(val wire: String) {
+        Public("public"),
+        Provider("provider");
+
+        companion object {
+            /** Unknown kinds read as public, matching silo-apple. */
+            fun fromWire(value: String?): Kind = entries.firstOrNull { it.wire == value } ?: Public
+        }
+    }
+
+    companion object {
+        /** Builds an endpoint with [url] normalized the way both platforms compare addresses. */
+        fun of(
+            url: String,
+            kind: Kind,
+            provider: String? = null,
+            displayName: String? = null,
+        ): PairingEndpoint = PairingEndpoint(normalizeEndpointUrl(url), kind, provider, displayName)
+    }
+}
+
+fun normalizeEndpointUrl(url: String): String = url.trim().trimEnd('/')
+
 /** Thrown when a message cannot be encoded or decoded against the wire schema. */
 class PairingMessageException(message: String) : Exception(message)
 
@@ -59,10 +129,18 @@ sealed class PairingMessage {
         val supportedVersions: List<Int>,
     ) : PairingMessage()
 
-    /** phone → TV, one per chosen server. */
+    /**
+     * phone → TV, one per chosen server. [serverIdentity] and [endpoints] are
+     * optional additions (protocol still v1): the deployment identity the phone
+     * verified at [serverURL], and the other addresses the deployment offers,
+     * so a TV that cannot reach the phone's address can verify and use one it
+     * can. Older peers omit and ignore them.
+     */
     data class PushServer(
         val serverURL: String,
         val serverName: String?,
+        val serverIdentity: String? = null,
+        val endpoints: List<PairingEndpoint>? = null,
     ) : PairingMessage()
 
     /**
@@ -76,7 +154,11 @@ sealed class PairingMessage {
         val matchCode: String,
     ) : PairingMessage()
 
-    /** TV → phone, terminal per-server outcome. */
+    /**
+     * TV → phone, terminal per-server outcome. [serverURL] always echoes the
+     * pushed URL, even when the TV signed in at another address. [error] is a
+     * [PairingFailureCode] wire value on failure.
+     */
     data class ServerResult(
         val serverURL: String,
         val status: PairingServerStatus,
@@ -135,6 +217,10 @@ object PairingMessageCodec {
                 put(KEY_TYPE, JsonPrimitive("pushServer"))
                 put("serverURL", JsonPrimitive(msg.serverURL))
                 if (msg.serverName != null) put("serverName", JsonPrimitive(msg.serverName))
+                if (msg.serverIdentity != null) put("serverIdentity", JsonPrimitive(msg.serverIdentity))
+                msg.endpoints?.let { endpoints ->
+                    put("endpoints", buildJsonArray { endpoints.forEach { add(it.toJson()) } })
+                }
             }
             is PairingMessage.DeviceStarted -> {
                 put(KEY_TYPE, JsonPrimitive("deviceStarted"))
@@ -170,6 +256,17 @@ object PairingMessageCodec {
             "pushServer" -> PairingMessage.PushServer(
                 serverURL = obj.requireString("serverURL"),
                 serverName = obj.optionalString("serverName"),
+                serverIdentity = obj.optionalString("serverIdentity"),
+                endpoints = (obj["endpoints"] as? JsonArray)?.map { element ->
+                    val endpoint = element as? JsonObject
+                        ?: throw PairingMessageException("endpoints must hold objects")
+                    PairingEndpoint.of(
+                        url = endpoint.requireString("url"),
+                        kind = PairingEndpoint.Kind.fromWire(endpoint.requireString("kind")),
+                        provider = endpoint.optionalString("provider"),
+                        displayName = endpoint.optionalString("displayName"),
+                    )
+                },
             )
             "deviceStarted" -> PairingMessage.DeviceStarted(
                 serverURL = obj.requireString("serverURL"),
@@ -189,6 +286,13 @@ object PairingMessageCodec {
         }
     }
 
+    private fun PairingEndpoint.toJson(): JsonObject = buildJsonObject {
+        put("url", JsonPrimitive(url))
+        put("kind", JsonPrimitive(kind.wire))
+        if (provider != null) put("provider", JsonPrimitive(provider))
+        if (displayName != null) put("displayName", JsonPrimitive(displayName))
+    }
+
     private fun JsonObject.requireString(key: String): String {
         val prim = (this[key] as? JsonPrimitive)
             ?: throw PairingMessageException("Missing field: $key")
@@ -196,7 +300,7 @@ object PairingMessageCodec {
     }
 
     private fun JsonObject.optionalString(key: String): String? =
-        (this[key] as? JsonPrimitive)?.content
+        (this[key] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
 
     private fun JsonObject.requireIntArray(key: String): List<Int> {
         val arr = this[key]?.jsonArray

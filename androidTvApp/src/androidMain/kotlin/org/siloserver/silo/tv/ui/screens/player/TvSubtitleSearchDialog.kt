@@ -48,27 +48,46 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import org.siloserver.silo.tv.ui.theme.DarkBackground
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
 import org.siloserver.silo.tv.ui.theme.FocusedContent
-import java.util.Locale
 
 /**
- * Language codes offered by the search/translate pickers — matches the web's
- * common-language set. Cycled left/right on a [TvDialogCyclerRow]; no text
- * input anywhere (TV constraint that put this feature in scope).
+ * Language codes offered by the search/translate pickers — the shared
+ * [LanguageNames] vocabulary the phone app uses, in the same display-name
+ * order. Cycled left/right on a [TvDialogCyclerRow]; no text input anywhere
+ * (TV constraint that put this feature in scope).
  */
-internal val TvSubtitleLanguageOptions: List<String> = listOf(
-    "en", "es", "fr", "de", "it", "pt", "nl", "pl", "ru", "ja", "ko", "zh",
-    "ar", "tr", "sv", "no", "da", "fi", "cs", "el", "he", "hi", "hu", "id",
-    "ro", "th", "uk", "vi",
-)
+internal val TvSubtitleLanguageOptions: List<String> =
+    LanguageNames.dropdownOptions.map { it.first }
 
-/** ISO 639-1 → English display name, fallback uppercased code (spec LanguageNames behavior). */
-internal fun tvLanguageDisplayName(code: String): String =
-    Locale(code).getDisplayLanguage(Locale.ENGLISH).ifBlank { code.uppercase() }
+/**
+ * Picker position for a profile/track language code (2- or 3-letter).
+ * Normalizes through [LanguageNames.searchCode], so every supported language
+ * lands on itself and only unsupported codes fall back to English.
+ */
+internal fun tvSubtitleLanguageIndex(code: String?): Int =
+    TvSubtitleLanguageOptions.indexOf(LanguageNames.searchCode(code))
+        .takeIf { it >= 0 } ?: TvSubtitleLanguageOptions.indexOf("en")
+
+/**
+ * Whether a track's 2- or 3-letter code names the same language as a picker
+ * code ("bul" vs "bg"). Unknown or missing source codes never match, since
+ * [LanguageNames.searchCode] would otherwise map them to English.
+ */
+internal fun tvIsSameLanguage(source: String?, target: String): Boolean {
+    val code = source?.trim()?.lowercase().orEmpty()
+    if (code.isEmpty()) return false
+    val normalized = LanguageNames.searchCode(code)
+    if (normalized == "en" && LanguageNames.displayName(code) != "English") return false
+    return normalized == LanguageNames.searchCode(target)
+}
+
+/** Display name for a 2- or 3-letter code, fallback uppercased code. */
+internal fun tvLanguageDisplayName(code: String): String = LanguageNames.displayName(code)
 
 /**
  * Score bucket colors — web/mobile parity (SubtitleScoreBadge): >=70 green
@@ -174,8 +193,7 @@ fun TvSubtitleSearchDialog(
                     modifier = Modifier.padding(horizontal = 8.dp),
                 )
 
-                val langIndex = TvSubtitleLanguageOptions.indexOf(state.language)
-                    .takeIf { it >= 0 } ?: 0
+                val langIndex = tvSubtitleLanguageIndex(state.language)
                 TvDialogCyclerRow(
                     title = "Language",
                     value = tvLanguageDisplayName(TvSubtitleLanguageOptions[langIndex]),
