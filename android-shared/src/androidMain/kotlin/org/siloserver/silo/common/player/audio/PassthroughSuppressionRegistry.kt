@@ -85,12 +85,13 @@ object PassthroughSuppressionRegistry : PassthroughSuppressionScope {
 @UnstableApi
 class PassthroughSuppressingAudioSink(
     private val delegate: AudioSink,
+    private val forceDecode: (Format) -> Boolean = { false },
 ) : ForwardingAudioSink(delegate) {
     override fun supportsFormat(format: Format): Boolean =
         getFormatSupport(format) != AudioSink.SINK_FORMAT_UNSUPPORTED
 
     override fun getFormatSupport(format: Format): Int =
-        if (PassthroughSuppressionRegistry.isSuppressed(format)) {
+        if (PassthroughSuppressionRegistry.isSuppressed(format) || forceDecode(format)) {
             // Returning SUPPORTED_WITH_TRANSCODING still makes
             // MediaCodecAudioRenderer treat the encoded format as sink-
             // playable and select bypass/passthrough again. Mark only the
