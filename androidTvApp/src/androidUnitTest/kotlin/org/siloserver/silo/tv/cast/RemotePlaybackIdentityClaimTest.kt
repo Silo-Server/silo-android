@@ -18,10 +18,11 @@ import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.DeviceLoginApi
 
 /**
- * The receiver's stop() ends the identity it captured only after the player's
- * teardown, so a same-phone handoff can reuse that identity (same generation)
- * in the meantime. The deferred cleanup must leave a reused identity alone but
- * still end one that no handoff ever claimed.
+ * The receiver's stop() ends the temporary identity only after the player's
+ * teardown, so a returning phone can hand off again (reusing the same
+ * generation, or replacing it) in the meantime. The deferred cleanup must leave
+ * an identity claimed by a later receiver run alone, but still end one that
+ * only the stopped run ever claimed.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -31,49 +32,61 @@ class RemotePlaybackIdentityClaimTest {
     private val tokens = TokenManagerImpl()
     private val manager = RemotePlaybackIdentityManager(api, tokens, deviceNameProvider = { "TV" })
 
-    @Test fun reuseByTheSamePhoneBlocksTheStaleCleanup() = runTest {
-        prepare(offer())
-        val captured = assertNotNull(manager.activeIdentity)
+    @Test fun reuseByALaterRunBlocksTheStaleCleanup() = runTest {
+        prepare(offer(), run = STOPPED_RUN)
+        val installed = assertNotNull(manager.activeIdentity)
 
-        val ready = prepare(offer())
+        val ready = prepare(offer(), run = NEXT_RUN)
 
         assertTrue(ready.reused)
-        assertFalse(manager.endUnclaimed(captured))
-        assertEquals(captured.generationId, manager.activeIdentity?.generationId)
+        assertFalse(manager.endIfNotClaimedSince(STOPPED_RUN))
+        assertEquals(installed.generationId, manager.activeIdentity?.generationId)
         assertTrue(tokens.hasTemporaryScope())
         assertEquals(0, api.endCalls)
     }
 
+    @Test fun reuseByTheStoppedRunStillLetsTheCleanupEndIt() = runTest {
+        prepare(offer(), run = STOPPED_RUN)
+
+        // A handoff from the session stop() is tearing down can finish its
+        // reuse after stop() ran. That run is gone, so nothing else ends it.
+        assertTrue(prepare(offer(), run = STOPPED_RUN).reused)
+
+        assertTrue(manager.endIfNotClaimedSince(STOPPED_RUN))
+        assertNull(manager.activeIdentity)
+        assertFalse(tokens.hasTemporaryScope())
+        assertEquals(1, api.endCalls)
+    }
+
     @Test fun anOfferThatFailsBeforeClaimingLeavesItToTheCleanup() = runTest {
-        prepare(offer())
-        val captured = assertNotNull(manager.activeIdentity)
+        prepare(offer(), run = STOPPED_RUN)
 
         // The server id does not encode the URL, so validation rejects it
         // before the active identity is touched.
-        assertFails { prepare(offer().copy(serverId = "mismatched")) }
+        assertFails { prepare(offer().copy(serverId = "mismatched"), run = NEXT_RUN) }
 
-        assertTrue(manager.endUnclaimed(captured))
+        assertTrue(manager.endIfNotClaimedSince(STOPPED_RUN))
         assertNull(manager.activeIdentity)
         assertFalse(tokens.hasTemporaryScope())
         assertEquals(1, api.endCalls)
     }
 
     @Test fun aReplacementIdentityIsNotEndedByTheOldCleanup() = runTest {
-        prepare(offer())
-        val captured = assertNotNull(manager.activeIdentity)
+        prepare(offer(), run = STOPPED_RUN)
+        val installed = assertNotNull(manager.activeIdentity)
 
         api.approvedProfileId = "profile-2"
-        prepare(offer(profileId = "profile-2"))
+        prepare(offer(profileId = "profile-2"), run = NEXT_RUN)
         val replacement = assertNotNull(manager.activeIdentity)
 
-        assertNotEquals(captured.generationId, replacement.generationId)
-        assertFalse(manager.endUnclaimed(captured))
+        assertNotEquals(installed.generationId, replacement.generationId)
+        assertFalse(manager.endIfNotClaimedSince(STOPPED_RUN))
         assertEquals(replacement, manager.activeIdentity)
         assertTrue(tokens.hasTemporaryScope())
     }
 
-    private suspend fun prepare(offer: SiloCastHandoffOffer) =
-        manager.prepare(offer, CONTROLLER, controllerDeviceName = null) {}
+    private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
+        manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
 
     private fun offer(profileId: String = "profile-1") = SiloCastHandoffOffer(
         requestId = "request",
@@ -140,5 +153,7 @@ class RemotePlaybackIdentityClaimTest {
     private companion object {
         const val SERVER_URL = "https://media.example.test"
         const val CONTROLLER = "phone-1"
+        const val STOPPED_RUN = 1L
+        const val NEXT_RUN = 2L
     }
 }
