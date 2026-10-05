@@ -83,13 +83,14 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
-    @Test fun recoveryRetriesLostStopWithExactBodyAndNoAutoplay() = runTest {
+    @Test fun nextStartRetriesLostStopWithExactBody() = runTest {
         val store = Store().apply { entries = listOf(entry()) }
         val deletes = mutableListOf<String>()
         val c = client { req ->
             when (req.url.encodedPath) {
                 "/api/v2/playback/capabilities" -> reply(caps())
                 "/api/v2/account/me" -> reply(account)
+                "/api/v2/playback/start" -> reply(decision("session-2"), HttpStatusCode.Created)
                 "/api/v2/playback/session-1" -> {
                     assertEquals(HttpMethod.Delete, req.method)
                     assertTrue(req.attributes[SingleAttemptAttributeKey])
@@ -104,30 +105,32 @@ class SequencedPlaybackTest {
         try {
             val identity = Identity()
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
-            assertIs<ApiResult.Success<Unit>>(runtime.recover())
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
             assertEquals(2, deletes.size); assertEquals(deletes.first(), deletes.last())
-            assertTrue(store.entries.single().terminal)
+            assertTrue(store.entries.single { it.attemptId == "attempt-1" }.terminal)
         } finally { c.close() }
     }
 
-    @Test fun unavailableStopSurvivesRestartAndIdentityReplacementCannotReplay() = runTest {
+    @Test fun unavailableStopNeverBlocksStartAndIdentityReplacementCannotReplay() = runTest {
         val store = Store().apply { entries = listOf(entry()) }
         val identity = Identity()
-        var deletes = 0
+        var deletes = 0; var starts = 0
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> { starts++; reply(decision("session-${starts + 1}"), HttpStatusCode.Created) }
             else -> { deletes++; reply("""{"code":"authority_unavailable","detail":"pending"}""", HttpStatusCode.ServiceUnavailable) }
         } }
+        fun earlier() = store.entries.single { it.attemptId == "attempt-1" }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
-            assertEquals("stop_pending", assertIs<ApiResult.Error>(runtime.recover()).error)
-            assertEquals(3, deletes); assertFalse(store.entries.single().terminal)
-            val body = store.entries.single().stop
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(3, deletes); assertFalse(earlier().terminal)
+            val body = earlier().stop
             identity.login = "login-2"
             val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { error("Must retain StopID") }
-            restarted.recover()
-            assertEquals(3, deletes); assertEquals(body, store.entries.single().stop)
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(restarted.start(request().copy(playbackAttemptId = "attempt-3")))
+            assertEquals(3, deletes); assertEquals(body, earlier().stop); assertEquals(2, starts)
         } finally { c.close() }
     }
 
@@ -145,25 +148,26 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
-    @Test fun uncertainStartIsPersistedBeforeDispatchAndBlocksAnotherAttempt() = runTest {
+    @Test fun uncertainStartIsPersistedBeforeDispatchAndDroppedByTheNextAttempt() = runTest {
         val identity = Identity(); val store = Store(); var starts = 0
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
             else -> {
                 starts++
-                assertEquals(store.entries.single().start.toString(), req.body.toByteArray().decodeToString())
-                assertTrue(store.entries.single().start["file_id"]!!.jsonPrimitive.isString)
+                assertEquals(store.entries.last().start.toString(), req.body.toByteArray().decodeToString())
+                assertTrue(store.entries.last().start["file_id"]!!.jsonPrimitive.isString)
                 assertTrue(req.attributes[SingleAttemptAttributeKey])
-                throw IllegalStateException("lost reply")
+                if (starts == 1) throw IllegalStateException("lost reply")
+                reply(decision("session-2"), HttpStatusCode.Created)
             }
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             assertIs<ApiResult.NetworkError>(runtime.start(request()))
-            // A later start first replays the exact retained attempt; a lost reply keeps the fence.
-            assertIs<ApiResult.NetworkError>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
-            assertEquals(2, starts); assertEquals(listOf("attempt-1"), runtime.pending.value)
+            // The lost start is never replayed: the server expires whatever it may have opened.
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(2, starts); assertTrue(store.entries.single { it.attemptId == "attempt-1" }.terminal)
         } finally { c.close() }
     }
 
@@ -241,14 +245,14 @@ class SequencedPlaybackTest {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val first = assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
             assertEquals("subtitle_unavailable_in_version", first.data.terminal?.reason)
-            assertTrue(store.entries.single().terminal); assertTrue(runtime.pending.value.isEmpty())
+            assertTrue(store.entries.single().terminal)
             // The refused attempt never fences the next start; a fresh attempt goes straight to the server.
             assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
             assertEquals(2, starts)
         } finally { c.close() }
     }
 
-    @Test fun validationRejectionRetainsExactAttemptWithoutLegacyFallback() = runTest {
+    @Test fun validationRejectionNeitherFallsBackNorBlocksTheNextAttempt() = runTest {
         val identity = Identity(); val store = Store(); var starts = 0
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
@@ -260,40 +264,39 @@ class SequencedPlaybackTest {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
             val repository = PlaybackRepository(runtime)
             assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
-            // The retained attempt is replayed byte-for-byte before a new one may start; the same refusal fences again.
-            assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request())).code)
-            assertEquals(2, starts); assertEquals(request().v2Body(installation), store.entries.single().start)
+            assertEquals(request().v2Body(installation), store.entries.single().start)
+            // The refused attempt is dropped, not replayed; the next one goes straight to the server.
+            assertEquals(422, assertIs<ApiResult.Error>(repository.startPlaybackV3(request().copy(playbackAttemptId = "attempt-2"))).code)
+            assertEquals(2, starts)
         } finally { c.close() }
     }
 
-    @Test fun recoveryReplayStaysPendingWhenFirstStopJournalWriteFails() = runTest {
+    @Test fun stopThatCannotBeJournaledIsRetriedByALaterStart() = runTest {
         val identity = Identity()
-        val store = Store().apply { entries = listOf(entry().copy(sessionId = null)); failStop = true }
+        val store = Store().apply { entries = listOf(entry()); failStop = true }
         var starts = 0; var deletes = 0
-        val decision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct"}}"""
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
-            "/api/v2/playback/start" -> { starts++; reply(decision, HttpStatusCode.Created) }
+            "/api/v2/playback/start" -> { starts++; reply(decision("session-${starts + 1}"), HttpStatusCode.Created) }
             "/api/v2/playback/session-1" -> {
                 deletes++
-                assertEquals(store.entries.single().stop, SiloJson.decodeFromString<PlaybackStopV2>(req.body.toByteArray().decodeToString()))
+                assertEquals(store.entries.single { it.attemptId == "attempt-1" }.stop,
+                    SiloJson.decodeFromString<PlaybackStopV2>(req.body.toByteArray().decodeToString()))
                 reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
             }
             else -> error("Unexpected request")
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
-            val repository = PlaybackRepository(runtime)
-            assertEquals("playback_storage", assertIs<ApiResult.Error>(repository.recoverPlayback()).error)
+            // The stop cannot be journaled, so it is never sent; the new start still goes ahead.
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
             assertEquals(1, starts); assertEquals(0, deletes)
-            assertEquals(listOf("attempt-1"), runtime.pending.value)
-            assertEquals("session-1", store.entries.single().sessionId)
-            assertEquals("playback_storage", assertIs<ApiResult.Error>(runtime.start(request().copy(playbackAttemptId = "another"))).error)
+            assertFalse(store.entries.single { it.attemptId == "attempt-1" }.terminal)
             store.failStop = false
-            assertIs<ApiResult.Success<Unit>>(repository.recoverPlayback())
-            assertEquals(1, starts); assertEquals(1, deletes)
-            assertTrue(store.entries.single().terminal); assertTrue(runtime.pending.value.isEmpty())
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-3")))
+            assertEquals(2, starts); assertEquals(1, deletes)
+            assertTrue(store.entries.single { it.attemptId == "attempt-1" }.terminal)
         } finally { c.close() }
     }
 
@@ -304,6 +307,7 @@ class SequencedPlaybackTest {
         attemptCount = 1, positionSeconds = 42.0, selectedTracks = SelectedPlaybackTracksV3(),
         capabilities = ClientCodecCapabilities(), clientPlaybackContext = request().clientPlaybackContext,
     )
+    private fun decision(session: String) = adoptedDecision.replace("session-1", session)
     private val adoptedDecision = """{"protocol_version":3,"server_features":["playback_plan_v3","neutral_playback_v3_contract_v1","sequenced_progress_v1"],"outcome":"playable","session_id":"session-1","playback_plan":{"plan_id":"plan-0001","plan_attempt_key":"plan-key-0001","session_id":"session-1","delivery":"original_http","stream":{"url":"/api/v2/stream/session-1","protocol":"http_progressive"},"decision_reason":"direct","requested_media_file_id":"42","effective_media_file_id":"42","source":{"media_file_id":"42"}}}"""
 
     @Test fun uncertainReplanIsDurableAndCannotReplayOrRebase() = runTest {
@@ -499,13 +503,12 @@ class SequencedPlaybackTest {
             assertIs<ApiResult.Success<Unit>>(runtime.progress("session-1", 12.0, false))
             assertIs<ApiResult.Success<Unit>>(runtime.stop("session-1"))
             assertTrue(store.entries.isEmpty())
-            assertTrue(runtime.pending.value.isEmpty())
         } finally { c.close() }
     }
 
-    @Test fun uncertainRemotePlaybackStartIsSettledBeforeTheNextOne() = runTest {
+    @Test fun uncertainRemotePlaybackStartNeverBlocksTheNextOne() = runTest {
         val identity = remotePlaybackIdentity()
-        val starts = mutableListOf<String>(); val deletes = mutableListOf<String>()
+        val starts = mutableListOf<String>()
         val c = client { req -> when (req.url.encodedPath) {
             "/api/v2/playback/capabilities" -> reply(caps())
             "/api/v2/account/me" -> reply(account)
@@ -513,23 +516,18 @@ class SequencedPlaybackTest {
                 val attempt = SiloJson.parseToJsonElement(req.body.toByteArray().decodeToString())
                     .jsonObject["playback_attempt_id"]!!.jsonPrimitive.content
                 starts += attempt
-                // The first start's reply is lost; its replay and the next start succeed.
+                // The first start's reply is lost; the next start succeeds.
                 if (starts.size == 1) throw IllegalStateException("lost reply")
-                reply(adoptedDecision.replace("session-1", "session-$attempt"), HttpStatusCode.Created)
-            }
-            "/api/v2/playback/session-attempt-1" -> {
-                deletes += "attempt-1"
-                reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+                reply(decision("session-$attempt"), HttpStatusCode.Created)
             }
             else -> error("Unexpected request ${req.url}")
         } }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
             assertIs<ApiResult.NetworkError>(runtime.start(request()))
-            // The phone sends another title: the lost start is replayed and stopped first.
+            // The phone sends another title: the lost start is dropped, not replayed.
             assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
-            assertEquals(listOf("attempt-1", "attempt-1", "attempt-2"), starts)
-            assertEquals(listOf("attempt-1"), deletes)
+            assertEquals(listOf("attempt-1", "attempt-2"), starts)
         } finally { c.close() }
     }
 
@@ -601,7 +599,6 @@ class SequencedPlaybackTest {
             assertEquals("identity_changed", assertIs<ApiResult.Error>(runtime.stop("session-1")).error)
             // Nothing to recover later: the credentials are gone for good.
             assertTrue(store.entries.isEmpty())
-            assertTrue(runtime.pending.value.isEmpty())
         } finally { c.close() }
     }
 
