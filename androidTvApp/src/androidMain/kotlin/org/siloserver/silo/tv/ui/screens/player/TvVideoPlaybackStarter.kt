@@ -532,20 +532,6 @@ fun resolveTvPlaybackStartSelection(
     )
 }
 
-/**
- * Playback authority for audio at launch. A track chosen on the movie/show
- * detail is title-level intent and therefore outranks both a carried episode
- * choice and the global language/quality preference. The preference is only
- * the fallback when neither manual source supplied a track.
- */
-internal fun resolveTvStartAudioTrackIndex(
-    requestedTitleTrackIndex: Int?,
-    episodeHandoffTrackIndex: Int?,
-    automaticPreferenceTrackIndex: Int?,
-): Int? = requestedTitleTrackIndex
-    ?: episodeHandoffTrackIndex
-    ?: automaticPreferenceTrackIndex
-
 /** Converts the client-side selection to the server's non-negative index contract. */
 fun resolveTvServerSubtitleTrackIndex(
     episodeSelectionHandoff: EpisodeSelectionHandoff?,

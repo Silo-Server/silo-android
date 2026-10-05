@@ -266,16 +266,6 @@ internal fun selectedAudioTrackOrdinal(
     audioTracks: List<AudioTrack>,
 ): Int = selectedServerIndex.takeIf { it in audioTracks.indices } ?: 0
 
-private fun SubtitleIdentity.serverTrackIndexForMobile(): Int = when (this) {
-    SubtitleIdentity.Off -> -1
-    is SubtitleIdentity.ServerSidecar -> serverIndex
-    is SubtitleIdentity.ServerBurnIn -> serverIndex
-    is SubtitleIdentity.Embedded -> serverIndex
-    is SubtitleIdentity.Downloaded,
-    is SubtitleIdentity.LocalMedia3,
-    -> -1
-}
-
 class PlayerViewModel(
     private val videoPlaybackCoordinator: VideoPlaybackSessionCoordinator,
     private val catalogRepository: CatalogRepository,

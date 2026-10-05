@@ -85,7 +85,6 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.AutoSubtitleContext
-import org.siloserver.silo.model.playback.AutoSubtitleResolution
 import org.siloserver.silo.model.playback.inventoryAutoSubtitleCandidates
 import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.selectedCandidate
@@ -453,43 +452,6 @@ internal fun subtitleTracksWithSelection(
         track.copy(isSelected = selectedIndex >= 0 && track.index == selectedIndex)
     }
 
-internal sealed class SubtitleAutoSelection {
-    data object NoChange : SubtitleAutoSelection()
-    data object Disable : SubtitleAutoSelection()
-    data class Select(val index: Int) : SubtitleAutoSelection()
-}
-
-/**
- * Ranks MOUNTED Media3 text tracks through the shared resolver.
- *
- * The ranking itself lives in [resolveAutoSubtitle] — one cascade, one language
- * table, one SDH predicate, one bitmap predicate, shared with the detail page's
- * Auto preview. This only adapts [PlayerTrackEntry] into candidates.
- */
-internal fun resolveAutoSubtitleSelection(
-    audioTracks: List<PlayerTrackEntry>,
-    subtitleTracks: List<PlayerTrackEntry>,
-    preferredLanguage: String?,
-    subtitleMode: String?,
-    showForced: Boolean,
-): SubtitleAutoSelection =
-    when (
-        val resolution = resolveAutoSubtitle(
-            candidates = playerTrackAutoSubtitleCandidates(subtitleTracks),
-            context = AutoSubtitleContext(
-                preferredLanguage = preferredLanguage,
-                mode = subtitleMode,
-                showForced = showForced,
-                audioLanguage = audioTracks.firstOrNull { it.isSelected }?.language,
-            ),
-        )
-    ) {
-        AutoSubtitleResolution.NoChange -> SubtitleAutoSelection.NoChange
-        AutoSubtitleResolution.Disable -> SubtitleAutoSelection.Disable
-        is AutoSubtitleResolution.Select ->
-            SubtitleAutoSelection.Select(resolution.candidate.selectionIndex)
-    }
-
 /**
  * The identity Auto resolves to for a launch that carried NO decision (deep
  * link, cast, remote/realtime start).
@@ -555,29 +517,6 @@ internal fun playerTrackAutoSubtitleCandidates(
         forced = track.isForced,
         hearingImpaired = track.isEffectivelyHearingImpaired(),
     )
-}
-
-internal fun preferredAutoTextSubtitleIndex(
-    tracks: List<PlayerTrackEntry>,
-    preferredLanguage: String?,
-): Int? {
-    return when (
-        val selection = resolveAutoSubtitleSelection(
-            audioTracks = emptyList(),
-            subtitleTracks = tracks,
-            preferredLanguage = preferredLanguage,
-            subtitleMode = "auto",
-            showForced = true,
-        )
-    ) {
-        // This helper answers "which track should we MOVE to" — an idempotent
-        // re-select of the already-selected target (see the resolver) is not a
-        // move, so it stays null here.
-        is SubtitleAutoSelection.Select ->
-            selection.index.takeUnless { idx -> tracks.any { it.index == idx && it.isSelected } }
-        SubtitleAutoSelection.Disable,
-        SubtitleAutoSelection.NoChange -> null
-    }
 }
 
 internal fun resolveInitialSubtitleTrackIndex(
@@ -1441,9 +1380,7 @@ class TvPlayerViewModel(
     // is latched WITHOUT validation here precisely because the track list may
     // not be populated yet.
     private val _pendingRemoteAudioIndex = MutableStateFlow<Int?>(null)
-    val pendingRemoteAudioIndex: StateFlow<Int?> = _pendingRemoteAudioIndex.asStateFlow()
     private val _pendingRemoteSubtitleIndex = MutableStateFlow<Int?>(null)
-    val pendingRemoteSubtitleIndex: StateFlow<Int?> = _pendingRemoteSubtitleIndex.asStateFlow()
     // compareAndSet so a command arriving during the suspending apply isn't
     // clobbered by the clear of the one we just handled.
 
@@ -1463,9 +1400,6 @@ class TvPlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val forceHdrPassthrough: StateFlow<Boolean> = playerSettingsStore.forceHdrPassthroughFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    private val dvProfile7Hdr10Fallback: StateFlow<Boolean> =
-        playerSettingsStore.dvProfile7HDR10FallbackFlow
-            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val matchContentFrameRate: StateFlow<Boolean> = playerSettingsStore.matchContentFrameRateFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     // Effective = custom appearance unless "Match Device Settings" is on
@@ -5552,15 +5486,6 @@ class TvPlayerViewModel(
                 isPlaying = false,
             )
         }
-    }
-
-    /** Ordered path used by auto-advance before the singleton lifecycle starts the next item. */
-    suspend fun stopSessionForExit(): Boolean {
-        subtitleTransactions.invalidateAndAwaitSettlement()
-        playbackMutationFence.invalidateAll()
-        prepareSessionExit()
-        subtitleTransactions.persistCommittedSelectionAndFlush()
-        return lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)
     }
 
     /** Ordinary Back/remote-stop path: snapshot locally and return to detail immediately. */

@@ -1,9 +1,5 @@
 package org.siloserver.silo.common.player.video
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import org.siloserver.silo.common.player.normalizedSubtitleCodecFamily
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.FileVersion
@@ -17,7 +13,6 @@ import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
  * episode-local identity: target IDs and subtitle indexes are resolved only
  * after the next episode's catalog detail is available.
  */
-@Serializable
 data class EpisodeSelectionHandoff(
     val source: EpisodeSourceIntent? = null,
     val subtitle: EpisodeSubtitleIntent = EpisodeSubtitleIntent.auto(),
@@ -35,10 +30,8 @@ data class EpisodeSelectionHandoff(
     val audio: EpisodeAudioIntent = EpisodeAudioIntent.auto(),
 )
 
-@Serializable
 enum class EpisodeAudioMode { AUTO, TRACK }
 
-@Serializable
 data class EpisodeAudioIntent(
     val mode: EpisodeAudioMode,
     val language: String? = null,
@@ -171,7 +164,6 @@ fun resolveAudioSelectionAcrossVersions(
     )
 }
 
-@Serializable
 data class EpisodeSourceIntent(
     val resolution: String,
     val videoCodec: String? = null,
@@ -179,13 +171,10 @@ data class EpisodeSourceIntent(
     val container: String? = null,
 )
 
-@Serializable
 enum class EpisodeDynamicRange { SDR, HDR, DOLBY_VISION }
 
-@Serializable
 enum class EpisodeSubtitleMode { AUTO, OFF, TRACK }
 
-@Serializable
 data class EpisodeSubtitleIntent(
     val mode: EpisodeSubtitleMode,
     val language: String? = null,
@@ -289,15 +278,6 @@ fun resolveEpisodeSubtitleIntent(
         intentSpecified = true,
     )
 }
-
-fun encodeEpisodeSelectionHandoff(handoff: EpisodeSelectionHandoff): String =
-    episodeSelectionHandoffJson.encodeToString(handoff)
-
-fun decodeEpisodeSelectionHandoff(value: String?): EpisodeSelectionHandoff? =
-    value?.takeIf { it.isNotBlank() }?.let { encoded ->
-        runCatching { episodeSelectionHandoffJson.decodeFromString<EpisodeSelectionHandoff>(encoded) }
-            .getOrNull()
-    }
 
 private fun FileVersion.matchesEpisodeVideoCodec(intent: EpisodeSourceIntent): Boolean =
     intent.videoCodec != null &&
@@ -404,9 +384,3 @@ private fun normalizedEpisodeToken(value: String?): String? =
         ?.lowercase()
         ?.filter(Char::isLetterOrDigit)
         ?.takeIf { it.isNotEmpty() }
-
-private val episodeSelectionHandoffJson = Json {
-    encodeDefaults = false
-    explicitNulls = false
-    ignoreUnknownKeys = true
-}

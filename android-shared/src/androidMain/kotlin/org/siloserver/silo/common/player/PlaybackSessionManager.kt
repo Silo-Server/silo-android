@@ -1244,24 +1244,6 @@ open class PlaybackSessionManager(
     }
 
     /**
-     * Rolls back whatever deferred publication this manager still holds.
-     *
-     * The lifecycle's `rollbackCurrentPendingPublication` can only settle a
-     * publication the *lifecycle* knows about, and reports success when it has
-     * none — but the manager's is created first, so a cancellation between the
-     * two leaves this side pending with no owner. Callers about to start fresh
-     * content should clear both.
-     *
-     * Returns true when nothing is pending or the rollback succeeded.
-     */
-    suspend fun rollbackCurrentPendingVideoPublication(): Boolean {
-        val pendingSessionId = videoAttemptMutex.withLock {
-            pendingVideoPublication?.replacement?.sessionId
-        } ?: return true
-        return rollbackUnpublishedVideoSession(pendingSessionId)
-    }
-
-    /**
      * Drops manager ownership of [sessionId] and stops it.
      *
      * For a non-deferred commit there is no publication to roll back: ownership

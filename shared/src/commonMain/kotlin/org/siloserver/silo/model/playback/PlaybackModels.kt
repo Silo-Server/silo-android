@@ -471,9 +471,3 @@ data class DeliverySubtitleCapabilities(
     @SerialName("sidecar_bitmap") val sidecarBitmap: Boolean = false,
     @SerialName("font_attachments") val fontAttachments: Boolean = false,
 )
-
-@Serializable
-data class ProgressRequest(
-    val position: Double,
-    @SerialName("is_paused") val isPaused: Boolean
-)

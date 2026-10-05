@@ -42,8 +42,6 @@ import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.network.ApiResult
-import org.siloserver.silo.playback.downloadedSubtitleArtifactTrackId
-import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 
 internal data class TvSubtitlePlaybackContext(
@@ -2588,27 +2586,6 @@ private fun VideoSessionStartV3.Ready.selectedTvSubtitleIdentity(): SubtitleIden
                 (selected.index == null || row.index == selected.index)
         }
         ?.let(::tvSubtitleIdentity)
-}
-
-private fun PlayerSubtitleInfo.isDownloadedTvRow(): Boolean =
-    isLocalDownloadedSubtitle()
-
-private fun PlayerSubtitleInfo.toDownloadedTvIdentity(): SubtitleIdentity.Downloaded {
-    val id = requireNotNull(downloadId)
-    return SubtitleIdentity.Downloaded(
-        downloadId = id,
-        media = org.siloserver.silo.model.playback.SubtitleMediaIdentity(
-            trackId = downloadedSubtitleArtifactTrackId(id),
-            label = label,
-            language = language,
-            codecFamily = codec,
-            forced = forced ?: false,
-            hearingImpaired = label
-                ?.takeIf(::subtitleLabelIndicatesHearingImpaired)
-                ?.let { true }
-                ?: false,
-        ),
-    )
 }
 
 private fun TvStagedSubtitleCandidate.validationFailure(

@@ -279,7 +279,7 @@ class PlaybackPublicationSettlementIntegrationTest {
 
             // A stale B cleanup arriving after the preflight is harmless.
             assertFalse(harness.manager.rollbackUnpublishedVideoSession("session-b"))
-            assertFalse(harness.lifecycle.rollbackUnpublishedActiveSession("session-b"))
+            assertFalse(harness.lifecycle.settlePendingPublicationIfCurrent("session-b", confirm = false) { true })
             assertEquals("session-a", harness.manager.activeSessionIdForTest())
             assertEquals("session-a", harness.lifecycle.activeSessionId())
 

@@ -153,11 +153,6 @@ import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
-// slow) under NonCancellable while holding engineSwitchMutex, so this must be
-// long enough not to abort a legitimately slow init, yet short enough to
-// recover from a wedged init instead of stranding a permanent black screen and
-// blocking every later switch behind the held mutex. 25s splits that range.
-private const val ENGINE_SWITCH_TIMEOUT_MS = 25_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
 // (gobackward.10 / goforward.30). A server with the profile-wide
 // player.video_skip_* settings replaces them (see resolvedSkip*Ms below).
@@ -3316,74 +3311,6 @@ data class VideoQualityOption(
 )
 
 internal const val VIDEO_QUALITY_AUTO_ID = "-1"
-
-/**
- * Flatten the current [Tracks] video group(s) into per-format quality options.
- * Each format becomes a resolution/bitrate-labelled option. "Auto" is prepended
- * and is selected whenever no single format override is active (adaptive).
- */
-internal fun extractVideoQualityOptions(tracks: Tracks): List<VideoQualityOption> {
-    val variants = mutableListOf<VideoQualityOption>()
-    val selectedFlags = mutableListOf<Boolean>()
-    var videoGroupOrdinal = 0
-    for (group in tracks.groups) {
-        if (group.type != C.TRACK_TYPE_VIDEO) continue
-        val mediaGroup = group.mediaTrackGroup
-        for (trackIndex in 0 until mediaGroup.length) {
-            val format = mediaGroup.getFormat(trackIndex)
-            selectedFlags.add(group.isTrackSelected(trackIndex))
-            variants.add(
-                VideoQualityOption(
-                    id = "$videoGroupOrdinal:$trackIndex",
-                    label = formatVideoQualityLabel(format, trackIndex),
-                    isSelected = false,
-                    resolution = format.height.takeIf { it > 0 }?.let { "${it}p" },
-                ),
-            )
-        }
-        videoGroupOrdinal++
-    }
-    if (variants.isEmpty()) return emptyList()
-
-    // An explicit single-variant override is in effect only when EXACTLY one
-    // variant is selected among multiple. Several selected (or none) = adaptive,
-    // so Auto is the active option. (A single-variant group is trivially "Auto"
-    // — there is nothing to switch.)
-    val hasMultipleVariants = variants.size > 1
-    val selectedCount = selectedFlags.count { it }
-    val overrideActive = hasMultipleVariants && selectedCount == 1
-    val selectedVariantIndex = if (overrideActive) selectedFlags.indexOfFirst { it } else -1
-
-    val resolved = variants.mapIndexed { idx, v ->
-        v.copy(isSelected = idx == selectedVariantIndex)
-    }
-    return buildList {
-        add(
-            VideoQualityOption(
-                id = VIDEO_QUALITY_AUTO_ID,
-                label = "Auto",
-                isSelected = !overrideActive,
-            ),
-        )
-        addAll(resolved)
-    }
-}
-
-private fun formatVideoQualityLabel(format: Format, trackIndex: Int): String {
-    val height = format.height.takeIf { it > 0 }
-    val resolution = when {
-        height != null -> "${height}p"
-        else -> null
-    }
-    val bitrate = format.bitrate.takeIf { it > 0 }?.let { bps ->
-        when {
-            bps >= 1_000_000 -> "%.1f Mbps".format(bps / 1_000_000.0)
-            else -> "%.0f Kbps".format(bps / 1_000.0)
-        }
-    }
-    val parts = listOfNotNull(resolution, bitrate)
-    return if (parts.isEmpty()) "Variant ${trackIndex + 1}" else parts.joinToString(" · ")
-}
 
 internal fun resizeModeForVideoFillMode(mode: VideoFillMode): Int = when (mode) {
     VideoFillMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
