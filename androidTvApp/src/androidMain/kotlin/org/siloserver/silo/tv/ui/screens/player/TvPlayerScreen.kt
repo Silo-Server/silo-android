@@ -277,6 +277,9 @@ fun TvPlayerScreen(
     // Consecutive auto-advance count (pass-out protection); 0 = manual start.
     autoAdvanceCount: Int = 0,
     episodeSelectionHandoff: org.siloserver.silo.common.player.video.EpisodeSelectionHandoff? = null,
+    // False while Navigation fades this screen in or out. True Black Bars
+    // keeps the black plate meanwhile (see `clearBars`).
+    navigationSettled: Boolean = true,
     // Scope the ViewModel key by fileId too so switching 4K <-> 1080p on
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
@@ -1937,9 +1940,10 @@ fun TvPlayerScreen(
     // over (the bars, Up Next, an error) shows the output's own black. Clearing,
     // not just skipping the plate, also wipes the window's theme background and
     // stale pixels nothing else repaints, such as the HUD after it hides. The
-    // plate stays until the first frame so the previous screen can't show
-    // through the Navigation cross-fade.
-    val clearBars = trueBlackBars && pictureShown
+    // plate stays until the first frame, and while Navigation fades the
+    // screen: the fade draws it into a layer, where clearing would let the
+    // other screen show through.
+    val clearBars = trueBlackBars && pictureShown && navigationSettled
 
     Box(
         modifier = Modifier
