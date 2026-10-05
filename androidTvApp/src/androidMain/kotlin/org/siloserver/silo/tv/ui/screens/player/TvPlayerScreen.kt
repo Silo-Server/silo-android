@@ -144,6 +144,7 @@ import org.siloserver.silo.tv.R
 import org.siloserver.silo.tv.cast.SiloCastVolumeState
 import org.siloserver.silo.tv.cast.TvSiloCastPlayerAdapter
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -547,14 +548,12 @@ fun TvPlayerScreen(
                 viewModel.onSetPlaybackSpeed(speed)
                 latestSiloCastMediaController?.playbackParameters = PlaybackParameters(speed.toFloat())
             },
+            // The phone offers the same server quality ladder as the HUD, so its pick
+            // is applied the same way: the server re-plans the stream at that rung.
             setQuality = { qualityId ->
-                val player = latestSiloCastMediaController ?: latestSiloCastSessionPlayer
-                if (player != null && selectVideoQuality(player, qualityId)) {
-                    val resolution = viewModel.uiState.value.videoQualities
-                        .firstOrNull { it.id == qualityId }
-                        ?.resolution
-                    viewModel.onVideoQualitySelectionApplied(resolution)
-                }
+                viewModel.switchQuality(
+                    qualityId.takeUnless { it == VIDEO_QUALITY_AUTO_ID } ?: PlaybackQuality.Auto.wireValue,
+                )
             },
             setVideoGravity = { value ->
                 viewModel.onVideoFillModeChanged(value.toSiloCastVideoFillMode())
@@ -3527,41 +3526,6 @@ private fun TvPlayerClockScope(
 ) {
     val clock by viewModel.playbackClock.collectAsState()
     content(clock)
-}
-
-/**
- * Apply (or clear, for [VIDEO_QUALITY_AUTO_ID]) a video quality override on the
- * player. Mirrors [AudioTrackManager]'s override approach but targets a specific
- * format *within* the video group. This is a real Media3 track switch.
- */
-internal fun selectVideoQuality(player: Player, id: String): Boolean {
-    if (id == VIDEO_QUALITY_AUTO_ID) {
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            .build()
-        return true
-    }
-    val parts = id.split(":")
-    val groupOrdinal = parts.getOrNull(0)?.toIntOrNull() ?: return false
-    val trackIndex = parts.getOrNull(1)?.toIntOrNull() ?: return false
-    var ordinal = 0
-    for (group in player.currentTracks.groups) {
-        if (group.type != C.TRACK_TYPE_VIDEO) continue
-        if (ordinal == groupOrdinal) {
-            val mediaGroup = group.mediaTrackGroup
-            if (trackIndex !in 0 until mediaGroup.length) return false
-            player.trackSelectionParameters = player.trackSelectionParameters
-                .buildUpon()
-                .setOverrideForType(
-                    androidx.media3.common.TrackSelectionOverride(mediaGroup, trackIndex),
-                )
-                .build()
-            return true
-        }
-        ordinal++
-    }
-    return false
 }
 
 /**

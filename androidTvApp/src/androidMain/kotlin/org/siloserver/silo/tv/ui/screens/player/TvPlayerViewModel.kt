@@ -4855,10 +4855,6 @@ class TvPlayerViewModel(
         _uiState.update { it.copy(videoFillMode = mode) }
     }
 
-    fun onVideoQualitySelectionApplied(resolution: String?) {
-        _uiState.update { it.copy(selectedFileResolution = resolution) }
-    }
-
     /**
      * Switch the in-player video quality (tvOS ApplePlaybackQuality parity): pin
      * a session-level [qualityOverride] and request a protocol-v3 replan at the
