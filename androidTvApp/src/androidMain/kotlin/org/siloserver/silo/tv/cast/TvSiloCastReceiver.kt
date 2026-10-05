@@ -14,6 +14,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -126,21 +127,27 @@ class TvSiloCastReceiver(
         // receiver runs (it stays up across server switches until onStop), and
         // drop the live controller session — its hello was authorized against
         // the previous server, so keeping it would let an old-server remote
-        // drive playback on the new one.
+        // drive playback on the new one. Only a different server or advertised
+        // name counts: profile and last-used updates rewrite the entry too, and
+        // re-registering on a profile clear raced the stop() that follows it,
+        // losing the Bonjour goodbye so the TV stayed listed after sign-out.
         newScope.launch {
-            serverRegistry.activeEntry.drop(1).collect { entry ->
-                closePreviousController()
-                identityManager.end()
-                val port = synchronized(this@TvSiloCastReceiver) { serverSocket?.localPort }
-                if (port != null) {
-                    advertiser.start(
-                        port = port,
-                        serverId = entry?.id,
-                        serverName = entry?.displayName,
-                        playing = activePlayer != null,
-                    )
+            serverRegistry.activeEntry
+                .distinctUntilChangedBy { it?.id to it?.displayName }
+                .drop(1)
+                .collect { entry ->
+                    closePreviousController()
+                    identityManager.end()
+                    val port = synchronized(this@TvSiloCastReceiver) { serverSocket?.localPort }
+                    if (port != null) {
+                        advertiser.start(
+                            port = port,
+                            serverId = entry?.id,
+                            serverName = entry?.displayName,
+                            playing = activePlayer != null,
+                        )
+                    }
                 }
-            }
         }
     }
 

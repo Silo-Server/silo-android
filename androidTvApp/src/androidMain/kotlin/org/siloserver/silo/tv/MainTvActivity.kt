@@ -28,7 +28,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -39,6 +41,9 @@ import org.siloserver.silo.common.startup.warmAuthenticatedStartup
 import org.siloserver.silo.common.startup.warmProfileSelectionStartup
 import org.siloserver.silo.common.ui.components.StartupSplashVideo
 import org.siloserver.silo.common.ui.components.StartupSplashResizeMode
+import org.siloserver.silo.network.IdentityTransition
+import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionPhase
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.network.TokenManager
@@ -54,7 +59,16 @@ import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerRemoteKeyBridge
 import org.siloserver.silo.tv.ui.theme.SiloTvTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 import org.koin.core.qualifier.named
@@ -101,6 +115,20 @@ class MainTvActivity : ComponentActivity() {
         // Capture the launching intent's Uri (if any) before Compose starts so
         // the navigation collector observes it as soon as it subscribes.
         handleIntent(intent)
+
+        // Run the SiloCast receiver while the app is started AND signed in,
+        // following sign-in, profile selection and sign-out without needing a
+        // background/foreground cycle. start()/stop() run here on the main
+        // thread, and repeatOnLifecycle cancels this block at ON_STOP, so no
+        // start() can land after onStop()'s stop().
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
+                castAuthentication().collect { authenticated ->
+                    if (authenticated) receiver.start() else receiver.stop()
+                }
+            }
+        }
 
         setContent {
             var startRoute by remember { mutableStateOf<String?>(null) }
@@ -198,27 +226,6 @@ class MainTvActivity : ComponentActivity() {
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
         lifecycleScope.launch(Dispatchers.IO) { refresher.refreshIfStale() }
-        lifecycleScope.launch(Dispatchers.IO) {
-            // The auth check suspends; a quick background could run onStop's
-            // stop() first (a no-op — nothing started) and THEN this start(),
-            // leaving the receiver advertising while backgrounded. Re-check
-            // the lifecycle after the suspension.
-            if (isAuthenticatedForCast() &&
-                lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
-            ) {
-                val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
-                receiver.start()
-                // The lifecycle check above is a TOCTOU: the activity can stop
-                // between the check and start(), so onStop()'s stop() lands
-                // BEFORE this start() and the receiver keeps advertising while
-                // backgrounded. Compensate after the fact — start()/stop() are
-                // @Synchronized and stop() is idempotent, so every interleaving
-                // terminates with the receiver stopped when backgrounded.
-                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    receiver.stop()
-                }
-            }
-        }
     }
 
     /**
@@ -352,21 +359,6 @@ class MainTvActivity : ComponentActivity() {
         }
         if (startRoute != TvRoute.Main.route) return
         lifecycleScope.launch(Dispatchers.IO) {
-            // Re-check the lifecycle before starting the cast receiver: a
-            // cold-start followed by an immediate Home can dispatch this after
-            // onStop()'s stop() already ran, leaving NSD advertising + the cast
-            // socket up while backgrounded. Mirrors the onStart() guard.
-            if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
-                receiver.start()
-                // Same TOCTOU compensation as onStart(): if the activity
-                // stopped between the check and start(), undo the start —
-                // start()/stop() are @Synchronized and stop() is idempotent,
-                // so every interleaving ends stopped when backgrounded.
-                if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
-                    receiver.stop()
-                }
-            }
             warmAuthenticatedStartup(
                 context = applicationContext,
                 authRepository = get(AuthRepository::class.java),
@@ -386,9 +378,38 @@ class MainTvActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Emits whether the TV is signed in far enough to receive casts, re-read
+     * after every committed identity change, so signing in, picking a profile
+     * or signing out while the app stays open starts or stops the receiver.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun castAuthentication(): Flow<Boolean> {
+        val registry = get<ServerRegistry>(ServerRegistry::class.java)
+        // Widened to nullable so a null marker can stand for "subscribed".
+        val transitions: SharedFlow<IdentityTransition?> =
+            get<IdentityTransitionBarrier>(IdentityTransitionBarrier::class.java).transitions
+        return merge(
+            // The marker triggers the first read only once the subscription is
+            // live, so a transition finishing at that moment can't be missed.
+            // DID_CHANGE, not WILL_CHANGE: the new identity is only readable
+            // after the transition's block has run.
+            transitions
+                .onSubscription { emit(null) }
+                .filter { it == null || it.phase == IdentityTransitionPhase.DID_CHANGE },
+            registry.activeEntry,
+        )
+            .mapLatest { isAuthenticatedForCast() }
+            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
+    }
+
     private suspend fun isAuthenticatedForCast(): Boolean {
         val registry = get<ServerRegistry>(ServerRegistry::class.java)
         val tokenManager = get<TokenManager>(TokenManager::class.java)
+        // A remote-playback overlay counts as signed in: stopping the receiver
+        // would end the handoff it belongs to.
+        if (tokenManager.hasTemporaryScope()) return true
         return registry.activeEntry.value != null &&
             !tokenManager.getAccessToken().isNullOrBlank() &&
             !tokenManager.getProfileId().isNullOrBlank()
