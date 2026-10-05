@@ -173,6 +173,8 @@ class TvLibraryDetailViewModel(
         val filtersLoading: Boolean = true,
         val browseItems: List<BrowseItem> = emptyList(),
         val browseHasMore: Boolean = false,
+        /** For an empty grid: false when the library itself is empty, true when filters hid everything, null when unknown (#451). */
+        val browseLibraryHasItems: Boolean? = null,
         val browseLoading: Boolean = false,
         val browseLoadingMore: Boolean = false,
         val browseError: String? = null,
@@ -570,6 +572,20 @@ class TvLibraryDetailViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    val visibleItems = response.items.visibleOnTv()
+                    // An empty first page only says this view matched nothing (#451):
+                    // with nothing narrowing it, the page was the whole library;
+                    // otherwise one unfiltered item decides. Loading stays up
+                    // meanwhile, so the wrong message never flashes.
+                    val libraryHasItems = when {
+                        !reset || visibleItems.isNotEmpty() -> null
+                        // Titles the TV does not show (isTvHiddenMediaType) still
+                        // mean the library is not empty.
+                        response.items.isNotEmpty() -> true
+                        filter == TvLibraryBrowseFilter(sort = filter.sort, order = filter.order) -> false
+                        else -> catalogRepository.libraryHasItems(libraryId, mediaTypeFor(libraryType))
+                    }
+                    if (generation != browseGeneration) return@launch
                     browseContinuation = response.continuation
                     if (browseSnapshot == null) {
                         browseSnapshot = response.snapshot
@@ -580,7 +596,6 @@ class TvLibraryDetailViewModel(
                         browseRawLoaded + response.items.size
                     }
                     _uiState.update {
-                        val visibleItems = response.items.visibleOnTv()
                         it.copy(
                             // distinctBy contentId is a belt-and-suspenders guard
                             // against duplicate keys crashing LazyVerticalGrid if a
@@ -591,6 +606,7 @@ class TvLibraryDetailViewModel(
                                 (it.browseItems + visibleItems).distinctBy { item -> item.contentId }
                             },
                             browseHasMore = response.hasMore,
+                            browseLibraryHasItems = if (reset) libraryHasItems else it.browseLibraryHasItems,
                             browseLoading = false,
                             browseLoadingMore = false,
                             browseError = null,

@@ -226,13 +226,17 @@ fun BrowseScreen(
                                 modifier = Modifier.size(64.dp),
                             )
                             Text(
-                                text = "No items found",
+                                text = if (state.libraryHasItems == false) "This library is empty" else "No items found",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
                             Text(
-                                text = "Try adjusting your filters",
+                                text = if (state.libraryHasItems == false) {
+                                    "There is nothing in this library yet."
+                                } else {
+                                    "Try adjusting your filters"
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 textAlign = TextAlign.Center,

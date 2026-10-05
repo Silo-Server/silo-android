@@ -31,6 +31,8 @@ data class BrowseUiState(
     val items: List<BrowseItem> = emptyList(),
     val hasMore: Boolean = false,
     val total: Int = 0,
+    /** For an empty library browse: false when the library itself is empty, true when filters hid everything, null when unknown (#451). */
+    val libraryHasItems: Boolean? = null,
     val filterState: CatalogFilterState = CatalogFilterState(),
     val mediaType: BrowseFacetMediaType = BrowseFacetMediaType.Video,
     val preserveFilters: Boolean = true,
@@ -219,6 +221,15 @@ class BrowseViewModel(
                     // Overlay local optimistic watched/favorite so an offline mutation
                     // shows immediately on the cached grid (mirrors Home).
                     val overlaid = overlayLocalState(response.items)
+                    // An empty first page of a library only says this view matched
+                    // nothing (#451): with nothing narrowing it, the page was the
+                    // whole library; otherwise one unfiltered item decides.
+                    val libraryId = currentState.libraryId
+                    val libraryHasItems = when {
+                        !reset || overlaid.isNotEmpty() || libraryId == null -> null
+                        !filters.hasActiveFilters && currentState.selectedNamePrefix == null -> false
+                        else -> catalogRepository.libraryHasItems(libraryId)
+                    }
                     kotlin.coroutines.coroutineContext.ensureActive()
                     continuation = response.continuation
                     // Audiobook libraries surface book-native facets
@@ -238,6 +249,7 @@ class BrowseViewModel(
                             items = if (reset) overlaid else it.items + overlaid,
                             hasMore = response.hasMore,
                             total = response.total,
+                            libraryHasItems = if (reset) libraryHasItems else it.libraryHasItems,
                             title = response.title ?: "Browse",
                             mediaType = mediaType ?: it.mediaType,
                             error = null,

@@ -56,6 +56,20 @@ class CatalogRepository(
     private val episodesInFlight =
         mutableMapOf<EpisodesRequestKey, Deferred<ApiResult<EpisodesResponse>>>()
 
+    /**
+     * Whether a library holds any item at all, whatever the viewer's filters:
+     * one unfiltered item, no total. A screen asks only once its own view came
+     * back empty, to tell an empty library from filters that match nothing
+     * (#451). Read straight from the API so a one-item page never replaces the
+     * cached default page [browse] keeps for offline. Null when the server
+     * could not answer.
+     */
+    suspend fun libraryHasItems(libraryId: Int, mediaType: String? = null): Boolean? =
+        when (val result = catalogApi.getCatalog(libraryId = libraryId, mediaType = mediaType, limit = 1, skipTotal = true)) {
+            is ApiResult.Success -> result.data.items.isNotEmpty()
+            else -> null
+        }
+
     /** Browse the catalog with optional filters, sorting, and pagination. */
     suspend fun browse(
         source: String? = null,
