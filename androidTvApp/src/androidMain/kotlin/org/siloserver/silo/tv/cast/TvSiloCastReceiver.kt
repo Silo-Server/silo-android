@@ -779,7 +779,13 @@ class TvSiloCastReceiver(
                 withContext(NonCancellable) {
                     identityManager.end(generationId).also { done ->
                         if (done) {
-                            pendingPlayerIdentityGeneration = null
+                            // Only this generation's stale launch: a newer one
+                            // admitted meanwhile keeps its protection.
+                            synchronized(this@TvSiloCastReceiver) {
+                                if (pendingPlayerIdentityGeneration == generationId) {
+                                    pendingPlayerIdentityGeneration = null
+                                }
+                            }
                             refreshAdvertisement()
                         }
                     }
