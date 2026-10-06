@@ -1449,6 +1449,8 @@ class TvPlayerViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val forceHdrPassthrough: StateFlow<Boolean> = playerSettingsStore.forceHdrPassthroughFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val trueBlackBars: StateFlow<Boolean> = playerSettingsStore.trueBlackBarsFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     val matchContentFrameRate: StateFlow<Boolean> = playerSettingsStore.matchContentFrameRateFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
     // Effective = custom appearance unless "Match Device Settings" is on
@@ -5159,10 +5161,6 @@ class TvPlayerViewModel(
 
     fun onVideoFillModeChanged(mode: VideoFillMode) {
         _uiState.update { it.copy(videoFillMode = mode) }
-    }
-
-    fun onVideoQualitySelectionApplied(resolution: String?) {
-        _uiState.update { it.copy(selectedFileResolution = resolution) }
     }
 
     /**

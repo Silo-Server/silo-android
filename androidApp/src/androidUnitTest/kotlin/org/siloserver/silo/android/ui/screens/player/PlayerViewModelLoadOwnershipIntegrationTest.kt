@@ -445,7 +445,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
-    fun pendingSessionStopCancelsNextUpWithoutStartingTheSuccessor() = runTest(dispatcher) {
+    fun failedSessionStopStillStartsTheSuccessor() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
         val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
@@ -468,10 +468,9 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             viewModel.offerNextEpisode()
             viewModel.playUpNextNow()
             fixture.manager.awaitStopped("session-a")
-            viewModel.awaitState { !it.isNextUpTransitioning }
-            assertEquals("episode-a", viewModel.uiState.value.contentId)
-            assertFalse(viewModel.uiState.value.showUpNext)
-            assertEquals(1, starter.startedRequestCount)
+            // The playback journal retries the stop before a later start; it never holds up this one.
+            starter.awaitRequestCount(2)
+            assertEquals(2, starter.startedRequestCount)
         } finally {
             store.clear()
         }

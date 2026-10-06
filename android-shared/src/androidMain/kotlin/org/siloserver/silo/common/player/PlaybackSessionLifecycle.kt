@@ -556,20 +556,15 @@ class PlaybackSessionLifecycle(
                 flushFinalProgress()
             }
 
-            var pendingStop = false
+            // A failed stop stays in the playback journal, which retries it before the next
+            // start; the server expires the session if that never comes.
             if (sessionId != null && stopActiveSessionOnStop) {
-                val r = sessionManager.stopSession(sessionId)
-                pendingStop = sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
-                when (r) {
+                when (val r = sessionManager.stopSession(sessionId)) {
                     is ApiResult.Error -> Log.w(TAG, "stopSession error: ${r.code} ${r.message}")
                     is ApiResult.NetworkError ->
                         Log.w(TAG, "stopSession network error: ${r.exception}")
                     else -> {}
                 }
-            }
-            if (pendingStop) {
-                _state.value = SessionState.Failed("Playback stop is pending. Retry from playback recovery.")
-                return@withLock false // Retain the old session and clocks until its terminal receipt.
             }
             lastStartParams = null
             lastReportedPosition = null

@@ -32,25 +32,27 @@ bytes of an unresolved sample.
 
 Stops persist one UUID and body before dispatch. Only a matching HTTP 200 stopped
 or replayed receipt confirms completion. Network errors and HTTP 503 responses
-retain the request after the bounded stop retry sequence. A later start for
-the same login, server and profile first runs recovery inline and only refuses
-with `playback_pending` when the retained request still cannot settle; Settings
-also exposes **Retry pending playback stops**. Recovery validates the installation,
-canonical account, saved login, origin and profile, resolves an uncertain start
-with its original attempt, and stops an allocated session without starting a
-renderer. It does not stop a currently adopted in-process player. Identity
-changes fence pending requests; stored requests grant no authority.
+keep the stop in the journal after the bounded retry sequence, and playback
+moves on regardless. The next start for the same login, server and profile
+first resends any retained stop, then starts whether or not that succeeded.
+Each start makes one attempt per retained stop and ends that pass at the first
+failure, so a server that is not answering stops cannot hold a start for longer
+than one request. It never waits on earlier sessions: the server allows a new session while an older
+one is still open and expires a session nobody stops. It does not stop a
+currently adopted in-process player. Identity changes fence pending requests;
+stored requests grant no authority.
+
+A start whose reply was lost is dropped, not replayed. A replay would open a
+session the server may never have created just to stop it, and the server
+expires any session the lost request did open. Retained requests recorded under
+an origin, account or installation this server no longer reports can never be
+acted on again, so the next start drops them as well.
 
 The app-private journal uses atomic writes and a process ownership lock and is
 excluded from Android backup. It stores request identities and bodies without
 credentials. Clearing application storage removes this recovery state. Existing
 queued intents retain their original bytes and authority; they are not converted,
 reset or replayed as new v2 intents.
-
-Generic errors, including HTTP 409, 422 and 503, do not prove that an earlier
-allocation is absent. They retain uncertain START requests. Recovery may replay
-the exact retained attempt under its original validated authority; it must not
-rebase the request, allocate a replacement attempt or fall back to v1.
 
 ## Audiobooks
 
@@ -74,7 +76,7 @@ only canonical positive IDs representable by its integer model.
 
 Focused tests cover persisted commands, receipt validation, lost replies,
 restart recovery, identity changes and shared lifecycle behavior.
-Phone and TV builds check caller and Settings integration. These checks do not
+Phone and TV builds check caller integration. These checks do not
 establish rendered media behavior, device process-kill durability, live server
 admission or physical TV acceptance. Actual isolated native media validation is a
 separate requirement; client conformance does not activate the server runtime.

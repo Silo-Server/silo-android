@@ -26,7 +26,6 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -44,7 +43,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.android.R
@@ -59,7 +57,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.network.clientVersionLabel
-import org.siloserver.silo.common.player.rememberPlaybackRecoverySettings
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityPresets
@@ -75,8 +72,8 @@ internal const val SILO_PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
  *
  * Android adds what the Apple apps keep elsewhere: Notifications, the Library
  * shortcuts (Watchlist, Favorites, History, Collections — reachable only from
- * here on the phone), Sign in a TV, and playback-stop recovery. Each sits in
- * the group it belongs to rather than in a group of its own. The Sign-in group
+ * here on the phone) and Sign in a TV. Each sits in the group it belongs to
+ * rather than in a group of its own. The Sign-in group
  * (the server's external sign-in providers) appears only on servers that
  * offer one.
  */
@@ -101,7 +98,6 @@ fun SettingsScreen(
     diagnosticsViewModel: DiagnosticsViewModel = koinViewModel(),
     signInViewModel: SignInSettingsViewModel = koinViewModel(),
 ) {
-    val recovery = rememberPlaybackRecoverySettings(koinInject())
     val state by viewModel.uiState.collectAsState()
     val signInState by signInViewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
@@ -128,8 +124,6 @@ fun SettingsScreen(
     val serverLabel = state.serverName.ifBlank { serverHost(state.serverUrl) ?: "Not connected" }
     val showDiagnostics = shouldShowDiagnosticsEntry(diagnosticsState) &&
         search.matches("diagnostics", "support", "reports", "debug", "crash")
-    val showRecovery = recovery.visible &&
-        search.matches("playback", "recovery", "retry", "stops", "support")
 
     val matchesInterface = search.matches(
         "interface", "appearance", "cards", "posters", "captions", "home", "sections",
@@ -163,7 +157,7 @@ fun SettingsScreen(
 
     val hasResults = matchesInterface || matchesNotifications || matchesPlayback || matchesSubtitles ||
         matchesDownloads || matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections ||
-        showDiagnostics || showRecovery || matchesServer || matchesPairDevice || matchesExperimental ||
+        showDiagnostics || matchesServer || matchesPairDevice || matchesExperimental ||
         matchesAbout || matchesSignOut || matchesSignIn
 
     Scaffold(
@@ -314,28 +308,15 @@ fun SettingsScreen(
                 }
             }
 
-            if (showDiagnostics || showRecovery) {
+            if (showDiagnostics) {
                 item(key = "support") {
-                    SettingsSection(
-                        title = "Support",
-                        footer = recovery.message.takeIf { showRecovery },
-                    ) {
-                        if (showDiagnostics) {
-                            SettingsNavigationRow(
-                                label = "Diagnostics",
-                                icon = Icons.Filled.MonitorHeart,
-                                value = diagnosticsAvailabilityLabel(diagnosticsState.availability),
-                                onClick = onNavigateToDiagnostics,
-                            )
-                        }
-                        if (showRecovery) {
-                            SettingsNavigationRow(
-                                label = if (recovery.busy) "Recovering Playback…" else "Retry Pending Playback Stops",
-                                icon = Icons.Filled.Restore,
-                                onClick = recovery.retry,
-                                enabled = !recovery.busy,
-                            )
-                        }
+                    SettingsSection(title = "Support") {
+                        SettingsNavigationRow(
+                            label = "Diagnostics",
+                            icon = Icons.Filled.MonitorHeart,
+                            value = diagnosticsAvailabilityLabel(diagnosticsState.availability),
+                            onClick = onNavigateToDiagnostics,
+                        )
                     }
                 }
             }

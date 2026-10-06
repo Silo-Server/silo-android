@@ -1335,6 +1335,7 @@ fun TvAppNavigation(
                 initialSubtitleAutoResolved = subtitleAutoResolved,
                 autoAdvanceCount = autoAdvanceCount,
                 episodeSelectionHandoff = episodeSelectionHandoff,
+                navigationSettled = !transition.isRunning,
                 onExit = { navController.popBackStack() },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.

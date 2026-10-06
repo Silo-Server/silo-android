@@ -283,6 +283,7 @@ fun TvSettingsScreen(
         onDolbyVisionEnabledChanged = viewModel::onDolbyVisionEnabledChanged,
         onDvProfile7HDR10FallbackChanged = viewModel::onDvProfile7HDR10FallbackChanged,
         onForceHdrPassthroughChanged = viewModel::onForceHdrPassthroughChanged,
+        onTrueBlackBarsChanged = viewModel::onTrueBlackBarsChanged,
         onResumeRewindSecondsChanged = viewModel::onResumeRewindSecondsChanged,
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
         onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
@@ -430,6 +431,7 @@ private fun SettingsSplitLayout(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -509,6 +511,7 @@ private fun SettingsSplitLayout(
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
             onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
+            onTrueBlackBarsChanged = onTrueBlackBarsChanged,
             onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
             onPassOutThresholdChanged = onPassOutThresholdChanged,
             onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -790,6 +793,7 @@ private fun SettingsDetailPane(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -844,6 +848,7 @@ private fun SettingsDetailPane(
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
             onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
+            onTrueBlackBarsChanged = onTrueBlackBarsChanged,
                 onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
                 onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -1131,13 +1136,13 @@ private fun TvPlaybackSettingsPane(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
 ) {
-    val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
     val seekState = seekIntervals?.state?.collectAsState()?.value
     var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
@@ -1199,8 +1204,16 @@ private fun TvPlaybackSettingsPane(
                     checked = state.forceHdrPassthrough,
                     onCheckedChange = onForceHdrPassthroughChanged,
                 )
+                // Android TV only: tvOS composites its own letterbox, so the
+                // Apple pane has no counterpart (silo-android#475).
+                SettingsToggleRow(
+                    label = "True Black Bars",
+                    checked = state.trueBlackBars,
+                    onCheckedChange = onTrueBlackBarsChanged,
+                )
                 // tvOS footer: the chosen preset's description, then the
-                // caveat for the one control here that can misbehave.
+                // caveat for Force HDR Passthrough. The True Black Bars
+                // sentence is Android TV's own.
                 SettingsFooterText(
                     text = (
                         QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.description
@@ -1208,7 +1221,10 @@ private fun TvPlaybackSettingsPane(
                         ) + " Force HDR Passthrough allows HDR playback when this TV doesn't report " +
                         "support. It does not force the HDMI output into HDR; Android may still convert " +
                         "the picture to SDR. Enable it only if you've confirmed your TV supports the " +
-                        "source format. Unsupported formats may produce a black screen or incorrect colors.",
+                        "source format. Unsupported formats may produce a black screen or incorrect colors." +
+                        " True Black Bars stops Silo from drawing the bars around the picture during " +
+                        "playback. Try it if they look grey in HDR or Dolby Vision, and turn it off again " +
+                        "if they get lighter or show a thin line.",
                 )
             }
         }
@@ -1275,17 +1291,6 @@ private fun TvPlaybackSettingsPane(
                     onRetry = { seekIntervals?.refresh() },
                     fallbackFocus = seekFallbackFocus,
                 )
-            }
-        }
-        if (recovery.visible) {
-            item {
-                SettingsGroup(title = "Playback Recovery") {
-                    SettingsActionRow(
-                        label = if (recovery.busy) "Recovering Playback…" else "Retry Pending Playback Stops",
-                        onClick = recovery.retry,
-                    )
-                    SettingsFooterText(text = recovery.message)
-                }
             }
         }
         item {

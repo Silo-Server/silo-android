@@ -53,22 +53,20 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
-    @Test fun `sequenced final flush stays part-local and pending stop retains old ownership for terminal retry`() = runTest {
+    @Test fun `sequenced final flush stays part-local and a failed stop still ends the session`() = runTest {
         val manager = object : FakeSessionManager() { override fun isSequenced(sessionId: String) = true }
         manager.stopResult = ApiResult.Error(0, "stop_pending", "pending")
         val lifecycle = newLifecycle(manager)
         lifecycle.adoptActiveSession(defaultStartParams(), makeSession("part"))
         lifecycle.reportPosition(30.0, 400.0, true, "part", 630.0, 1000.0)
-        assertFalse(lifecycle.stop("part"))
-        assertEquals(30.0, manager.lastProgressPosition)
-        manager.stopResult = ApiResult.Success(Unit)
+        // The journal keeps the stop and retries it before the next start.
         assertTrue(lifecycle.stop("part"))
-        assertEquals(2, manager.stopCallCount)
+        assertEquals(1, manager.stopCallCount)
         assertEquals(30.0, manager.lastProgressPosition)
         assertTrue(lifecycle.state.value is SessionState.Idle)
     }
 
-    @Test fun `sequenced authority outage keeps session and stop pending without legacy progress`() = runTest {
+    @Test fun `sequenced authority outage ends the session without legacy progress`() = runTest {
         val manager = object : FakeSessionManager() {
             override fun isSequenced(sessionId: String) = true
         }.apply {
@@ -84,7 +82,7 @@ class PlaybackSessionLifecycleTest {
         assertTrue(lifecycle.state.value is SessionState.Active)
         assertEquals(0, health.callCount)
         lifecycle.stop(expectedSessionId = "negotiated")
-        assertTrue(lifecycle.state.value is SessionState.Failed)
+        assertTrue(lifecycle.state.value is SessionState.Idle)
         assertTrue(personal.syncCalls.isEmpty())
         assertEquals(1, manager.stopCallCount)
         assertEquals(2, manager.progressCallCount)
