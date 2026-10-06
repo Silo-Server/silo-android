@@ -472,6 +472,26 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("libraries")
             viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2, 3), cache.libraries?.map { it.id })
+
+            // Same with nothing visible to protect: an audiobook-only server
+            // keeps its baseline through a transient failure, so a later empty
+            // response is still confirmed before it reaches the cache.
+            fixture.librariesBody = """
+                {"items":[{"id":"3","name":"Books","type":"audiobooks","sort_order":0}],"page":{"has_more":false}}
+            """.trimIndent()
+            viewModel.refresh()
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.isEmpty() }
+            fixture.librariesStatusQueue += HttpStatusCode.ServiceUnavailable
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries }
+            fixture.librariesBodyQueue += """{"items":[],"page":{"has_more":false}}"""
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(3), cache.libraries?.map { it.id })
         } finally {
             store.clear()
             Dispatchers.resetMain()

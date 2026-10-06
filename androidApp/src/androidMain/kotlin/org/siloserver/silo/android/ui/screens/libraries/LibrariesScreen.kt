@@ -335,7 +335,9 @@ class LibrariesViewModel(
                 }
             }
             is ApiResult.Error -> {
-                serverLibraryIds = emptySet()
+                // Revoked access drops the baseline; a transient failure keeps
+                // it, since hidden libraries can outlive an empty screen.
+                if (!result.canServeCache()) serverLibraryIds = emptySet()
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
@@ -346,7 +348,6 @@ class LibrariesViewModel(
                 }
             }
             is ApiResult.NetworkError -> {
-                serverLibraryIds = emptySet()
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
