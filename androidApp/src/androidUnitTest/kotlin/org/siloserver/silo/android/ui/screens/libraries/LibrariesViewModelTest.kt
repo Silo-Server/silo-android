@@ -306,6 +306,41 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun libraryListRecheckRecoversAShortListAndKeepsItOnFailure() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        fixture.librariesBody = """
+            {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
+        """.trimIndent()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 1 }
+
+            // The server now returns the full list: the re-check picks it up
+            // and keeps the open library selected.
+            fixture.librariesBody = null
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            val recovered = viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 2 }
+            assertEquals(1, recovered.selectedLibraryId)
+
+            // A failed re-check leaves the list on screen instead of an error.
+            fixture.librariesStatus = HttpStatusCode.InternalServerError
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            val afterFailure = viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(1, 2), afterFailure.libraries.map { it.id })
+            assertEquals(null, afterFailure.librariesError)
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]
@@ -346,6 +381,9 @@ class LibrariesViewModelTest {
         private val deferredKeys: Set<String>,
     ) {
         var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
+        /** Overrides the immediate two-library list; [librariesStatus] fails it instead. */
+        @Volatile var librariesBody: String? = null
+        @Volatile var librariesStatus: HttpStatusCode = HttpStatusCode.OK
         private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         private val requests = Channel<String>(Channel.UNLIMITED)
         private val pendingRequests = mutableListOf<String>()
@@ -387,7 +425,11 @@ class LibrariesViewModelTest {
                 }
                 requests.send(key)
                 val body = responses[key]?.await() ?: immediateBody(key)
-                respondJson(body)
+                if (key == "libraries" && librariesStatus != HttpStatusCode.OK) {
+                    respond(content = "", status = librariesStatus)
+                } else {
+                    respondJson(body)
+                }
             },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
@@ -422,7 +464,7 @@ class LibrariesViewModelTest {
         }
 
         private fun immediateBody(key: String): String = when {
-            key == "libraries" -> """
+            key == "libraries" -> librariesBody ?: """
                 {"items":[
                   {"id":"1","name":"First","type":"movies","sort_order":0},
                   {"id":"2","name":"Second","type":"movies","sort_order":1}

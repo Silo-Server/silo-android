@@ -49,6 +49,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -68,7 +69,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
@@ -232,7 +236,22 @@ class LibrariesViewModel(
     private fun isHiddenAudiobookLibrary(library: UserLibrary): Boolean =
         !showAudiobooks && library.type.trim().lowercase() in setOf("audiobook", "audiobooks")
 
-    fun refresh() {
+    fun refresh() = loadLibraries(reloadContent = true)
+
+    /**
+     * Re-fetch the library list, reloading the open library's content only when
+     * the selection has to change. The screen calls this on every resume: this
+     * VM outlives tab switches, so a list that loaded short (a partial server
+     * response, or the cached fallback after a failed request) used to stay
+     * short — hiding the switcher and every other library — until the process
+     * died.
+     */
+    fun refreshLibraryList() {
+        if (_uiState.value.isLoadingLibraries) return
+        loadLibraries(reloadContent = false)
+    }
+
+    private fun loadLibraries(reloadContent: Boolean) {
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -241,7 +260,13 @@ class LibrariesViewModel(
                 )
             }
 
-            when (val result = personalDataRepository.listUserLibraries()) {
+            val result = personalDataRepository.listUserLibraries()
+            if (result !is ApiResult.Success && !reloadContent && _uiState.value.libraries.isNotEmpty()) {
+                // A failed background re-check keeps the list already on screen.
+                _uiState.update { it.copy(isLoadingLibraries = false) }
+                return@launch
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     // Libraries is the unified hub for every library type
                     // (video / audio / reading). The selector lists them all
@@ -288,7 +313,7 @@ class LibrariesViewModel(
                         )
                     }
 
-                    if (selectedLibraryId != null) {
+                    if (selectedLibraryId != null && (reloadContent || selectedLibraryId != previousLibraryId)) {
                         loadCurrentTab(selectedLibraryId, force = true)
                     }
                 }
@@ -804,6 +829,18 @@ fun LibrariesScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
+
+    // Re-check the library list on every resume: entering the tab (the observer
+    // replays ON_RESUME when added) and returning to the app. The VM loads once
+    // and outlives tab switches, so a short list otherwise stuck until restart.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshLibraryList()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.
