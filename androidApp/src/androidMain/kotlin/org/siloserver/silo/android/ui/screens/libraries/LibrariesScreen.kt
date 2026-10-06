@@ -282,14 +282,13 @@ class LibrariesViewModel(
             )
         }
 
-        var result = personalDataRepository.listUserLibraries()
-        if (!reload && result is ApiResult.Success && result.dropsKnownLibraries()) {
-            // A short list is the failure this re-check exists to recover
-            // from, so confirm a shrink with a second read before publishing
-            // it. A real removal (revoked access, deleted library) repeats.
-            // The first read just cached the short list, so a failed second
-            // read must not fall back to it.
-            result = personalDataRepository.listUserLibraries(fallbackToCache = false)
+        // A background re-check confirms a shrinking list before trusting it
+        // (a short list is the failure it exists to recover from); a real
+        // removal (revoked access, deleted library) repeats and applies.
+        val result = if (reload) {
+            personalDataRepository.listUserLibraries()
+        } else {
+            personalDataRepository.recheckUserLibraries(_uiState.value.libraries.mapTo(mutableSetOf()) { it.id })
         }
         if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
             // A transient failure on a background re-check keeps the list
@@ -351,11 +350,6 @@ class LibrariesViewModel(
                 }
             }
         }
-    }
-
-    private fun ApiResult.Success<List<UserLibrary>>.dropsKnownLibraries(): Boolean {
-        val returnedIds = data.mapTo(mutableSetOf()) { it.id }
-        return _uiState.value.libraries.any { it.id !in returnedIds }
     }
 
     fun selectLibrary(libraryId: Int) {

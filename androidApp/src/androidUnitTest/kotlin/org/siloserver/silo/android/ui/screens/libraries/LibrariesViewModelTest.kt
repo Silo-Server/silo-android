@@ -418,8 +418,8 @@ class LibrariesViewModelTest {
             val state = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2), state.libraries.map { it.id })
 
-            // A short response the repository caches, then a failed confirming
-            // read: the cached short list must not stand in as confirmation.
+            // A short response, then a failed confirming read: neither the
+            // screen nor the offline cache may take the unconfirmed short list.
             fixture.librariesBodyQueue += """
                 {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
             """.trimIndent()
@@ -429,6 +429,7 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("libraries")
             val afterFailedConfirm = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2), afterFailedConfirm.libraries.map { it.id })
+            assertEquals(listOf(1, 2), cache.libraries?.map { it.id })
         } finally {
             store.clear()
             Dispatchers.resetMain()

@@ -36,12 +36,8 @@ open class PersonalDataRepository(
 
     // -- Libraries --
 
-    /**
-     * Lists the libraries visible to the current user (offline: last cached
-     * list). Pass [fallbackToCache] = false when only a fresh server answer
-     * will do, such as confirming that the list really shrank.
-     */
-    suspend fun listUserLibraries(fallbackToCache: Boolean = true): ApiResult<List<UserLibrary>> {
+    /** Lists the libraries visible to the current user (offline: last cached list). */
+    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val result = personalDataApi.listUserLibraries()
         if (result is ApiResult.Success) {
@@ -50,8 +46,33 @@ open class PersonalDataRepository(
             }
             return result
         }
-        if (fallbackToCache && result.canServeCache()) {
+        if (result.canServeCache()) {
             catalogCache.getCachedLibraries()?.let { return ApiResult.Success(it) }
+        }
+        return result
+    }
+
+    /**
+     * Background re-check of a library list already on screen ([knownIds]).
+     * A list missing any known library is read again before it is trusted,
+     * and only the accepted list is cached, so one transient short response
+     * can't replace the full list on screen or in the offline cache. A failed
+     * read returns the failure rather than the cache: the caller keeps what
+     * it shows.
+     */
+    suspend fun recheckUserLibraries(knownIds: Set<Int>): ApiResult<List<UserLibrary>> {
+        if (knownIds.isEmpty()) return listUserLibraries()
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val first = personalDataApi.listUserLibraries()
+        val result = if (first is ApiResult.Success && !first.data.map { it.id }.containsAll(knownIds)) {
+            personalDataApi.listUserLibraries()
+        } else {
+            first
+        }
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheLibraries(result.data, cacheWriteLease)
+            }
         }
         return result
     }
