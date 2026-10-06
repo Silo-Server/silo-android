@@ -348,6 +348,37 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun libraryListRecheckThatDropsTheSelectedLibraryResetsToTheReplacement() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("sections:1")
+            viewModel.selectLibrary(2)
+            fixture.awaitRequest("sections:2")
+            viewModel.selectNamePrefix("B")
+            viewModel.uiState.first { it.selectedNamePrefix != null }
+
+            // The server stops listing the open library: the re-check falls
+            // back to the first library with none of library 2's browse state,
+            // and loads the replacement's content.
+            fixture.librariesBody = """
+                {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
+            """.trimIndent()
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("sections:1")
+            val state = viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 1 }
+            assertEquals(1, state.selectedLibraryId)
+            assertEquals(null, state.selectedNamePrefix)
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]
