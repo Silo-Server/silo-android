@@ -67,9 +67,11 @@ sealed class RoomRealtimeEvent {
 }
 
 /**
- * The room ticket mint refused the request. [terminal] refusals (401 after the
- * interceptor's one refresh, 403, 404, 409, 422) end the engagement; anything
- * else is a transport failure that may be retried.
+ * The room ticket mint refused the request. [terminal] refusals (403, 404,
+ * 409, 422) end the engagement; anything else is a transport failure that may
+ * be retried. A 401 left after the interceptor's one refresh is retried too: a
+ * refresh that failed on the network says nothing about the party, and a real
+ * sign-out leaves the party through the identity transition.
  */
 class RoomTicketRefusedException(
     val status: Int,
@@ -78,7 +80,7 @@ class RoomTicketRefusedException(
     val terminal: Boolean get() = status in TERMINAL_STATUSES
 
     private companion object {
-        val TERMINAL_STATUSES = setOf(401, 403, 404, 409, 422)
+        val TERMINAL_STATUSES = setOf(403, 404, 409, 422)
     }
 }
 

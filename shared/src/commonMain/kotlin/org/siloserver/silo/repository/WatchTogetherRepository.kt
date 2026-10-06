@@ -195,6 +195,7 @@ class WatchTogetherRepository(
     private var socketSuggestionsSeq = 0L
     private var suggestionReadRequests = 0L
     private var suggestionReadStartedAt = 0L
+    private var lastSuggestionRead: Pair<RoomBinding, ApiResult<List<Suggestion>>>? = null
     private var rawSuggestions: List<Suggestion> = emptyList()
     private val clockEstimator = RoomClockEstimator()
 
@@ -443,41 +444,52 @@ class WatchTogetherRepository(
         val lease = activeBinding() ?: return missingRoom()
         val ticket = stateMutex.withLock { ++suggestionReadRequests }
         return suggestionReadMutex.withLock {
-            if (stateMutex.withLock { suggestionReadStartedAt >= ticket }) {
-                return@withLock ApiResult.Success(_suggestions.value)
+            val shared = lastSuggestionRead
+            if (shared?.first == lease && stateMutex.withLock { suggestionReadStartedAt >= ticket }) {
+                // A read for this membership started after this request and
+                // already ran: share its outcome, a failure included.
+                return@withLock when {
+                    !isCurrent(lease) -> obsoleteRoomRequest()
+                    shared.second is ApiResult.Success -> ApiResult.Success(_suggestions.value)
+                    else -> shared.second
+                }
             }
             val socketSeqAtStart = stateMutex.withLock {
                 suggestionReadStartedAt = suggestionReadRequests
                 socketSuggestionsSeq
             }
-            val pages = mutableListOf<Suggestion>()
-            var cursor: String? = null
-            while (true) {
-                val token = proofToken(lease) ?: return@withLock missingRoom()
-                when (val page = api.listSuggestions(lease.roomId, token, lease.authScope, cursor)) {
-                    is ApiResult.Success -> {
-                        pages += page.data.suggestions
-                        cursor = page.data.page?.nextCursor?.takeIf { page.data.page.hasMore }
-                        if (cursor == null) break
-                    }
-                    is ApiResult.Error -> return@withLock page
-                    is ApiResult.NetworkError -> return@withLock page
-                }
-            }
-            val merged = pages.distinctBy { it.id }
-            val published = stateMutex.withLock {
-                if (!isCurrentLocked(lease)) return@withLock false
-                votedIds.clear()
-                votedIds.addAll(merged.filter { it.votedByMe }.map { it.id })
-                _personalVotesKnown.value = true
-                // A socket broadcast that arrived during the read carries newer
-                // tallies; keep its rows and take only personal votes from HTTP.
-                if (socketSuggestionsSeq == socketSeqAtStart) rawSuggestions = merged
-                publishSuggestionsLocked()
-                true
-            }
-            if (published) ApiResult.Success(_suggestions.value) else obsoleteRoomRequest()
+            readSuggestionPages(lease, socketSeqAtStart).also { lastSuggestionRead = lease to it }
         }
+    }
+
+    private suspend fun readSuggestionPages(lease: RoomBinding, socketSeqAtStart: Long): ApiResult<List<Suggestion>> {
+        val pages = mutableListOf<Suggestion>()
+        var cursor: String? = null
+        while (true) {
+            val token = proofToken(lease) ?: return missingRoom()
+            when (val page = api.listSuggestions(lease.roomId, token, lease.authScope, cursor)) {
+                is ApiResult.Success -> {
+                    pages += page.data.suggestions
+                    cursor = page.data.page?.nextCursor?.takeIf { page.data.page.hasMore }
+                    if (cursor == null) break
+                }
+                is ApiResult.Error -> return page
+                is ApiResult.NetworkError -> return page
+            }
+        }
+        val merged = pages.distinctBy { it.id }
+        val published = stateMutex.withLock {
+            if (!isCurrentLocked(lease)) return@withLock false
+            votedIds.clear()
+            votedIds.addAll(merged.filter { it.votedByMe }.map { it.id })
+            _personalVotesKnown.value = true
+            // A socket broadcast that arrived during the read carries newer
+            // tallies; keep its rows and take only personal votes from HTTP.
+            if (socketSuggestionsSeq == socketSeqAtStart) rawSuggestions = merged
+            publishSuggestionsLocked()
+            true
+        }
+        return if (published) ApiResult.Success(_suggestions.value) else obsoleteRoomRequest()
     }
 
     /**
@@ -944,8 +956,21 @@ class WatchTogetherRepository(
                         }
                     }
                     is RoomTicketExpiringException -> {
+                        // The proof or the access token is about to lapse. Renew
+                        // the proof when it may be the one; an expiring access
+                        // token lapses within the retry and the next mint's 401
+                        // refreshes it. Each attempt counts against the budget,
+                        // so a server that keeps answering this way ends the
+                        // engagement instead of retrying forever.
                         val expiry = stateMutex.withLock { proof?.expiresAtEpochMs }
-                        if (expiry != null && expiry - wallClockMs() < timing.proofRenewalMarginMs) reconcileRoom(lease)
+                        if (expiry == null || expiry - serverWallNowMs() < timing.proofRenewalMarginMs) {
+                            reconcileRoom(lease)
+                        }
+                        failures++
+                        if (reconnectBudgetSpent(failures, lastHealthyMs)) {
+                            endIfOwner(lease, owner, WatchPartyEndReason.ConnectionLost)
+                            break
+                        }
                         delay(timing.expiringTicketRetryMs)
                         continue
                     }
@@ -966,7 +991,7 @@ class WatchTogetherRepository(
                 }
             }
             failures++
-            if (failures >= timing.maxReconnectFailures && now - lastHealthyMs >= timing.reconnectBudgetMs) {
+            if (reconnectBudgetSpent(failures, lastHealthyMs)) {
                 endIfOwner(lease, owner, WatchPartyEndReason.ConnectionLost)
                 break
             }
@@ -975,6 +1000,16 @@ class WatchTogetherRepository(
             backoffIndex = (backoffIndex + 1).coerceAtMost(timing.backoffMs.lastIndex)
         }
     }
+
+    private fun reconnectBudgetSpent(failures: Int, lastHealthyMs: Long): Boolean =
+        failures >= timing.maxReconnectFailures && monotonicNowMs() - lastHealthyMs >= timing.reconnectBudgetMs
+
+    /**
+     * The server's wall clock as this device best knows it. Proof expiry is a
+     * server timestamp, so a device clock that runs fast or slow must not
+     * decide when to renew.
+     */
+    private fun serverWallNowMs(): Long = wallClockMs() + (_clock.value.offsetMs ?: 0L)
 
     /**
      * Why the last room socket ended and how long it had been open, for the
@@ -1012,13 +1047,23 @@ class WatchTogetherRepository(
     }
 
     private suspend fun renewProofLoop(lease: RoomBinding, owner: Long) {
+        var renewedLastPass = false
         while (isCurrent(lease, owner)) {
             val expiry = stateMutex.withLock { proof?.expiresAtEpochMs }
-            val waitMs = if (expiry == null) timing.proofUnknownRenewalMs else expiry - wallClockMs() - timing.proofRenewalMarginMs
-            if (waitMs > 0) delay(waitMs)
+            val waitMs = if (expiry == null) {
+                timing.proofUnknownRenewalMs
+            } else {
+                expiry - serverWallNowMs() - timing.proofRenewalMarginMs
+            }
+            // A proof that is already due right after a successful renewal
+            // (a short-lived proof, or a clock this device cannot correct)
+            // would otherwise be read again at once, in a tight loop.
+            val pause = if (renewedLastPass) waitMs.coerceAtLeast(timing.proofRetryMs) else waitMs
+            if (pause > 0) delay(pause)
             if (!isCurrent(lease, owner)) break
             val renewed = reconcileRoom(lease)
-            if (renewed !is ApiResult.Success) {
+            renewedLastPass = renewed is ApiResult.Success
+            if (!renewedLastPass) {
                 if (!isCurrent(lease, owner)) break
                 delay(timing.proofRetryMs)
             }
@@ -1144,7 +1189,12 @@ class WatchTogetherRepository(
                     val serverSent = parseRfc3339ToEpochMillis(event.serverSentAt)
                     val received = event.clientReceivedMs
                     if (sent != null && serverReceived != null && serverSent != null && received != null) {
-                        clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs())
+                        // The receipt was stamped when the frame was decoded; it
+                        // may be folded later. Pair it with the monotonic time
+                        // of that same moment, or the wait reads as a wall-clock
+                        // jump and wipes the estimate.
+                        val waitedMs = (wallClockMs() - received).coerceAtLeast(0L)
+                        clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs() - waitedMs)
                         _clock.value = clockEstimator.estimate
                     }
                 }

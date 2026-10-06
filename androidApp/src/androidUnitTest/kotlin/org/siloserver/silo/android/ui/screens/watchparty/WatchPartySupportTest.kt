@@ -5,7 +5,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
@@ -14,35 +13,6 @@ import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.watchtogether.WatchPartyInvite
 
 class WatchPartySupportTest {
-
-    // ---- Server match -------------------------------------------------------
-
-    @Test
-    fun `an invitation matches the active server by scheme, host, port, and path`() {
-        assertTrue(watchPartyServerMatches("https://media.example.com", "https://media.example.com"))
-        assertTrue(watchPartyServerMatches("https://Media.Example.com/", "https://media.example.com"))
-        assertTrue(watchPartyServerMatches("https://media.example.com/silo/", "https://media.example.com/silo"))
-        assertTrue(watchPartyServerMatches("https://media.example.com:443", "https://media.example.com"))
-        assertTrue(watchPartyServerMatches("http://10.0.0.5:8096", "http://10.0.0.5:8096/"))
-    }
-
-    @Test
-    fun `a different scheme, port, base path, or address is a different server`() {
-        assertFalse(watchPartyServerMatches("http://media.example.com", "https://media.example.com"))
-        assertFalse(watchPartyServerMatches("https://media.example.com:8443", "https://media.example.com"))
-        assertFalse(watchPartyServerMatches("https://media.example.com/silo", "https://media.example.com"))
-        assertFalse(watchPartyServerMatches("https://media.example.com/Silo", "https://media.example.com/silo"))
-        // A LAN address and a public address for the same server do not match.
-        assertFalse(watchPartyServerMatches("http://192.168.1.10:8096", "https://media.example.com"))
-    }
-
-    @Test
-    fun `no active server, credentials, or an unparseable URL never match`() {
-        assertFalse(watchPartyServerMatches("https://media.example.com", null))
-        assertFalse(watchPartyServerMatches("https://user@media.example.com", "https://media.example.com"))
-        assertFalse(watchPartyServerMatches("not a url", "https://media.example.com"))
-        assertFalse(watchPartyServerMatches("ftp://media.example.com", "ftp://media.example.com"))
-    }
 
     // ---- Invitation links ---------------------------------------------------
 

@@ -493,7 +493,7 @@ val androidTvModule = module {
             availability = get(),
             recents = get(),
             isCurrentServer = { url ->
-                org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyServerMatches(
+                org.siloserver.silo.common.watchparty.watchPartyServerMatches(
                     linkServerUrl = url,
                     activeServerUrl = serverRegistry.activeEntry.value?.url,
                 )

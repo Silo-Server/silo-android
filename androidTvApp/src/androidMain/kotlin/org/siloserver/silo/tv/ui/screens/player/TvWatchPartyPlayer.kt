@@ -26,19 +26,19 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.isActive
+import org.siloserver.silo.common.player.watchparty.IssuedSeekTracker
 import org.siloserver.silo.common.player.watchparty.WatchPartyPlayback
+import org.siloserver.silo.common.player.watchparty.watchPartyNoticeText
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.playback.PlaybackAction
-import org.siloserver.silo.watchtogether.RoomPlaybackNotice
 import org.siloserver.silo.watchtogether.RoomPlayerObservation
 import org.siloserver.silo.watchtogether.RoomPlayerPort
 import org.siloserver.silo.watchtogether.RoomPlayerState
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.RoomTransportResult
 import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
-import kotlin.math.abs
 
 /** Why a Watch Party viewer's playback is held locally, without asking the room. */
 enum class TvRoomHold {
@@ -87,7 +87,7 @@ internal class TvWatchPartyScreenController(
     private val viewModel: TvPlayerViewModel,
     private val nowMs: () -> Long = SystemClock::elapsedRealtime,
 ) {
-    private val issuedSeeks = TvRoomIssuedSeeks()
+    private val issuedSeeks = IssuedSeekTracker(nowMs)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var departed = false
 
@@ -132,11 +132,11 @@ internal class TvWatchPartyScreenController(
         playback.requestSeek(sourceSeconds) == RoomTransportResult.Sent
 
     /** Every seek this screen hands to Media3, so its discontinuity is not mistaken for an outside seek. */
-    fun recordIssuedSeek(playerPositionMs: Long) = issuedSeeks.record(playerPositionMs, nowMs())
+    fun recordIssuedSeek(playerPositionMs: Long) = issuedSeeks.note(playerPositionMs)
 
     /** A Media3 seek discontinuity. Seeks from outside the app become room requests or are undone. */
     fun onSeekDiscontinuity(fromPlayerMs: Long, toPlayerMs: Long) {
-        if (issuedSeeks.isOwn(toPlayerMs, nowMs())) return
+        if (!issuedSeeks.isExternal(toPlayerMs)) return
         val from = viewModel.roomSourcePositionForPlayer(fromPlayerMs) ?: return
         val to = viewModel.roomSourcePositionForPlayer(toPlayerMs) ?: return
         playback.onExternalSeek(from, to) { restore -> viewModel.applyRoomSeek(restore) }
@@ -366,7 +366,7 @@ internal fun TvWatchPartyEffects(
 
     LaunchedEffect(watchParty) {
         watchParty.playback.notices.collect { notice ->
-            viewModel.showPlayerMessage(tvWatchPartyNoticeText(notice))
+            viewModel.showPlayerMessage(watchPartyNoticeText(notice))
         }
     }
     // Transient server rejections (a refused request) never end the party.
@@ -405,17 +405,6 @@ private fun org.siloserver.silo.model.watchtogether.RoomSnapshot?.isPlayingRoom(
         phase == RoomPhase.Playing &&
         !isPaused &&
         playbackState == RoomPlaybackState.Playing
-
-/** Plain-language text for a room notice. */
-internal fun tvWatchPartyNoticeText(notice: RoomPlaybackNotice): String = when (notice) {
-    is RoomPlaybackNotice.Denied -> when (notice.intent) {
-        RoomTransportIntent.Seek -> "Only the host can seek."
-        RoomTransportIntent.PlayPause -> "Only the host can play or pause."
-    }
-    RoomPlaybackNotice.Reconnecting -> "Reconnecting to the party…"
-    RoomPlaybackNotice.ClockUnavailable -> "Waiting for party timing. If this continues, leave and rejoin."
-    RoomPlaybackNotice.Undelivered -> "Couldn't reach the party. Try again."
-}
 
 internal const val TV_WATCH_PARTY_LAUNCH_REFUSAL = "Leave the Watch Party to play something else."
 
@@ -480,38 +469,6 @@ internal fun tvRoomPlayerState(playbackState: Int?, hasMedia: Boolean): RoomPlay
  */
 internal fun tvSiloCastPlaybackSpeed(inWatchParty: Boolean, requested: Double): Double? =
     requested.takeIf { !inWatchParty && it.isFinite() && it > 0.0 }
-
-/**
- * Seeks this screen issued, remembered briefly so the discontinuity each one
- * produces is not mistaken for a seek from outside the app.
- */
-internal class TvRoomIssuedSeeks(
-    private val toleranceMs: Long = 500L,
-    private val lifetimeMs: Long = 3_000L,
-    private val capacity: Int = 16,
-) {
-    private data class Issued(val targetMs: Long, val issuedAtMs: Long)
-
-    private val issued = ArrayDeque<Issued>()
-
-    fun record(targetPlayerMs: Long, nowMs: Long) {
-        prune(nowMs)
-        issued.addLast(Issued(targetPlayerMs.coerceAtLeast(0L), nowMs))
-        while (issued.size > capacity) issued.removeFirst()
-    }
-
-    /** True when [targetPlayerMs] matches a seek this screen issued recently. */
-    fun isOwn(targetPlayerMs: Long, nowMs: Long): Boolean {
-        prune(nowMs)
-        return issued.any { abs(it.targetMs - targetPlayerMs) <= toleranceMs }
-    }
-
-    private fun prune(nowMs: Long) {
-        while (issued.isNotEmpty() && nowMs - issued.first().issuedAtMs > lifetimeMs) {
-            issued.removeFirst()
-        }
-    }
-}
 
 /**
  * One step down the same file's quality ladder: the highest rung below the

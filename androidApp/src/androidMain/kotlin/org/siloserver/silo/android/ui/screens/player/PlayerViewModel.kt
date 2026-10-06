@@ -1268,8 +1268,20 @@ class PlayerViewModel(
             suppressResumeRewind = args.suppressResumeRewind,
             force = force,
             preserveRouteIntent = true,
-            room = args.room,
+            room = args.room?.let(::roomRetryContext),
         )
+    }
+
+    /**
+     * The room context for a retry of [original]. Within the same epoch it
+     * resumes where this player was, like an in-place restart; before
+     * anything played it keeps the room position. A retry never carries an
+     * older epoch's position.
+     */
+    private fun roomRetryContext(original: WatchPartyPlaybackContext): WatchPartyPlaybackContext {
+        val current = currentRoomContext ?: return original
+        if (current.roomId != original.roomId || current.selectionRevision != original.selectionRevision) return original
+        return roomRestartContext(_uiState.value.position.takeIf { it > 0.0 }) ?: original
     }
 
     private fun ownsLoad(owner: MobilePlayerLoadOwner): Boolean = loadOwners.owns(owner)

@@ -478,6 +478,40 @@ class RoomPlaybackBindingTest {
         assertEquals(400.0, player.seeks.last())
     }
 
+    @Test
+    fun `a play correction held by the reload budget runs once the budget allows`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer().apply { buffered = { false } }
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 50.0) }
+        command(room, "r1", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        command(room, "r2", TransportAction.Play, 110.0, RoomPlaybackState.Playing)
+        advanceTimeBy(9_000)
+        assertEquals(1, player.seeks.size)
+
+        // The superseded reload backs off for ten seconds; then the held
+        // correction reloads toward where the room is now.
+        advanceTimeBy(1_500)
+        assertEquals(2, player.seeks.size)
+        assertTrue(player.seeks.last() >= 119.0, "aimed at ${player.seeks.last()}")
+    }
+
+    @Test
+    fun `a reconnect returns a correction rate to exactly 1x`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer().apply { buffered = { false } }
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.125, player.rates.last()!!, 0.001)
+
+        room.connectionState.value = connection.copy(writable = false)
+        advanceTimeBy(300)
+        assertNull(player.rates.last())
+    }
+
     // ---- buffering and catching up ------------------------------------------------------
 
     @Test

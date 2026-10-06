@@ -1005,7 +1005,6 @@ class WatchTogetherRepositoryTest {
         for ((status, reason) in listOf(
             404 to WatchPartyEndReason.NotFound,
             409 to WatchPartyEndReason.Ended,
-            401 to WatchPartyEndReason.Unauthorized,
             422 to WatchPartyEndReason.Unauthorized,
         )) {
             val realtime = FakeRealtime().apply {
@@ -1066,6 +1065,43 @@ class WatchTogetherRepositoryTest {
         assertEquals(2, realtime.connectCount)
         assertNull(r.roomClosedReason.value)
         job.cancel()
+    }
+
+    @Test
+    fun `a 401 ticket refusal reconnects instead of ending the party`() = runTest {
+        val realtime = FakeRealtime().apply {
+            connectBehavior = { attempt ->
+                if (attempt == 1) {
+                    flow { emit(RoomRealtimeEvent.TransportTerminated(RoomTicketRefusedException(401, "unauthorized"))) }
+                } else {
+                    events.asSharedFlow()
+                }
+            }
+        }
+        val r = repo(realtime = realtime)
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        advanceTimeBy(testTiming.backoffMs.first() + 1)
+        runCurrent()
+
+        assertEquals(2, realtime.connectCount)
+        assertNull(r.roomClosedReason.value)
+        job.cancel()
+    }
+
+    @Test
+    fun `expiring tickets that never stop exhaust the reconnect budget`() = runTest {
+        val realtime = FakeRealtime().apply {
+            connectBehavior = { flow { emit(RoomRealtimeEvent.TransportTerminated(RoomTicketExpiringException())) } }
+        }
+        val r = repo(realtime = realtime)
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        advanceTimeBy(testTiming.reconnectBudgetMs + testTiming.expiringTicketRetryMs + 1)
+        runCurrent()
+
+        assertTrue(job.isCompleted)
+        assertEquals(WatchPartyEndReason.ConnectionLost, r.roomClosedReason.value)
     }
 
     @Test
@@ -1380,7 +1416,60 @@ class WatchTogetherRepositoryTest {
         job.cancel()
     }
 
+    @Test
+    fun `a pong folded after a wait keeps the clock estimate`() = runTest {
+        val realtime = FakeRealtime()
+        val r = repo(realtime = realtime, timing = testTiming.copy(backgroundWork = true))
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        runCurrent()
+        r.checkClockContinuity()
+
+        // A 200 ms offset and an 80 ms round trip, received at [receivedWall].
+        fun pong(receivedWall: Long) = RoomRealtimeEvent.Pong(
+            clientSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(receivedWall - 81),
+            serverReceivedAt = org.siloserver.silo.util.formatEpochMillisRfc3339(receivedWall + 159),
+            serverSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(receivedWall + 160),
+            clientReceivedMs = receivedWall,
+        )
+        realtime.events.emit(pong(1_000_000L + testScheduler.currentTime))
+        runCurrent()
+        assertEquals(200L, r.clock.value.offsetMs)
+        val generation = r.clock.value.generation
+
+        // Decoded 1.5 s before it is folded: a wait, not a wall-clock jump.
+        realtime.events.emit(pong(1_000_000L + testScheduler.currentTime - 1_500))
+        runCurrent()
+        r.checkClockContinuity()
+
+        assertEquals(200L, r.clock.value.offsetMs)
+        assertEquals(generation, r.clock.value.generation)
+        job.cancel()
+    }
+
     // ---- suggestions -------------------------------------------------------------
+
+    @Test
+    fun `a coalesced suggestion read reports the shared read's failure`() = runTest {
+        val api = FakeApi().apply { listSuggestionsResult = CompletableDeferred() }
+        val r = repo(api = api)
+        r.createRoom(create())
+        val first = async { r.refreshSuggestions() }
+        runCurrent()
+        val second = async { r.refreshSuggestions() }
+        val third = async { r.refreshSuggestions() }
+        runCurrent()
+
+        api.listSuggestionsResult!!.complete(ApiResult.NetworkError(IllegalStateException("offline")))
+        runCurrent()
+
+        assertIs<ApiResult.NetworkError>(first.await())
+        assertIs<ApiResult.NetworkError>(second.await())
+        assertIs<ApiResult.NetworkError>(third.await())
+        assertEquals(2, api.count("list"))
+    }
 
     @Test
     fun `opening the socket hydrates suggestions off the receive path`() = runTest {

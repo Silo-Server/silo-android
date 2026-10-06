@@ -1,9 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import androidx.media3.common.Player
-import org.siloserver.silo.watchtogether.RoomPlaybackNotice
 import org.siloserver.silo.watchtogether.RoomPlayerState
-import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import java.io.File
 import kotlin.test.Test
@@ -190,34 +188,6 @@ class TvWatchPartyPlayerTest {
         assertFalse(tvRoomPositionBuffered(targetPlayerSeconds = 100.0, currentPlayerSeconds = Double.NaN, bufferedPlayerSeconds = 130.0))
     }
 
-    // ---- External seeks ----------------------------------------------------------
-
-    @Test
-    fun `a seek this screen issued is recognised by its target`() {
-        val seeks = TvRoomIssuedSeeks()
-        seeks.record(targetPlayerMs = 60_000L, nowMs = 1_000L)
-
-        assertTrue(seeks.isOwn(targetPlayerMs = 60_000L, nowMs = 1_100L))
-        assertTrue(seeks.isOwn(targetPlayerMs = 60_400L, nowMs = 1_100L), "Media3 may land slightly off the target")
-    }
-
-    @Test
-    fun `a seek to another position is external`() {
-        val seeks = TvRoomIssuedSeeks()
-        seeks.record(targetPlayerMs = 60_000L, nowMs = 1_000L)
-
-        assertFalse(seeks.isOwn(targetPlayerMs = 90_000L, nowMs = 1_100L))
-        assertFalse(TvRoomIssuedSeeks().isOwn(targetPlayerMs = 60_000L, nowMs = 1_100L))
-    }
-
-    @Test
-    fun `an issued seek is forgotten after a short while`() {
-        val seeks = TvRoomIssuedSeeks(lifetimeMs = 3_000L)
-        seeks.record(targetPlayerMs = 60_000L, nowMs = 1_000L)
-
-        assertFalse(seeks.isOwn(targetPlayerMs = 60_000L, nowMs = 4_500L))
-    }
-
     // ---- Player state, notices, quality ---------------------------------------
 
     @Test
@@ -228,17 +198,6 @@ class TvWatchPartyPlayerTest {
         assertEquals(RoomPlayerState.Idle, tvRoomPlayerState(Player.STATE_IDLE, hasMedia = true))
         assertEquals(RoomPlayerState.Idle, tvRoomPlayerState(Player.STATE_READY, hasMedia = false))
         assertEquals(RoomPlayerState.Idle, tvRoomPlayerState(null, hasMedia = true))
-    }
-
-    @Test
-    fun `room notices use plain copy`() {
-        assertEquals("Only the host can seek.", tvWatchPartyNoticeText(RoomPlaybackNotice.Denied(RoomTransportIntent.Seek)))
-        assertEquals(
-            "Only the host can play or pause.",
-            tvWatchPartyNoticeText(RoomPlaybackNotice.Denied(RoomTransportIntent.PlayPause)),
-        )
-        assertEquals("Reconnecting to the party…", tvWatchPartyNoticeText(RoomPlaybackNotice.Reconnecting))
-        assertEquals("Couldn't reach the party. Try again.", tvWatchPartyNoticeText(RoomPlaybackNotice.Undelivered))
     }
 
     @Test

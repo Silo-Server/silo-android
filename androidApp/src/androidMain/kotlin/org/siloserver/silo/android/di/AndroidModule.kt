@@ -547,7 +547,7 @@ val androidModule = module {
             availability = get(),
             recents = get(),
             isCurrentServer = { url ->
-                org.siloserver.silo.android.ui.screens.watchparty.watchPartyServerMatches(
+                org.siloserver.silo.common.watchparty.watchPartyServerMatches(
                     linkServerUrl = url,
                     activeServerUrl = registry.activeEntry.value?.url,
                 )

@@ -702,7 +702,7 @@ fun TvPlayerScreen(
         if (watchParty != null && !watchParty.canSeek()) {
             // Guests never seek: say so instead of scanning a preview nobody can commit.
             viewModel.showPlayerMessage(
-                tvWatchPartyNoticeText(
+                org.siloserver.silo.common.player.watchparty.watchPartyNoticeText(
                     org.siloserver.silo.watchtogether.RoomPlaybackNotice.Denied(RoomTransportIntent.Seek),
                 ),
             )

@@ -166,6 +166,7 @@ class RoomPlaybackBinding(
         data object Changed : Event
         data class Command(val scheduled: ScheduledTransportCommand) : Event
         data class Execute(val token: Long) : Event
+        data object QualityChanged : Event
     }
 
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
@@ -210,6 +211,11 @@ class RoomPlaybackBinding(
     private var stallReported = false
     private val sustainedStalls = ArrayDeque<Long>()
     private var convergence: Convergence? = null
+
+    // A Play correction that needs new media while the reload budget is
+    // spacing reloads. It runs once the budget allows, unless the viewer
+    // reaches the room first or a newer command replaces it.
+    private var deferredReload: Convergence? = null
     private var rateApplied: Double? = null
     private val reloads = RoomReloadBudget()
     private var wasSuspended = false
@@ -257,16 +263,14 @@ class RoomPlaybackBinding(
         rateApplied = null
     }
 
-    /** Acknowledge that the viewer changed quality: the offer and reload pacing start over. */
+    /**
+     * Acknowledge that the viewer changed quality: the offer and reload pacing
+     * start over. The offer hides at once; the loop clears its own state.
+     */
     fun onQualityChanged() {
         _offerLowerQuality.value = false
-        sustainedStalls.clear()
-        events.trySend(Event.Changed)
-        reloadsResetRequested = true
+        events.trySend(Event.QualityChanged)
     }
-
-    @kotlin.concurrent.Volatile
-    private var reloadsResetRequested = false
 
     // ---- user intents ---------------------------------------------------------
 
@@ -315,6 +319,11 @@ class RoomPlaybackBinding(
             when (event) {
                 is Event.Command -> accept(event.scheduled)
                 is Event.Execute -> execute(event.token)
+                Event.QualityChanged -> {
+                    sustainedStalls.clear()
+                    reloads.reset()
+                    _offerLowerQuality.value = false
+                }
                 Event.Tick, Event.Changed -> Unit
             }
             step()
@@ -345,10 +354,6 @@ class RoomPlaybackBinding(
         val snapshot = room.roomSnapshot.value
         val connection = room.connectionState.value
         val obs = player.observations.value
-        if (reloadsResetRequested) {
-            reloadsResetRequested = false
-            reloads.reset()
-        }
         if (snapshot == null || snapshot.phase != RoomPhase.Playing) {
             resetEpoch()
             return
@@ -396,7 +401,12 @@ class RoomPlaybackBinding(
             if (room.attachSession(key.playbackSessionId)) attachedKey = key
         }
         val serverAttached = key != null && attachedKey == key && echoed
-        if (!serverAttached || sessionId == null) return
+        if (!serverAttached || sessionId == null) {
+            // No room to converge toward while detached or reconnecting; a
+            // correction rate left running would carry this viewer past it.
+            clearRate()
+            return
+        }
 
         val playable = !obs.seekPending && (obs.state == RoomPlayerState.Ready || obs.state == RoomPlayerState.Ended)
         val executedLatest = pending == null
@@ -454,6 +464,7 @@ class RoomPlaybackBinding(
 
         // Rate convergence and reload pacing.
         converge(now, obs)
+        retryDeferredReload(now, obs)
 
         // Ordinary reports: only positions that are decisions.
         val readinessPending = readiness != null || (catchingUp && snapshot.selfMember?.isReady != true)
@@ -472,13 +483,11 @@ class RoomPlaybackBinding(
         executionJob?.cancel()
         applied = null
         readiness = null
+        deferredReload = null
         stallStartedAtMs = null
         stallReported = false
         _catchingUp.value = false
-        if (convergence != null || rateApplied != null) {
-            convergence = null
-            setRate(null)
-        }
+        clearRate()
     }
 
     // ---- commands -------------------------------------------------------------
@@ -580,9 +589,11 @@ class RoomPlaybackBinding(
                     player.seekTo(target)
                 } else if (reloads.allowed(now)) {
                     // A Play correction that must load new media is paced.
-                    val aimed = reloads.begin(target, now, obs.durationSeconds.takeIf { it > 0.0 })
-                    player.seekTo(aimed)
-                    reloads.noteLoading()
+                    beginReload(target, now, obs)
+                } else {
+                    // Held until the budget allows, so the viewer is not left
+                    // playing at the wrong position with nothing to fix it.
+                    deferredReload = Convergence(target, now)
                 }
             }
             is RoomCatchup.Decision.Rate -> {
@@ -624,12 +635,54 @@ class RoomPlaybackBinding(
         }
     }
 
+    /**
+     * Run a held Play correction once the reload budget allows, aimed at where
+     * the room is now. Drift that shrank in the meantime is settled the
+     * cheaper way: nothing, a buffered seek, or a rate.
+     */
+    private fun retryDeferredReload(now: Long, obs: RoomPlayerObservation) {
+        val held = deferredReload ?: return
+        if (obs.seekPending || !obs.isPlaying || obs.suspended) return
+        val expected = RoomCatchup.expectedPosition(held.targetSeconds, held.executeAtMonotonicMs, now)
+        val drift = expected - obs.sourcePositionSeconds
+        when {
+            abs(drift) <= RoomCatchup.DEADBAND_SECONDS -> {
+                deferredReload = null
+                reloads.settle()
+            }
+            player.isBuffered(expected) -> {
+                deferredReload = null
+                player.seekTo(expected)
+            }
+            abs(drift) <= RoomCatchup.BAND_SECONDS -> {
+                deferredReload = null
+                convergence = held
+                setRate(RoomCatchup.rateFor(drift))
+            }
+            reloads.allowed(now) -> {
+                deferredReload = null
+                beginReload(expected, now, obs)
+            }
+        }
+    }
+
+    private fun beginReload(target: Double, now: Long, obs: RoomPlayerObservation) {
+        val aimed = reloads.begin(target, now, obs.durationSeconds.takeIf { it > 0.0 })
+        player.seekTo(aimed)
+        reloads.noteLoading()
+    }
+
     private fun stopCorrections(now: Long) {
-        if (convergence != null) {
+        clearRate()
+        deferredReload = null
+        if (reloads.inFlight) reloads.abandon(now)
+    }
+
+    private fun clearRate() {
+        if (convergence != null || rateApplied != null) {
             convergence = null
             setRate(null)
         }
-        if (reloads.inFlight) reloads.abandon(now)
     }
 
     private fun setRate(rate: Double?) {
