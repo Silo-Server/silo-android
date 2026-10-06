@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -66,6 +67,24 @@ class WatchNextSeeder(
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             WatchNextSyncWorker.UNIQUE_NAME_PERIODIC,
             ExistingPeriodicWorkPolicy.KEEP,
+            request,
+        )
+    }
+
+    /**
+     * Re-checks Profile Selection when a timed away interval would run out,
+     * so the launcher stops showing this profile's titles then rather than at
+     * the next hourly refresh. Needs no network: it only wipes the row, or
+     * does nothing if Silo was opened in time.
+     */
+    fun scheduleProfileExpiryCheck(delayMs: Long) {
+        val request = OneTimeWorkRequestBuilder<WatchNextSyncWorker>()
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(WatchNextSyncWorker.KEY_POLICY_CHECK_ONLY to true))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            WatchNextSyncWorker.UNIQUE_NAME_PROFILE_EXPIRY,
+            ExistingWorkPolicy.REPLACE,
             request,
         )
     }

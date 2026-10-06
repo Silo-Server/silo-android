@@ -119,6 +119,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import androidx.compose.ui.layout.ContentScale
+import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
@@ -311,6 +312,7 @@ fun TvSettingsScreen(
         onSubtitleDeviceOverrideEnabledChanged = viewModel::setSubtitleDeviceOverrideEnabled,
         onSubtitleMatchesDeviceChanged = viewModel::onSubtitleMatchesDeviceChanged,
         onShowAudiobooksTabChanged = viewModel::onShowAudiobooksTabChanged,
+        onProfileLaunchBehaviorChanged = viewModel::onProfileLaunchBehaviorChanged,
     )
 
     if (showSignOutConfirm) {
@@ -417,6 +419,7 @@ private fun SettingsSplitLayout(
     onCategorySelected: (TvSettingsCategory) -> Unit,
     onEnterCategory: (TvSettingsCategory) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onSwitchProfile: () -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
@@ -500,6 +503,7 @@ private fun SettingsSplitLayout(
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+            onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
             onManageServers = onManageServers,
             onOpenDiagnosticsReport = onOpenDiagnosticsReport,
             onQualityPresetSelected = onQualityPresetSelected,
@@ -781,6 +785,7 @@ private fun SettingsDetailPane(
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     /** Receives a [QualityPresets] preset id. */
@@ -832,6 +837,7 @@ private fun SettingsDetailPane(
                 homeSectionsViewModel = homeSectionsViewModel,
                 firstFocusRequester = detailFocusRequester,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+                onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
                 onCardPresentationChanged = onCardPresentationChanged,
                 onCardPresentationDeviceOnlyChanged = onCardPresentationDeviceOnlyChanged,
                 onUseProfileCardDefault = onUseProfileCardDefault,
@@ -949,11 +955,13 @@ private fun TvGeneralSettingsPane(
     homeSectionsViewModel: HomeViewModel,
     firstFocusRequester: FocusRequester,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onCardPresentationChanged: (CardPresentation) -> Unit,
     onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileCardDefault: () -> Unit,
 ) {
     var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
+    var showProfileLaunchPicker by remember { mutableStateOf(false) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
     val titleArtStore: TitleArtStore = koinInject()
     // Opening General is a refresh edge for a title art choice made on another
@@ -967,6 +975,19 @@ private fun TvGeneralSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
+            // tvOS General → PROFILE AT LAUNCH. Device-wide and never synced,
+            // so it reads the same whichever profile is active.
+            SettingsGroup(title = "Profile at Launch") {
+                SettingsValueRow(
+                    label = "Profile Selection",
+                    value = state.profileLaunchBehavior.title,
+                    onClick = { showProfileLaunchPicker = true },
+                    focusRequester = firstFocusRequester,
+                )
+                SettingsFooterText(text = state.profileLaunchBehavior.description)
+            }
+        }
+        item {
             // Device-local, server/profile-specific visibility and order for
             // the populated rows returned by Home, matching tvOS General.
             SettingsGroup(title = "Home Sections") {
@@ -974,7 +995,6 @@ private fun TvGeneralSettingsPane(
                     label = "Home Sections",
                     value = "",
                     onClick = { showHomeSectionsEditor = true },
-                    focusRequester = firstFocusRequester,
                 )
                 SettingsFooterText(
                     text = "Choose which Home rows are visible and edit the order in which they appear on this Android TV.",
@@ -1103,6 +1123,21 @@ private fun TvGeneralSettingsPane(
             onDismiss = { activeCardPicker = null },
         )
         null -> Unit
+    }
+
+    if (showProfileLaunchPicker) {
+        TvSettingsPickerSheet(
+            title = "Profile Selection",
+            options = ProfileLaunchBehavior.entries.map {
+                PickerOption(it.raw, it.title, detail = it.description)
+            },
+            selectedId = state.profileLaunchBehavior.raw,
+            onSelect = { id ->
+                onProfileLaunchBehaviorChanged(ProfileLaunchBehavior.fromRaw(id))
+                showProfileLaunchPicker = false
+            },
+            onDismiss = { showProfileLaunchPicker = false },
+        )
     }
 
     if (showHomeSectionsEditor) {
@@ -2058,7 +2093,8 @@ private enum class SubtitlePicker {
 // Reusable picker sheet (centered modal vertical option list)
 // ---------------------------------------------------------------------------
 
-data class PickerOption(val id: String, val label: String)
+/** [detail] is an optional second line explaining the choice (tvOS `TVSettingsOption.detail`). */
+data class PickerOption(val id: String, val label: String, val detail: String? = null)
 
 /**
  * Reusable centered modal option picker. Renders a vertical list with a
@@ -2226,13 +2262,21 @@ private fun TvSettingsPickerOptionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = option.label,
-                style = SettingsRowTextStyle(),
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = foreground,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = option.label,
+                    style = SettingsRowTextStyle(),
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = foreground,
+                )
+                option.detail?.let { detail ->
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                        color = foreground.copy(alpha = 0.72f),
+                    )
+                }
+            }
             // tvOS TVSettingsPickerOptionRow: a filled check circle trails the
             // current option.
             if (selected) {

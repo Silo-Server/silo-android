@@ -129,6 +129,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 |---|:---:|:---:|---|
 | Household profiles (multiple per account) | ✅ | ✅ | `ProfileRepository` |
 | PIN-protected & child profiles, content-rating limits | ✅ | ✅ | |
+| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ➖ | ✅ | TV: Settings → General; device-local; tvOS parity, including hiding Watch Next |
 | Per-profile language / subtitle / playback prefs | ✅ | ✅ | |
 | Library access restrictions per profile | ✅ | ✅ | |
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |

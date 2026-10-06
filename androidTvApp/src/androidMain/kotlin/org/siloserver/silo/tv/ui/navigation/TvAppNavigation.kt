@@ -70,7 +70,14 @@ import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
+import org.siloserver.silo.tv.cast.RemotePlaybackIdentityManager
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.profiles.TvActiveProfileReset
+import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
+import org.siloserver.silo.common.player.PlaybackSessionLifecycle
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.tv.ui.screens.cast.TvSiloCastStandbyView
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -102,6 +109,16 @@ internal fun tvShouldShowDiagnosticsPrompt(
  * become current must not retry forever.
  */
 private const val MAX_DEEP_LINK_NAV_ATTEMPTS = 3
+
+/**
+ * How long the Profile Selection return rule waits for a phone-launched
+ * title's playback teardown before ending its identity. Same bound as
+ * TvSiloCastReceiver's PLAYBACK_TEARDOWN_TIMEOUT_MS.
+ */
+private const val CAST_PLAYBACK_TEARDOWN_TIMEOUT_MS = 15_000L
+
+/** Upper bound on how long the Profile Selection cover waits for the picker's transition. */
+private const val PROFILE_COVER_MAX_MS = 2_000L
 
 /**
  * True when item detail for exactly [contentId]/[seasonNumber] is already the
@@ -440,6 +457,59 @@ fun TvAppNavigation(
     val pendingDeepLink: MutableStateFlow<Uri?> =
         koinInject(qualifier = named("pendingDeepLink"))
     val siloCastStandby by siloCastReceiver.standbyState.collectAsState()
+    val profileAwayTracker: TvProfileAwayTracker = koinInject()
+    val profileLaunchPreferences: TvProfileLaunchPreferences = koinInject()
+    val activeProfileReset: TvActiveProfileReset = koinInject()
+    val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
+    val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
+
+    // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
+    // when Silo comes back from the background and the setting asks, Who's
+    // Watching replaces whatever was on screen, as Switch Profile does.
+    LaunchedEffect(profileAwayTracker) {
+        kotlinx.coroutines.flow.combine(
+            profileAwayTracker.selectionRequired,
+            navController.currentBackStackEntryFlow,
+        ) { required, entry -> required to entry.destination.route }.collect { (required, route) ->
+            if (!required) return@collect
+            // Signed out, or already choosing a profile: nothing to replace.
+            if (route == null || route in preMainAuthRoutes) {
+                profileAwayTracker.onSelectionHandled()
+                return@collect
+            }
+            // A phone-launched title's temporary identity is not this TV's
+            // profile to clear. End it first, as tvOS does, but in
+            // TvSiloCastReceiver.stop()'s order: the player's queued final
+            // report and stopSession ride on that identity, so let them land
+            // (bounded) before revoking it. Ending always drops it locally;
+            // one still installed means a phone started a new title on this
+            // TV just now, and that phone's viewer is the one watching.
+            if (tokenManager.hasTemporaryScope()) {
+                withTimeoutOrNull(CAST_PLAYBACK_TEARDOWN_TIMEOUT_MS) { playbackLifecycle.awaitPendingStop() }
+                remotePlaybackIdentityManager.end()
+                if (tokenManager.hasTemporaryScope()) {
+                    profileAwayTracker.onSelectionHandled()
+                    return@collect
+                }
+            }
+            // Leave the profile's screens before clearing its state (see
+            // onSwitchProfile). MainTvActivity.onStop already flushed pending
+            // device-setting writes under this profile.
+            navController.navigate(TvRoute.ProfileSelection.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+            activeProfileReset.clearActiveProfile()
+            // MainTvActivity covers the screen while the request is up; lift
+            // it once the previous profile's screens have faded out.
+            withTimeoutOrNull(PROFILE_COVER_MAX_MS) {
+                navController.visibleEntries.first { entries ->
+                    entries.all { it.destination.route in preMainAuthRoutes }
+                }
+            }
+            profileAwayTracker.onSelectionHandled()
+        }
+    }
 
     LaunchedEffect(siloCastReceiver) {
         siloCastReceiver.launchRequests.collect { request ->
@@ -487,7 +557,9 @@ fun TvAppNavigation(
         kotlinx.coroutines.flow.combine(
             pendingDeepLink,
             navController.currentBackStackEntryFlow,
-        ) { uri, entry -> uri to entry }.collect { (uri, entry) ->
+            // Re-runs a held link once a chosen profile ends the away interval.
+            profileLaunchPreferences.state,
+        ) { uri, entry, _ -> uri to entry }.collect { (uri, entry) ->
             if (uri == null) return@collect
             if (uri != attemptUri) {
                 attemptUri = uri
@@ -528,6 +600,11 @@ fun TvAppNavigation(
             // never go stale on an authenticated session.
             val route = entry.destination.route
             if (route == null || route in preMainAuthRoutes) return@collect // unauthenticated flow: keep queued until Main
+            // Profile Selection (silo-apple `handleDeepLink`): a link that
+            // arrives while Silo is returning must not open the previous
+            // profile's data before Who's Watching replaces it. Keep it queued
+            // until a profile is chosen.
+            if (profileLaunchPreferences.requiresSelectionAfterBackground()) return@collect
             val contentId = uri.pathSegments.lastOrNull() ?: run {
                 pendingDeepLink.value = null
                 return@collect
@@ -812,6 +889,9 @@ fun TvAppNavigation(
         composable(TvRoute.ProfileSelection.route) {
             TvProfileSelectionScreen(
                 onProfileSelected = {
+                    // A chosen profile ends any away interval (silo-apple
+                    // `remember`), which lets Watch Next and held links through.
+                    profileLaunchPreferences.clearBackgroundedAt()
                     navController.navigate(TvRoute.Main.route) {
                         popUpTo(TvRoute.ProfileSelection.route) { inclusive = true }
                     }
@@ -959,20 +1039,7 @@ fun TvAppNavigation(
                         navController.navigate(TvRoute.ProfileSelection.route) {
                             popUpTo(TvRoute.Main.route) { inclusive = true }
                         }
-                        profileRepository.clearProfile()
-                        // Library/overlay prefs are per-profile — drop the caches
-                        // so the next profile's prefs don't ghost-render the
-                        // previous user's rows. Parity with the Settings
-                        // switch-profile path.
-                        libraryPlaybackPrefsStore.clear()
-                        overlayPrefsStore.clear()
-                        cardPresentationStore.clear()
-                        seekIntervalStore.clear()
-                        titleArtStore.clear()
-                        // Clear the previous profile's Watch Next rows before
-                        // landing on the picker; the new profile will re-seed
-                        // via [onProfileSelected].
-                        watchNextSeeder.clear()
+                        activeProfileReset.clearActiveProfile()
                     }
                 },
                 // Android TV is now multi-server (parity with tvOS). "Switch

@@ -3,6 +3,7 @@ package org.siloserver.silo.tv
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +56,10 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.port.HomeCachePort
 import org.siloserver.silo.tv.cast.TvSiloCastReceiver
+import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.profiles.TvActiveProfileReset
+import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
 import org.siloserver.silo.tv.ui.navigation.TvAppNavigation
 import org.siloserver.silo.tv.ui.navigation.TvRoute
 import org.siloserver.silo.tv.ui.screens.player.TvPlayerRemoteKeyBridge
@@ -66,6 +72,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onSubscription
@@ -88,6 +95,12 @@ class MainTvActivity : ComponentActivity() {
         // start. Mirrors the phone-side flag in MainActivity.
         @Volatile
         private var hasShownColdSplash = false
+
+        // Profile Selection's launch rule applies once per process, like the
+        // splash: a later Activity in the same process follows the return rule
+        // instead (see resolveStartDestination).
+        @Volatile
+        private var hasResolvedLaunchProfile = false
 
         /** Shared with [TvAppNavigation]'s consumer so intake and consumption
          * of a deep link line up in one logcat filter. */
@@ -115,6 +128,19 @@ class MainTvActivity : ComponentActivity() {
         // Capture the launching intent's Uri (if any) before Compose starts so
         // the navigation collector observes it as soon as it subscribes.
         handleIntent(intent)
+
+        // Recents and a warm return to Silo show a snapshot of its last screen.
+        // When Profile Selection asks, that is the previous viewer's profile,
+        // so keep no snapshot then (Android 13+; earlier versions have no
+        // equivalent short of blocking screenshots altogether).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            lifecycleScope.launch {
+                get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java).state
+                    .map { it.behavior == ProfileLaunchBehavior.Automatic }
+                    .distinctUntilChanged()
+                    .collect { automatic -> setRecentsScreenshotEnabled(automatic) }
+            }
+        }
 
         // Run the SiloCast receiver while the app is started AND signed in,
         // following sign-in, profile selection and sign-out without needing a
@@ -150,6 +176,12 @@ class MainTvActivity : ComponentActivity() {
                 launchAuthenticatedStartupWarmup(route)
             }
 
+            // Profile Selection: from the moment Silo returns and the setting
+            // asks, cover the previous profile's screens until Who's Watching
+            // has replaced them (TvAppNavigation lifts the request).
+            val profileAwayTracker = remember { get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java) }
+            val profileCoverVisible by profileAwayTracker.selectionRequired.collectAsState()
+
             SiloTvTheme {
                 val resolvedRoute = startRoute
                 val splashVisible = resolvedRoute == null || !splashPlaybackComplete
@@ -160,11 +192,12 @@ class MainTvActivity : ComponentActivity() {
                             // Consume ALL input at the root while the splash
                             // overlay is up: no input-dispatch-timeout ANR, and
                             // no keys leak into the app pre-rendering below —
-                            // even after its content grabs focus.
+                            // even after its content grabs focus. The profile
+                            // cover gates input the same way.
                             if (splashVisible) {
                                 TvFocusLog.d { "key swallowed by splash gate" }
                             }
-                            splashVisible
+                            splashVisible || profileCoverVisible
                         },
                 ) {
                     if (resolvedRoute != null) {
@@ -178,6 +211,9 @@ class MainTvActivity : ComponentActivity() {
                             startDestination = resolvedRoute,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    }
+                    if (profileCoverVisible && !splashVisible) {
+                        Box(modifier = Modifier.fillMaxSize().background(Color.Black))
                     }
                     if (splashVisible) {
                         val splashFocus = remember { FocusRequester() }
@@ -232,6 +268,7 @@ class MainTvActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         DiagnosticsLifecycleLogger.state("foreground")
+        get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).onForeground()
         val refresher = get<ServerDrivenConfigRefresher>(ServerDrivenConfigRefresher::class.java)
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.startForeground()
@@ -300,6 +337,10 @@ class MainTvActivity : ComponentActivity() {
     override fun onStop() {
         DiagnosticsLifecycleLogger.state("background")
         super.onStop()
+        // A configuration-change recreation is not leaving Silo.
+        if (!isChangingConfigurations) {
+            get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).onBackground()
+        }
         val monitor = get<ServerReachabilityMonitor>(ServerReachabilityMonitor::class.java)
         monitor.stopForeground()
         get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java).stop()
@@ -317,6 +358,8 @@ class MainTvActivity : ComponentActivity() {
     private suspend fun resolveStartDestination(): String {
         val registry = get<ServerRegistry>(ServerRegistry::class.java)
         val tokenManager = get<TokenManager>(TokenManager::class.java)
+        val processStart = !hasResolvedLaunchProfile
+        hasResolvedLaunchProfile = true
 
         val activeEntry = registry.activeEntry.value
             ?: return TvRoute.ServerSetup.route
@@ -349,6 +392,30 @@ class MainTvActivity : ComponentActivity() {
 
         val profileId = tokenManager.getProfileId()
         if (profileId.isNullOrBlank()) return TvRoute.ProfileSelection.route
+
+        // A remote-playback overlay (only possible when the Activity is
+        // recreated in a live process) owns identity until it ends; the
+        // navigation graph applies the return rule once it has.
+        if (tokenManager.hasTemporaryScope()) return TvRoute.Main.route
+
+        // Profile Selection (silo-apple `ProfileLaunchState.resolution`). A
+        // process start applies the launch rule: Every Time, or a timed choice
+        // whose away interval ran out while Silo was closed. A later Activity
+        // in this process (Back left Silo, then it was reopened) follows the
+        // return rule the away tracker evaluated in onStart. Either way the
+        // profile is cleared here, before the picker loads, and losing its PIN
+        // proof makes a protected profile ask for its PIN again.
+        val launchPreferences = get<TvProfileLaunchPreferences>(TvProfileLaunchPreferences::class.java)
+        val requiresSelection = if (processStart) {
+            launchPreferences.requiresSelectionAtLaunch()
+        } else {
+            get<TvProfileAwayTracker>(TvProfileAwayTracker::class.java).selectionRequired.value
+        }
+        if (requiresSelection) {
+            get<TvActiveProfileReset>(TvActiveProfileReset::class.java).clearActiveProfile()
+            return TvRoute.ProfileSelection.route
+        }
+        if (processStart) launchPreferences.clearBackgroundedAt()
 
         return TvRoute.Main.route
     }
