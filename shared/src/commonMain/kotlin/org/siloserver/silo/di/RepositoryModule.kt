@@ -26,7 +26,6 @@ import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.watchtogether.RoomSession
-import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.koin.dsl.module
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -155,7 +154,6 @@ val repositoryModule = module {
             },
         )
     }
-    single<WatchTogetherEntryGateway> { get<WatchTogetherRepository>() }
     // Eager so the identity-transition privacy gate is installed before any
     // profile/server/token mutation can occur. This process-lifetime scope,
     // rather than a screen scope, owns connection replacement and teardown.

@@ -224,6 +224,12 @@ internal fun TvPlayerHud(
     onSelectChapter: (Int) -> Unit,
     onDismiss: () -> Unit,
     initialTab: HudTab = HudTab.Info,
+    /**
+     * False in a Watch Party: the room plays one exact file at 1x, so the
+     * version picker and the speed row are hidden. Quality stays (it is the
+     * same file's ladder).
+     */
+    versionAndSpeedControlsVisible: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val tabs = visibleHudTabs(
@@ -503,7 +509,7 @@ internal fun TvPlayerHud(
                     HudTab.Video -> HudVideoPane(
                         videoQualities = videoQualities,
                         onSelectVideoQuality = onSelectVideoQuality,
-                        fileVersions = fileVersions,
+                        fileVersions = if (versionAndSpeedControlsVisible) fileVersions else emptyList(),
                         selectedFileId = selectedFileId,
                         onSelectFileVersion = onSelectFileVersion,
                         hdrEnabled = hdrEnabled,
@@ -515,6 +521,7 @@ internal fun TvPlayerHud(
                         onFillModeChanged = onVideoFillModeChanged,
                         playbackSpeed = playbackSpeed,
                         onPlaybackSpeedChanged = onPlaybackSpeedChanged,
+                        speedRowVisible = versionAndSpeedControlsVisible,
                         sleepTimerState = sleepTimerState,
                         onStartSleepTimer = onStartSleepTimer,
                         onCancelSleepTimer = onCancelSleepTimer,
@@ -1041,6 +1048,7 @@ private fun HudVideoPane(
     onFillModeChanged: (VideoFillMode) -> Unit,
     playbackSpeed: Double,
     onPlaybackSpeedChanged: (Double) -> Unit,
+    speedRowVisible: Boolean,
     sleepTimerState: SleepTimerState,
     onStartSleepTimer: (Int) -> Unit,
     onCancelSleepTimer: () -> Unit,
@@ -1061,7 +1069,8 @@ private fun HudVideoPane(
     val entryRow = when {
         hasVersionRow -> "version"
         hasQualityRow -> "quality"
-        else -> "speed"
+        speedRowVisible -> "speed"
+        else -> "aspect"
     }
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -1144,32 +1153,35 @@ private fun HudVideoPane(
                     },
                 )
 
-                HudFocusedSettingRow(
-                    label = "Speed",
-                    value = formatTvPlaybackSpeed(playbackSpeed),
-                    enabled = enabled,
-                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "speed" },
-                    onActivate = {
-                        onPresentPicker(
-                            HudPickerPresentation(
-                                title = "Playback Speed",
-                                options = PLAYBACK_SPEED_OPTIONS.map {
-                                    HudPickerOption(speedOptionId(it), formatTvPlaybackSpeed(it))
-                                },
-                                selectedId = speedOptionId(playbackSpeed),
-                                onSelect = { id ->
-                                    PLAYBACK_SPEED_OPTIONS.firstOrNull { speedOptionId(it) == id }
-                                        ?.let(onPlaybackSpeedChanged)
-                                },
-                            ),
-                        )
-                    },
-                )
+                if (speedRowVisible) {
+                    HudFocusedSettingRow(
+                        label = "Speed",
+                        value = formatTvPlaybackSpeed(playbackSpeed),
+                        enabled = enabled,
+                        entryFocusRequester = entryFocusRequester.takeIf { entryRow == "speed" },
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Playback Speed",
+                                    options = PLAYBACK_SPEED_OPTIONS.map {
+                                        HudPickerOption(speedOptionId(it), formatTvPlaybackSpeed(it))
+                                    },
+                                    selectedId = speedOptionId(playbackSpeed),
+                                    onSelect = { id ->
+                                        PLAYBACK_SPEED_OPTIONS.firstOrNull { speedOptionId(it) == id }
+                                            ?.let(onPlaybackSpeedChanged)
+                                    },
+                                ),
+                            )
+                        },
+                    )
+                }
 
                 HudFocusedSettingRow(
                     label = "Aspect",
                     value = fillModeLabel(fillMode),
                     enabled = enabled,
+                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "aspect" },
                     onActivate = {
                         onPresentPicker(
                             HudPickerPresentation(
