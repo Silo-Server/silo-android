@@ -316,7 +316,7 @@ class LibrariesViewModelTest {
             {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
         """.trimIndent()
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        val viewModel = fixture.viewModel()
+        val viewModel = fixture.viewModel(catalogCache = InMemoryLibraryCache())
         val store = ViewModelStore().also { it.put("libraries", viewModel) }
         try {
             fixture.awaitRequest("libraries")
@@ -345,6 +345,13 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("libraries")
             val afterForbidden = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(emptyList(), afterForbidden.libraries)
+
+            // A transient failure next must not resurrect the pre-403 list
+            // from the offline cache.
+            fixture.librariesStatus = HttpStatusCode.ServiceUnavailable
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            assertEquals(emptyList(), viewModel.uiState.first { !it.isLoadingLibraries }.libraries)
 
             // Access returns: the list recovers and the cleared rows reload,
             // even though the selected library is unchanged.
@@ -395,12 +402,7 @@ class LibrariesViewModelTest {
     fun libraryListRecheckConfirmsAShrinkBeforePublishingIt() = runTest {
         val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        // A real cache, so a failed read can fall back to the list it holds.
-        val cache = object : CatalogCachePort {
-            @Volatile var libraries: List<UserLibrary>? = null
-            override suspend fun cacheLibraries(libraries: List<UserLibrary>) { this.libraries = libraries }
-            override suspend fun getCachedLibraries() = libraries
-        }
+        val cache = InMemoryLibraryCache()
         val viewModel = fixture.viewModel(catalogCache = cache)
         val store = ViewModelStore().also { it.put("libraries", viewModel) }
         try {
@@ -451,6 +453,13 @@ class LibrariesViewModelTest {
             }
         }
         error("Unreachable")
+    }
+
+    /** A real library cache, so a failed read can fall back to the list it holds. */
+    private class InMemoryLibraryCache : CatalogCachePort {
+        @Volatile var libraries: List<UserLibrary>? = null
+        override suspend fun cacheLibraries(libraries: List<UserLibrary>) { this.libraries = libraries }
+        override suspend fun getCachedLibraries() = libraries
     }
 
     /** BrowsePrefsStore persists nothing without an active server + profile. */

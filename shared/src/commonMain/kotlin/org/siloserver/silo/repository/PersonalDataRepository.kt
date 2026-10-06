@@ -57,11 +57,11 @@ open class PersonalDataRepository(
      * A list missing any known library is read again before it is trusted,
      * and only the accepted list is cached, so one transient short response
      * can't replace the full list on screen or in the offline cache. A failed
-     * read returns the failure rather than the cache: the caller keeps what
-     * it shows.
+     * read returns the failure rather than the cache — even with nothing on
+     * screen, where the cache may hold a list whose access was since denied —
+     * so the caller keeps what it shows.
      */
     suspend fun recheckUserLibraries(knownIds: Set<Int>): ApiResult<List<UserLibrary>> {
-        if (knownIds.isEmpty()) return listUserLibraries()
         val requestIdentityGeneration = identityTransitions.generation.value
         val first = personalDataApi.listUserLibraries()
         val result = if (first is ApiResult.Success && !first.data.map { it.id }.containsAll(knownIds)) {
