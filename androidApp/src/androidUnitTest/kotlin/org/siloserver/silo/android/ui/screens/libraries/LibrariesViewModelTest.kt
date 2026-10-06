@@ -307,7 +307,7 @@ class LibrariesViewModelTest {
     }
 
     @Test
-    fun libraryListRecheckRecoversAShortListAndKeepsItOnlyOnTransientFailure() = runTest {
+    fun libraryListRecheckRecoversShortOrClearedListsAndKeepsThemOnlyOnTransientFailure() = runTest {
         val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
         fixture.librariesBody = """
             {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
@@ -317,6 +317,7 @@ class LibrariesViewModelTest {
         val store = ViewModelStore().also { it.put("libraries", viewModel) }
         try {
             fixture.awaitRequest("libraries")
+            fixture.awaitRequest("sections:1")
             viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 1 }
 
             // The server now returns the full list: the re-check picks it up
@@ -341,6 +342,14 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("libraries")
             val afterForbidden = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(emptyList(), afterForbidden.libraries)
+
+            // Access returns: the list recovers and the cleared rows reload,
+            // even though the selected library is unchanged.
+            fixture.librariesStatus = HttpStatusCode.OK
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("sections:1")
+            assertEquals(1, viewModel.uiState.first { it.libraries.size == 2 }.selectedLibraryId)
         } finally {
             store.clear()
             Dispatchers.resetMain()

@@ -134,6 +134,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
@@ -220,7 +221,11 @@ class LibrariesViewModel(
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
-    private var librariesRequestGeneration = 0L
+    // Library-list loads run one at a time, in order, so an older response
+    // can't overwrite a newer one (on screen or in the offline cache). A
+    // request made mid-load queues one follow-up pass.
+    private var librariesJob: Job? = null
+    private var librariesRecheckQueued = false
     private var pendingContentReload = false
     private val pageSize = 42
 
@@ -252,79 +257,89 @@ class LibrariesViewModel(
     fun refreshLibraryList() = loadLibraries(reloadContent = false)
 
     private fun loadLibraries(reloadContent: Boolean) {
-        val requestGeneration = ++librariesRequestGeneration
-        // A full refresh superseded by a newer list request still owes its
-        // content reload; the request that wins applies it.
         if (reloadContent) pendingContentReload = true
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isLoadingLibraries = true,
-                    librariesError = null,
-                )
-            }
+        if (librariesJob?.isActive == true) {
+            librariesRecheckQueued = true
+            return
+        }
+        librariesJob = viewModelScope.launch {
+            do {
+                librariesRecheckQueued = false
+                // Each pass takes the reload owed so far, so a background
+                // re-check never inherits a full refresh it didn't run.
+                val reload = pendingContentReload
+                pendingContentReload = false
+                loadLibrariesPass(reload)
+            } while (librariesRecheckQueued)
+        }
+    }
 
-            val result = personalDataRepository.listUserLibraries()
-            // Only the newest list request publishes, so an older, possibly
-            // shorter response can't overwrite a newer one.
-            if (requestGeneration != librariesRequestGeneration) return@launch
-            val reload = pendingContentReload
-            pendingContentReload = false
-            if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
-                // A transient failure on a background re-check keeps the list
-                // on screen. Auth failures fall through and clear it.
-                _uiState.update { it.copy(isLoadingLibraries = false) }
-                return@launch
-            }
-            when (result) {
-                is ApiResult.Success -> {
-                    // Libraries is the unified hub for every library type
-                    // (video / audio / reading). The selector lists them all
-                    // and ItemDetail routes each item to the right player or
-                    // reader by its type.
-                    val libraries = result.data
-                        .filterNot(::isHiddenAudiobookLibrary)
-                        .sortedBy { library -> library.sortOrder }
-                    val previousLibraryId = _uiState.value.selectedLibraryId
-                    val selectedLibraryId = previousLibraryId
-                        ?.takeIf { currentId -> libraries.any { it.id == currentId } }
-                        ?: libraries.firstOrNull()?.id
-                    // A *new* selection (first load, or the prior library
-                    // vanished) gets the same reset as selectLibrary. An
-                    // unchanged selection keeps its rows and active filters.
-                    val selectionChanged = selectedLibraryId != previousLibraryId
-                    if (selectionChanged) resetForLibrary(selectedLibraryId)
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = libraries,
-                            librariesError = null,
-                        )
-                    }
+    private suspend fun loadLibrariesPass(reload: Boolean) {
+        _uiState.update {
+            it.copy(
+                isLoadingLibraries = true,
+                librariesError = null,
+            )
+        }
 
-                    if (selectedLibraryId != null && (reload || selectionChanged)) {
-                        loadCurrentTab(selectedLibraryId, force = true)
-                    }
+        val result = personalDataRepository.listUserLibraries()
+        if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
+            // A transient failure on a background re-check keeps the list
+            // on screen. Auth failures fall through and clear it.
+            _uiState.update { it.copy(isLoadingLibraries = false) }
+            return
+        }
+        when (result) {
+            is ApiResult.Success -> {
+                // Libraries is the unified hub for every library type
+                // (video / audio / reading). The selector lists them all
+                // and ItemDetail routes each item to the right player or
+                // reader by its type.
+                val libraries = result.data
+                    .filterNot(::isHiddenAudiobookLibrary)
+                    .sortedBy { library -> library.sortOrder }
+                // Recovering from an emptied list (an earlier failure
+                // cleared it, sections included) owes a content reload too.
+                val recovering = _uiState.value.libraries.isEmpty()
+                val previousLibraryId = _uiState.value.selectedLibraryId
+                val selectedLibraryId = previousLibraryId
+                    ?.takeIf { currentId -> libraries.any { it.id == currentId } }
+                    ?: libraries.firstOrNull()?.id
+                // A *new* selection (first load, or the prior library
+                // vanished) gets the same reset as selectLibrary. An
+                // unchanged selection keeps its rows and active filters.
+                val selectionChanged = selectedLibraryId != previousLibraryId
+                if (selectionChanged) resetForLibrary(selectedLibraryId)
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = libraries,
+                        librariesError = null,
+                    )
                 }
-                is ApiResult.Error -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = emptyList(),
-                            sections = emptyList(),
-                            librariesError = result.message.ifBlank { "Failed to load libraries" },
-                        )
-                    }
+
+                if (selectedLibraryId != null && (reload || selectionChanged || recovering)) {
+                    loadCurrentTab(selectedLibraryId, force = true)
                 }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = emptyList(),
-                            sections = emptyList(),
-                            librariesError = "Network error: ${result.exception.message ?: "unknown"}",
-                        )
-                    }
+            }
+            is ApiResult.Error -> {
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = emptyList(),
+                        sections = emptyList(),
+                        librariesError = result.message.ifBlank { "Failed to load libraries" },
+                    )
+                }
+            }
+            is ApiResult.NetworkError -> {
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = emptyList(),
+                        sections = emptyList(),
+                        librariesError = "Network error: ${result.exception.message ?: "unknown"}",
+                    )
                 }
             }
         }
