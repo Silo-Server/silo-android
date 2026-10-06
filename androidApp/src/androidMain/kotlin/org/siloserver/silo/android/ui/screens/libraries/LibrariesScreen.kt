@@ -226,6 +226,10 @@ class LibrariesViewModel(
     // request made mid-load queues one follow-up pass.
     private var librariesJob: Job? = null
     private var librariesRecheckQueued = false
+    // Every library the server last listed, hidden audiobook libraries
+    // included: the baseline a re-check confirms a shrink against, so a
+    // partial list can't drop hidden libraries from the offline cache.
+    private var serverLibraryIds: Set<Int> = emptySet()
     private var pendingContentReload = false
     private val pageSize = 42
 
@@ -288,7 +292,7 @@ class LibrariesViewModel(
         val result = if (reload) {
             personalDataRepository.listUserLibraries()
         } else {
-            personalDataRepository.recheckUserLibraries(_uiState.value.libraries.mapTo(mutableSetOf()) { it.id })
+            personalDataRepository.recheckUserLibraries(serverLibraryIds)
         }
         if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
             // A transient failure on a background re-check keeps the list
@@ -298,6 +302,7 @@ class LibrariesViewModel(
         }
         when (result) {
             is ApiResult.Success -> {
+                serverLibraryIds = result.data.mapTo(mutableSetOf()) { it.id }
                 // Libraries is the unified hub for every library type
                 // (video / audio / reading). The selector lists them all
                 // and ItemDetail routes each item to the right player or
@@ -330,6 +335,7 @@ class LibrariesViewModel(
                 }
             }
             is ApiResult.Error -> {
+                serverLibraryIds = emptySet()
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
@@ -340,6 +346,7 @@ class LibrariesViewModel(
                 }
             }
             is ApiResult.NetworkError -> {
+                serverLibraryIds = emptySet()
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,

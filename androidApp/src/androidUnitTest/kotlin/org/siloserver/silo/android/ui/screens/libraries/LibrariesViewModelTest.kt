@@ -439,6 +439,46 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun libraryListRecheckConfirmsAShrinkOfHiddenAudiobookLibraries() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        fixture.librariesBody = """
+            {"items":[
+              {"id":"1","name":"First","type":"movies","sort_order":0},
+              {"id":"2","name":"Second","type":"movies","sort_order":1},
+              {"id":"3","name":"Books","type":"audiobooks","sort_order":2}
+            ],"page":{"has_more":false}}
+        """.trimIndent()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val cache = InMemoryLibraryCache()
+        val viewModel = fixture.viewModel(catalogCache = cache)
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("libraries")
+            // Audiobooks are hidden by default, so only 1 and 2 are on screen.
+            viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 2 }
+
+            // A short response that keeps every visible library but drops the
+            // hidden audiobook library still needs confirming before it is
+            // cached; the confirming read returns all three.
+            fixture.librariesBodyQueue += """
+                {"items":[
+                  {"id":"1","name":"First","type":"movies","sort_order":0},
+                  {"id":"2","name":"Second","type":"movies","sort_order":1}
+                ],"page":{"has_more":false}}
+            """.trimIndent()
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(1, 2, 3), cache.libraries?.map { it.id })
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]
