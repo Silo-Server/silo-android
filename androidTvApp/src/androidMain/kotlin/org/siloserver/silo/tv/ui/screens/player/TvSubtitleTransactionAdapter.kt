@@ -922,6 +922,17 @@ internal class TvSubtitleTransactionAdapter(
         return true
     }
 
+    /**
+     * Remounts the unchanged subtitle list so a sidecar whose content changed
+     * behind the same URL (a server timing change) is fetched again. It does
+     * not start a refresh, so an in-flight download refresh keeps ownership.
+     */
+    fun remountSubtitles() {
+        if (context == null) return
+        subtitleRefreshNonce += 1
+        publish()
+    }
+
     fun completeRefreshFailure(owner: TvSubtitleRefreshOwner, message: String): Boolean {
         if (!ownsRefresh(owner)) return false
         refreshGeneration += 1

@@ -12,6 +12,7 @@ import org.siloserver.silo.tv.BuildConfig
 import android.os.SystemClock
 import android.util.Log
 import org.siloserver.silo.common.player.SubDiag
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
@@ -39,6 +40,7 @@ import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.MountedSubtitleTrack
 import org.siloserver.silo.common.player.resolveMountedSubtitle
 import org.siloserver.silo.common.player.backend.VideoBackendCapabilities
@@ -102,6 +104,19 @@ import org.siloserver.silo.model.playback.enrichAuthoritativePlaybackSubtitleCho
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.mergeDownloadedSubtitles
 import org.siloserver.silo.playback.PlaybackSubtitleReady
+import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.PlaybackSubtitleSyncUpdated
+import org.siloserver.silo.playback.SubtitleSyncController
+import org.siloserver.silo.playback.SubtitleSyncFeedbackTracker
+import org.siloserver.silo.playback.SubtitleSyncNotice
+import org.siloserver.silo.playback.feedbackInput
+import org.siloserver.silo.playback.includesSyncKey
+import org.siloserver.silo.playback.activeSyncKey
+import org.siloserver.silo.playback.statusLabelFor
+import org.siloserver.silo.playback.syncKeyFor
+import org.siloserver.silo.playback.timingActionsFor
+import org.siloserver.silo.model.subtitles.SubtitleSyncState
+import org.siloserver.silo.common.player.subtitleSyncName
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
 import org.siloserver.silo.model.subtitles.SubtitleAiStatus
@@ -137,6 +152,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -1099,6 +1115,10 @@ class TvPlayerViewModel(
         // subtitleUrls, so the initial prepare effect stays the only path
         // for session start / stream-URL changes.
         val subtitleRefreshNonce: Int = 0,
+        // Grows per sync key each time a syncable subtitle's timing changed
+        // and its cues must be fetched again. The mount that carries a
+        // revision reports it back, so sync feedback knows the new cues show.
+        val subtitleCueRevisions: Map<String, Int> = emptyMap(),
         val committedSubtitleIdentity: SubtitleIdentity = SubtitleIdentity.Off,
         val pendingSubtitleIdentity: SubtitleIdentity? = null,
         val subtitleApplying: Boolean = false,
@@ -1396,6 +1416,55 @@ class TvPlayerViewModel(
     private val _aiTranslate = MutableStateFlow(AiTranslateUiState())
     val aiTranslate: StateFlow<AiTranslateUiState> = _aiTranslate.asStateFlow()
 
+    // Timing and sync state of the playing file's stored subtitles.
+    private val subtitleSync = SubtitleSyncController(
+        subtitlesRepository,
+        viewModelScope,
+        onTimingChanged = ::onSubtitleSyncTimingChanged,
+    )
+    /** The Subtitles pane's sync state: the selected track's timing actions and each track's status. */
+    internal val hudSubtitleSync: StateFlow<TvHudSubtitleSync> = combine(
+        subtitleSync.state,
+        _uiState
+            .map { state -> state.subtitleUrls to (state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity) }
+            .distinctUntilChanged(),
+    ) { sync, (rows, selected) ->
+        val statuses = rows.mapNotNull { row -> sync.statusLabelFor(row)?.let { row to it } }
+        TvHudSubtitleSync(
+            timing = sync.timingActionsFor(rows.syncKeyFor(selected)),
+            statusByServerIndex = statuses.associate { (row, status) -> row.index to status },
+            statusByDownloadId = statuses.mapNotNull { (row, status) -> row.downloadId?.let { it to status } }.toMap(),
+        )
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, TvHudSubtitleSync())
+    // The card that follows a sync this viewer started.
+    private val subtitleSyncFeedback = SubtitleSyncFeedbackTracker(viewModelScope)
+    val subtitleSyncNotice: StateFlow<SubtitleSyncNotice?> = subtitleSyncFeedback.notice
+    /** The cue revision of each sync key whose cues the player has in use. */
+    private val loadedSubtitleCueRevisions = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** Cue revisions of the last subtitle mount, until Media3 selects its subtitle track. */
+    private var mountedSubtitleCueRevisions: Map<String, Int> = emptyMap()
+
+    fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
+
+    fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
+
+    /**
+     * The player mounted subtitles built from a state carrying [revisions].
+     * Media3 fetches them after the mount returns, so they count as loaded
+     * only once [onMountedSubtitleSelected] reports the track in use.
+     */
+    internal fun onSubtitleCuesMounted(revisions: Map<String, Int>) {
+        mountedSubtitleCueRevisions = revisions
+    }
+
+    /** Media3 selected the mounted subtitle track on the live player: its cues are in use. */
+    internal fun onMountedSubtitleSelected() {
+        val revisions = mountedSubtitleCueRevisions
+        if (revisions.isEmpty()) return
+        mountedSubtitleCueRevisions = emptyMap()
+        loadedSubtitleCueRevisions.update { it + revisions }
+    }
+
     /**
      * Mounts the subtitle transaction adapter has asked for, each carrying the
      * owner that must be told how it went. Mirrors the seekRequests idiom: the
@@ -1452,6 +1521,9 @@ class TvPlayerViewModel(
     // (then the OS captioning style, tvOS parity).
     val subtitleAppearance: StateFlow<SubtitleAppearance> = playerSettingsStore.effectiveSubtitleAppearanceFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, SubtitleAppearance.DEFAULT)
+    /** False when the server is known to discard subtitle text opacity. */
+    val subtitleTextOpacitySupported: StateFlow<Boolean> = playerSettingsStore.subtitleTextOpacitySupportedFlow
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
     /**
      * Per-profile audio delay in ms, ±500 clamp. Sourced from
      * [PlayerSettingsStore.audioSyncMsFlow]; mirrored into the active
@@ -1496,6 +1568,26 @@ class TvPlayerViewModel(
                 .map { it.selectedFileId ?: it.mediaFileId }
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
+        }
+        // Subtitle sync applies to server playback only.
+        viewModelScope.launch {
+            _uiState
+                .map { state ->
+                    state.mediaFileId?.takeIf { state.sessionId != null } to
+                        state.subtitleUrls.mapNotNullTo(mutableSetOf()) { it.syncKey }
+                }
+                .distinctUntilChanged()
+                .collect { (mediaFileId, syncKeys) -> subtitleSync.bind(mediaFileId, syncKeys) }
+        }
+        viewModelScope.launch {
+            val screen = _uiState
+                .map { state ->
+                    Triple(activeSubtitleSyncKey(state), state.subtitleCueRevisions, state.subtitleUrls)
+                }
+                .distinctUntilChanged()
+            combine(subtitleSync.state, screen, loadedSubtitleCueRevisions) { sync, (activeKey, revisions, tracks), loaded ->
+                sync.feedbackInput(activeKey, revisions, loaded) { subtitleSyncName(tracks, it) }
+            }.collect(subtitleSyncFeedback::update)
         }
         // Mirror the screen error into the adb test hook — screen-level
         // failures (terminal server plans) never reach the Media3 player, so
@@ -5201,6 +5293,8 @@ class TvPlayerViewModel(
      * error surfaced).
      */
     fun onSubtitlesPaneShown() {
+        // Opening re-reads sync state so a job that finished meanwhile shows.
+        subtitleSync.reload()
         if (aiStatusRequested) return
         aiStatusRequested = true
         viewModelScope.launch {
@@ -5213,8 +5307,7 @@ class TvPlayerViewModel(
     }
 
     fun openSubtitleSearchDialog() {
-        val defaultLang = _uiState.value.preferredTextLanguage
-            ?.takeIf { it.isNotBlank() }?.take(2)?.lowercase() ?: "en"
+        val defaultLang = LanguageNames.searchCode(_uiState.value.preferredTextLanguage)
         _subtitleSearch.update {
             // Keep prior results/language when reopening mid-session.
             if (it.hasSearched) it else it.copy(language = defaultLang)
@@ -5290,6 +5383,8 @@ class TvPlayerViewModel(
             if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
             when (r) {
                 is ApiResult.Success -> {
+                    // Follows the automatic sync the server starts for a new download.
+                    subtitleSync.remember(r.data.subtitle)
                     val merged = refreshSubtitles(
                         autoSelectSubtitleId = r.data.subtitle.id,
                         source = TvSubtitleRefreshSource.Download,
@@ -5429,6 +5524,63 @@ class TvPlayerViewModel(
         )
         if (applied && autoSelectId != null) pendingAuthoritativeSubtitleDownloadId = null
         return applied
+    }
+
+    /**
+     * The server retimed a subtitle of the file, stored or a sidecar (a sync,
+     * or a timing set or reset). The sync controller re-reads it and reports
+     * the change through [onSubtitleSyncTimingChanged].
+     */
+    internal fun applySubtitleTimingChanged(update: PlaybackSubtitleTimingChanged) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        val key = update.syncKey ?: update.subtitleId?.let(SubtitleSyncState::storedKey) ?: return
+        subtitleSync.timingChanged(key)
+    }
+
+    /** A step of a sync job of the file (realtime): progress, then the outcome. */
+    internal fun applySubtitleSyncUpdated(update: PlaybackSubtitleSyncUpdated?) {
+        update ?: return
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        subtitleSync.syncUpdated(update)
+    }
+
+    fun dismissSubtitleSyncNotice() = subtitleSyncFeedback.dismiss()
+
+    private fun mountedSubtitles(state: UiState): List<PlayerSubtitleInfo> =
+        if (state.sessionId == null) {
+            emptyList()
+        } else {
+            subtitlesForVideoMediaMount(
+                subtitles = state.subtitleUrls,
+                playbackPlan = state.playbackPlan,
+                subtitleIdentity = state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity,
+                preferMuxedTracks = true,
+            )
+        }
+
+    private fun activeSubtitleSyncKey(state: UiState): String? =
+        state.subtitleUrls.activeSyncKey(
+            state.pendingSubtitleIdentity ?: state.committedSubtitleIdentity,
+            mounted = mountedSubtitles(state),
+        )
+
+    /**
+     * A syncable subtitle's timing changed. Media3 keeps the cues it already
+     * parsed, so when that subtitle is the mounted sidecar, remount the same
+     * item at the same position to fetch it again. Its cue revision tells the
+     * sync feedback when the new cues show.
+     */
+    private fun onSubtitleSyncTimingChanged(key: String) {
+        _uiState.update {
+            it.copy(subtitleCueRevisions = it.subtitleCueRevisions + (key to (it.subtitleCueRevisions[key] ?: 0) + 1))
+        }
+        if (mountedSubtitles(_uiState.value).includesSyncKey(key)) subtitleTransactions.remountSubtitles()
     }
 
     // ---- Subtitle suite: AI translate / transcribe -------------------------------

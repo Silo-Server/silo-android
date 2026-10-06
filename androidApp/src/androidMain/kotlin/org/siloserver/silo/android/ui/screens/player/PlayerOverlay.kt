@@ -43,13 +43,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import org.siloserver.silo.android.ui.util.LanguageNames
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
 import org.siloserver.silo.watchtogether.roomTransportAuthorized
+import org.siloserver.silo.playback.statusLabelFor
+import org.siloserver.silo.playback.timingActionsFor
 
 /**
  * Full-screen overlay composable that layers gesture handling, transport controls,
@@ -169,6 +171,8 @@ fun PlayerOverlay(
     val notice by viewModel.notice.collectAsState()
     val sessionState by viewModel.sessionState.collectAsState()
     val subtitleTools by viewModel.subtitleTools.collectAsState()
+    val subtitleSync by viewModel.subtitleSyncState.collectAsState()
+    val subtitleSyncNotice by viewModel.subtitleSyncNotice.collectAsState()
     // Pinch-to-scale (iOS parity): pinch-out steps Fit -> Fill -> Stretch,
     // pinch-in steps back, clamped at both ends. No-op steps (already at an
     // end) skip the toast so a clamped pinch stays quiet.
@@ -273,6 +277,19 @@ fun PlayerOverlay(
             contentAlignment = Alignment.TopStart,
         ) {
             PlayerNoticeOverlay(notice = notice)
+        }
+
+        // Subtitle sync card (top-right, below the top bar's actions): follows
+        // a sync this viewer started, whether or not the controls show.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(top = 72.dp, end = 16.dp)
+                .zIndex(9f),
+            contentAlignment = Alignment.TopEnd,
+        ) {
+            SubtitleSyncCard(notice = subtitleSyncNotice, onDismiss = viewModel::dismissSubtitleSyncNotice)
         }
 
         // Remote-control "display_message" toast (top-center), shown for a few
@@ -532,6 +549,12 @@ fun PlayerOverlay(
             tracksSheetVisible = false
             aiTranslateVisible = true
         },
+        subtitleStatus = subtitleSync::statusLabelFor,
+        timingActions = subtitleSync.timingActionsFor(
+            state.subtitleTracks.getOrNull(state.selectedSubtitleIndex)?.syncKey,
+        ),
+        onSyncSubtitle = viewModel::requestSubtitleSync,
+        onResetTiming = viewModel::resetSubtitleTiming,
         tabletopPaneHeight = tabletopPaneHeight,
     )
 
@@ -674,7 +697,8 @@ fun PlayerOverlay(
     SubtitleStyleSheet(
         isVisible = subtitleStyleVisible,
         appearance = viewModel.subtitleAppearance.collectAsState().value,
-        onUpdate = viewModel::onSetSubtitleAppearance,
+        showTextOpacity = viewModel.subtitleTextOpacitySupported.collectAsState().value,
+        onUpdate = viewModel::onEditSubtitleAppearance,
         onDismiss = { subtitleStyleVisible = false },
         onBack = {
             subtitleStyleVisible = false

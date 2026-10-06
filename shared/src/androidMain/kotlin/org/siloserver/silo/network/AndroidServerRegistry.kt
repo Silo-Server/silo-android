@@ -112,6 +112,17 @@ class AndroidServerRegistry(
         }
     }
 
+    override suspend fun setVerifiedServerId(serverId: String, verifiedServerId: String?) {
+        mutex.withLock {
+            val current = _entries.value.firstOrNull { it.id == serverId } ?: return
+            if (current.verifiedServerId == verifiedServerId) return
+            val updated = _entries.value.map { entry ->
+                if (entry.id == serverId) entry.copy(verifiedServerId = verifiedServerId) else entry
+            }
+            persistAndApplyLocked(updated, _activeServerId.value)
+        }
+    }
+
     override suspend fun setFetchedName(serverId: String, fetchedName: String?) {
         mutex.withLock {
             val updated = _entries.value.map { entry ->

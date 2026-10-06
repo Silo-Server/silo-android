@@ -52,11 +52,12 @@ class TvUsabilityGuardTest {
         assertTrue(destinations.contains("TvRootDestination.LibraryType"))
         assertTrue(destinations.contains("TvRootDestination.Calendar"))
         // For You IS a root tab again (QA 2026-07-08, tvOS .recommendations
-        // parity, with its Watchlist/Favorites dropdown). Search stays a
+        // parity, with its Watchlist/Favorites dropdown), and so is Requests
+        // while the server enables it (tvOS `.requests`). Search stays a
         // trailing icon, and secondary utility surfaces never become tabs.
         assertTrue(destinations.contains("TvRootDestination.ForYou"))
+        assertTrue(destinations.contains("if (requestsEnabled) add(TvRootDestination.Requests)"))
         assertFalse(destinations.contains("TvRootDestination.Search"))
-        assertFalse(destinations.contains("TvRootDestination.Requests"))
         assertFalse(destinations.contains("TvRootDestination.Settings"))
     }
 

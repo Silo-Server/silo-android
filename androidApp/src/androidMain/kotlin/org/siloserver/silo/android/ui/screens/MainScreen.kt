@@ -81,7 +81,6 @@ import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
-import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
@@ -161,7 +160,6 @@ fun MainScreen(
     val downloadsRepository: org.siloserver.silo.repository.DownloadsRepository = koinInject()
     val downloadStorage: org.siloserver.silo.common.downloads.DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
-    val authRepository: AuthRepository = koinInject()
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
@@ -169,6 +167,8 @@ fun MainScreen(
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
+    val titleArtStore: org.siloserver.silo.common.settings.TitleArtStore = koinInject()
+    val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
@@ -288,16 +288,10 @@ fun MainScreen(
 
     fun signOutFromProfileMenu() {
         reachabilityScope.launch {
-            authRepository.logout()
-            requestsFeatureStore.reset()
-            metadataAiFeatureStore.reset()
-            // Per-profile card caches, same teardown the Settings sign-out
-            // does — otherwise the next user's shell renders (and can write
-            // back) the previous profile's overlays and card presentation.
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
+            // Same teardown as the Settings sign-out: otherwise the next
+            // user's shell renders (and can write back) the previous
+            // profile's overlays and card presentation.
+            signOutTeardown.signOut()
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
@@ -319,6 +313,7 @@ fun MainScreen(
         activeProfileStore.reset()
         cardPresentationStore.clear()
         seekIntervalStore.clear()
+        titleArtStore.clear()
     }
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }

@@ -32,6 +32,8 @@ interface PairingAuthPort {
         refreshToken: String,
         expiresIn: Long,
         expectedIdentity: AccountSessionExpectation? = null,
+        /** Deployment identity verified at [serverUrl], recorded on the saved server. */
+        verifiedServerId: String? = null,
     )
 }
 
@@ -52,6 +54,7 @@ class RegistryPairingAuthPort(
         refreshToken: String,
         expiresIn: Long,
         expectedIdentity: AccountSessionExpectation?,
+        verifiedServerId: String?,
     ): Unit = withContext(NonCancellable) {
         commitMutex.withLock {
             if (cleartextOriginConsent?.requiresApproval(serverUrl) == true) {
@@ -101,6 +104,7 @@ class RegistryPairingAuthPort(
             // stale UPDATE_REQUIRED — so, like switchToServer, a replacement
             // probe is handed to the repository's background scope.
             authRepository?.refreshServerContractWithFallback(serverId)
+            if (verifiedServerId != null) serverRegistry.setVerifiedServerId(serverId, verifiedServerId)
             if (expectedIdentity != null && tokenManager.captureAccountSessionExpectation()?.generation != expectedIdentity.generation + 1) throw AccountSessionChangedException()
         }
     }

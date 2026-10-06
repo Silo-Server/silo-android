@@ -1,10 +1,13 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import kotlinx.serialization.json.Json
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.playback.audioTrackFingerprint
+import org.siloserver.silo.playback.resolveAudioTrackOrdinal
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 
 /**
@@ -60,6 +63,22 @@ class MobileAudioTrackSelectionTest {
             TrackSelectionFingerprintUpdate.Set(audioTrackFingerprint(tracks[1])),
             update,
         )
+    }
+
+    @Test
+    fun `an original download choice restores against the online catalog`() {
+        val catalog = Json.decodeFromString<List<AudioTrack>>(
+            """[{"language":"eng","codec":"aac","title":"English"},{"language":"deu","codec":"aac","title":"German"}]""",
+        )
+        val manifestTracks = catalog.mapIndexed { ordinal, track -> track.copy(index = ordinal) }
+        val update = assertIs<TrackSelectionFingerprintUpdate.Set>(mobileAudioTrackPersistenceUpdate(
+            committedAudioTrackIndex = 1,
+            audioTracks = manifestTracks,
+            originalDownload = true,
+        ))
+
+        assertEquals(1, resolveAudioTrackOrdinal(catalog, update.fingerprint))
+        assertEquals(1, selectedServerAudioTrackIndex(1, manifestTracks))
     }
 
     @Test

@@ -108,6 +108,7 @@ import org.siloserver.silo.model.catalog.VersionChapter
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaRelatedItem
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
@@ -657,6 +658,7 @@ private fun TvDetailContent(
             runtimeMinutes = activeSeriesPlaybackDetail?.let { playbackDetail ->
                 selectedMediaRuntimeMinutes(playbackDetail, activeSeriesSelectedVersion)
             } ?: episode.runtime,
+            ratings = detail.titleRatings(),
         )
     } ?: TvDetailMetadata.factsLine(
         detail = detail,
@@ -857,6 +859,11 @@ private fun TvDetailContent(
                                     onSeasonClick = onSeasonClick,
                                     libraryId = libraryId,
                                     onWatchParty = onWatchParty,
+                                    // Season mode marks the selected season;
+                                    // Show mode offers only the whole series.
+                                    watchedSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
                                 )
                             },
                         )
@@ -1504,6 +1511,7 @@ private fun HeroActionRow(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     libraryId: Int?,
     onWatchParty: (WatchPartyDestination?) -> Unit,
+    watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
 ) {
     val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
@@ -1804,6 +1812,21 @@ private fun HeroActionRow(
                     },
                 ),
             )
+            watchedSeason?.let { season ->
+                val seasonWatched = season.userData?.played == true
+                add(
+                    TvDialogOption(
+                        key = "season-watched",
+                        title = "Mark ${tvSeasonPickerLabel(season)} " +
+                            if (seasonWatched) "Unwatched" else "Watched",
+                        selected = seasonWatched,
+                        onClick = {
+                            moreOpen = false
+                            viewModel.onSetSeasonWatched(season, !seasonWatched)
+                        },
+                    ),
+                )
+            }
             watchPartyOption?.let { option ->
                 add(
                     TvDialogOption(

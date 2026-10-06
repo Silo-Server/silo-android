@@ -408,7 +408,7 @@ internal fun TvDiagnosticsSettingsPane(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
+internal fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
     val closeFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {

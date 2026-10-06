@@ -83,9 +83,9 @@ import org.siloserver.silo.model.ebook.chooseEbookVersion
 import org.siloserver.silo.model.ebook.isInAppReadableEbookVersion
 import org.siloserver.silo.model.ebook.isSupportedEbookVersion
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.labelFor
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
-import org.siloserver.silo.playback.selectPlaybackVersion
 import org.koin.compose.koinInject
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
@@ -213,6 +213,11 @@ fun ItemDetailScreen(
             } else {
                 hapticView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
             }
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.downloadFailureMessages.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -630,8 +635,18 @@ fun ItemDetailScreen(
                             it.contentId == state.selectedEpisodeContentId
                         }
                         val selectedEpisodeDetail = state.selectedEpisodeDetail
-                        val selectedEpisodeVersionIndex = state.selectedVersionIndex
-                            .coerceIn(0, (selectedEpisodeDetail?.versions?.lastIndex ?: 0).coerceAtLeast(0))
+                        // Auto resolves like the movie page and playback, so
+                        // the version shown is the one Play and Download use.
+                        val selectedEpisodeVersions = selectedEpisodeDetail?.versions.orEmpty()
+                        val selectedEpisodeVersionIndex = detailDisplayVersionIndex(
+                            versions = selectedEpisodeVersions,
+                            explicitIndex = state.selectedVersionIndex
+                                .coerceIn(0, selectedEpisodeVersions.lastIndex.coerceAtLeast(0))
+                                .takeIf { state.hasExplicitVersionSelection },
+                            lastFileId = selectedEpisodeDetail?.userData?.lastFileId,
+                            preferredQuality = preferredQuality,
+                            fallbackIndex = 0,
+                        )
                         val selectedEpisodeFileId = selectedEpisodeDetail?.versions
                             ?.getOrNull(selectedEpisodeVersionIndex)
                             ?.fileId
@@ -724,6 +739,9 @@ fun ItemDetailScreen(
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
                             onSeasonSelected = { viewModel.selectSeason(it) },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
+                            },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
@@ -757,7 +775,7 @@ fun ItemDetailScreen(
                                                 viewModel.onDownloadTapped(
                                                     version, episode.title,
                                                     forceRedownloadMissingLocal = episodeDownloadState.needsLocalRecovery,
-                                                    downloadContentId = episode.contentId,
+                                                    episode = episode,
                                                 )
                                             },
                                             qualityAction = { quality ->
@@ -765,7 +783,7 @@ fun ItemDetailScreen(
                                                     version, episode.title,
                                                     forceRedownloadMissingLocal = episodeDownloadState.needsLocalRecovery,
                                                     downloadQuality = quality,
-                                                    downloadContentId = episode.contentId,
+                                                    episode = episode,
                                                 )
                                             },
                                             estimate = org.siloserver.silo.model.download.DownloadSizeEstimate
@@ -825,41 +843,18 @@ fun ItemDetailScreen(
                         // flow through to the DownloadButton.
                         val downloadRecords by viewModel.downloads.collectAsState()
                         // Auto preview must resolve through the SAME shared
-                        // selector as playback (lastFileId → preferred-quality
-                        // rank → bestAvailable), not just lastFileId-else-[0] —
+                        // selector as playback, not just lastFileId-else-[0] —
                         // otherwise the previewed version (and the audio/subtitle
                         // lists derived from it) can describe a file playback
-                        // won't use. An explicit user pick still wins. TV parity:
-                        // selectTvDetailDisplayVersion does the same.
-                        val videoDisplayVersionIndex = if (
-                            state.hasExplicitVersionSelection || detail.versions.isEmpty()
-                        ) {
-                            effectiveSelectedVersionIndex
-                        } else if (preferredQuality == null) {
-                            // The quality pref hasn't emitted from DataStore yet
-                            // (a frame or two): don't auto-resolve against a
-                            // missing pref — it would name a version the arriving
-                            // pref immediately contradicts (first-frame flash).
-                            // lastFileId is pref-independent and always wins in
-                            // selectPlaybackVersion, so it can be shown at once;
-                            // otherwise hold the bare "Auto" placeholder (-1 →
-                            // no resolved version) until the pref lands.
-                            detail.userData?.lastFileId
-                                ?.let { lastFileId ->
-                                    detail.versions.indexOfFirst { it.fileId == lastFileId }
-                                        .takeIf { it >= 0 }
-                                }
-                                ?: -1
-                        } else {
-                            val resolvedFileId = selectPlaybackVersion(
-                                detail.versions,
-                                detail.userData?.lastFileId,
-                                preferredQuality,
-                            ).fileId
-                            detail.versions.indexOfFirst { it.fileId == resolvedFileId }
-                                .takeIf { it >= 0 }
-                                ?: effectiveSelectedVersionIndex
-                        }
+                        // won't use. TV parity: selectTvDetailDisplayVersion
+                        // does the same.
+                        val videoDisplayVersionIndex = detailDisplayVersionIndex(
+                            versions = detail.versions,
+                            explicitIndex = effectiveSelectedVersionIndex.takeIf { state.hasExplicitVersionSelection },
+                            lastFileId = detail.userData?.lastFileId,
+                            preferredQuality = preferredQuality,
+                            fallbackIndex = effectiveSelectedVersionIndex,
+                        )
                         val selectedVersion = detail.versions.getOrNull(videoDisplayVersionIndex)
                         val selectedLocalDownload = selectedVersion?.let { version ->
                             localDownloadFor(version.fileId)
@@ -1009,6 +1004,7 @@ fun ItemDetailScreen(
                 estimate = pendingDownloadEstimate,
                 availableBytes = remember { downloadStorage.usableSpaceBytes() },
                 allowedQualities = pendingDownloadAllowedQualities,
+                qualityLabel = { quality -> downloadCapability.labelFor(quality) },
             )
         }
 
@@ -1048,152 +1044,69 @@ fun ItemDetailScreen(
         }
         }
 
-        // Pinned header. The strip fades in first so the controls gain a
-        // backing as the artwork leaves, then the title arrives once the hero
-        // is mostly gone — the two ranges and the smoothstep are iOS's.
-        val headerTitle = state.detail?.title.orEmpty()
-        val barAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderBarFadeFromDp,
-            HeaderBarFadeToDp,
-        )
-        val titleAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderTitleFadeFromDp,
-            HeaderTitleFadeToDp,
-        )
-        if (barAlpha > 0f) {
-            // Runs from the very top of the window, not from below the status
-            // bar: the page is edge to edge, so insetting the strip left the
-            // status-bar band uncovered above it.
-            val statusBarHeight = WindowInsets.statusBars
-                .asPaddingValues()
-                .calculateTopPadding()
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(statusBarHeight + DetailHeaderBarHeight)
-                    .graphicsLayer { alpha = barAlpha }
-                    .background(SiloPageBackground)
-                    .drawBehind {
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.10f),
-                            topLeft = Offset(0f, size.height - 1f),
-                            size = Size(size.width, 1f),
-                        )
-                    },
-            )
-        }
-        if (titleAlpha > 0f && headerTitle.isNotBlank()) {
-            Text(
-                text = headerTitle,
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .height(DetailHeaderBarHeight)
-                    .fillMaxWidth()
-                    // Clear of the back and remote controls on either side,
-                    // and centred on them: both sit in the same strip.
-                    .padding(horizontal = 72.dp)
-                    .wrapContentHeight(Alignment.CenterVertically)
-                    .graphicsLayer { alpha = titleAlpha },
-            )
-        }
-
-        // These two glyphs sit on hero artwork that can be any colour, so they
-        // keep a disc — the bottom-nav pill, made translucent. A dark disc
-        // holds a white glyph over a pale poster and still lets the artwork
-        // through, which the previous white-tinted wash could not.
-        IconButton(
-            onClick = onBackClick,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                // Same geometry as the Home header's actions: a 40dp target
-                // 16dp from the edge, sitting directly below the status bar,
-                // so the controls do not jump when moving between the two.
-                .padding(horizontal = 16.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(SiloOverlayPillSurface)
-                .border(1.dp, SiloNavPillBorder, CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp),
-        ) {
-            IconButton(
-                onClick = {
-                    if (siloCastState.hasActiveSession) {
-                        remoteMenuExpanded = true
-                    } else {
-                        showRemoteTargetPicker = true
-                    }
-                },
-                // Solid pill while a cast session is live, translucent at
-                // rest, so the fill still reports state.
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
+        DetailTopChrome(
+            title = state.detail?.title.orEmpty(),
+            scroll = detailScroll,
+            onBackClick = onBackClick,
+            trailing = {
+                IconButton(
+                    onClick = {
                         if (siloCastState.hasActiveSession) {
-                            SiloNavPillSurface
+                            remoteMenuExpanded = true
                         } else {
-                            SiloOverlayPillSurface
+                            showRemoteTargetPicker = true
+                        }
+                    },
+                    // Solid pill while a cast session is live, translucent at
+                    // rest, so the fill still reports state.
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (siloCastState.hasActiveSession) {
+                                SiloNavPillSurface
+                            } else {
+                                SiloOverlayPillSurface
+                            },
+                        )
+                        .border(1.dp, SiloNavPillBorder, CircleShape),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.SettingsRemote,
+                        contentDescription = "Remote Control",
+                        tint = Color.White,
+                    )
+                }
+                DropdownMenu(
+                    expanded = remoteMenuExpanded,
+                    onDismissRequest = { remoteMenuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Remote Control") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            onOpenCastRemote()
                         },
                     )
-                    .border(1.dp, SiloNavPillBorder, CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.SettingsRemote,
-                    contentDescription = "Remote Control",
-                    tint = Color.White,
-                )
-            }
-            DropdownMenu(
-                expanded = remoteMenuExpanded,
-                onDismissRequest = { remoteMenuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Remote Control") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        onOpenCastRemote()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Choose TV") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        showRemoteTargetPicker = true
-                    },
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = {
-                        Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
-                    },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        siloCastController.disconnect()
-                    },
-                )
-            }
-        }
+                    DropdownMenuItem(
+                        text = { Text("Choose TV") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            showRemoteTargetPicker = true
+                        },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = {
+                            Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            siloCastController.disconnect()
+                        },
+                    )
+                }
+            },
+        )
     }
 }

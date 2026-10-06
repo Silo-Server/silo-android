@@ -19,8 +19,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -33,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -44,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.playback.SubtitleTimingActions
 import org.siloserver.silo.player.formatSubtitleTrackDisplayLabel
 
 /** Combined audio and subtitle picker with adaptive phone and foldable layouts. */
@@ -62,6 +66,10 @@ fun TracksSheet(
     showTranslateAction: Boolean = false,
     onSearchSubtitles: () -> Unit = {},
     onTranslateWithAi: () -> Unit = {},
+    subtitleStatus: (PlayerSubtitleInfo) -> String? = { null },
+    timingActions: SubtitleTimingActions? = null,
+    onSyncSubtitle: (String) -> Unit = {},
+    onResetTiming: (String) -> Unit = {},
     tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
@@ -130,6 +138,10 @@ fun TracksSheet(
                         showTranslateAction = showTranslateAction,
                         onSearchSubtitles = openSubtitleSearch,
                         onTranslateWithAi = openAiTranslate,
+                        subtitleStatus = subtitleStatus,
+                        timingActions = timingActions,
+                        onSyncSubtitle = onSyncSubtitle,
+                        onResetTiming = onResetTiming,
                         scrollContent = true,
                         modifier = Modifier
                             .weight(0.56f)
@@ -167,6 +179,10 @@ fun TracksSheet(
                         showTranslateAction = showTranslateAction,
                         onSearchSubtitles = openSubtitleSearch,
                         onTranslateWithAi = openAiTranslate,
+                        subtitleStatus = subtitleStatus,
+                        timingActions = timingActions,
+                        onSyncSubtitle = onSyncSubtitle,
+                        onResetTiming = onResetTiming,
                         scrollContent = false,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -211,6 +227,10 @@ private fun SubtitleTrackCard(
     showTranslateAction: Boolean,
     onSearchSubtitles: () -> Unit,
     onTranslateWithAi: () -> Unit,
+    subtitleStatus: (PlayerSubtitleInfo) -> String?,
+    timingActions: SubtitleTimingActions?,
+    onSyncSubtitle: (String) -> Unit,
+    onResetTiming: (String) -> Unit,
     scrollContent: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -230,8 +250,17 @@ private fun SubtitleTrackCard(
         subtitles.forEachIndexed { index, subtitle ->
             TrackRow(
                 label = subtitleTrackLabel(subtitle, index),
+                attributes = subtitleStatus(subtitle),
                 isSelected = index == selectedSubtitleIndex,
                 onClick = { onSelect(index) },
+            )
+        }
+        if (timingActions != null) {
+            PlayerSheetDivider(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+            SubtitleTimingSection(
+                actions = timingActions,
+                onSync = { onSyncSubtitle(timingActions.key) },
+                onReset = { onResetTiming(timingActions.key) },
             )
         }
         if (showSearchAction || showTranslateAction) {
@@ -252,6 +281,69 @@ private fun SubtitleTrackCard(
             )
         }
     }
+}
+
+/**
+ * "Sync to audio" and "Reset timing" for the selected subtitle, stored or a
+ * file next to the media, with a running sync's progress and the last result.
+ * Anyone who can play the file may retime it; after a refusal (demo mode) the
+ * actions give way to a short explanation.
+ */
+@Composable
+private fun SubtitleTimingSection(
+    actions: SubtitleTimingActions,
+    onSync: () -> Unit,
+    onReset: () -> Unit,
+) {
+    Text(
+        text = "TIMING",
+        color = Color.White.copy(alpha = 0.48f),
+        fontSize = 11.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+    )
+    if (actions.forbidden) {
+        TimingMessage(SubtitleTimingActions.FORBIDDEN_MESSAGE)
+        return
+    }
+    if (actions.canSync) {
+        ActionRow(
+            icon = Icons.Filled.Sync,
+            label = if (actions.inProgress) "Syncing…" else "Sync to audio",
+            onClick = onSync,
+            enabled = actions.actionsEnabled,
+        )
+    }
+    if (actions.inProgress) {
+        SyncProgressRow(
+            percent = actions.percent ?: 0,
+            label = actions.phaseLabel,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+        )
+    }
+    if (actions.canReset) {
+        ActionRow(
+            icon = Icons.Filled.Restore,
+            label = "Reset timing",
+            onClick = onReset,
+            enabled = actions.actionsEnabled,
+        )
+    }
+    actions.result?.let { TimingMessage(it.text, color = if (it.warning) TimingWarningColor else null) }
+    actions.note?.let { TimingMessage(it, color = Color.White.copy(alpha = 0.40f)) }
+    actions.error?.let { TimingMessage(it, color = MaterialTheme.colorScheme.error) }
+}
+
+private val TimingWarningColor = Color(0xFFFDE68A).copy(alpha = 0.85f)
+
+@Composable
+private fun TimingMessage(text: String, color: Color? = null) {
+    Text(
+        text = text,
+        color = color ?: Color.White.copy(alpha = 0.50f),
+        fontSize = 12.sp,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+    )
 }
 
 @Composable
@@ -376,13 +468,15 @@ private fun ActionRow(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 2.dp)
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
+            .alpha(if (enabled) 1f else 0.4f)
             .heightIn(min = 50.dp)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

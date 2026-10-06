@@ -1,7 +1,10 @@
 package org.siloserver.silo.common.downloads
 
 import androidx.room.withTransaction
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.common.data.db.SiloDatabase
+import org.siloserver.silo.common.data.db.dao.DownloadArtworkRow
 import org.siloserver.silo.model.download.DownloadSidecar
 
 /**
@@ -25,6 +28,26 @@ class DownloadMetadataStore(private val db: SiloDatabase) {
 
     suspend fun deleteSidecar(serverId: String, profileId: String, fileId: Int) {
         downloadDao.delete(serverId, profileId, fileId)
+    }
+
+    /**
+     * Writes what [update] makes of the slot's row, in one transaction, only
+     * while the row still [matches]. A row replaced or deleted after the caller
+     * last read it is left as it is. [update] may return null to write nothing.
+     */
+    suspend fun updateSidecarIf(
+        serverId: String,
+        profileId: String,
+        fileId: Int,
+        matches: (DownloadSidecar) -> Boolean,
+        update: (DownloadSidecar) -> DownloadSidecar?,
+    ): Boolean = db.withTransaction {
+        val current = downloadDao.get(serverId, profileId, fileId)?.toSidecar()
+            ?.takeIf(matches)
+            ?: return@withTransaction false
+        val updated = update(current) ?: return@withTransaction false
+        downloadDao.upsert(updated.toEntity(serverId, profileId))
+        true
     }
 
     /** A file slot may now contain a replacement download; an old tombstone cannot own it. */
@@ -69,4 +92,12 @@ class DownloadMetadataStore(private val db: SiloDatabase) {
 
     suspend fun deleteAllForServer(serverId: String) =
         downloadDao.deleteAllForServer(serverId)
+
+    /**
+     * Saved-artwork columns of every download that has any, emitting only when
+     * they change. The download capture writes artwork after the completed
+     * status, so the Downloads tab watches this to pick up the saved images.
+     */
+    fun savedArtworkChanges(): Flow<List<DownloadArtworkRow>> =
+        downloadDao.observeSavedArtwork().distinctUntilChanged()
 }

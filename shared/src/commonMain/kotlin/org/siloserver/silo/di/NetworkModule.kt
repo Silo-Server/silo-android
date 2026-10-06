@@ -23,6 +23,10 @@ val networkModule = module {
     single { AuthApi(get(), get()) }
     single { OnboardingApi(get(), get(), get()) }
     single<DeviceLoginApi> { DefaultDeviceLoginApi(get(), get()) }
+    single<ServerIdentityApi> { DefaultServerIdentityApi(get()) }
+    single<org.siloserver.silo.network.api.ExternalSignInApi> {
+        org.siloserver.silo.network.api.DefaultExternalSignInApi(get(), get())
+    }
     single { CatalogV2Api(get(), get(), get()) }
     single { PersonRefreshV2Api(get(), get(), get()) }
     single { WatchDetailV2Api(get(), get(), get()) }
@@ -56,6 +60,7 @@ val networkModule = module {
     single { SubtitleDownloadV2Api(get(), get(), get()) }
     single { SubtitleReadsV2Api(get(), get(), get()) }
     single { SubtitleAiCreateV2Api(get(), get(), get()) }
+    single { SubtitleSyncV2Api(get(), get(), get()) }
     single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get()) }
     single<NotificationsApi> { NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get(), get(), get()) }

@@ -17,6 +17,7 @@ class ServerDrivenConfigRefresher(
     private val playerSettingsStore: PlayerSettingsStore,
     private val hasAuthenticatedProfile: suspend () -> Boolean,
     private val seekIntervalStore: SeekIntervalStore? = null,
+    private val titleArtStore: TitleArtStore? = null,
     private val nowMs: () -> Long = { SystemClock.elapsedRealtime() },
 ) {
     @Volatile
@@ -40,6 +41,7 @@ class ServerDrivenConfigRefresher(
         libraryPlaybackPrefsStore.refresh()
         playerSettingsStore.refreshFromServer()
         seekIntervalStore?.refresh()
+        titleArtStore?.refresh()
         lastRefreshAtMs = now
         return true
     }

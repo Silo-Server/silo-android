@@ -394,11 +394,7 @@ private class SharedPreferencesSeekIntervalCache(
         }
     }
 
-    private fun prefix(identity: String): String =
-        "si_" + java.security.MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { "%02x".format(it) }
-            .take(24)
+    private fun prefix(identity: String): String = settingsCachePrefix("si_", identity)
 
     private companion object {
         const val SUPPORTED = "supported"

@@ -34,14 +34,13 @@ object Spacing {
 /**
  * Metrics for the grouped-settings surface.
  *
- * Mirrors the Silo web client's settings pages: a lifted page ground, opaque
- * grouped cards with a generous radius, a lettered section heading sitting
- * *above* its card, and rows that are tall enough to carry a label over a
- * description. Android row mechanics are kept — the control stays trailing
- * rather than stacking under the label the way the web layout does.
+ * Mirrors the Apple apps' Settings (silo-apple #546): a native inset-grouped
+ * list on a black ground, one-line rows with the current value trailing, a
+ * title-case section header above each group and an optional footer below it.
+ * Overview rows carry a graphite icon tile; sub-page rows are text only.
  *
  * Every value the settings tree needs lives here so the next visual pass has
- * one file to edit instead of twenty-two literals spread across six files.
+ * one file to edit instead of literals spread across the settings files.
  */
 object SettingsDimens {
     /** Page gutter for the settings list. */
@@ -53,71 +52,94 @@ object SettingsDimens {
     /** Trailing scroll runway so the last card clears the navigation bar. */
     val pageBottomSpacer = Spacing.xxxl
 
-    /** Gap between two grouped cards, heading included. */
-    val sectionGap = 22.dp
+    /** Gap between two groups, header and footer included. */
+    val sectionGap = 20.dp
 
-    /** Grouped card corner radius. */
+    /** Dialog corner radius. [SiloConfirmDialog] shares it. */
     val cardRadius = 20.dp
 
-    /** Inset of the section heading relative to the card's leading edge. */
-    val headerStartInset = Spacing.xs
+    /** Inset-grouped list corner radius, Apple's large grouped-cell rounding. */
+    val groupRadius = 26.dp
 
-    /** Gap between a section heading and its card. */
+    /** Header and footer inset, aligned with the row text inside the group. */
+    val headerStartInset = Spacing.lg
+
+    /** Gap between a section header and its group. */
     val headerBottomGap = Spacing.sm
 
-    /** Minimum row height. Every row honours this so a row with a description
-     *  and a row without still read as the same list. */
-    val rowMinHeight = 60.dp
+    /** Gap between a group and its footer. */
+    val footerTopGap = Spacing.sm
+
+    /** Minimum row height on a sub-page (Apple's 52pt grouped row). */
+    val rowMinHeight = 52.dp
+
+    /** Minimum height of an overview row with an icon tile (Apple's 60pt). */
+    val overviewRowMinHeight = 60.dp
 
     /** Row content insets. */
     val rowHorizontalPadding = Spacing.lg
     val rowVerticalPadding = Spacing.md
 
-    /** Gap between a row label and its description. */
+    /** Gap between a row label and a description, where a row still has one. */
     val rowLabelGap = Spacing.xxs
 
-    /**
-     * Gap between the row text block and its trailing control — chevron,
-     * switch, radio. Never text: a trailing *value* rides on the label's own
-     * line instead (see [rowLabelValueGap]), so a description can never end up
-     * a hairsbreadth from it.
-     */
-    val rowTrailingGap = Spacing.md
+    /** Gap between the row text block and its trailing control. */
+    val rowTrailingGap = Spacing.sm
 
     /**
      * Minimum gap between a row label and the trailing value sharing its line.
-     * Only binds when the label is long enough to reach the value; a short
-     * label leaves the value trailing-aligned with slack between them.
+     * Only binds when the label is long enough to reach the value.
      */
     val rowLabelValueGap = Spacing.md
 
     /**
      * Cap on a trailing value's width, so a long one (a server URL) cannot
      * crush the label it sits beside. The value ellipsizes at this width; the
-     * label wraps. Sized so the longest authored value on this surface —
-     * "30 seconds before end" — still renders whole.
+     * label wraps.
      */
-    val rowValueMaxWidth = 170.dp
+    val rowValueMaxWidth = 190.dp
 
-    /** Hairline between rows. */
+    /** Overview icon tile: Apple's 30pt square with continuous 0.24 rounding. */
+    val iconTileSize = 30.dp
+    val iconTileRadius = 7.dp
+    val iconGlyphSize = 17.dp
+
+    /** Gap between the icon tile and the row label. */
+    val iconTileGap = 14.dp
+
+    /** Hairline between popup-menu rows; also the menus' border width. */
     val dividerThickness = 1.dp
+
+    /** Hairline between grouped settings rows, Apple's single-pixel separator. */
+    val separatorThickness = 0.5.dp
 
     /** Divider inset, aligned to the row label. */
     val dividerStartInset = Spacing.lg
 
-    /** Disclosure chevron. */
-    val chevronSize = 18.dp
+    /** Divider trailing inset. */
+    val dividerEndInset = Spacing.lg
 
-    /** Account header avatar. */
+    /** Disclosure chevron. */
+    val chevronSize = 20.dp
+
+    /** Menu-picker indicator, the search glyph, and a menu row's checkmark. */
+    val menuIndicatorSize = 18.dp
+
+    /** Leading slot that holds a menu row's checkmark, kept for every row. */
+    val menuCheckWidth = 28.dp
+
+    /** Account card avatar (Apple `ProfileAvatarView` at 56pt). */
     val avatarSize = 56.dp
-    val avatarIconSize = 30.dp
     val avatarGap = 14.dp
+
+    /** Settings overview search field. */
+    val searchFieldHeight = 44.dp
 
     /** Inset for prose blocks that sit inside a card rather than on a row. */
     val proseHorizontalPadding = Spacing.lg
     val proseVerticalPadding = Spacing.md
 
-    /** Divider opacity over [SiloSurfaceContainer]. */
+    /** Divider opacity over [SiloSurfaceContainer], for popup menus. */
     const val dividerAlpha = 0.55f
 
     /** Opacity applied to a disabled row's text and controls. */
@@ -192,49 +214,68 @@ fun Modifier.siloRowTopDivider(show: Boolean): Modifier =
     }
 
 /**
- * Type ramp for the grouped-settings surface.
- *
- * The M3 ramp in [SiloTypography] mirrors the iOS point sizes and has no slot
- * for a row description, so the settings rows previously had a single 16sp
- * label and nothing else. These four styles are the hierarchy the web client
- * uses: a lettered caps heading, a medium-weight label, a muted description,
- * and a smaller trailing value that reads as a picker's current choice rather
- * than as a second label.
+ * Type ramp for the grouped-settings surface: Apple's grouped list at Android
+ * sizes. Row labels and values share one regular-weight size, the value in the
+ * secondary colour; headers are title case and semibold; footers are small.
  */
 object SettingsTextStyles {
+    /** The large "Settings" title at the top of the overview. */
+    val largeTitle = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Bold,
+        fontSize = 34.sp,
+        lineHeight = 41.sp,
+    )
+
     val sectionHeader = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 13.sp,
-        lineHeight = 16.sp,
-        letterSpacing = 0.9.sp,
+        fontSize = 16.sp,
+        lineHeight = 21.sp,
     )
 
     val rowLabel = TextStyle(
         fontFamily = FontFamily.Default,
-        fontWeight = FontWeight.Medium,
-        fontSize = 14.5.sp,
-        lineHeight = 19.sp,
+        fontWeight = FontWeight.Normal,
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
     )
 
+    /** Section footers and the few rows that still carry a description. */
     val rowDescription = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
-        fontSize = 12.5.sp,
+        fontSize = 13.sp,
         lineHeight = 17.sp,
     )
 
     val rowValue = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.Normal,
-        fontSize = 13.5.sp,
-        lineHeight = 18.sp,
+        fontSize = 17.sp,
+        lineHeight = 22.sp,
     )
 
     val accountName = TextStyle(
         fontFamily = FontFamily.Default,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 19.sp,
-        lineHeight = 24.sp,
+        fontSize = 20.sp,
+        lineHeight = 25.sp,
+    )
+
+    /** The account card's "Admin" capsule. */
+    val badge = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+    )
+
+    /** Popup menu rows (`SiloMenuItem`), kept at the menus' own size. */
+    val menuLabel = TextStyle(
+        fontFamily = FontFamily.Default,
+        fontWeight = FontWeight.Medium,
+        fontSize = 14.5.sp,
+        lineHeight = 19.sp,
     )
 }

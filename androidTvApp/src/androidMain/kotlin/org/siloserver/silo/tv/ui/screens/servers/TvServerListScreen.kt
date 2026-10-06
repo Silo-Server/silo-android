@@ -47,6 +47,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.server.ServerEntry
+import org.siloserver.silo.tv.ui.screens.settings.SettingsBackground
 import org.siloserver.silo.tv.ui.focus.rememberTvContentInitialFocus
 import org.siloserver.silo.tv.ui.components.TvDialogOption
 import org.siloserver.silo.tv.ui.components.TvOptionDialog
@@ -108,7 +109,7 @@ fun TvServerListScreen(
         modifier = Modifier
             .fillMaxSize()
             .then(contentInitialFocus)
-            .background(ServerSettingsBackground)
+            .background(SettingsBackground)
             .padding(start = 44.dp, top = Spacing.safeArea, end = 44.dp, bottom = Spacing.xxxl),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(32.dp)) {
@@ -210,7 +211,6 @@ fun TvServerListScreen(
 
 }
 
-private val ServerSettingsBackground = Color(0xFF17181A)
 private val ServerListMaxWidth = 620.dp
 private val ServerRowShape = RoundedCornerShape(8.dp)
 

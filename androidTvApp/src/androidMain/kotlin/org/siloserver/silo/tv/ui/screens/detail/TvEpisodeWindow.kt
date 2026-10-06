@@ -14,6 +14,13 @@ internal class TvEpisodeWindow {
         pages[season] = episodes.sortedBy { it.episodeNumber }
     }
 
+    /** Rewrites cached pages in place: one season, or every season when [season] is null. */
+    fun mapEpisodes(season: Int?, transform: (EpisodeListItem) -> EpisodeListItem) {
+        pages.replaceAll { number, episodes ->
+            if (season == null || number == season) episodes.map(transform) else episodes
+        }
+    }
+
     fun orderedSeasons(seasons: List<Season>): List<Int> =
         seasons.sortedWith(compareBy<Season> { it.isSpecialsForDisplay() }.thenBy { it.seasonNumber })
             .map { it.seasonNumber }.distinct()

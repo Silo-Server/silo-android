@@ -12,8 +12,9 @@ private const val CHECKING_SERVER = "Checking whether this server stores skip in
 
 /**
  * One "Video" or "Audiobooks" group of the profile-wide skip intervals
- * (settings revision 9). On an older server the group explains the legacy
- * behavior instead of offering pickers that could not be saved.
+ * (settings revision 9), with the Apple pages' labels and footers. On an older
+ * server the group explains the legacy behavior instead of offering pickers
+ * that could not be saved.
  */
 @Composable
 fun SeekIntervalSettings(
@@ -28,7 +29,14 @@ fun SeekIntervalSettings(
         SeekMedia.Video -> "Video"
         SeekMedia.Audiobook -> "Audiobooks"
     }
-    SettingsSection(title = title, modifier = modifier) {
+    val supported = state.support != SeekIntervalSupport.Unsupported && !state.checking && !state.checkFailed
+    val footer = when {
+        !supported -> null
+        media == SeekMedia.Video ->
+            "Used by the on-screen skip buttons and double-tap. Applies to every device signed in to this profile."
+        else -> "Used by the audiobook player's skip buttons. Applies to every device signed in to this profile."
+    }
+    SettingsSection(title = title, footer = footer, modifier = modifier) {
         if (state.support == SeekIntervalSupport.Unsupported) {
             SettingsProse(
                 body = when (media) {
@@ -59,7 +67,7 @@ fun SeekIntervalSettings(
                             "Until it answers, intervals set in the audiobook player stay on this device."
                 },
             )
-            SettingsNavigationRow(label = "Try again", onClick = onRetry)
+            SettingsNavigationRow(label = "Try Again", onClick = onRetry)
             return@SettingsSection
         }
 
@@ -70,8 +78,7 @@ fun SeekIntervalSettings(
         val options = state.choices.map(SeekIntervals::label)
         SeekDirection.entries.forEach { direction ->
             SettingsDropdownRow(
-                label = if (direction == SeekDirection.Back) "Skip back" else "Skip forward",
-                description = if (direction == SeekDirection.Back) "Applies to every device on this profile." else null,
+                label = if (direction == SeekDirection.Back) "Skip Back" else "Skip Forward",
                 value = SeekIntervals.label(pair.seconds(direction)),
                 options = options,
                 onOptionSelected = { label ->
@@ -84,7 +91,7 @@ fun SeekIntervalSettings(
         if (media == SeekMedia.Audiobook) {
             if (state.showLegacyImport) {
                 SettingsNavigationRow(
-                    label = "Use this device's audiobook intervals",
+                    label = "Use This Device's Audiobook Intervals",
                     description = "${state.legacyAudiobookSummary}. Uploads them to this profile.",
                     value = if (state.importInProgress) "Importing" else null,
                     onClick = onImportLegacyAudiobook,

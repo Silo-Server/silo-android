@@ -28,6 +28,7 @@ import org.siloserver.silo.android.ui.components.MediaGridDefaults
 import org.siloserver.silo.android.ui.components.rememberBrowseItemCardActions
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.Person
 
 /**
  * Displays search results in a vertical grid of media cards.
@@ -35,21 +36,25 @@ import org.siloserver.silo.model.catalog.BrowseItem
  * Supports infinite scroll to load additional results.
  *
  * @param results The search result items to display.
+ * @param people Cast and crew matching the query, shown above the titles.
  * @param total Total number of matching results.
  * @param isSearching Whether a search request is in flight.
  * @param hasMore Whether more results are available.
  * @param onItemClick Callback with content ID when a result card is tapped.
+ * @param onPersonClick Callback with person ID when a person is tapped.
  * @param onLoadMore Callback to load the next page of results.
  * @param modifier Compose modifier.
  */
 @Composable
 fun SearchResults(
     results: List<BrowseItem>,
+    people: List<Person>,
     total: Int,
     totalExact: Boolean = true,
     isSearching: Boolean,
     hasMore: Boolean,
     onItemClick: (String) -> Unit,
+    onPersonClick: (Long) -> Unit,
     onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
     footer: (@Composable () -> Unit)? = null,
@@ -92,16 +97,28 @@ fun SearchResults(
         verticalArrangement = Arrangement.spacedBy(MediaGridDefaults.PosterGridVerticalSpacing),
         modifier = modifier,
     ) {
-        // Result count header
-        item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-result-count") {
-            Text(
-                text = "${if (totalExact) "" else "About "}$total result${if (total == 1) "" else "s"}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                // The grid's own contentPadding supplies the 16.dp gutters, so
-                // the header only needs to clear the first row of cards.
-                modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
-            )
+        if (people.isNotEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-people") {
+                SearchPeopleRow(
+                    people = people,
+                    onPersonClick = onPersonClick,
+                    modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+                )
+            }
+        }
+
+        // Result count header. A people-only answer has no titles to count.
+        if (results.isNotEmpty() || people.isEmpty()) {
+            item(span = { GridItemSpan(maxLineSpan) }, contentType = "search-result-count") {
+                Text(
+                    text = "${if (totalExact) "" else "About "}$total result${if (total == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // The grid's own contentPadding supplies the 16.dp gutters, so
+                    // the header only needs to clear the first row of cards.
+                    modifier = Modifier.padding(horizontal = 2.dp, vertical = 4.dp),
+                )
+            }
         }
 
         items(

@@ -83,6 +83,29 @@
             </intent-filter>
         </activity>
 
+        <!-- External sign-in (OIDC) redirect: the server sends the browser to
+             org.siloserver.silo:/auth/callback when a native sign-in ends
+             (RFC 8252 private-use scheme; a custom scheme has no App Links
+             verification, so no autoVerify). Android ignores path attributes
+             in a filter without a host, so the filter names the scheme and
+             NativeSignInCallback accepts only the exact path. Phone only: TVs
+             never sign in with a provider themselves. -->
+        <activity
+            android:name=".auth.NativeSignInCallbackActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+
+                <data android:scheme="org.siloserver.silo" />
+            </intent-filter>
+        </activity>
+
         <!-- Debug-only adb test hook (scripts/android-playback-test.sh): status as
              JSON + transport commands via `am broadcast`. Sender must hold
              android.permission.DUMP (shell only); the receiver additionally

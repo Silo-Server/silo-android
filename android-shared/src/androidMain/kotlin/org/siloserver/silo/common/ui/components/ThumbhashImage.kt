@@ -89,8 +89,9 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *
  * Decodes [thumbhash] (a tiny base64-encoded ThumbHash) into a small bitmap and
  * shows it immediately, crossfading to the full network image as it loads — so
- * posters/backdrops blur up instead of popping in from a flat color. Falls back
- * to a neutral placeholder when no thumbhash is supplied or decoding fails.
+ * posters/backdrops blur up instead of popping in from a flat color. The
+ * ThumbHash stays up when the image fails to load. Falls back to a neutral
+ * placeholder when no thumbhash is supplied or decoding fails.
  *
  * @param url The remote image URL to load.
  * @param thumbhash Base64-encoded ThumbHash for the instant blurred preview.
@@ -187,6 +188,9 @@ fun ThumbhashImage(
             contentScale = contentScale,
             alignment = alignment,
             placeholder = placeholder,
+            // A failed load (offline, expired URL) keeps the blur-up rather
+            // than dropping to an empty box.
+            error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { onSuccess?.invoke() },
             onError = { onError?.invoke() },
@@ -255,6 +259,7 @@ fun ThumbhashImage(
             // Matches the cover above, so the swap at the gate is pixel-identical
             // when a thumbhash exists.
             placeholder = placeholder,
+            error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { state ->
                 fullImageReady = true

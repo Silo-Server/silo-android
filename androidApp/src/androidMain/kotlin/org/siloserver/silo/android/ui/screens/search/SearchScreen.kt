@@ -38,7 +38,6 @@ import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
 import org.siloserver.silo.model.feature.RequestsFeatureStore
-import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.koin.compose.koinInject
@@ -50,12 +49,14 @@ import org.koin.compose.koinInject
  * (debounced 300ms), and appropriate empty/loading/error states.
  *
  * @param onItemClick Callback with content ID when a result is tapped.
+ * @param onPersonClick Callback with person ID when a people result is tapped.
  * @param viewModel The search ViewModel (provided by Koin).
  */
 @Composable
 fun SearchScreen(
     onItemClick: (String) -> Unit,
-    onRequestMediaClick: (RequestMediaResult) -> Unit,
+    onPersonClick: (Long) -> Unit,
+    onRequestMediaClick: (mediaType: String, tmdbId: Int) -> Unit,
     onRequestLibraryItemClick: (String) -> Unit,
     onBackClick: (() -> Unit)? = null,
     viewModel: SearchViewModel,
@@ -195,7 +196,11 @@ fun SearchScreen(
             }
 
             when {
-                state.isSearching && state.results.isEmpty() -> {
+                // Titles can answer before people do. Hold off on "No results"
+                // until both have, so a person-only match does not flash it.
+                // A title error is final and shows at once with its Retry.
+                (state.isSearching || (state.isLoadingPeople && state.error == null)) &&
+                    state.results.isEmpty() && state.people.isEmpty() -> {
                     // Sits in the top part of the content area, matching the
                     // empty state's offset, so it stays visible above the IME
                     // instead of being centred in the space the keyboard covers.
@@ -254,7 +259,7 @@ fun SearchScreen(
                         }
                     }
                 }
-                state.hasSearched && state.results.isEmpty() && !state.isSearching -> {
+                state.hasSearched && state.results.isEmpty() && state.people.isEmpty() && !state.isSearching -> {
                     Column(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.weight(1f)) {
                             SearchEmptyState(
@@ -268,11 +273,13 @@ fun SearchScreen(
                 else -> {
                     SearchResults(
                         results = state.results,
+                        people = state.people,
                         total = state.total,
                         totalExact = state.totalExact,
                         isSearching = state.isSearching,
                         hasMore = state.hasMore,
                         onItemClick = onItemClick,
+                        onPersonClick = onPersonClick,
                         onLoadMore = { viewModel.loadMore() },
                         modifier = Modifier.fillMaxSize(),
                         footer = { RequestSearchFooter() },

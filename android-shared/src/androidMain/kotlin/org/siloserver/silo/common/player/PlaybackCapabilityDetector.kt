@@ -15,6 +15,7 @@ import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.common.network.SiloClientBuildIdentity
 import org.siloserver.silo.player.DolbyVisionPolicy
 import org.siloserver.silo.common.player.video.media3OriginalPlaybackContainers
+import org.siloserver.silo.model.download.DownloadCaps
 import org.siloserver.silo.model.playback.ClientPlaybackContext
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.CAPABILITY_EVIDENCE_EXACT
@@ -31,6 +32,8 @@ import org.siloserver.silo.model.playback.CLIENT_DV7_TO_DV81
 import org.siloserver.silo.model.playback.CLIENT_DV7_TO_HDR10
 import org.siloserver.silo.model.playback.CLIENT_DV_TRANSFORM_RECIPE_VERSION
 import org.siloserver.silo.model.playback.NATIVE_HLS_PLAYBACK_V1_FEATURE
+import org.siloserver.silo.model.playback.NATIVE_EMBEDDED_SUBTITLE_CODECS
+import org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability
 import org.siloserver.silo.model.playback.CLIENT_SELECTED_AUDIO_TRACK_V1_CLAIM
 import org.siloserver.silo.model.playback.CLIENT_DV8_BASE_LAYER_FALLBACK_V1_CLAIM
 import org.siloserver.silo.model.playback.HdrCapabilities
@@ -405,6 +408,33 @@ class PlaybackCapabilityDetector(
     }
 
     /**
+     * Decode-only capability for `POST /api/v2/downloads`. A download plays
+     * later on whatever output is attached then, so this omits the display
+     * and audio-route facts [detect] intersects in: the codec, container and
+     * resolution facts come from the same probes, and HDR is the decoder's own
+     * support after the same Dolby Vision setting [detect] applies.
+     */
+    fun downloadCaps(
+        ffmpegAvailable: Boolean = FfmpegAudioSupport.isAvailable(),
+        dolbyVision: DolbyVisionPolicy.Snapshot = DolbyVisionPolicy.Snapshot(),
+    ): DownloadCaps {
+        val codecProbe = MediaCodecCapabilitiesProbe.probe()
+        val decoderHdr = codecProbe.hdr.withDolbyVisionPolicy(dolbyVision)
+        return DownloadCaps(
+            videoEvidence = CAPABILITY_EVIDENCE_EXACT,
+            codecsVideo = codecProbe.videoCodecs.toList(),
+            codecsAudio = advertisedAudioDecodeCodecs(
+                platformCodecs = detectPlatformSoftwareAudioCodecs().codecs,
+                ffmpegCodecs = if (ffmpegAvailable) FfmpegAudioSupport.supportedCodecShortCodes() else emptyList(),
+            ),
+            containers = media3OriginalPlaybackContainers,
+            maxResolution = codecProbe.maxResolution,
+            hdr = decoderHdr.hdr10 || decoderHdr.hdr10Plus || decoderHdr.hlg || decoderHdr.dolbyVisionProfiles.isNotEmpty(),
+            videoDecode = codecProbe.videoDecodeCapabilities,
+        )
+    }
+
+    /**
      * The form factor implied by the current UI mode, for callers that live in
      * `android-shared` and so cannot see either app's `BuildConfig`. The app
      * modules pass their own literal ("mobile" / "tv") because they know it
@@ -500,11 +530,22 @@ class PlaybackCapabilityDetector(
                     maxChannels = passthrough?.maxChannels,
                     hdrDetails = caps.hdrDetails,
                     subtitles = DeliverySubtitleCapabilities(
-                        nativeEmbedded = listOf(org.siloserver.silo.model.playback.NativeEmbeddedSubtitleCapability(
-                            container = "mp4",
-                            codecs = listOf("mov_text"),
-                            trackIdentity = "container_track_id",
-                        )),
+                        // MP4 and MatroskaExtractor both set each track's
+                        // Format.id to the container track ID the server
+                        // records. libass's Matroska extractor subclass
+                        // forwards formats unchanged, so ASS keeps the same
+                        // identity; its flags tell the planner whether the
+                        // stream path keeps styling and attached fonts.
+                        nativeEmbedded = NATIVE_EMBEDDED_SUBTITLE_CODECS.map { (container, codecs) ->
+                            val ass = "ass" in codecs
+                            NativeEmbeddedSubtitleCapability(
+                                container = container,
+                                codecs = codecs,
+                                trackIdentity = "container_track_id",
+                                assStyling = ass && libassDirectFidelity,
+                                fontAttachments = ass && libassEmbeddedFonts,
+                            )
+                        },
                         embeddedText = true,
                         sidecarText = true,
                         assStyling = libassDirectFidelity,

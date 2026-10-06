@@ -2,7 +2,9 @@ package org.siloserver.silo.android.ui.screens.detail
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,7 +39,9 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -51,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -60,6 +65,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,8 +82,14 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.settings.titleLogoUrl
+import org.siloserver.silo.common.ui.RatingEntry
+import org.siloserver.silo.common.ui.WholeTokenRow
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.DisplayRating
+import org.siloserver.silo.model.catalog.ExternalRatings
 import org.siloserver.silo.model.catalog.ItemDetail
+import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
 
@@ -259,15 +271,27 @@ private fun ExpandedDetailHero(
                         .then(if (hasPortrait) Modifier.height(posterHeight) else Modifier),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    // Beside a portrait, the text block takes only the height
+                    // the actions leave, so Play stays level with the poster.
+                    // Only the title gives up height: it is weighted, so the
+                    // facts and ratings rows are measured first and never clip,
+                    // and a logo scales down to what is left.
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(if (hasPortrait) Modifier.weight(1f).clipToBounds() else Modifier),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         if (!eyebrow.isNullOrBlank()) {
                             EyebrowChip(text = eyebrow)
                         }
-                        ExpandedHeroTitle(detail = detail)
+                        Box(
+                            modifier = if (hasPortrait) Modifier.weight(1f, fill = false).clipToBounds() else Modifier,
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            ExpandedHeroTitle(detail = detail)
+                        }
                         val metadataTokens = (factsLine + sourceTokens).distinct()
                         if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
                             SourceRow(
@@ -276,12 +300,9 @@ private fun ExpandedDetailHero(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             )
                         }
+                        DetailRatingsRow(ratings = detail.titleRatings())
                     }
-                    if (hasPortrait) {
-                        Spacer(modifier = Modifier.weight(1f))
-                    } else {
-                        Spacer(modifier = Modifier.height(20.dp))
-                    }
+                    Spacer(modifier = Modifier.height(if (hasPortrait) 12.dp else 20.dp))
                     // Expanded/tablet only: Play and its bottom action row end
                     // no lower than the portrait. The compact phone branch is
                     // intentionally unchanged.
@@ -419,7 +440,7 @@ private fun ExpandedHeroTitle(detail: ItemDetail) {
         return
     }
 
-    val logoUrl = detail.logoUrl
+    val logoUrl = titleLogoUrl(detail.logoUrl)
     if (!logoUrl.isNullOrBlank()) {
         ThumbhashImage(
             url = logoUrl,
@@ -514,8 +535,17 @@ fun DetailHero(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             val metadataTokens = (factsLine + sourceTokens).distinct()
-            if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
-                SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+            val ratings = detail.titleRatings()
+            if (metadataTokens.isNotEmpty() || detail.contentRating != null || ratings.isNotEmpty()) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (metadataTokens.isNotEmpty() || detail.contentRating != null) {
+                        SourceRow(tokens = metadataTokens, ratingChip = detail.contentRating)
+                    }
+                    DetailRatingsRow(ratings = ExternalRatings.forPhone(ratings))
+                }
             }
             actions()
             if (reserveOverviewSpace || !overviewText.isNullOrBlank()) {
@@ -794,7 +824,7 @@ private fun HeroTitle(detail: ItemDetail) {
         return
     }
 
-    val logoUrl = detail.logoUrl
+    val logoUrl = titleLogoUrl(detail.logoUrl)
     if (!logoUrl.isNullOrBlank()) {
         // iOS hero logo height — 160pt on compact phones, full width.
         ThumbhashImage(
@@ -916,6 +946,28 @@ private fun SourceRow(
         }
     }
 }
+
+/**
+ * External ratings centered on one line, in the order given. When they do not
+ * all fit, whole entries drop from the end; the row never wraps. The server
+ * sends at most three; the phone layout also caps at
+ * [ExternalRatings.PHONE_LIMIT].
+ */
+@Composable
+private fun DetailRatingsRow(ratings: List<DisplayRating>) {
+    if (ratings.isEmpty()) return
+    val style = detailRatingStyle()
+    WholeTokenRow(spacing = DetailRatingSpacing) {
+        ratings.forEach { rating -> RatingEntry(rating = rating, style = style) }
+    }
+}
+
+@Composable
+private fun detailRatingStyle(): TextStyle = LocalTextStyle.current.merge(
+    TextStyle(color = DetailPrimaryText, fontSize = 15.sp, lineHeight = 20.sp),
+)
+
+private val DetailRatingSpacing = 20.dp
 
 @Composable
 private fun ContentRatingChip(text: String) {
@@ -1338,12 +1390,15 @@ fun SectionHeader(
 
 // ── Season chips ──────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SeasonChips(
     seasons: List<Season>,
     selectedSeasonNumber: Int,
     onSeasonSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Long-press menu on a chip; null hides it. */
+    onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
 ) {
     // The series overview deliberately keeps its single selected chip. iOS
     // renders "Season 1" even when there is no alternative season because it
@@ -1389,27 +1444,50 @@ fun SeasonChips(
         ) { season ->
             val isSelected = season.seasonNumber == selectedSeasonNumber
             val label = phoneSeasonLabel(season)
+            val isWatched = season.userData?.played == true
+            var menuExpanded by remember { mutableStateOf(false) }
             // iOS PhoneSeasonChips: 14pt (semibold selected / medium
             // unselected), hpad 16, height 36, unselected fill white-0.06.
-            Surface(
-                shape = PillShape,
-                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.06f),
-                border = if (isSelected) {
-                    null
-                } else {
-                    androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
-                },
-                modifier = Modifier
-                    .height(36.dp)
-                    .clickable { onSeasonSelected(season.seasonNumber) },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text(
-                        text = label,
-                        fontSize = 14.sp,
-                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                        color = if (isSelected) Color.Black else Color.White,
-                        modifier = Modifier.padding(horizontal = 16.dp),
+            Box {
+                Surface(
+                    shape = PillShape,
+                    color = if (isSelected) Color.White else Color.White.copy(alpha = 0.06f),
+                    border = if (isSelected) {
+                        null
+                    } else {
+                        androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                    },
+                    modifier = Modifier
+                        .height(36.dp)
+                        .combinedClickable(
+                            onClick = { onSeasonSelected(season.seasonNumber) },
+                            onLongClick = if (onSeasonWatchedChange != null && season.episodeCount > 0) {
+                                { menuExpanded = true }
+                            } else {
+                                null
+                            },
+                        ),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = label,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
+                            color = if (isSelected) Color.Black else Color.White,
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                        )
+                    }
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text(if (isWatched) "Mark Season Unwatched" else "Mark Season Watched") },
+                        onClick = {
+                            menuExpanded = false
+                            onSeasonWatchedChange?.invoke(season, !isWatched)
+                        },
                     )
                 }
             }
@@ -1447,7 +1525,6 @@ object HeroMetadata {
     ): List<String> = buildList {
         if (detail.year > 0) add(detail.year.toString())
         if (runtimeMinutes > 0) add(formatRuntime(runtimeMinutes))
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
     fun seriesFactsLine(detail: ItemDetail): List<String> = buildList {
@@ -1455,7 +1532,6 @@ object HeroMetadata {
         detail.seasonCount?.takeIf { it > 0 }?.let {
             add("$it Season${if (it > 1) "s" else ""}")
         }
-        detail.ratingImdb?.let { add("IMDb %.1f".format(it)) }
     }
 
     private fun formatRuntime(minutes: Int): String {

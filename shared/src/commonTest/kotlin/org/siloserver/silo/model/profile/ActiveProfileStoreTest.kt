@@ -69,6 +69,20 @@ class ActiveProfileStoreTest {
     }
 
     @Test
+    fun aLocalEditUpdatesOnlyACachedProfile() = runTest {
+        val repo = FakeProfileRepository()
+        val store = ActiveProfileStore(repo)
+
+        store.update { it.copy(subtitleLanguage = "fr") }
+        assertEquals(null, store.activeProfile.value)
+
+        store.refresh()
+        store.update { it.copy(subtitleLanguage = "fr") }
+        assertEquals("fr", store.activeProfile.value?.subtitleLanguage)
+        assertEquals(1, repo.listCalls)
+    }
+
+    @Test
     fun aFailedRefreshKeepsTheCachedProfile() = runTest {
         val repo = FakeProfileRepository()
         val store = ActiveProfileStore(repo)

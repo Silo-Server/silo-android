@@ -168,6 +168,301 @@ class MobileDetailActionsTest {
     }
 
     @Test
+    fun markingSeasonWatchedWritesTheSeasonAndRefreshesWhatItChanged() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val catalogRequests = mutableListOf<String>()
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(catalogRequests))
+        viewModel.seedSeriesDetail()
+        // uiState is a derived flow; let it observe the seeded state.
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[1], true)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(listOf("/api/v2/watched/season-2"), repository.watchedPaths)
+        assertEquals(listOf(true), repository.watchedCalls)
+        assertEquals(true, state.seasons[1].userData?.played)
+        assertFalse(state.seasons[0].userData?.played == true)
+        assertFalse(state.episodes.single().userData?.played == true)
+        assertTrue("/api/v2/catalog/series/series-1/seasons" in catalogRequests)
+        assertTrue("/api/v2/catalog/series/series-1/seasons/1/episodes" in catalogRequests)
+        // The changed season reloads when it is next selected; the visible one is kept.
+        assertEquals(setOf(1), state.episodesBySeason.keys)
+    }
+
+    @Test
+    fun markingVisibleSeasonWatchedChecksItsEpisodes() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(mutableListOf()))
+        viewModel.seedSeriesDetail()
+        // uiState is a derived flow; let it observe the seeded state.
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(listOf("/api/v2/watched/season-1"), repository.watchedPaths)
+        assertEquals(true, state.episodes.single().userData?.played)
+        assertEquals(true, state.episodesBySeason.getValue(1).single().userData?.played)
+        // Season 2 was not changed, so its cached episodes stay.
+        assertFalse(state.episodesBySeason.getValue(2).single().userData?.played == true)
+    }
+
+    @Test
+    fun failedSeasonWatchedRestoresTheSeasonAndItsEpisodes() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Error(500, "failed", "season failed") }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val catalogRequests = mutableListOf<String>()
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(catalogRequests))
+        viewModel.seedSeriesDetail()
+        // uiState is a derived flow; let it observe the seeded state.
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(listOf("/api/v2/watched/season-1"), repository.watchedPaths)
+        assertFalse(state.seasons[0].userData?.played == true)
+        assertFalse(state.episodes.single().userData?.played == true)
+        assertFalse(state.episodesBySeason.getValue(1).single().userData?.played == true)
+        assertEquals(emptyList(), catalogRequests)
+    }
+
+    @Test
+    fun failedSeasonWatchedKeepsEpisodesMarkedWhileItWasPending() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Error(500, "failed", "season failed")
+                },
+                { ApiResult.Success(Unit) },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(mutableListOf()))
+        viewModel.seedSeriesDetail(
+            seasonOneEpisodes = listOf(
+                EpisodeListItem(contentId = "s1e1", seasonNumber = 1, episodeNumber = 1),
+                EpisodeListItem(
+                    contentId = "s1e2",
+                    seasonNumber = 1,
+                    episodeNumber = 2,
+                    userData = LeafItemUserData(played = true),
+                ),
+            ),
+        )
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        runCurrent()
+        viewModel.setEpisodeWatched("s1e2", false)
+        advanceUntilIdle()
+
+        assertEquals(listOf("/api/v2/watched/season-1", "/api/v2/watched/s1e2"), repository.watchedPaths)
+        val state = viewModel.uiState.value
+        assertFalse(state.seasons[0].userData?.played == true)
+        val played = state.episodes.associate { it.contentId to (it.userData?.played == true) }
+        // E1 reverts with the failed season write; E2 keeps its own successful change.
+        assertEquals(mapOf("s1e1" to false, "s1e2" to false), played)
+    }
+
+    @Test
+    fun failedSeasonAndEpisodeWritesBothRollBack() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Error(500, "failed", "season failed")
+                },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(mutableListOf()))
+        viewModel.seedSeriesDetail()
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        runCurrent()
+        viewModel.setEpisodeWatched("season-1-episode-1", false)
+        advanceUntilIdle()
+
+        // The episode's failed write rolls back to the season's optimistic state;
+        // the season rollback must then still undo that.
+        assertFalse(viewModel.uiState.value.episodes.single().userData?.played == true)
+        assertFalse(viewModel.uiState.value.seasons[0].userData?.played == true)
+    }
+
+    @Test
+    fun markingSeasonWatchedClearsTheVisibleResumePoint() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        // Every catalog read fails, so the post-write refresh cannot correct the list.
+        val viewModel = itemDetailViewModel(repository, recordingCatalogRepository(mutableListOf()))
+        viewModel.seedSeriesDetail(
+            seasonOneEpisodes = listOf(
+                EpisodeListItem(
+                    contentId = "s1e1",
+                    seasonNumber = 1,
+                    episodeNumber = 1,
+                    userData = LeafItemUserData(isInProgress = true, positionSeconds = 120.0, durationSeconds = 1000.0),
+                ),
+            ),
+        )
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        advanceUntilIdle()
+
+        val episode = viewModel.uiState.value.episodes.single()
+        assertEquals(true, episode.userData?.played)
+        assertEquals(null, episode.userData?.positionSeconds)
+        assertFalse(episode.userData?.isInProgress == true)
+    }
+
+    @Test
+    fun failedSeasonWriteDoesNotUndoANewerSeriesWrite() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Error(500, "failed", "season failed")
+                },
+                { ApiResult.Success(Unit) },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(mutableListOf()),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail()
+        runCurrent()
+
+        viewModel.setSeasonWatched(viewModel.uiState.value.seasons[0], true)
+        runCurrent()
+        viewModel.toggleWatched()
+        advanceUntilIdle()
+
+        assertEquals(listOf("/api/v2/watched/season-1", "/api/v2/watched/series-1"), repository.watchedPaths)
+        val state = viewModel.uiState.value
+        assertEquals(true, state.detail?.userData?.played)
+        assertEquals(true, state.seasons[0].userData?.played)
+        assertEquals(true, state.episodes.single().userData?.played)
+    }
+
+    @Test
+    fun seriesWriteAppliesToAnEpisodeWhoseNewerWriteFailed() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Success(Unit)
+                },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        // Every catalog read fails, so only the series callback can update the episode.
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(mutableListOf()),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail()
+        runCurrent()
+
+        viewModel.toggleWatched()
+        runCurrent()
+        viewModel.setEpisodeWatched("season-1-episode-1", true)
+        advanceUntilIdle()
+
+        assertEquals(listOf("/api/v2/watched/series-1", "/api/v2/watched/season-1-episode-1"), repository.watchedPaths)
+        assertEquals(true, viewModel.uiState.value.episodes.single().userData?.played)
+    }
+
+    @Test
+    fun seriesWriteKeepsAnEpisodeWrittenSuccessfullyWhileItWasPending() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf(
+                {
+                    delay(100)
+                    ApiResult.Success(Unit)
+                },
+                { ApiResult.Success(Unit) },
+                { ApiResult.Error(500, "failed", "episode failed") },
+            ),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(mutableListOf()),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail(
+            seasonOneEpisodes = listOf(
+                EpisodeListItem(
+                    contentId = "s1e1",
+                    seasonNumber = 1,
+                    episodeNumber = 1,
+                    userData = LeafItemUserData(played = true),
+                ),
+            ),
+        )
+        runCurrent()
+
+        viewModel.toggleWatched()
+        runCurrent()
+        viewModel.setEpisodeWatched("s1e1", false)
+        runCurrent()
+        viewModel.setEpisodeWatched("s1e1", true)
+        advanceUntilIdle()
+
+        // The successful unmark stands; the failed re-mark and the later series
+        // response do not overwrite it.
+        assertFalse(viewModel.uiState.value.episodes.single().userData?.played == true)
+    }
+
+    @Test
+    fun markingSeriesWatchedRefreshesSeasonsAndVisibleEpisodes() = runItemDetailTest {
+        val repository = RecordingPersonalDataRepository(
+            mutableListOf({ ApiResult.Success(Unit) }),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val catalogRequests = mutableListOf<String>()
+        val viewModel = itemDetailViewModel(
+            repository,
+            recordingCatalogRepository(catalogRequests),
+            contentId = "series-1",
+        )
+        viewModel.seedSeriesDetail()
+
+        viewModel.toggleWatched()
+        advanceUntilIdle()
+
+        assertEquals(listOf("/api/v2/watched/series-1"), repository.watchedPaths)
+        assertEquals(true, viewModel.uiState.value.detail?.userData?.played)
+        assertTrue("/api/v2/catalog/series/series-1/seasons" in catalogRequests)
+        assertTrue("/api/v2/catalog/series/series-1/seasons/1/episodes" in catalogRequests)
+        assertEquals(setOf(1), viewModel.uiState.value.episodesBySeason.keys)
+    }
+
+    @Test
     fun selectingSeriesEpisodeImmediatelyResetsItsPlaybackOverrides() = runItemDetailTest {
         val viewModel = itemDetailViewModel(
             personalDataRepository = RecordingPersonalDataRepository(mutableListOf()),
@@ -212,6 +507,18 @@ class MobileDetailActionsTest {
         }
     }
 
+    /** Records catalog paths; every read fails to decode, so state stays as seeded. */
+    private fun kotlinx.coroutines.test.TestScope.recordingCatalogRepository(
+        requests: MutableList<String>,
+    ): CatalogRepository = CatalogRepository(
+        CatalogApi(
+            dummyHttpClient(StandardTestDispatcher(testScheduler)) { request ->
+                requests += request.url.encodedPath
+                respond("{}")
+            },
+        ),
+    )
+
     /** A catalog client that never answers, so a selection's loading flag stays observable. */
     private fun kotlinx.coroutines.test.TestScope.pendingCatalogRepository(): CatalogRepository = CatalogRepository(
         CatalogApi(dummyHttpClient(StandardTestDispatcher(testScheduler)) { CompletableDeferred<Unit>().await(); respond("{}") }),
@@ -238,17 +545,18 @@ class MobileDetailActionsTest {
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun ItemDetailViewModel.seedSeriesDetail() {
-        val field = ItemDetailViewModel::class.java.getDeclaredField("_uiState")
-        field.isAccessible = true
-        val flow = field.get(this) as MutableStateFlow<ItemDetailUiState>
-        val seasonOneEpisodes = listOf(
+    private fun ItemDetailViewModel.seedSeriesDetail(
+        seasonOneEpisodes: List<EpisodeListItem> = listOf(
             EpisodeListItem(
                 contentId = "season-1-episode-1",
                 seasonNumber = 1,
                 episodeNumber = 1,
             ),
-        )
+        ),
+    ) {
+        val field = ItemDetailViewModel::class.java.getDeclaredField("_uiState")
+        field.isAccessible = true
+        val flow = field.get(this) as MutableStateFlow<ItemDetailUiState>
         val seasonTwoEpisodes = listOf(
             EpisodeListItem(
                 contentId = "season-2-episode-1",
@@ -328,6 +636,7 @@ class MobileDetailActionsTest {
         private val scope: AuthScopeSnapshot,
         private val engineDispatcher: kotlinx.coroutines.CoroutineDispatcher?,
         val watchedCalls: MutableList<Boolean>,
+        val watchedPaths: MutableList<String>,
     ) : PersonalDataRepository(
         personalDataApi = PersonalDataApi(
             HttpClient(
@@ -339,6 +648,7 @@ class MobileDetailActionsTest {
                                 return@addHandler respond("", HttpStatusCode.NotFound)
                             }
                             watchedCalls += request.method == HttpMethod.Post
+                            watchedPaths += request.url.encodedPath
                             when (val outcome = responses.removeFirstOrNull()?.invoke() ?: ApiResult.Success(Unit)) {
                                 is ApiResult.Success -> respond("", HttpStatusCode.NoContent)
                                 is ApiResult.Error -> respond(
@@ -367,6 +677,7 @@ class MobileDetailActionsTest {
             responses,
             AuthScopeSnapshot("s1", "p1", "https://silo.example", "pt", identityGeneration = 1),
             engineDispatcher,
+            mutableListOf(),
             mutableListOf(),
         )
     }

@@ -1,0 +1,14 @@
+{
+  "device_code": "dev-1",
+  "user_code": "4821-7730",
+  "match_code": "warm pony",
+  "verification_uri": "https://silo.example.test/activate",
+  "verification_uri_complete": "https://silo.example.test/activate?code=48217730",
+  "expires_at": "2026-01-02T03:19:05.678Z",
+  "expires_in": 900,
+  "interval": 5,
+  "device_name": "Living room TV",
+  "device_platform": "tvos",
+  "client_purpose": "device_login",
+  "temporary": false
+}

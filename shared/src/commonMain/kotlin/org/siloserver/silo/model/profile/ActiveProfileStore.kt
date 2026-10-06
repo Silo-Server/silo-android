@@ -3,6 +3,7 @@ package org.siloserver.silo.model.profile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
 
@@ -69,6 +70,11 @@ class ActiveProfileStore(
             // person glyph on a flaky connection.
             is ApiResult.Error, is ApiResult.NetworkError -> _activeProfile.value != null
         }
+    }
+
+    /** Apply a local edit to the cached profile, if one is cached. */
+    fun update(transform: (Profile) -> Profile) {
+        _activeProfile.update { it?.let(transform) }
     }
 
     /** Clear on sign-out or a server switch, so no profile leaks across accounts. */

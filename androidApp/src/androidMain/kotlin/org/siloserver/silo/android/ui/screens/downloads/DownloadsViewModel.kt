@@ -7,8 +7,10 @@ import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadReclaimCandidate
 import org.siloserver.silo.common.downloads.DownloadReclaimPlan
 import org.siloserver.silo.common.downloads.DownloadReclaimPlanner
+import org.siloserver.silo.common.downloads.DownloadSlotLocks
 import org.siloserver.silo.common.downloads.DownloadStorage
 import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
+import org.siloserver.silo.common.downloads.tileArtwork
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadRecord
@@ -27,10 +29,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -304,6 +308,15 @@ class DownloadsViewModel(
             // Finish any offline delete interrupted by a crash between the durable
             // tombstone and the on-device cleanup (idempotent byte/metadata delete).
             finishPendingDeletions()
+            // The capture saves artwork after the completed status the records
+            // collector reloads on, so a later artwork write needs its own
+            // reload. Subscribed before the initial read below, so the dropped
+            // first emission describes the state that read also sees.
+            launch {
+                metadataStore.savedArtworkChanges().drop(1).collect {
+                    publishSections(repository.records.value, forceReload = true)
+                }
+            }
             // Backfill + initial sidecar read.
             reloadSidecarMetadata()
             refreshSubscriptionsInternal()
@@ -320,34 +333,51 @@ class DownloadsViewModel(
                 )
             }
 
-            repository.records.collect { records ->
-                // Room is the source of truth for what's downloaded locally; the
-                // tab is built from the Room sidecars (which always carry
-                // title/poster/mediaType/series), NOT from server records joined
-                // to a map that can be empty (the old path rendered a bare
-                // contentId + MOVIES + "missing file" whenever the join missed).
-                // Live byte-progress/status is overlaid from the in-memory server
-                // records for in-flight items. Reload sidecars when a record the
-                // map doesn't know about appears (newly enqueued).
-                val (sections, bytesUsed) = withContext(Dispatchers.IO) {
-                    if (records.any { it.id !in metadataByRecordId }) {
-                        reloadSidecarMetadata()
-                    }
-                    val sects = buildSections(records.associateBy { it.id })
-                    sects to sects.sumOf { it.totalBytesUsed }
-                }
-                _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        // Preserve any delete/refresh failure — refresh() and
-                        // clearError() manage the error lifecycle explicitly;
-                        // a progress tick must not wipe it before it's shown.
-                        error = it.error,
-                        sections = sections,
-                        totalBytesUsed = bytesUsed,
-                    )
+            repository.records.collect { records -> publishSections(records) }
+        }
+    }
+
+    /**
+     * Rebuilds the tab from [records] and the Room sidecars and publishes it.
+     * [forceReload] re-reads the sidecars even when no record is new or newly
+     * completed (a later sidecar write, such as saved artwork).
+     */
+    private suspend fun publishSections(records: List<DownloadRecord>, forceReload: Boolean = false) {
+        // Room is the source of truth for what's downloaded locally; the
+        // tab is built from the Room sidecars (which always carry
+        // title/poster/mediaType/series), NOT from server records joined
+        // to a map that can be empty (the old path rendered a bare
+        // contentId + MOVIES + "missing file" whenever the join missed).
+        // Live byte-progress/status is overlaid from the in-memory server
+        // records for in-flight items. Reload sidecars when a record the
+        // map doesn't know about appears (newly enqueued), or when a
+        // download finished: the worker writes the completed sidecar
+        // (status + final file URI) before publishing the record, and
+        // the local completion is what the row's Ready/Play state reads.
+        val (sections, bytesUsed) = withContext(Dispatchers.IO) {
+            val unseenCompletions = records.filter { sidecarMissesCompletion(it) }.map { it.id }
+            if (forceReload || unseenCompletions.isNotEmpty() || records.any { it.id !in metadataByRecordId }) {
+                reloadSidecarMetadata()
+                // Reload once per disagreement: a row the server holds as
+                // completed while it downloads again locally must not
+                // re-read Room on every progress tick.
+                completionReloadIds = (completionReloadIds + unseenCompletions).filterTo(mutableSetOf()) {
+                    metadataByRecordId[it]?.record?.statusEnum() != DownloadStatus.Completed
                 }
             }
+            val sects = buildSections(records.associateBy { it.id })
+            sects to sects.sumOf { it.totalBytesUsed }
+        }
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                // Preserve any delete/refresh failure — refresh() and
+                // clearError() manage the error lifecycle explicitly;
+                // a progress tick must not wipe it before it's shown.
+                error = it.error,
+                sections = sections,
+                totalBytesUsed = bytesUsed,
+            )
         }
     }
 
@@ -446,10 +476,12 @@ class DownloadsViewModel(
             .getOrElse { emptyList() }
         for (p in pending) {
             val fileId = p.mediaFileId ?: continue
-            metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
-                withContext(Dispatchers.IO) {
-                    storage.delete(p.serverId, p.profileId, fileId) ||
-                        !storage.exists(p.serverId, p.profileId, fileId)
+            DownloadSlotLocks.of(p.serverId, p.profileId, fileId).withLock {
+                metadataStore.completePendingDeletion(p.serverId, p.profileId, fileId, p.recordId) {
+                    withContext(Dispatchers.IO) {
+                        storage.delete(p.serverId, p.profileId, fileId) ||
+                            !storage.exists(p.serverId, p.profileId, fileId)
+                    }
                 }
             }
         }
@@ -516,10 +548,9 @@ class DownloadsViewModel(
             // write a DURABLE tombstone (so the record can't resurrect as a ghost on
             // the next online refresh — written BEFORE byte deletion so a crash can't
             // lose the server-delete intent), then drop the bytes + metadata.
-            val status = record?.statusEnum() ?: sidecar?.record?.statusEnum()
-            if (status == DownloadStatus.Queued || status == DownloadStatus.Downloading) {
-                downloadEnqueuer.cancel(id)
-            }
+            // Completed media can still be capturing subtitle sidecars. Wait
+            // for that worker too, before removing files or its metadata row.
+            downloadEnqueuer.cancel(id)
             // Drop the in-memory sidecar maps BEFORE the tombstone: enqueueDurableDelete
             // emits on repository.records and the collector rebuilds sections from
             // metadataByRecordId — if the entry were still present the deleted row would
@@ -530,10 +561,14 @@ class DownloadsViewModel(
             try {
                 repository.enqueueDurableDelete(serverId, profileId, id, fileId)
                 if (fileId != null) {
-                    withContext(Dispatchers.IO) {
-                        storage.delete(serverId, profileId, fileId)
+                    // A subtitle refresh rewrites this slot's files and row
+                    // under the same lock, so it cannot write the row back.
+                    DownloadSlotLocks.of(serverId, profileId, fileId).withLock {
+                        withContext(Dispatchers.IO) {
+                            storage.delete(serverId, profileId, fileId)
+                        }
+                        metadataStore.deleteSidecar(serverId, profileId, fileId)
                     }
-                    metadataStore.deleteSidecar(serverId, profileId, fileId)
                 }
             } finally {
                 // Also covers the fileId == null branch, which never reaches
@@ -584,19 +619,22 @@ class DownloadsViewModel(
         val sidecars = metadataByRecordId.values.toList()
         val watchedStates = userItemStatePort.localContentStates(sidecars.map { it.record.contentId })
         val liveById = repository.records.value.associateBy { it.id }
-        val rows = sidecars.map { sidecar ->
-            val live = liveById[sidecar.record.id]
-            val item = sidecar.toDownloadItem(live)
-            DownloadReclaimCandidate(
-                recordId = sidecar.record.id,
-                contentId = sidecar.record.contentId,
-                mediaFileId = sidecar.record.mediaFileId,
-                title = sidecar.title,
-                status = (live ?: sidecar.record).status,
-                fileSizeBytes = item.fileSizeBytes,
-                completed = watchedStates[sidecar.record.contentId]?.watched == true,
-                updatedAtMs = sidecar.updatedAtMs,
-            )
+        // toDownloadItem stats the media file and saved artwork on disk.
+        val rows = withContext(Dispatchers.IO) {
+            sidecars.map { sidecar ->
+                val live = liveById[sidecar.record.id]
+                val item = sidecar.toDownloadItem(live)
+                DownloadReclaimCandidate(
+                    recordId = sidecar.record.id,
+                    contentId = sidecar.record.contentId,
+                    mediaFileId = sidecar.record.mediaFileId,
+                    title = sidecar.title,
+                    status = (live ?: sidecar.record).status,
+                    fileSizeBytes = item.fileSizeBytes,
+                    completed = watchedStates[sidecar.record.contentId]?.watched == true,
+                    updatedAtMs = sidecar.updatedAtMs,
+                )
+            }
         }
         // Never plan the file the player is currently using (reachable via
         // PiP -> Downloads): deleting it yanks the bytes out from under a live
@@ -634,6 +672,13 @@ class DownloadsViewModel(
             sidecar.record.mediaFileId to (serverId to profileId)
         }
     }
+
+    /** Completed records whose sidecar still disagreed after a reload. */
+    private var completionReloadIds: Set<String> = emptySet()
+
+    private fun sidecarMissesCompletion(record: DownloadRecord): Boolean =
+        record.statusEnum() == DownloadStatus.Completed && record.id !in completionReloadIds &&
+            metadataByRecordId[record.id]?.record?.statusEnum()?.let { it != DownloadStatus.Completed } == true
 
     private suspend fun activeDownloadScope(): Pair<String, String> {
         val serverId = serverRegistry.activeServerId.value ?: DownloadEnqueuer.DEFAULT_SERVER_ID
@@ -691,13 +736,16 @@ class DownloadsViewModel(
         // No real bytes on disk: a completed-but-missing row is 0 (don't show a
         // stale size or inflate the header); an in-flight row uses live bytesSent.
             ?: if (status == DownloadStatus.Completed) 0L else rec.bytesSent
+        // Saved artwork is checked on disk here, like the media file above;
+        // callers build items on Dispatchers.IO.
+        val artwork = tileArtwork()
         return DownloadItem(
             id = record.id,
             contentId = record.contentId,
             title = title,
             subtitle = subtitle,
-            posterUrl = posterUrl,
-            posterThumbhash = posterThumbhash,
+            posterUrl = artwork.url,
+            posterThumbhash = artwork.thumbhash,
             fileSizeBytes = shownBytes,
             progress = displayProgress,
             isComplete = fileState.isComplete,
@@ -771,8 +819,9 @@ class DownloadsViewModel(
         }
         val seriesEntries = bySeries.map { (seriesKey, group) ->
             val seriesTitle = group.firstNotNullOfOrNull { it.seriesTitle?.takeIf { t -> t.isNotBlank() } } ?: "Series"
-            val poster = group.firstNotNullOfOrNull { it.posterUrl }
-            val thumb = group.firstNotNullOfOrNull { it.posterThumbhash }
+            val artwork = group.tileArtwork()
+            val poster = artwork.url
+            val thumb = artwork.thumbhash
             val bySeason = LinkedHashMap<Int, MutableList<DownloadSidecar>>()
             for (sc in group) bySeason.getOrPut(sc.seasonNumber ?: -1) { mutableListOf() } += sc
             val seasons = bySeason.toSortedMap().map { (season, seasonScs) ->

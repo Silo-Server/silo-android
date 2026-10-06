@@ -258,6 +258,7 @@ private fun <T> optionalTargetMatches(
 private val preAuthenticationDestinationRoutes = setOf(
     Route.Login.route,
     Route.ServerSetup.route,
+    Route.ServerSetupPrefilled.ROUTE,
     Route.ServerList.route,
     Route.Setup.route,
     Route.Signup.route,

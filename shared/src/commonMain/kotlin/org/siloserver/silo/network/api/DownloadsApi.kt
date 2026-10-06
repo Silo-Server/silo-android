@@ -3,6 +3,7 @@ package org.siloserver.silo.network.api
 import org.siloserver.silo.model.download.DownloadCapability
 import org.siloserver.silo.model.download.DownloadRecord
 import org.siloserver.silo.model.download.DownloadRequest
+import org.siloserver.silo.model.download.DownloadStatusEvent
 import org.siloserver.silo.model.download.DownloadsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -33,6 +34,9 @@ open class DownloadsApi(
 
     open suspend fun delete(id: String, scope: AuthScopeSnapshot?): ApiResult<Unit> =
         if (scope == null) changed() else registry.delete(id, scope)
+
+    open suspend fun reportStatus(id: String, event: DownloadStatusEvent, scope: AuthScopeSnapshot?): ApiResult<DownloadRecord> =
+        if (scope == null) changed() else registry.reportStatus(id, event, scope)
 
     /**
      * Feature detection (issue #20 §3). Call at detail load / profile switch;

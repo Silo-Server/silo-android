@@ -77,6 +77,11 @@ sealed interface AudioReconcileAction {
  * @param planAudioOrdinal the catalog ordinal the server says it delivered.
  * @param requiresMountedIdentity whether a byte-for-byte original-file plan
  * must prove the selected catalog row against Media3's mounted inventory.
+ * @param positionalCatalog whether [catalog] lists the mounted file's own audio
+ * tracks in file order (a downloaded file described by its offline manifest).
+ * The catalog ordinal then IS the Media3 audio-group ordinal, so selection
+ * goes by position: a re-encoded track (TrueHD source delivered as AAC) can
+ * never identity-match the source description, but it sits at the same place.
  */
 fun reconcileDesiredAudioAction(
     desired: DesiredAudio?,
@@ -86,6 +91,7 @@ fun reconcileDesiredAudioAction(
     selectedOrdinal: Int?,
     planAudioOrdinal: Int?,
     requiresMountedIdentity: Boolean = false,
+    positionalCatalog: Boolean = false,
 ): AudioReconcileAction {
     if (desired == null) return AudioReconcileAction.None
     // An empty or partial snapshot is not evidence of anything. The intent must
@@ -101,6 +107,18 @@ fun reconcileDesiredAudioAction(
     }
 
     val wanted = catalog.getOrNull(desired.catalogOrdinal) ?: return AudioReconcileAction.None
+
+    // Only trusted while the inventories agree in size: a snapshot that shows a
+    // different number of audio groups is not the file the catalog describes,
+    // and falls back to identity matching below.
+    if (positionalCatalog && mounted.size == catalog.size) {
+        val target = mounted[desired.catalogOrdinal]
+        return if (selectedOrdinal == target.ordinal) {
+            AudioReconcileAction.Confirm
+        } else {
+            AudioReconcileAction.Apply(target.ordinal)
+        }
+    }
 
     // Resolved ONCE against the whole snapshot. Matching a one-element list
     // asks a different question: the matcher stops as soon as one candidate

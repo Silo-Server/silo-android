@@ -28,46 +28,15 @@ class RequestPresentationTest {
     }
 
     @Test
-    fun `badge status prefers availability then status then requestable then reason`() {
-        assertEquals(RequestAvailability.Available, result(availability = RequestAvailability.Available).badgeStatus())
-        assertEquals(RequestStatus.Pending, result(requestStatus = RequestStatus.Pending).badgeStatus())
-        assertEquals("request", result(requestable = true).badgeStatus())
-        assertEquals("not allowed", result(reason = "not allowed").badgeStatus())
-        assertEquals(RequestAvailability.Missing, result().badgeStatus())
-    }
-
-    @Test
-    fun `display label maps known tokens and title-cases the rest`() {
-        assertEquals("In Library", RequestAvailability.Available.requestDisplayLabel())
-        assertEquals("Missing", RequestAvailability.Missing.requestDisplayLabel())
-        assertEquals("Request", "request".requestDisplayLabel())
-        assertEquals("Movie", RequestMediaType.Movie.requestDisplayLabel())
-        assertEquals("Series", RequestMediaType.Series.requestDisplayLabel())
-        assertEquals("All", RequestMediaType.All.requestDisplayLabel())
-        assertEquals("Pending", RequestStatus.Pending.requestDisplayLabel())
-        assertEquals("Partially Available", "partially_available".requestDisplayLabel())
-    }
-
-    @Test
-    fun `can cancel only while active and pending`() {
-        assertTrue(request(status = RequestStatus.Pending, outcome = RequestOutcome.Active).canCancel())
-        assertFalse(request(status = RequestStatus.Downloading, outcome = RequestOutcome.Active).canCancel())
-        assertFalse(request(status = RequestStatus.Pending, outcome = RequestOutcome.Cancelled).canCancel())
-    }
-
-    @Test
-    fun `target summary joins fields and truncates with ellipsis after two targets`() {
-        assertNull(request().targetSummary())
-
-        val summary = request(
-            targets = listOf(
-                target(id = 1, instanceName = "Radarr 4K", quality = "2160p", status = "queued"),
-                target(id = 2, instanceName = "Radarr", quality = "1080p", status = "queued"),
-                target(id = 3, instanceName = "Backup", quality = "720p", status = "queued"),
-            ),
-        ).targetSummary()
-
-        assertEquals("Radarr 4K • 2160p • queued, Radarr • 1080p • queued, …", summary)
+    fun `cards open the library only when their status reads in library`() {
+        val inLibrary = result(availability = RequestAvailability.Available).copy(libraryContentId = "item-1")
+        assertEquals("item-1", inLibrary.libraryItemToOpen())
+        // A series in the library with missing seasons on the way opens the request.
+        val seasonsComing = inLibrary.copy(request = RequestState(status = RequestStatus.Downloading, state = RequestUserState.Approved))
+        assertNull(seasonsComing.libraryItemToOpen())
+        val landed = request(status = RequestStatus.Completed).copy(state = RequestUserState.Available, libraryContentId = "item-2")
+        assertEquals("item-2", landed.libraryItemToOpen())
+        assertNull(landed.copy(state = RequestUserState.Processing).libraryItemToOpen())
     }
 
     private fun result(
@@ -95,21 +64,6 @@ class RequestPresentationTest {
         status = status,
         outcome = outcome,
         targets = targets,
-        createdAt = "2026-06-12T00:00:00Z",
-        updatedAt = "2026-06-12T00:00:00Z",
-    )
-
-    private fun target(
-        id: Long,
-        instanceName: String,
-        quality: String,
-        status: String,
-    ): RequestTarget = RequestTarget(
-        id = id.toString(),
-        requestId = "request-1",
-        instanceName = instanceName,
-        quality = quality,
-        status = status,
         createdAt = "2026-06-12T00:00:00Z",
         updatedAt = "2026-06-12T00:00:00Z",
     )

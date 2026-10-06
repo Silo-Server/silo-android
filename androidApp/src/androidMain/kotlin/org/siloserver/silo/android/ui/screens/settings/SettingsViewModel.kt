@@ -3,11 +3,10 @@ package org.siloserver.silo.android.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
-import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
-import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -15,7 +14,11 @@ import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.download.effectiveDefault
+import org.siloserver.silo.model.download.labelFor
+import org.siloserver.silo.repository.DownloadsRepository
 import org.siloserver.silo.model.notifications.NotificationPreferencesUpdate
 import org.siloserver.silo.model.settings.CardCaption
 import org.siloserver.silo.model.settings.CardPosterSize
@@ -23,6 +26,7 @@ import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +57,10 @@ data class SettingsUiState(
     // Account
     val user: User? = null,
     val serverUrl: String = "",
+    // The account card shows the active profile's name and avatar, and the
+    // Server row the server's display name, as the Apple apps do.
+    val activeProfile: Profile? = null,
+    val serverName: String = "",
     val isLoadingUser: Boolean = false,
     val loggedOut: Boolean = false,
 
@@ -81,6 +89,15 @@ data class SettingsUiState(
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /**
+     * What playback draws: [subtitleAppearance], or the device caption style
+     * while Use Device Settings is on. The preview shows this; the editors
+     * edit [subtitleAppearance].
+     */
+    val effectiveSubtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
+        org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /** False when the server is known to discard subtitle text opacity. */
+    val subtitleTextOpacitySupported: Boolean = true,
     // Up Next card: auto-play the next episode at countdown expiry, and how
     // many seconds before the end to surface the card (0 = only at end).
     val autoPlayNext: Boolean = true,
@@ -94,6 +111,9 @@ data class SettingsUiState(
     val downloadsWifiOnly: Boolean = true,
     val keepWatchedDownloads: Boolean = false,
     val defaultDownloadQuality: String = DownloadQuality.Original.label,
+    // The presets this account may request, labelled with the server's
+    // resolution ceiling once the download capability has loaded.
+    val downloadQualityOptions: List<String> = DownloadQuality.entries.map { it.label },
 
     // Subtitles
     // BCP 47 tag, "" = off. The picker converts to and from labels.
@@ -123,30 +143,50 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val authRepository: AuthRepository,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
-    private val overlayPrefsStore: OverlayPrefsStore,
     private val activeProfileStore: ActiveProfileStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
+    private val signOutTeardown: SignOutTeardown,
     audiobookSettingsStore: AudiobookSettingsStore,
+    private val downloadsRepository: DownloadsRepository? = null,
+    private val serverRegistry: ServerRegistry? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    private var subtitleLanguageEditGeneration = 0L
+    private var subtitleModeEditGeneration = 0L
+    private var forcedSubtitlesEditGeneration = 0L
+    private var subtitleLanguageConfirmedGeneration = 0L
+    private var subtitleModeConfirmedGeneration = 0L
+    private var forcedSubtitlesConfirmedGeneration = 0L
 
     /** Profile-wide video and audiobook skip intervals (settings revision 9). */
     val seekIntervals = SeekIntervalSettingsModel(seekIntervalStore, audiobookSettingsStore, viewModelScope)
 
     init {
         loadUserInfo()
+        observeAccountCard()
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
         observeCardPresentation()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
+    }
+
+    private fun observeAccountCard() {
+        activeProfileStore.activeProfile.onEach { profile ->
+            _uiState.update { it.copy(activeProfile = profile) }
+        }.launchIn(viewModelScope)
+        serverRegistry?.activeEntry?.onEach { entry ->
+            _uiState.update { it.copy(serverName = entry?.displayName.orEmpty()) }
+        }?.launchIn(viewModelScope)
+        // Cached after the first fetch, so this is cheap on every later visit.
+        viewModelScope.launch { activeProfileStore.refresh() }
     }
 
     private fun loadUserInfo() {
@@ -233,9 +273,20 @@ class SettingsViewModel(
         playerSettingsStore.keepWatchedDownloadsFlow.onEach { keepWatched ->
             _uiState.update { it.copy(keepWatchedDownloads = keepWatched) }
         }.launchIn(viewModelScope)
-        playerSettingsStore.defaultDownloadQualityFlow.onEach { quality ->
-            _uiState.update { it.copy(defaultDownloadQuality = downloadQualityLabel(quality)) }
+        val downloadCapability = downloadsRepository?.capability ?: MutableStateFlow(null)
+        combine(playerSettingsStore.defaultDownloadQualityFlow, downloadCapability) { quality, capability ->
+            val offered = capability?.allowedQualities() ?: DownloadQuality.entries
+            _uiState.update {
+                it.copy(
+                    // The preset new downloads will actually use.
+                    defaultDownloadQuality = capability.labelFor(capability.effectiveDefault(DownloadQuality.fromWire(quality))),
+                    downloadQualityOptions = offered.map { preset -> capability.labelFor(preset) },
+                )
+            }
         }.launchIn(viewModelScope)
+        // Opening Settings refreshes the capability, as the detail screen does,
+        // so the labels reflect the server's current download settings.
+        downloadsRepository?.let { repository -> viewModelScope.launch { repository.refreshCapability() } }
         playerSettingsStore.pictureInPictureEnabledFlow.onEach { enabled ->
             _uiState.update { it.copy(pictureInPictureEnabled = enabled) }
         }.launchIn(viewModelScope)
@@ -254,6 +305,12 @@ class SettingsViewModel(
         }.launchIn(viewModelScope)
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.effectiveSubtitleAppearanceFlow.onEach { appearance ->
+            _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
+            _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
         }.launchIn(viewModelScope)    }
 
     fun setDownloadsWifiOnly(value: Boolean) {
@@ -429,16 +486,9 @@ class SettingsViewModel(
 
     fun logout() {
         viewModelScope.launch {
-            // Push any in-flight settings before tearing down the session.
-            playerSettingsStore.flushPendingDeviceSettings()
-            authRepository.logout()
-            // Drop per-profile cached prefs so the next user doesn't see
-            // stale rows flash before the fresh fetch lands.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
+            // Pushes in-flight settings, then drops per-profile cached prefs so
+            // the next user doesn't see stale rows flash before the fresh fetch.
+            signOutTeardown.signOut()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }
@@ -495,12 +545,19 @@ class SettingsViewModel(
         viewModelScope.launch { playerSettingsStore.setShowAudiobooks(enabled) }
     }
 
-    fun setSubtitleAppearance(value: org.siloserver.silo.model.settings.SubtitleAppearance) {
+    /**
+     * Commits a subtitle-appearance change via a transform rather than a
+     * precomputed value (replaced the former `setSubtitleAppearance`).
+     * [PlayerSettingsStore.updateSubtitleAppearance][org.siloserver.silo.common.settings.PlayerSettingsStore.updateSubtitleAppearance]
+     * applies it atomically inside the store's own write transaction, so two
+     * edits committing around the same time (e.g. two opacity fields as the
+     * sheet is dismissed) can't race on a snapshot read before either writes.
+     */
+    fun editSubtitleAppearance(
+        transform: (org.siloserver.silo.model.settings.SubtitleAppearance) -> org.siloserver.silo.model.settings.SubtitleAppearance,
+    ) {
         viewModelScope.launch {
-            playerSettingsStore.setSubtitleAppearance(value)
-            // The granular subtitle.* fields are client-local — the contract
-            // carries appearance as one object — so a per-field edit only
-            // reaches the server once projected into the composite.
+            playerSettingsStore.updateSubtitleAppearance(transform)
             playerSettingsStore.flushProjectedSubtitleAppearance()
         }
     }
@@ -539,8 +596,14 @@ class SettingsViewModel(
         }
     }
 
+    // The subtitle setters below also store each write's confirmed value in
+    // the cached profile, which offline playback reads for its subtitle
+    // preferences. Only a newer successful write to the same field supersedes
+    // a confirmed value; pending or failed edits leave that value available.
+
     /** [language] is a BCP 47 tag, or "" for off. */
     fun setSubtitleLanguage(language: String) {
+        val editGeneration = ++subtitleLanguageEditGeneration
         val previous = _uiState.value.subtitleLanguage
         _uiState.update { it.copy(subtitleLanguage = language) }
         viewModelScope.launch {
@@ -550,12 +613,18 @@ class SettingsViewModel(
                     if (it.subtitleLanguage == language) it.copy(subtitleLanguage = previous) else it
                 }
             } else {
-                applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
+                if (editGeneration > subtitleLanguageConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = language) { it.subtitleLanguage }
+                    subtitleLanguageConfirmedGeneration = editGeneration
+                    val confirmed = result.snapshot?.subtitleLanguage ?: language
+                    activeProfileStore.update { it.copy(subtitleLanguage = confirmed) }
+                }
             }
         }
     }
 
     fun setSubtitleMode(mode: SubtitleMode) {
+        val editGeneration = ++subtitleModeEditGeneration
         val previous = _uiState.value.subtitleMode
         _uiState.update { it.copy(subtitleMode = mode) }
         viewModelScope.launch {
@@ -565,12 +634,18 @@ class SettingsViewModel(
                     if (it.subtitleMode == mode) it.copy(subtitleMode = previous) else it
                 }
             } else {
-                applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
+                if (editGeneration > subtitleModeConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = mode.wire) { it.subtitleMode }
+                    subtitleModeConfirmedGeneration = editGeneration
+                    val confirmed = result.snapshot?.subtitleMode ?: mode.wire
+                    activeProfileStore.update { it.copy(subtitleMode = confirmed) }
+                }
             }
         }
     }
 
     fun setShowForcedSubtitles(enabled: Boolean) {
+        val editGeneration = ++forcedSubtitlesEditGeneration
         val previous = _uiState.value.showForcedSubtitles
         _uiState.update { it.copy(showForcedSubtitles = enabled) }
         viewModelScope.launch {
@@ -580,8 +655,13 @@ class SettingsViewModel(
                     if (it.showForcedSubtitles == enabled) it.copy(showForcedSubtitles = previous) else it
                 }
             } else {
-                applyResolved(result.snapshot, edited = enabled.toString()) {
-                    it.showForcedSubtitles.toString()
+                if (editGeneration > forcedSubtitlesConfirmedGeneration) {
+                    applyResolved(result.snapshot, edited = enabled.toString()) {
+                        it.showForcedSubtitles.toString()
+                    }
+                    forcedSubtitlesConfirmedGeneration = editGeneration
+                    val confirmed = result.snapshot?.showForcedSubtitles ?: enabled
+                    activeProfileStore.update { it.copy(showForcedSubtitles = confirmed) }
                 }
             }
         }
@@ -627,9 +707,10 @@ class SettingsViewModel(
         }
     }
 
-    private fun downloadQualityLabel(value: String): String =
-        DownloadQuality.fromWire(value).label
-
+    // A shown label is the preset's bitrate label plus an optional
+    // " · up to …" suffix, so the bitrate part alone identifies the preset
+    // even if the capability refreshed after the list was drawn.
     private fun downloadQualityWireValue(value: String): String =
-        DownloadQuality.entries.firstOrNull { it.label == value }?.wire ?: DownloadQuality.Original.wire
+        DownloadQuality.entries.firstOrNull { it.label == value.substringBefore(" · ") }?.wire
+            ?: DownloadQuality.Original.wire
 }

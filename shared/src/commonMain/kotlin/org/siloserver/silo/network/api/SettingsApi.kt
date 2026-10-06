@@ -11,9 +11,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
 /**
- * Admin-configured card-overlay baseline. `enabled` is the global
- * kill-switch (admins can disable overlays for everyone); `defaults` is
- * the serialized [CardOverlayPrefs] JSON used when a user has no override.
+ * Admin-configured card-overlay baseline. `enabled` is the server-wide
+ * default for profiles that have not set `ui.card_overlays_enabled`;
+ * `defaults` is the serialized [CardOverlayPrefs] JSON used when a user
+ * has no override.
  * Mirrors iOS `OverlayConfigResponse` and the server's
  * `GET /api/v2/settings/overlay-config` shape.
  */

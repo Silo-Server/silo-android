@@ -701,6 +701,72 @@ class TvNextUpSelectionHandoffTest {
         assertNull(TvDetailTrackSelectionSession.recall(scenario.episodeTwoId))
     }
 
+    @Test
+    fun markingSelectedSeasonWatchedChecksItsEpisodesAndRefreshesTheSeason() = runDetailTest {
+        val scenario = Scenario(suffix = "-season-watched")
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        val season = fixture.viewModel.uiState.value.seasons.first { it.seasonNumber == 1 }
+        val seasonRequestsBefore = scenario.seasonsRequests.get()
+
+        fixture.viewModel.onSetSeasonWatched(season, true)
+
+        val optimistic = fixture.viewModel.uiState.value
+        assertEquals(true, optimistic.seasons.first { it.seasonNumber == 1 }.userData?.played)
+        assertTrue(optimistic.episodes.all { it.userData?.played == true })
+        awaitCondition {
+            scenario.seasonsRequests.get() > seasonRequestsBefore &&
+                fixture.viewModel.uiState.value.seasons.first { it.seasonNumber == 1 }.userData?.played == true
+        }
+        assertEquals(1, scenario.seasonOneWatchRequests.get())
+        assertTrue(scenario.episodeOneWatched && scenario.episodeTwoWatched)
+        assertTrue(fixture.viewModel.uiState.value.episodes.all { it.userData?.played == true })
+    }
+
+    @Test
+    fun failedSeasonWatchedRestoresTheSeasonAndItsEpisodes() = runDetailTest {
+        val scenario = Scenario(suffix = "-season-watched-fails")
+        scenario.seasonOneWatchFails = true
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        val season = fixture.viewModel.uiState.value.seasons.first { it.seasonNumber == 1 }
+
+        fixture.viewModel.onSetSeasonWatched(season, true)
+        awaitCondition {
+            scenario.seasonOneWatchRequests.get() == 1 &&
+                fixture.viewModel.uiState.value.episodes.none { it.userData?.played == true }
+        }
+
+        val state = fixture.viewModel.uiState.value
+        assertFalse(state.seasons.first { it.seasonNumber == 1 }.userData?.played == true)
+        assertEquals(scenario.episodeOneId, state.nextUpEpisode?.contentId)
+    }
+
+    @Test
+    fun failedSeasonWatchedKeepsAnEpisodeMarkedWhileItWasPending() = runDetailTest {
+        val scenario = Scenario(suffix = "-season-watched-overlap")
+        scenario.episodeTwoWatched = true
+        scenario.seasonOneWatchFails = true
+        scenario.seasonOneWatchGate = CompletableDeferred()
+        val fixture = createFixture(scenario)
+        awaitEpisode(fixture.viewModel, scenario.episodeOneId)
+        val season = fixture.viewModel.uiState.value.seasons.first { it.seasonNumber == 1 }
+
+        fixture.viewModel.onSetSeasonWatched(season, true)
+        awaitCondition { scenario.seasonOneWatchRequests.get() == 1 }
+        fixture.viewModel.onSetEpisodeWatched(scenario.episodeTwoId, false)
+        awaitCondition { !scenario.episodeTwoWatched }
+        scenario.seasonOneWatchGate?.complete(Unit)
+
+        awaitCondition {
+            fixture.viewModel.uiState.value.seasons.first { it.seasonNumber == 1 }.userData?.played != true &&
+                fixture.viewModel.uiState.value.episodes.none { it.userData?.played == true }
+        }
+        val played = fixture.viewModel.uiState.value.episodes.associate { it.contentId to (it.userData?.played == true) }
+        // Episode one reverts with the failed season write; episode two keeps its own change.
+        assertEquals(mapOf(scenario.episodeOneId to false, scenario.episodeTwoId to false), played)
+    }
+
     // ------------------------------------------------------------------
 
     private val createdViewModels = mutableListOf<ViewModel>()
@@ -803,6 +869,9 @@ class TvNextUpSelectionHandoffTest {
         val seasonTwoEpisodeId = "season-2-episode-1$suffix"
         var episodeOneWatched = false
         var episodeTwoWatched = false
+        var seasonOneWatchFails = false
+        var seasonOneWatchGate: CompletableDeferred<Unit>? = null
+        val seasonOneWatchRequests = AtomicInteger()
         var episodeTwoGate: CompletableDeferred<Unit>? = null
         var episodeOneWatchGate: CompletableDeferred<Unit>? = null
         var seasonsGate: CompletableDeferred<Unit>? = null
@@ -837,7 +906,7 @@ class TvNextUpSelectionHandoffTest {
                         seasonsGate?.await()
                         json(
                             """{"items":[
-                                {"content_id":"season-1$suffix","season_number":1,"title":"Season 1"},
+                                {"content_id":"season-1$suffix","season_number":1,"title":"Season 1","user_data":{"played":${episodeOneWatched && episodeTwoWatched}}},
                                 {"content_id":"season-2$suffix","season_number":2,"title":"Season 2"}
                             ]}""".trimIndent(),
                         )
@@ -875,6 +944,22 @@ class TvNextUpSelectionHandoffTest {
                         episodeOneWatchGate?.await()
                         episodeOneWatched = request.method.value != "DELETE"
                         respond("", HttpStatusCode.NoContent)
+                    }
+                    "/api/v2/watched/season-1$suffix" -> {
+                        seasonOneWatchRequests.incrementAndGet()
+                        seasonOneWatchGate?.await()
+                        if (seasonOneWatchFails) {
+                            respond(
+                                content = """{"type":"about:blank","title":"failed","status":500}""",
+                                status = HttpStatusCode.InternalServerError,
+                                headers = headersOf(HttpHeaders.ContentType, "application/problem+json"),
+                            )
+                        } else {
+                            val watched = request.method.value != "DELETE"
+                            episodeOneWatched = watched
+                            episodeTwoWatched = watched
+                            respond("", HttpStatusCode.NoContent)
+                        }
                     }
                     "/api/v2/watched/$episodeTwoId" -> {
                         episodeTwoWatched = request.method.value != "DELETE"

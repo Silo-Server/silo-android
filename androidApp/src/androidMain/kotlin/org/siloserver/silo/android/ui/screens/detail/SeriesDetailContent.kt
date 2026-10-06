@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -72,6 +74,7 @@ fun SeriesDetailContent(
     onEpisodeDetailClick: (String) -> Unit,
     onEpisodeWatchedChange: (String, Boolean) -> Unit,
     onSeasonSelected: (Int) -> Unit,
+    onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
@@ -113,6 +116,9 @@ fun SeriesDetailContent(
     // replacing it with a skeleton (and repainting different names) on every
     // horizontal episode selection.
     val fixedSeriesCredit = remember(detail.contentId, detail.cast) { seriesStarringCredit(detail) }
+    val markableSelectedSeason = selectedSeason?.takeIf {
+        onSeasonWatchedChange != null && it.episodeCount > 0
+    }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
         "$count episode${if (count == 1) "" else "s"}"
     }
@@ -169,6 +175,7 @@ fun SeriesDetailContent(
                     seasons = seasons,
                     selectedSeasonNumber = selectedSeasonNumber,
                     onSeasonSelected = onSeasonSelected,
+                    onSeasonWatchedChange = onSeasonWatchedChange,
                 )
             }
             if (showsEpisodeDetails) {
@@ -280,18 +287,45 @@ fun SeriesDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
-                    overflow = if (partyAction != null) {
+                    overflow = if (markableSelectedSeason != null || partyAction != null) {
                         { dismiss ->
-                            DropdownMenuItem(
-                                text = { Text(partyAction.label) },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Groups, contentDescription = null)
-                                },
-                                onClick = {
-                                    dismiss()
-                                    partyAction.onClick()
-                                },
-                            )
+                            if (markableSelectedSeason != null && onSeasonWatchedChange != null) {
+                                val seasonWatched = markableSelectedSeason.userData?.played == true
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            "Mark ${phoneSeasonLabel(markableSelectedSeason)} " +
+                                                if (seasonWatched) "Unwatched" else "Watched",
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (seasonWatched) {
+                                                Icons.Outlined.Circle
+                                            } else {
+                                                Icons.Outlined.CheckCircle
+                                            },
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    onClick = {
+                                        dismiss()
+                                        onSeasonWatchedChange(markableSelectedSeason, !seasonWatched)
+                                    },
+                                )
+                            }
+                            if (partyAction != null) {
+                                DropdownMenuItem(
+                                    text = { Text(partyAction.label) },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.Groups, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        dismiss()
+                                        partyAction.onClick()
+                                    },
+                                )
+                            }
                         }
                     } else {
                         null

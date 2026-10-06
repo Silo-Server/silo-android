@@ -1,5 +1,7 @@
 package org.siloserver.silo.repository
 
+import org.siloserver.silo.model.request.AdminRequestAction
+import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -12,10 +14,14 @@ import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.model.request.RequestStatus
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 private fun stubRequest(
@@ -39,6 +45,7 @@ private class FakeRequestsApi(
     private val mineResult: ApiResult<RequestsListResponse> = ApiResult.Success(RequestsListResponse()),
     private val createResult: ApiResult<MediaRequest> = ApiResult.NetworkError(IllegalStateException("no fake")),
     private val cancelResult: ApiResult<MediaRequest> = ApiResult.NetworkError(IllegalStateException("no fake")),
+    private val mineGate: CompletableDeferred<Unit>? = null,
 ) : RequestsApi {
 
     var mineCalls = 0
@@ -70,6 +77,7 @@ private class FakeRequestsApi(
         offset: Int?,
     ): ApiResult<RequestsListResponse> {
         mineCalls++
+        mineGate?.await()
         return mineResult
     }
 
@@ -77,6 +85,19 @@ private class FakeRequestsApi(
         ApiResult.NetworkError(IllegalStateException("no fake"))
 
     override suspend fun cancel(id: String): ApiResult<MediaRequest> = cancelResult
+
+    override suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> =
+        ApiResult.NetworkError(IllegalStateException("no fake"))
+
+    override suspend fun adminRequests(
+        status: String?,
+        outcome: String?,
+        mediaType: String?,
+        tmdbId: Int?,
+    ): ApiResult<RequestsListResponse> = ApiResult.NetworkError(IllegalStateException("no fake"))
+
+    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> =
+        ApiResult.NetworkError(IllegalStateException("no fake"))
 }
 
 class RequestsRepositoryTest {
@@ -153,5 +174,60 @@ class RequestsRepositoryTest {
         repo.reset()
 
         assertTrue(repo.mine.first().isEmpty())
+    }
+
+    @Test
+    fun `a read that answers after reset stores nothing`() = runTest {
+        val previous = stubRequest("a", 1)
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeRequestsApi(mineResult = ApiResult.Success(RequestsListResponse(listOf(previous))), mineGate = gate)
+        val repo = RequestsRepository(api)
+
+        val read = async { repo.refreshMine() }
+        runCurrent()
+        // The profile switches while the previous profile's list is in flight.
+        repo.reset()
+        gate.complete(Unit)
+
+        assertTrue(read.await() is ApiResult.Error)
+        assertTrue(repo.mine.first().isEmpty())
+        assertNull(repo.cache.ownRecord(previous.cacheKey()))
+    }
+
+    @Test
+    fun `a recent complete read answers for one title until reset`() = runTest {
+        val api = FakeRequestsApi(mineResult = ApiResult.Success(RequestsListResponse(listOf(stubRequest("a", 1)))))
+        val repo = RequestsRepository(api)
+
+        repo.refreshMine()
+        repo.ensureMine()
+        assertEquals(1, api.mineCalls)
+
+        repo.reset()
+        repo.ensureMine()
+        assertEquals(2, api.mineCalls)
+    }
+
+    @Test
+    fun `a list read that a create overtook keeps the created request`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val created = stubRequest("created", 2)
+        val api = FakeRequestsApi(
+            mineResult = ApiResult.Success(RequestsListResponse(listOf(stubRequest("old", 1)))),
+            createResult = ApiResult.Success(created),
+            mineGate = gate,
+        )
+        val repo = RequestsRepository(api)
+
+        val read = async { repo.refreshMine() }
+        runCurrent()
+        repo.create(CreateMediaRequest(mediaType = RequestMediaType.Movie, tmdbId = 2, title = "Movie 2"))
+        gate.complete(Unit)
+        read.await()
+
+        assertEquals(listOf(created), repo.mine.first())
+        // The snapshot doesn't count as fresh, so the next caller reads again.
+        repo.ensureMine()
+        assertEquals(2, api.mineCalls)
     }
 }

@@ -106,7 +106,7 @@ class TvLibrarySubdestinationViewModelTest {
         viewModel.onTabSelected(TvLibraryTab.Browse)
         awaitState { requests.catalogRequestCount() >= 1 }
         viewModel.onSortKeySelected(TvLibrarySortOption.ReleaseDate)
-        awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "-year" }
+        awaitState { requests.lastCatalogRequestOrNull()?.query?.get("sort") == "-release_date" }
         val requestsBeforeReentry = requests.catalogRequestCount()
 
         // Re-entering the screen (back out of item detail) re-issues the
@@ -115,7 +115,7 @@ class TvLibrarySubdestinationViewModelTest {
         viewModel.onTabSelected(TvLibraryTab.Browse)
         settle()
 
-        assertEquals("year", viewModel.uiState.value.browseFilter.sort)
+        assertEquals("release_date", viewModel.uiState.value.browseFilter.sort)
         assertEquals("desc", viewModel.uiState.value.browseFilter.order)
         assertEquals(requestsBeforeReentry, requests.catalogRequestCount())
     }

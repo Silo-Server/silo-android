@@ -2,6 +2,7 @@
 package org.siloserver.silo.model.playback
 
 import org.siloserver.silo.model.subtitles.DownloadedSubtitle
+import org.siloserver.silo.model.subtitles.SubtitleSyncState
 
 /** `source` value the server (and web client) use for provider-downloaded tracks. */
 const val SUBTITLE_SOURCE_DOWNLOADED = "downloaded"
@@ -53,11 +54,18 @@ fun mergeDownloadedSubtitles(
             forced = null,
             url = "/stream/$sessionId/subtitles/$index${subtitleUrlExtension(dl.format)}",
             downloadId = dl.id,
+            // The server names a stored subtitle `stored-{id}` for sync, and
+            // syncs only the text formats it can retime.
+            syncKey = SubtitleSyncState.storedKey(dl.id).takeIf { isRetimableSubtitleFormat(dl.format) },
         )
     }
 
     return base + newTracks
 }
+
+private val retimableSubtitleFormats = setOf("srt", "subrip", "vtt", "webvtt", "ass", "ssa")
+
+private fun isRetimableSubtitleFormat(format: String): Boolean = format.trim().lowercase() in retimableSubtitleFormats
 
 private fun subtitleUrlExtension(format: String): String {
     return when (format.trim().lowercase()) {

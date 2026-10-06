@@ -39,6 +39,17 @@ class SubtitleManagerAppearanceTest {
     }
 
     @Test
+    fun textOpacityScalesOnlyTheForegroundAlpha() {
+        val half = captionStyleFor(SubtitleAppearance.DEFAULT.copy(fontColor = "#ff0000", textOpacity = 50))
+        // 50% of 255 truncates to 0x7F; the RGB and the edge color are untouched.
+        assertEquals(0x7FFF0000, half.foregroundColor)
+        assertEquals(0xFF000000.toInt(), half.edgeColor)
+
+        val faintest = captionStyleFor(SubtitleAppearance.DEFAULT.copy(textOpacity = 1))
+        assertEquals(0x02FFFFFF, faintest.foregroundColor)
+    }
+
+    @Test
     fun bottomSubtitlesUseTheReferenceSafeMargin() {
         val method = SubtitleManager::class.java.getDeclaredMethod(
             "bottomPaddingFor",

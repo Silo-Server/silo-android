@@ -73,11 +73,52 @@ enum class DownloadQuality(
     Mbps2("2mbps", "2 Mbps", 2_000),
     Mbps1("1mbps", "1 Mbps", 1_000);
 
+    /**
+     * [label] plus the resolution ceiling the server reports for this preset,
+     * e.g. "20 Mbps · up to 4K". A missing ceiling (Original, or an older
+     * server) leaves the bitrate-only label.
+     */
+    fun label(maxHeight: Int?): String {
+        if (maxHeight == null || maxHeight <= 0) return label
+        val resolution = if (maxHeight >= 2160) "4K" else "${maxHeight}p"
+        return "$label · up to $resolution"
+    }
+
     companion object {
         fun fromWire(value: String?): DownloadQuality =
             entries.firstOrNull { it.wire == value?.lowercase()?.trim() } ?: Original
     }
 }
+
+/**
+ * One entry of the capability's `quality_options`: a preset's video bitrate
+ * cap and the tallest output it can produce on this server. Both are absent
+ * for `original`.
+ */
+@Serializable
+data class DownloadQualityOption(
+    val preset: String,
+    @SerialName("bitrate_kbps") val bitrateKbps: Int? = null,
+    @SerialName("max_height") val maxHeight: Int? = null,
+)
+
+/**
+ * Decode-only device facts sent as `caps` on `POST /api/v2/downloads`. The
+ * server uses them to serve `original` as-is only when this device plays it,
+ * and to keep a bitrate preset's resolution within what the decoder takes.
+ * A download plays later on whatever output is attached then, so nothing here
+ * describes the current display or audio route.
+ */
+@Serializable
+data class DownloadCaps(
+    @SerialName("video_evidence") val videoEvidence: String,
+    @SerialName("codecs_video") val codecsVideo: List<String>,
+    @SerialName("codecs_audio") val codecsAudio: List<String>,
+    val containers: List<String>,
+    @SerialName("max_resolution") val maxResolution: String? = null,
+    val hdr: Boolean = false,
+    @SerialName("video_decode") val videoDecode: List<org.siloserver.silo.model.playback.VideoDecodeCapability> = emptyList(),
+)
 
 /**
  * POST /api/v2/downloads body. Either `episodeId` or `fileId` is set on
@@ -96,6 +137,7 @@ data class DownloadRequest(
     @SerialName("device_id") val deviceId: String? = null,
     val revision: Int? = null,
     @SerialName("status_event_at") val statusEventAt: String? = null,
+    val caps: DownloadCaps? = null,
 )
 
 /**
@@ -124,6 +166,17 @@ enum class DownloadStatus(val wire: String) {
             entries.firstOrNull { it.wire == value?.lowercase() } ?: Unknown
     }
 }
+
+/**
+ * One local status report for one registry revision (`PATCH /api/v2/downloads/{id}`).
+ * [status] is `downloading` or `completed`; [updatedAt] is the RFC 3339 time the
+ * local state changed, not the send time. A retry must resend all three values.
+ */
+data class DownloadStatusEvent(
+    val status: String,
+    val updatedAt: String,
+    val revision: Int,
+)
 
 /**
  * `direct` = browser one-shot serve (no persistent server record).
@@ -158,12 +211,18 @@ data class DownloadCapability(
     val enabled: Boolean = false,
     @SerialName("download_allowed") val downloadAllowed: Boolean = false,
     @SerialName("quality_presets") val qualityPresets: List<String> = emptyList(),
+    /** One entry per [qualityPresets] value: its bitrate cap and resolution ceiling. */
+    @SerialName("quality_options") val qualityOptions: List<DownloadQualityOption> = emptyList(),
     @SerialName("transcode_enabled") val transcodeEnabled: Boolean = false,
     @SerialName("transcode_user_allowed") val transcodeUserAllowed: Boolean = false,
     @SerialName("season_download") val seasonDownload: Boolean = false,
     @SerialName("series_monitoring") val seriesMonitoring: Boolean = false,
     @SerialName("monitoring_modes") val monitoringModes: List<String> = emptyList(),
 ) {
+    /** The label for [quality], with the server's resolution ceiling: "10 Mbps · up to 1080p". */
+    fun label(quality: DownloadQuality): String =
+        quality.label(qualityOptions.firstOrNull { it.preset == quality.wire }?.maxHeight)
+
     /** Downloads are usable only when the feature is on AND this user may download. */
     val isUsable: Boolean get() = enabled && downloadAllowed && (revision == null || (revision.isNotBlank() && state == "available"))
 
@@ -183,6 +242,26 @@ data class DownloadCapability(
             presets.filter { it == DownloadQuality.Original }
         }
         return gated.ifEmpty { listOf(DownloadQuality.Original) }
+    }
+}
+
+/** [DownloadCapability.label], or the bitrate-only label before a capability has loaded. */
+fun DownloadCapability?.labelFor(quality: DownloadQuality): String = this?.label(quality) ?: quality.label
+
+/**
+ * The preset new downloads use for a saved default: the saved one when this
+ * capability offers it, since the server refuses a preset the account can no
+ * longer request (transcoding turned off, say); else Original, or the first
+ * offered preset if the server does not list Original. An unloaded capability
+ * keeps the saved value.
+ */
+fun DownloadCapability?.effectiveDefault(saved: DownloadQuality): DownloadQuality {
+    if (this == null) return saved
+    val offered = allowedQualities()
+    return when {
+        saved in offered -> saved
+        DownloadQuality.Original in offered -> DownloadQuality.Original
+        else -> offered.first()
     }
 }
 

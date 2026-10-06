@@ -333,9 +333,15 @@ val androidTvModule = module {
     // TLS-PSK socket lifecycle; the receiver is the transport-agnostic state
     // machine. A later step wires the UI to PairingReceiver.status.
     single {
+        val identityApi = get<org.siloserver.silo.network.api.ServerIdentityApi>()
         org.siloserver.silo.common.pairing.PairingReceiver(
             authPort = org.siloserver.silo.common.pairing.RegistryPairingAuthPort(get(), get(), get(), get()),
-            deviceLogin = org.siloserver.silo.common.pairing.DeviceLoginRepositoryPort(get()),
+            // Its own device-login state machine: the sign-in screen runs its
+            // own device code while it advertises, and the two must not share
+            // one repository's state.
+            deviceLogin = org.siloserver.silo.common.pairing.DeviceLoginRepositoryPort(
+                org.siloserver.silo.repository.DeviceLoginRepository(get()),
+            ),
             identityProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceIdentity(
                     name = tvDeviceName(),
@@ -343,28 +349,16 @@ val androidTvModule = module {
                         .stable(androidContext()),
                 )
             },
-            // Always `setup`: advertising only runs while the server-setup
-            // screen is showing, and Apple is authoritative for the wire —
-            // silo-apple's TVPairingAdvertiser hardcodes st=setup and its
-            // companion card FILTERS to state == .setup, so a registry-based
-            // `login` (always true after a sign-out, since the registry keeps
-            // entries) made the TV invisible to phones exactly when the user
-            // needed set-up-with-phone again.
-            receiverStateProvider = { org.siloserver.silo.pairing.PairingReceiverState.Setup },
+            identityProbe = { url -> identityApi.probeIdentity(url) },
         )
     }
+    // The advertised state comes from the screen that starts it: server setup
+    // advertises st=setup, the sign-in screen st=login with its server's
+    // identity (srv) so only phones holding that server offer it.
     single {
         org.siloserver.silo.common.pairing.TvPairingAdvertiser(
             context = androidContext(),
             receiver = get(),
-            // Always `setup`: advertising only runs while the server-setup
-            // screen is showing, and Apple is authoritative for the wire —
-            // silo-apple's TVPairingAdvertiser hardcodes st=setup and its
-            // companion card FILTERS to state == .setup, so a registry-based
-            // `login` (always true after a sign-out, since the registry keeps
-            // entries) made the TV invisible to phones exactly when the user
-            // needed set-up-with-phone again.
-            receiverStateProvider = { org.siloserver.silo.pairing.PairingReceiverState.Setup },
         )
     }
     single { SiloCastNsdAdvertiser(androidContext()) }
@@ -391,10 +385,27 @@ val androidTvModule = module {
     }
 
     // Auth ViewModels
-    viewModel { TvServerSetupViewModel(get(), get()) }
+    viewModel {
+        val tokens = get<org.siloserver.silo.network.TokenManager>()
+        TvServerSetupViewModel(get(), get(), hasSession = { !tokens.getAccessToken().isNullOrBlank() })
+    }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSetupViewModel(get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.auth.TvSignupViewModel(get()) }
-    viewModel { TvLoginViewModel(get(), get(), get()) }
+    viewModel { params ->
+        TvLoginViewModel(
+            authRepository = get(),
+            tokenManager = get(),
+            // Per-screen device-login state; see the PairingReceiver above.
+            deviceLogin = org.siloserver.silo.repository.DeviceLoginRepository(get()),
+            serverRegistry = get(),
+            serverIdentities = get(),
+            sessionExpired = params.getOrNull<Boolean>() ?: false,
+            externalSignIn = get(),
+            // st=login rollout gate (silo-apple PairingProtocol.advertisesSignInTVs):
+            // debug builds only until both phone apps that accept login TVs ship.
+            advertisesSignIn = BuildConfig.DEBUG,
+        )
+    }
     viewModel { TvProfileSelectionViewModel(get(), get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.profiles.TvCreateProfileViewModel(get()) }
     viewModel { params ->
@@ -406,7 +417,7 @@ val androidTvModule = module {
     viewModel { TvServerListViewModel(get(), get(), get()) }
 
     viewModel { params ->
-        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
+        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
     }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
@@ -421,10 +432,16 @@ val androidTvModule = module {
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
     viewModel { RecommendationsViewModel(get()) }
-    viewModel { RequestsViewModel(get()) }
+    // The Requests page reads the approval queue itself, so the hub doesn't
+    // count it; it loads its view models when it composes.
+    viewModel { params ->
+        RequestsViewModel(get(), get(), countsPendingApprovals = false, loadOnInit = params.getOrNull<Boolean>() ?: true)
+    }
     viewModel { RequestSearchViewModel(get()) }
-    viewModel { MyRequestsViewModel(get()) }
-    viewModel { org.siloserver.silo.tv.ui.screens.requests.TvRequestsViewModel(get()) }
+    viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true) }
+    viewModel { params ->
+        org.siloserver.silo.viewmodel.RequestApprovalsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
+    }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {

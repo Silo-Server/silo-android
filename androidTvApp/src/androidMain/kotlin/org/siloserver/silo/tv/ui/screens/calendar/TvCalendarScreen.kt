@@ -135,8 +135,8 @@ import org.siloserver.silo.viewmodel.CalendarViewModel
  *    "Monday, June 9") over a HORIZONTAL row (LazyRow) of portrait poster
  *    cards. Event-less days render a "Nothing scheduled" stub so the week keeps
  *    its shape and every day is a scroll target.
- *  - Whole-screen empty state with a focusable action ("Show Everything" when
- *    filtered, else "Refresh") and a filter-aware title.
+ *  - Whole-screen empty state with focusable links to the other two views and
+ *    a view-specific title.
  *
  * Mirrors [org.siloserver.silo.tv.ui.screens.recommendations.TvRecommendationsScreen]
  * for the koinViewModel + initial-focus-once pattern.
@@ -488,7 +488,16 @@ fun TvCalendarScreen(
                     }
                 },
                 onRefresh = viewModel::refresh,
-                onShowEverything = { viewModel.setFilter(CalendarFilter.All) },
+                onSelectFilter = { filter ->
+                    viewModel.setFilter(filter)
+                    // The pressed link leaves with the old empty state; move
+                    // focus to the new view's filter chip so it doesn't fall
+                    // through to the top menu.
+                    filterFocusRequesters[filter]?.claimFocusOrReport(
+                        target = "calendar_filter",
+                        action = "empty_state_link",
+                    )
+                },
                 selectedDayFocusRequester = selectedDayFocusRequester,
                 shelfFocusDay = shelfFocusDay,
                 shelfFocusRequest = shelfFocusRequest,
@@ -1009,7 +1018,7 @@ private fun CalendarList(
     onControlFocused: (CalendarControlFocusZone?) -> Unit,
     onFocusRequestAcknowledged: () -> Unit,
     onRefresh: () -> Unit,
-    onShowEverything: () -> Unit,
+    onSelectFilter: (String) -> Unit,
     selectedDayFocusRequester: FocusRequester,
     shelfFocusDay: String?,
     shelfFocusRequest: Int,
@@ -1167,7 +1176,7 @@ private fun CalendarList(
                     CalendarMessage(
                         title = state.error ?: "Failed to load calendar",
                         subtitle = "Press the week arrows to try another week.",
-                        action = CalendarAction("Refresh", onRefresh),
+                        actions = listOf(CalendarAction("Refresh", onRefresh)),
                         onActionFocused = clearControlFocusZone,
                     )
                 }
@@ -1177,10 +1186,8 @@ private fun CalendarList(
                     CalendarMessage(
                         title = emptyTitle(state.filter),
                         subtitle = emptyCopy(state.filter),
-                        action = if (state.filter != CalendarFilter.All) {
-                            CalendarAction("Show Everything", onShowEverything)
-                        } else {
-                            CalendarAction("Refresh", onRefresh)
+                        actions = emptyStateLinks(state.filter).map { (value, label) ->
+                            CalendarAction(label) { onSelectFilter(value) }
                         },
                         topAligned = true,
                         onActionFocused = clearControlFocusZone,
@@ -1561,6 +1568,9 @@ private fun BadgePill(text: String) {
             fontWeight = FontWeight.Bold,
             color = Color.Black,
             maxLines = 1,
+            // Wrapping drew only the first word in a full-width pill.
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -1574,7 +1584,7 @@ private data class CalendarAction(val label: String, val onClick: () -> Unit)
 private fun CalendarMessage(
     title: String,
     subtitle: String,
-    action: CalendarAction,
+    actions: List<CalendarAction>,
     topAligned: Boolean = false,
     onActionFocused: () -> Unit,
 ) {
@@ -1613,34 +1623,38 @@ private fun CalendarMessage(
                 color = Color.White.copy(alpha = 0.62f),
             )
             Spacer(modifier = Modifier.height(2.dp))
-            Surface(
-                onClick = action.onClick,
-                shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(100.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = Color.White.copy(alpha = 0.10f),
-                    contentColor = Color.White,
-                    focusedContainerColor = FocusedContainer,
-                    focusedContentColor = FocusedContent,
-                    pressedContainerColor = FocusedContainer,
-                    pressedContentColor = FocusedContent,
-                ),
-                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                modifier = Modifier.onFocusChanged { if (it.isFocused) onActionFocused() },
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(140.dp)
-                        .padding(vertical = 7.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = action.label,
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontSize = 15.5.sp,
-                            lineHeight = 18.5.sp,
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                actions.forEach { action ->
+                    Surface(
+                        onClick = action.onClick,
+                        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(100.dp)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Color.White.copy(alpha = 0.10f),
+                            contentColor = Color.White,
+                            focusedContainerColor = FocusedContainer,
+                            focusedContentColor = FocusedContent,
+                            pressedContainerColor = FocusedContainer,
+                            pressedContentColor = FocusedContent,
                         ),
-                        fontWeight = FontWeight.SemiBold,
-                    )
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                        modifier = Modifier.onFocusChanged { if (it.isFocused) onActionFocused() },
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(140.dp)
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = action.label,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontSize = 15.5.sp,
+                                    lineHeight = 18.5.sp,
+                                ),
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1650,7 +1664,9 @@ private fun CalendarMessage(
 // MARK: - Formatting helpers
 
 private fun badgeLabel(badge: String): String? = when (badge) {
-    CalendarBadge.SeriesPremiere -> "SERIES PREMIERE"
+    // tvOS says "SERIES PREMIERE", which does not fit a poster at 14sp;
+    // NEW SEASON already marks season premieres.
+    CalendarBadge.SeriesPremiere -> "PREMIERE"
     CalendarBadge.SeasonPremiere -> "NEW SEASON"
     CalendarBadge.Finale -> "FINALE"
     else -> null
@@ -1673,8 +1689,23 @@ private fun cardSubtitle(item: CalendarItem): String? {
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
 }
 
+/**
+ * The views an empty week links to: always the other two, never the one on
+ * screen (silo-server #1494, silo-apple #513). "everything" is the phone's
+ * spelling of All; any other legacy filter links to all three views.
+ */
+private fun emptyStateLinks(filter: String): List<Pair<String, String>> {
+    val view = if (filter == CalendarFilter.Everything) CalendarFilter.All else filter
+    return listOf(
+        CalendarFilter.Following to "Following",
+        CalendarFilter.Trending to "Trending",
+        CalendarFilter.All to "All",
+    ).filter { (value, _) -> value != view }
+}
+
 private fun emptyTitle(filter: String): String = when (filter) {
     CalendarFilter.Following -> "Nothing from shows you follow"
+    CalendarFilter.Trending -> "Nothing trending this week"
     else -> "Nothing scheduled this week"
 }
 

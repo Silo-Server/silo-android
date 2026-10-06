@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.ui.navigation
 
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionLayout
@@ -34,7 +35,10 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
+import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
 import androidx.lifecycle.DEFAULT_ARGS_KEY
 import androidx.lifecycle.viewmodel.MutableCreationExtras
 import androidx.core.os.bundleOf
@@ -88,6 +92,7 @@ import org.siloserver.silo.android.ui.screens.profiles.CreateProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.EditProfileScreen
 import org.siloserver.silo.android.ui.screens.profiles.ProfileSelectionScreen
 import org.siloserver.silo.android.ui.screens.requests.MyRequestsScreen
+import org.siloserver.silo.android.ui.screens.requests.RequestApprovalsScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestDetailScreen
 import org.siloserver.silo.android.ui.screens.requests.RequestsScreen
 import org.siloserver.silo.android.ui.screens.search.MobileSearchMediaType
@@ -95,7 +100,12 @@ import org.siloserver.silo.android.ui.screens.search.SearchScreen
 import org.siloserver.silo.android.ui.screens.search.SearchViewModel
 import org.siloserver.silo.android.ui.screens.servers.ServerListScreen
 import org.siloserver.silo.android.ui.screens.servers.ServerSwitchDestination
+import org.siloserver.silo.android.ui.screens.settings.SettingsDownloadsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsInterfaceScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsNotificationsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsPlaybackScreen
 import org.siloserver.silo.android.ui.screens.settings.SettingsScreen
+import org.siloserver.silo.android.ui.screens.settings.SettingsSubtitlesScreen
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsPromptDialog
 import org.siloserver.silo.common.diagnostics.DiagnosticsLifecycleLogger
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsReportScreen
@@ -103,6 +113,8 @@ import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsSe
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.cards.ProvideCardPresentation
+import org.siloserver.silo.common.settings.ProvideTitleArt
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
 import org.siloserver.silo.common.player.video.VideoPlayerRouteArgs
 import org.siloserver.silo.common.settings.CardPresentationStore
@@ -135,6 +147,17 @@ internal fun currentPlayerTargetOrNull(
     return registration.target()
 }
 
+/** First-run routes, drawn transparent over the shared [MarqueeBackdrop]. */
+private val MarqueeRoutes = setOf(
+    Route.ServerSetup.route,
+    Route.ServerSetupPrefilled.ROUTE,
+    Route.Login.route,
+    Route.Setup.route,
+    Route.Signup.route,
+    Route.InviteClaim.ROUTE,
+    Route.ProfileSelection.route,
+)
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun AppNavigation(
@@ -156,6 +179,8 @@ fun AppNavigation(
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
+    val titleArtStore: TitleArtStore = koinInject()
+    val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
@@ -353,6 +378,7 @@ fun AppNavigation(
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
+    ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     // Shared-element host: lets a tapped poster morph into the item-detail
     // backdrop. The scope is published via CompositionLocal so deep descendants
     // (a poster card, the detail hero) can opt in without threading it through
@@ -366,6 +392,15 @@ fun AppNavigation(
         LocalHeroSourceHandoff provides heroSourceHandoff,
     ) {
     Box(modifier = Modifier.fillMaxSize()) {
+    // The first-run screens draw over one shared brand-light backdrop that
+    // lives outside the destinations, so it keeps moving while they fade.
+    AnimatedVisibility(
+        visible = currentEntry?.destination?.route in MarqueeRoutes,
+        enter = fadeIn(tween(PageFadeDurationMs)),
+        exit = fadeOut(tween(PageFadeDurationMs)),
+    ) {
+        MarqueeBackdrop()
+    }
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -393,6 +428,34 @@ fun AppNavigation(
                 onNavigateToLogin = { _ ->
                     navController.navigate(Route.Login.route) {
                         popUpTo(Route.ServerSetup.route) { inclusive = true }
+                    }
+                },
+                onNavigateToProfiles = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(Route.ServerSetup.route) { inclusive = true }
+                    }
+                },
+            )
+        }
+        composable(
+            route = Route.ServerSetupPrefilled.ROUTE,
+            arguments = listOf(navArgument("url") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            ServerSetupScreen(
+                prefillUrl = backStackEntry.arguments?.getString("url"),
+                onNavigateToSetup = {
+                    navController.navigate(Route.Setup.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
+                    }
+                },
+                onNavigateToLogin = { _ ->
+                    navController.navigate(Route.Login.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
+                    }
+                },
+                onNavigateToProfiles = {
+                    navController.navigate(Route.ProfileSelection.route) {
+                        popUpTo(Route.ServerSetupPrefilled.ROUTE) { inclusive = true }
                     }
                 },
             )
@@ -491,6 +554,16 @@ fun AppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("serverId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("serverUrl") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
             // Deliberately NO navDeepLink registrations. While they existed,
             // Navigation matched the Activity's launch Intent itself when the
@@ -503,78 +576,164 @@ fun AppNavigation(
             val token = backStackEntry.arguments?.getString("token")
             val code = backStackEntry.arguments?.getString("code")
             val requiredOrigin = backStackEntry.arguments?.getString("serverOrigin")
+            val requiredServerId = backStackEntry.arguments?.getString("serverId")
+            val linkServerUrl = backStackEntry.arguments?.getString("serverUrl")
             val knownServers by serverRegistry.entries.collectAsState()
             val activeServer by serverRegistry.activeEntry.collectAsState()
-            val match = remember(requiredOrigin, activeServer, knownServers) {
-                deviceLoginServerMatch(
-                    requiredOrigin = requiredOrigin,
-                    activeServerUrl = activeServer?.url,
-                    entries = knownServers,
-                )
+            val serverIdentities: org.siloserver.silo.repository.ServerIdentityRepository = koinInject()
+            // A `silo://device?server=` link names its server by deployment
+            // identity; matching it may need a probe, so it resolves async.
+            // Origin-scoped and unscoped links resolve at once, as before.
+            val match by produceState<DeviceLoginServerMatch?>(
+                initialValue = if (requiredServerId == null) {
+                    deviceLoginServerMatch(requiredOrigin, activeServer?.url, knownServers)
+                } else {
+                    null
+                },
+                requiredServerId, requiredOrigin, activeServer?.id, knownServers.map { it.id to it.url },
+            ) {
+                value = if (requiredServerId == null) {
+                    deviceLoginServerMatch(requiredOrigin, activeServer?.url, knownServers)
+                } else {
+                    deviceLoginServerMatchByIdentity(
+                        requiredServerId = requiredServerId,
+                        linkUrl = linkServerUrl,
+                        activeEntry = activeServer,
+                        entries = knownServers,
+                        identityOf = { entry -> serverIdentities.identityOf(entry) },
+                        entriesWithIdentity = serverIdentities::entriesFor,
+                    )
+                }
             }
+            /** This request again, with [pendingCode] as its code: for re-queueing it. */
+            fun pairDeviceRoute(pendingCode: String?) = Route.PairDevice(
+                token = token,
+                code = pendingCode,
+                serverOrigin = requiredOrigin,
+                serverId = requiredServerId,
+                serverUrl = linkServerUrl,
+            ).route
+            val requeueRoute = pairDeviceRoute(code)
             val pairingScope = rememberCoroutineScope()
+            val pairingDone: () -> Unit = {
+                if (!navController.popBackStack()) {
+                    navController.navigate(Route.Home.route) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
+            /**
+             * Sign in on [serverId]'s server (the active one when null), then
+             * come back to [pendingCode]: signing in ends at profile selection,
+             * whose popUpTo(0) wipes this destination, so the request is
+             * re-queued. [signOutFirst] is "Not you? Switch account": sign out
+             * of that server's account so a different one can sign in, and
+             * have its next provider sign-in ask the provider to offer
+             * another account (`prompt=select_account`); [startSignIn] (a
+             * provider that takes it) has the login screen start that
+             * sign-in by itself, as on silo-apple. Sign-in
+             * runs on the active server, so a different server becomes active.
+             * Runs in the nav host's scope: it outlives this destination.
+             */
+            fun signInThenReturn(serverId: String?, pendingCode: String?, signOutFirst: Boolean, startSignIn: Boolean = false) {
+                navScope.launch {
+                    val switchTo = serverId?.takeIf { it != serverRegistry.activeServerId.value }
+                    // Settings still waiting to sync go to the server they were
+                    // made on, before the switch.
+                    if (signOutFirst) signOutTeardown.flushPendingSettings()
+                    if (switchTo != null) authRepository.switchToServer(switchTo)
+                    val switching = switchTo != null
+                    // Same teardown as every other sign-out, which also has
+                    // the next provider sign-in offer another account.
+                    if (signOutFirst) signOutTeardown.signOut(flushFirst = false, startSignIn = startSignIn)
+                    onRequeueExternalRoute(pairDeviceRoute(pendingCode ?: code))
+                    navController.navigate(Route.Login.route) {
+                        if (switching || signOutFirst) popUpTo(0) { inclusive = true }
+                    }
+                }
+            }
             when (val resolved = match) {
-                is DeviceLoginServerMatch.SwitchRequired ->
-                    DevicePairingWrongServerScreen(
-                        serverName = resolved.entry.displayName,
-                        onSwitch = {
-                            pairingScope.launch {
-                                authRepository.switchToServer(resolved.entry.id)
-                                // Re-queue ONLY if the target server will send
-                                // the user through auth: that flow ends at
-                                // profile selection, whose popUpTo(0) wipes this
-                                // destination and the code would have to be
-                                // scanned again. Re-queueing unconditionally was
-                                // worse — with no sign-in needed the request just
-                                // waited for this screen to close and then
-                                // reopened it.
-                                val authRoute = pairingAuthRouteOrNull(
-                                    tokenManager = tokenManager,
-                                    activeEntryProfileId = serverRegistry.activeEntry.value
-                                        ?.profileId,
-                                )
-                                if (authRoute != null) {
-                                    onRequeueExternalRoute(
-                                        Route.PairDevice(
-                                            token = token,
-                                            code = code,
-                                            serverOrigin = requiredOrigin,
-                                        ).route,
+                null -> org.siloserver.silo.android.ui.screens.auth.AuthStage {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.Center),
+                    )
+                }
+                is DeviceLoginServerMatch.SwitchRequired -> {
+                    val inPlace = resolved.inPlaceApprovalServer(token, code)
+                    if (inPlace != null) {
+                        // The link's code is approved on the saved server it
+                        // names, with that server's own credentials: the phone
+                        // stays on its active server (silo-apple parity).
+                        DevicePairingScreen(
+                            token = null,
+                            code = code,
+                            serverId = inPlace.id,
+                            lockServer = true,
+                            onDone = pairingDone,
+                            onSignIn = { selectedServerId, typedCode ->
+                                signInThenReturn(selectedServerId ?: inPlace.id, typedCode, signOutFirst = false)
+                            },
+                            onSwitchAccount = { selectedServerId, typedCode, startSignIn ->
+                                signInThenReturn(selectedServerId ?: inPlace.id, typedCode, signOutFirst = true, startSignIn)
+                            },
+                        )
+                    } else {
+                        // A `token` link: only the active server's lookup takes it.
+                        DevicePairingWrongServerScreen(
+                            serverName = resolved.entry.displayName,
+                            onSwitch = {
+                                pairingScope.launch {
+                                    authRepository.switchToServer(resolved.entry.id)
+                                    // Re-queue ONLY if the target server will send
+                                    // the user through auth: that flow ends at
+                                    // profile selection, whose popUpTo(0) wipes this
+                                    // destination and the code would have to be
+                                    // scanned again. Re-queueing unconditionally was
+                                    // worse — with no sign-in needed the request just
+                                    // waited for this screen to close and then
+                                    // reopened it.
+                                    val authRoute = pairingAuthRouteOrNull(
+                                        tokenManager = tokenManager,
+                                        activeEntryProfileId = serverRegistry.activeEntry.value
+                                            ?.profileId,
                                     )
-                                    // Requeueing alone left the user sitting on
-                                    // a pairing screen for a server they are not
-                                    // signed in to; the queued request only
-                                    // fires once something else takes them
-                                    // somewhere authenticated. Send them.
-                                    navController.navigate(authRoute) {
+                                    if (authRoute != null) {
+                                        onRequeueExternalRoute(requeueRoute)
+                                        // Requeueing alone left the user sitting on
+                                        // a pairing screen for a server they are not
+                                        // signed in to; the queued request only
+                                        // fires once something else takes them
+                                        // somewhere authenticated. Send them.
+                                        navController.navigate(authRoute) {
+                                            popUpTo(0) { inclusive = true }
+                                        }
+                                    }
+                                }
+                            },
+                            onCancel = {
+                                if (!navController.popBackStack()) {
+                                    navController.navigate(Route.Home.route) {
                                         popUpTo(0) { inclusive = true }
                                     }
                                 }
-                            }
-                        },
-                        onCancel = {
-                            if (!navController.popBackStack()) {
-                                navController.navigate(Route.Home.route) {
-                                    popUpTo(0) { inclusive = true }
-                                }
-                            }
-                        },
-                    )
+                            },
+                        )
+                    }
+                }
                 is DeviceLoginServerMatch.UnknownServer ->
                     DevicePairingUnknownServerScreen(
                         origin = resolved.origin,
                         onAddServer = {
                             // Adding a server always runs setup and login, which
                             // clear this destination — so this one always
-                            // re-queues.
-                            onRequeueExternalRoute(
-                                Route.PairDevice(
-                                    token = token,
-                                    code = code,
-                                    serverOrigin = requiredOrigin,
-                                ).route,
+                            // re-queues. The link's address is filled in.
+                            onRequeueExternalRoute(requeueRoute)
+                            val linkOrigin = resolved.origin.takeIf {
+                                it.startsWith("https://", ignoreCase = true) || it.startsWith("http://", ignoreCase = true)
+                            }
+                            navController.navigate(
+                                linkOrigin?.let { Route.ServerSetupPrefilled(it).route } ?: Route.ServerSetup.route,
                             )
-                            navController.navigate(Route.ServerSetup.route)
                         },
                         onCancel = {
                             if (!navController.popBackStack()) {
@@ -587,26 +746,19 @@ fun AppNavigation(
                 DeviceLoginServerMatch.Active -> DevicePairingScreen(
                     token = token,
                     code = code,
-                    onDone = {
-                        if (!navController.popBackStack()) {
-                            navController.navigate(Route.Home.route) {
-                                popUpTo(0) { inclusive = true }
-                            }
-                        }
+                    serverId = activeServer?.id,
+                    // A link that names this server keeps the code on it.
+                    lockServer = requiredServerId != null || requiredOrigin != null,
+                    onDone = pairingDone,
+                    // "Sign in" after a 401 on the chosen server: sign in there
+                    // (it becomes active) and come back to the typed code.
+                    onSignIn = { selectedServerId, typedCode ->
+                        signInThenReturn(selectedServerId, typedCode, signOutFirst = false)
                     },
-                    onSignIn = {
-                        // Same preservation as the switch path: signing in ends
-                        // at profile selection, whose popUpTo(0) wipes this
-                        // destination, and the code would have to be scanned
-                        // again.
-                        onRequeueExternalRoute(
-                            Route.PairDevice(
-                                token = token,
-                                code = code,
-                                serverOrigin = requiredOrigin,
-                            ).route,
-                        )
-                        navController.navigate(Route.Login.route)
+                    onSwitchAccount = { selectedServerId, typedCode, startSignIn ->
+                        // "Not you? Switch account": sign out of the server the
+                        // card names, then sign in again and come back to this code.
+                        signInThenReturn(selectedServerId, typedCode, signOutFirst = true, startSignIn)
                     },
                 )
             }
@@ -665,6 +817,7 @@ fun AppNavigation(
                         overlayPrefsStore.hydrateIfNeeded()
                         cardPresentationStore.hydrateIfNeeded()
                         seekIntervalStore.hydrateIfNeeded()
+                        titleArtStore.hydrateIfNeeded()
                     }
                     // Route through the tour gate: OnboardingTourScreen checks
                     // server-side state and immediately hands off to Home when
@@ -678,6 +831,15 @@ fun AppNavigation(
                 },
                 onNavigateToEditProfile = { profileId ->
                     navController.navigate(Route.EditProfile(profileId).route)
+                },
+                onChangeServer = { navController.navigate(Route.ServerList.route) },
+                onSignOut = {
+                    navScope.launch {
+                        signOutTeardown.signOut()
+                        navController.navigate(Route.Login.route) {
+                            popUpTo(0) { inclusive = true }
+                        }
+                    }
                 },
             )
         }
@@ -778,6 +940,11 @@ fun AppNavigation(
         }
         composable(Route.Settings.route) {
             SettingsScreen(
+                onOpenInterface = { navController.navigate(Route.SettingsInterface.route) },
+                onOpenPlayback = { navController.navigate(Route.SettingsPlayback.route) },
+                onOpenSubtitles = { navController.navigate(Route.SettingsSubtitles.route) },
+                onOpenDownloads = { navController.navigate(Route.SettingsDownloads.route) },
+                onOpenNotifications = { navController.navigate(Route.SettingsNotifications.route) },
                 onNavigateToServers = {
                     navController.navigate(Route.ServerList.route)
                 },
@@ -792,6 +959,7 @@ fun AppNavigation(
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
                     seekIntervalStore.clear()
+                    titleArtStore.clear()
                 },
                 onNavigateToWatchlist = { navController.navigate(Route.Watchlist.route) },
                 onNavigateToFavorites = { navController.navigate(Route.Favorites.route) },
@@ -805,7 +973,39 @@ fun AppNavigation(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                showTopBar = true,
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        // Settings sub-pages share the overview's view model, so the value a
+        // page changes is the value its overview row shows on the way back.
+        composable(Route.SettingsInterface.route) { entry ->
+            SettingsInterfaceScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsPlayback.route) { entry ->
+            SettingsPlaybackScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsSubtitles.route) { entry ->
+            SettingsSubtitlesScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsDownloads.route) { entry ->
+            SettingsDownloadsScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
+                downloadsViewModel = koinViewModel(),
+                onBackClick = { navController.popBackStack() },
+            )
+        }
+        composable(Route.SettingsNotifications.route) { entry ->
+            SettingsNotificationsScreen(
+                viewModel = koinViewModel(viewModelStoreOwner = settingsOwner(navController, entry)),
                 onBackClick = { navController.popBackStack() },
             )
         }
@@ -844,8 +1044,11 @@ fun AppNavigation(
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
-                onRequestMediaClick = { item ->
-                    navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
+                onPersonClick = { personId ->
+                    navController.navigate(Route.PersonDetail(personId).route)
+                },
+                onRequestMediaClick = { mediaType, tmdbId ->
+                    navController.navigate(Route.RequestDetail(mediaType, tmdbId).route)
                 },
                 onRequestLibraryItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
@@ -859,26 +1062,34 @@ fun AppNavigation(
         }
 
         // ---- Requests ----
+        val openRequestDetail: (String, Int) -> Unit = { mediaType, tmdbId ->
+            navController.navigate(Route.RequestDetail(mediaType, tmdbId).route)
+        }
+        val openRequestLibraryItem: (String) -> Unit = { contentId ->
+            navController.navigate(Route.ItemDetail(contentId).route)
+        }
         composable(Route.Requests.route) {
             RequestsScreen(
                 onBackClick = { navController.popBackStack() },
                 onMyRequestsClick = { navController.navigate(Route.MyRequests.route) },
-                onMediaClick = { item ->
-                    navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
-                },
-                onLibraryItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
-                },
+                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(Route.MyRequests.route) {
             MyRequestsScreen(
                 onBackClick = { navController.popBackStack() },
-                onRequestClick = { request ->
-                    request.libraryContentId?.takeIf { it.isNotBlank() }?.let { contentId ->
-                        navController.navigate(Route.ItemDetail(contentId).route)
-                    } ?: navController.navigate(Route.RequestDetail(request.mediaType, request.tmdbId).route)
-                },
+                onApprovalsClick = { navController.navigate(Route.RequestApprovals.route) },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
+            )
+        }
+        composable(Route.RequestApprovals.route) {
+            RequestApprovalsScreen(
+                onBackClick = { navController.popBackStack() },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
         composable(
@@ -894,12 +1105,8 @@ fun AppNavigation(
                 mediaType = mediaType,
                 tmdbId = tmdbId,
                 onBackClick = { navController.popBackStack() },
-                onMediaClick = { item ->
-                    navController.navigate(Route.RequestDetail(item.mediaType, item.tmdbId).route)
-                },
-                onLibraryItemClick = { contentId ->
-                    navController.navigate(Route.ItemDetail(contentId).route)
-                },
+                onRequestDetailClick = openRequestDetail,
+                onLibraryItemClick = openRequestLibraryItem,
             )
         }
 
@@ -1440,6 +1647,29 @@ fun AppNavigation(
         }
 
         WatchPartySoloGuardDialog(externalSoloGuard)
+
+        // Nearby-TV offer, app-wide once signed in (iOS parity). Not over the
+        // sign-in chain, where the phone has no session to approve with, nor
+        // over playback or reading.
+        val companionHiddenRoutes = setOf(
+            Route.Login.route,
+            Route.ServerSetup.route,
+            Route.ServerSetupPrefilled.ROUTE,
+            Route.Setup.route,
+            Route.Signup.route,
+            Route.ProfileSelection.route,
+            Route.CreateProfile.route,
+            Route.InviteClaim.ROUTE,
+            Route.PairDevice.ROUTE,
+            Route.Player.ROUTE,
+            Route.AudiobookPlayer.ROUTE,
+            Route.BookReader.ROUTE,
+            Route.SiloCastRemote.route,
+        )
+        org.siloserver.silo.android.ui.screens.pairing.CompanionPairingHost(
+            enabled = currentRoute != null && currentRoute !in companionHiddenRoutes,
+        )
+    }
     }
     }
     }
@@ -1487,3 +1717,14 @@ private suspend fun pairingAuthRouteOrNull(
     val profileId = activeEntryProfileId ?: tokenManager.getProfileId()
     return if (profileId.isNullOrBlank()) Route.ProfileSelection.route else null
 }
+
+/**
+ * The Settings overview's back-stack entry, which owns the SettingsViewModel
+ * its sub-pages share. Falls back to the page's own entry should the overview
+ * ever be missing from the stack, so the page still renders.
+ */
+@Composable
+private fun settingsOwner(navController: NavHostController, entry: NavBackStackEntry): ViewModelStoreOwner =
+    remember(entry) {
+        runCatching { navController.getBackStackEntry(Route.Settings.route) }.getOrNull() ?: entry
+    }

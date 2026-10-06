@@ -98,7 +98,7 @@ class DeviceLoginRepositoryTest {
     }
 
     @Test
-    fun `start failure transitions to Failed(StartFailed)`() = runTest(UnconfinedTestDispatcher()) {
+    fun `start 5xx transitions to Failed(Unreachable) without raw server text`() = runTest(UnconfinedTestDispatcher()) {
         val api = object : DeviceLoginApi {
             override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
                 ApiResult.Error(code = 500, error = "", message = "boom")
@@ -115,7 +115,8 @@ class DeviceLoginRepositoryTest {
         repo.begin("d", "p")
         val state = repo.state.value
         assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(state)
-        assertEquals(DeviceLoginRepository.FailureReason.StartFailed, state.reason)
+        assertEquals(DeviceLoginRepository.FailureReason.Unreachable, state.reason)
+        assertEquals(null, state.message)
     }
 
     @Test
@@ -236,7 +237,7 @@ class DeviceLoginRepositoryTest {
     }
 
     @Test
-    fun `network error on start transitions to Failed(StartFailed)`() = runTest(UnconfinedTestDispatcher()) {
+    fun `network error on start transitions to Failed(Unreachable)`() = runTest(UnconfinedTestDispatcher()) {
         val api = object : DeviceLoginApi {
             override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
                 ApiResult.NetworkError(exception = RuntimeException("offline"))
@@ -252,6 +253,97 @@ class DeviceLoginRepositoryTest {
         repo.begin("d", "p")
         val state = repo.state.value
         assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(state)
-        assertEquals(DeviceLoginRepository.FailureReason.StartFailed, state.reason)
+        assertEquals(DeviceLoginRepository.FailureReason.Unreachable, state.reason)
+    }
+
+    @Test
+    fun `persistent network errors stop at the local deadline with backoff`() = runTest {
+        val pollTimes = mutableListOf<Long>()
+        val api = object : DeviceLoginApi {
+            override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
+                ApiResult.Success(session().copy(expiresIn = 120, interval = 1))
+            override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> {
+                pollTimes += testScheduler.currentTime
+                return ApiResult.NetworkError(RuntimeException("offline"))
+            }
+            override suspend fun lookupDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun approveDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun denyDeviceLogin(token: String?, code: String?) = error("unreachable")
+        }
+        val repo = DeviceLoginRepository(api, clock = DeviceLoginClock { testScheduler.currentTime })
+        repo.begin("d", "p")
+        val state = repo.state.value
+        assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(state)
+        assertEquals(DeviceLoginRepository.FailureReason.Expired, state.reason)
+        assertTrue(testScheduler.currentTime <= 120_000L, "must not poll past the local deadline")
+        val gaps = pollTimes.zipWithNext { a, b -> b - a }
+        assertEquals(listOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L), gaps.take(6))
+    }
+
+    @Test
+    fun `canceled status ends the attempt`() = runTest(UnconfinedTestDispatcher()) {
+        var polls = 0
+        val api = object : DeviceLoginApi {
+            override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
+                ApiResult.Success(session())
+            override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> {
+                polls++
+                return ApiResult.Success(
+                    if (polls == 1) DeviceLoginPollResponse(status = "pending", opened = true)
+                    else DeviceLoginPollResponse(status = "canceled"),
+                )
+            }
+            override suspend fun lookupDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun approveDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun denyDeviceLogin(token: String?, code: String?) = error("unreachable")
+        }
+        val repo = DeviceLoginRepository(api)
+        repo.begin("d", "p")
+        val state = repo.state.value
+        assertIs<DeviceLoginRepository.DeviceLoginState.Failed>(state)
+        assertEquals(DeviceLoginRepository.FailureReason.Canceled, state.reason)
+    }
+
+    @Test
+    fun `a pending answer's expires_at keeps the attempt alive past the start answer's expiry`() = runTest {
+        val api = object : DeviceLoginApi {
+            override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
+                ApiResult.Success(session().copy(expiresIn = 60, expiresAt = "2026-01-01T00:01:00Z", interval = 5))
+            override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> =
+                ApiResult.Success(
+                    when {
+                        testScheduler.currentTime >= 200_000L ->
+                            DeviceLoginPollResponse(status = "approved", accessToken = "at", refreshToken = "rt")
+                        // An approver's lookup extended the request to 00:05:00.
+                        else -> DeviceLoginPollResponse(status = "pending", opened = true, expiresAt = "2026-01-01T00:05:00Z")
+                    },
+                )
+            override suspend fun lookupDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun approveDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun denyDeviceLogin(token: String?, code: String?) = error("unreachable")
+        }
+        val repo = DeviceLoginRepository(api, clock = DeviceLoginClock { testScheduler.currentTime })
+        repo.begin("d", "p")
+        assertIs<DeviceLoginRepository.DeviceLoginState.Approved>(repo.state.value)
+    }
+
+    @Test
+    fun `the attempt polls once more at its deadline before giving up`() = runTest {
+        val pollTimes = mutableListOf<Long>()
+        val api = object : DeviceLoginApi {
+            override suspend fun startDeviceLogin(deviceName: String?, devicePlatform: String?) =
+                ApiResult.Success(session().copy(expiresIn = 12, interval = 5))
+            override suspend fun pollDeviceLogin(deviceCode: String): ApiResult<DeviceLoginPollResponse> {
+                pollTimes += testScheduler.currentTime
+                return ApiResult.Success(DeviceLoginPollResponse(status = "pending"))
+            }
+            override suspend fun lookupDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun approveDeviceLogin(token: String?, code: String?) = error("unreachable")
+            override suspend fun denyDeviceLogin(token: String?, code: String?) = error("unreachable")
+        }
+        val repo = DeviceLoginRepository(api, clock = DeviceLoginClock { testScheduler.currentTime })
+        repo.begin("d", "p")
+        assertEquals(listOf(0L, 5_000L, 10_000L, 12_000L), pollTimes)
+        assertEquals(DeviceLoginRepository.FailureReason.Expired, (repo.state.value as DeviceLoginRepository.DeviceLoginState.Failed).reason)
     }
 }

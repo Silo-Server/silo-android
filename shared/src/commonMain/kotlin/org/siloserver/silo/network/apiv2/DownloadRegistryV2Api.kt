@@ -5,6 +5,8 @@ import io.ktor.client.request.*
 import io.ktor.http.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.siloserver.silo.model.download.*
 import org.siloserver.silo.network.*
 
@@ -48,7 +50,9 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
             client.request(path) {
                 this.method = method; authScope(owner!!); requireSiloAuth()
                 // The existing auth plugin attaches the installation's device metadata.
-                if (method != HttpMethod.Get) singleAttempt()
+                // A status event retains its revision and timestamp, so replaying
+                // PATCH after an auth refresh is safe. DELETE remains one attempt.
+                if (method == HttpMethod.Delete) singleAttempt()
                 configure()
             }
         }) { it }
@@ -92,5 +96,30 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
     suspend fun delete(id: String, scope: AuthScopeSnapshot): ApiResult<Unit> {
         val device = devices.current()?.id ?: return identityChanged()
         return exchange(scope, device, HttpMethod.Delete, "/api/v2/downloads/${id.encodeURLPathPart()}")
+    }
+
+    /**
+     * `PATCH /downloads/{id}`: one revision-bound local status event. [updatedAt] is when the
+     * local state changed, not when this is sent; a retry resends the same event, which the
+     * server acknowledges without changing the entry. A moved revision answers `409`.
+     */
+    suspend fun reportStatus(id: String, event: DownloadStatusEvent, scope: AuthScopeSnapshot): ApiResult<DownloadRecord> {
+        val device = devices.current()?.id?.takeIf { it.isNotBlank() } ?: return identityChanged()
+        if (id.isBlank() || event.revision < 1 || event.updatedAt.isBlank() ||
+            event.status != DownloadStatus.Downloading.wire && event.status != DownloadStatus.Completed.wire) return invalid()
+        val result = exchange<DownloadEntryV2>(scope, device, HttpMethod.Patch, "/api/v2/downloads/${id.encodeURLPathPart()}") {
+            contentType(ContentType.Application.Json)
+            setBody(buildJsonObject {
+                put("status", event.status); put("updated_at", event.updatedAt); put("revision", event.revision)
+            })
+        }
+        return when (result) {
+            is ApiResult.Success -> {
+                val row = try { result.data.project(device) } catch (_: IllegalArgumentException) { return invalid() }
+                if (row.id == id) ApiResult.Success(row) else invalid()
+            }
+            is ApiResult.Error -> result
+            is ApiResult.NetworkError -> result
+        }
     }
 }

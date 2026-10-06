@@ -19,6 +19,7 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.PushRegistrationRepository
 import org.siloserver.silo.repository.RecommendationRepository
+import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.SettingsRepository
@@ -60,6 +61,8 @@ val repositoryModule = module {
     }
     single { OnboardingRepository(get()) }
     single { DeviceLoginRepository(get()) }
+    single { org.siloserver.silo.repository.ServerIdentityRepository(get(), get()) }
+    single { org.siloserver.silo.repository.ExternalSignInRepository(get()) }
     single {
         CatalogRepository(
             catalogApi = get(),
@@ -93,7 +96,16 @@ val repositoryModule = module {
         )
     }
     single { RecommendationRepository(get()) }
-    single { RequestsRepository(get()) }
+    single {
+        RequestsRepository(
+            api = get(),
+            cache = RequestDetailCache(
+                prefetchScope = kotlinx.coroutines.CoroutineScope(
+                    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+                ),
+            ),
+        )
+    }
     single { RequestsFeatureStore(get()) }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
@@ -106,7 +118,7 @@ val repositoryModule = module {
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
     single { EbookReaderRepository(get(), get()) }
-    single { SubtitlesRepository(get(), get()) }
+    single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }
 
     // REST-backed inbox state plus a realtime factory that builds the default
