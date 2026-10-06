@@ -388,6 +388,33 @@ class LibrariesViewModelTest {
         }
     }
 
+    @Test
+    fun libraryListRecheckConfirmsAShrinkBeforePublishingIt() = runTest {
+        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = fixture.viewModel()
+        val store = ViewModelStore().also { it.put("libraries", viewModel) }
+        try {
+            fixture.awaitRequest("libraries")
+            viewModel.uiState.first { !it.isLoadingLibraries && it.libraries.size == 2 }
+
+            // One transient short response: the confirming read returns the
+            // full list again, so the switcher keeps both libraries.
+            fixture.librariesBodyQueue += """
+                {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
+            """.trimIndent()
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("libraries")
+            val state = viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(1, 2), state.libraries.map { it.id })
+        } finally {
+            store.clear()
+            Dispatchers.resetMain()
+            fixture.close()
+        }
+    }
+
     private suspend fun LibrariesViewModel.onlyActiveRequest(): Job = withTimeout(5_000) {
         while (true) {
             val activeRequests = viewModelScope.coroutineContext[Job]
@@ -430,6 +457,8 @@ class LibrariesViewModelTest {
         var owner = AuthScopeSnapshot("s", "p", "https://example.invalid", "pin", identityGeneration = 1)
         /** Overrides the immediate two-library list; [librariesStatus] fails it instead. */
         @Volatile var librariesBody: String? = null
+        /** One-shot bodies served, in order, ahead of [librariesBody]. */
+        val librariesBodyQueue = java.util.concurrent.ConcurrentLinkedQueue<String>()
         @Volatile var librariesStatus: HttpStatusCode = HttpStatusCode.OK
         private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         private val requests = Channel<String>(Channel.UNLIMITED)
@@ -511,7 +540,7 @@ class LibrariesViewModelTest {
         }
 
         private fun immediateBody(key: String): String = when {
-            key == "libraries" -> librariesBody ?: """
+            key == "libraries" -> librariesBodyQueue.poll() ?: librariesBody ?: """
                 {"items":[
                   {"id":"1","name":"First","type":"movies","sort_order":0},
                   {"id":"2","name":"Second","type":"movies","sort_order":1}

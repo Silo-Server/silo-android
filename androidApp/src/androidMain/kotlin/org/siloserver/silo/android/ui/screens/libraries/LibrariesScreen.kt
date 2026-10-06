@@ -282,7 +282,13 @@ class LibrariesViewModel(
             )
         }
 
-        val result = personalDataRepository.listUserLibraries()
+        var result = personalDataRepository.listUserLibraries()
+        if (!reload && result is ApiResult.Success && result.dropsKnownLibraries()) {
+            // A short list is the failure this re-check exists to recover
+            // from, so confirm a shrink with a second read before publishing
+            // it. A real removal (revoked access, deleted library) repeats.
+            result = personalDataRepository.listUserLibraries()
+        }
         if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
             // A transient failure on a background re-check keeps the list
             // on screen. Auth failures fall through and clear it.
@@ -343,6 +349,11 @@ class LibrariesViewModel(
                 }
             }
         }
+    }
+
+    private fun ApiResult.Success<List<UserLibrary>>.dropsKnownLibraries(): Boolean {
+        val returnedIds = data.mapTo(mutableSetOf()) { it.id }
+        return _uiState.value.libraries.any { it.id !in returnedIds }
     }
 
     fun selectLibrary(libraryId: Int) {
