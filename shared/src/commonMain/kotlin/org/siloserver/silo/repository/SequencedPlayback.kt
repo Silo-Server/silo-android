@@ -430,7 +430,7 @@ class SequencedPlayback(
         val entry = load().find { it.sessionId == sessionId } ?: return@withLock null
         stopEntry(entry)
     }
-    private suspend fun stopEntry(original: PlaybackJournalEntry): ApiResult<Unit> {
+    private suspend fun stopEntry(original: PlaybackJournalEntry, attempts: Int = 3): ApiResult<Unit> {
         if (original.terminal) return ApiResult.Success(Unit)
         var entry = original
         if (entry.stop == null) {
@@ -440,7 +440,7 @@ class SequencedPlayback(
         }
         fun stopPending() = failure("identity_changed", "Playback authority changed; stop remains pending.")
         val captured = scope(entry) ?: return stopPending()
-        repeat(3) { attempt ->
+        repeat(attempts) { attempt ->
             if (scope(entry) == null) return stopPending()
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
                 is ApiResult.Success -> {
@@ -454,7 +454,7 @@ class SequencedPlayback(
                 } else if (result.code != 503) return result
                 is ApiResult.NetworkError -> Unit
             }
-            if (attempt < 2) delay(250L * (attempt + 1))
+            if (attempt < attempts - 1) delay(250L * (attempt + 1))
         }
         return failure("stop_pending", "Playback stop is pending. It is retried before the next playback starts.")
     }
@@ -464,6 +464,9 @@ class SequencedPlayback(
      * replan whose outcome was lost, or a session from before a restart. Attempts recorded
      * under another address, account or installation of this server can never be acted on
      * again, so they are dropped; the server expires their sessions.
+     *
+     * This runs on every start, so it is bounded: each stop gets one attempt, and the first
+     * that fails ends this pass. The rest wait for the next start rather than delay this one.
      */
     private suspend fun settleDurable(live: DurableLoginAuthority, accountId: String, installationId: String) {
         for (entry in load().filter { it.needsRecovery() && it.loginId == live.loginId &&
@@ -476,7 +479,7 @@ class SequencedPlayback(
             val oldScope = scopes[entry.attemptId]
             if (oldScope != null && !oldScope.isSameIdentityAs(live.scope)) continue
             scopes[entry.attemptId] = live.scope
-            settle(entry)
+            if (!settle(entry)) return
         }
     }
 
@@ -484,7 +487,7 @@ class SequencedPlayback(
     private suspend fun settleTemporary(current: AuthScopeSnapshot, loginId: String) {
         for (entry in load().filter { it.needsRecovery() && it.loginId == loginId &&
             it.serverId == current.serverId && it.profileId == current.profileId }) {
-            if (scope(entry) != null) settle(entry)
+            if (scope(entry) != null && !settle(entry)) return
         }
     }
 
@@ -492,10 +495,14 @@ class SequencedPlayback(
      * Stops [entry]'s session. A start whose reply was lost has no session id to stop, and
      * replaying it would open a session the server may never have created, so it is dropped
      * and left for the server to expire. A stop that fails stays journaled for next time.
+     * Returns whether [entry] is settled.
      */
-    private suspend fun settle(entry: PlaybackJournalEntry) {
-        if (entry.sessionId == null) save(entry.copy(terminal = true, progress = null))
-        else stopEntry(entry)
+    private suspend fun settle(entry: PlaybackJournalEntry): Boolean {
+        if (entry.sessionId == null) {
+            save(entry.copy(terminal = true, progress = null))
+            return true
+        }
+        return stopEntry(entry, attempts = 1) is ApiResult.Success
     }
 }
 

@@ -83,19 +83,21 @@ class SequencedPlaybackTest {
         } finally { c.close() }
     }
 
-    @Test fun nextStartRetriesLostStopWithExactBody() = runTest {
+    @Test fun laterStartsRetryALostStopWithExactBody() = runTest {
         val store = Store().apply { entries = listOf(entry()) }
         val deletes = mutableListOf<String>()
+        var starts = 0
         val c = client { req ->
             when (req.url.encodedPath) {
                 "/api/v2/playback/capabilities" -> reply(caps())
                 "/api/v2/account/me" -> reply(account)
-                "/api/v2/playback/start" -> reply(decision("session-2"), HttpStatusCode.Created)
+                "/api/v2/playback/start" -> { starts++; reply(decision("session-${starts + 1}"), HttpStatusCode.Created) }
                 "/api/v2/playback/session-1" -> {
                     assertEquals(HttpMethod.Delete, req.method)
                     assertTrue(req.attributes[SingleAttemptAttributeKey])
                     deletes += req.body.toByteArray().decodeToString()
-                    assertEquals(store.entries.single().stop, SiloJson.decodeFromString<PlaybackStopV2>(deletes.last()))
+                    assertEquals(store.entries.single { it.attemptId == "attempt-1" }.stop,
+                        SiloJson.decodeFromString<PlaybackStopV2>(deletes.last()))
                     if (deletes.size == 1) throw IllegalStateException("lost stop reply")
                     reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
                 }
@@ -105,14 +107,17 @@ class SequencedPlaybackTest {
         try {
             val identity = Identity()
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            // One attempt per start: the lost reply leaves the stop for the next start.
             assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
+            assertEquals(1, deletes.size); assertFalse(store.entries.single { it.attemptId == "attempt-1" }.terminal)
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-3")))
             assertEquals(2, deletes.size); assertEquals(deletes.first(), deletes.last())
             assertTrue(store.entries.single { it.attemptId == "attempt-1" }.terminal)
         } finally { c.close() }
     }
 
     @Test fun unavailableStopNeverBlocksStartAndIdentityReplacementCannotReplay() = runTest {
-        val store = Store().apply { entries = listOf(entry()) }
+        val store = Store().apply { entries = listOf(entry(), entry().copy(attemptId = "attempt-0", sessionId = "session-0")) }
         val identity = Identity()
         var deletes = 0; var starts = 0
         val c = client { req -> when (req.url.encodedPath) {
@@ -124,13 +129,15 @@ class SequencedPlaybackTest {
         fun earlier() = store.entries.single { it.attemptId == "attempt-1" }
         try {
             val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { stopId }
+            // The first failed stop ends the pass: one request, and the second stop waits.
             assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request().copy(playbackAttemptId = "attempt-2")))
-            assertEquals(3, deletes); assertFalse(earlier().terminal)
+            assertEquals(1, deletes); assertFalse(earlier().terminal)
+            assertNull(store.entries.single { it.attemptId == "attempt-0" }.stop)
             val body = earlier().stop
             identity.login = "login-2"
             val restarted = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, store) { error("Must retain StopID") }
             assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(restarted.start(request().copy(playbackAttemptId = "attempt-3")))
-            assertEquals(3, deletes); assertEquals(body, earlier().stop); assertEquals(2, starts)
+            assertEquals(1, deletes); assertEquals(body, earlier().stop); assertEquals(2, starts)
         } finally { c.close() }
     }
 

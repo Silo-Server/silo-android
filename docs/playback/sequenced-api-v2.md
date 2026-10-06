@@ -34,8 +34,10 @@ Stops persist one UUID and body before dispatch. Only a matching HTTP 200 stoppe
 or replayed receipt confirms completion. Network errors and HTTP 503 responses
 keep the stop in the journal after the bounded retry sequence, and playback
 moves on regardless. The next start for the same login, server and profile
-first resends any retained stop, then starts whether or not that succeeded. It
-never waits on earlier sessions: the server allows a new session while an older
+first resends any retained stop, then starts whether or not that succeeded.
+Each start makes one attempt per retained stop and ends that pass at the first
+failure, so a server that is not answering stops cannot hold a start for longer
+than one request. It never waits on earlier sessions: the server allows a new session while an older
 one is still open and expires a session nobody stops. It does not stop a
 currently adopted in-process player. Identity changes fence pending requests;
 stored requests grant no authority.
