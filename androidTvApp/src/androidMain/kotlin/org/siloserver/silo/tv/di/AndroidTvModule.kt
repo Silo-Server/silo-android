@@ -370,6 +370,7 @@ val androidTvModule = module {
         )
     }
     single {
+        val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
@@ -378,6 +379,7 @@ val androidTvModule = module {
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
             },
+            awaitPlaybackTeardown = playbackLifecycle::awaitPendingStop,
             inWatchParty = {
                 get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
             },

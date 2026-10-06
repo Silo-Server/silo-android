@@ -713,7 +713,12 @@ class PlaybackSessionLifecycle(
         job.start()
     }
 
-    private suspend fun awaitPendingStop() {
+    /**
+     * Waits for a queued [stopAsync] teardown (final progress + stopSession)
+     * to finish. Callers that revoke the credentials those requests ride on
+     * must await this first, or the teardown lands as a 401.
+     */
+    suspend fun awaitPendingStop() {
         val job = synchronized(pendingStopLock) { pendingStopJob } ?: return
         job.join()
     }
