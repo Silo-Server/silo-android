@@ -432,6 +432,17 @@ class LibrariesViewModelTest {
             val afterFailedConfirm = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2), afterFailedConfirm.libraries.map { it.id })
             assertEquals(listOf(1, 2), cache.libraries?.map { it.id })
+
+            // A full refresh (the Show Audiobooks toggle) confirms a shrink too.
+            fixture.librariesBodyQueue += """
+                {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
+            """.trimIndent()
+            viewModel.refresh()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("libraries")
+            val afterRefresh = viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(1, 2), afterRefresh.libraries.map { it.id })
+            assertEquals(listOf(1, 2), cache.libraries?.map { it.id })
         } finally {
             store.clear()
             Dispatchers.resetMain()

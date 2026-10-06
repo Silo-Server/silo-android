@@ -226,10 +226,11 @@ class LibrariesViewModel(
     // request made mid-load queues one follow-up pass.
     private var librariesJob: Job? = null
     private var librariesRecheckQueued = false
-    // Every library the server last listed, hidden audiobook libraries
-    // included: the baseline a re-check confirms a shrink against, so a
-    // partial list can't drop hidden libraries from the offline cache.
-    private var serverLibraryIds: Set<Int> = emptySet()
+    // The last library list the server confirmed, hidden audiobook
+    // libraries included. Later loads confirm a shrink against it, so a
+    // partial list can't hide libraries or reach the offline cache, and a
+    // transient failure re-shows it instead of the cache.
+    private var serverLibraries: List<UserLibrary> = emptyList()
     private var pendingContentReload = false
     private val pageSize = 42
 
@@ -286,23 +287,22 @@ class LibrariesViewModel(
             )
         }
 
-        // A background re-check confirms a shrinking list before trusting it
-        // (a short list is the failure it exists to recover from); a real
-        // removal (revoked access, deleted library) repeats and applies.
-        val result = if (reload) {
+        // Once a list is known, every load confirms a shrink before trusting
+        // it (a short list is the failure this screen recovers from); a real
+        // removal (revoked access, deleted library) repeats and applies. Only
+        // the first load may fall back to the offline cache.
+        val known = serverLibraries
+        val fetched = if (reload && known.isEmpty()) {
             personalDataRepository.listUserLibraries()
         } else {
-            personalDataRepository.recheckUserLibraries(serverLibraryIds)
+            personalDataRepository.recheckUserLibraries(known.mapTo(mutableSetOf()) { it.id })
         }
-        if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
-            // A transient failure on a background re-check keeps the list
-            // on screen. Auth failures fall through and clear it.
-            _uiState.update { it.copy(isLoadingLibraries = false) }
-            return
-        }
+        // A transient failure re-shows the known list, re-filtered so a Show
+        // Audiobooks change still applies. Auth failures fall through and clear it.
+        val result = if (fetched.canServeCache() && known.isNotEmpty()) ApiResult.Success(known) else fetched
         when (result) {
             is ApiResult.Success -> {
-                serverLibraryIds = result.data.mapTo(mutableSetOf()) { it.id }
+                serverLibraries = result.data
                 // Libraries is the unified hub for every library type
                 // (video / audio / reading). The selector lists them all
                 // and ItemDetail routes each item to the right player or
@@ -337,7 +337,7 @@ class LibrariesViewModel(
             is ApiResult.Error -> {
                 // Revoked access drops the baseline; a transient failure keeps
                 // it, since hidden libraries can outlive an empty screen.
-                if (!result.canServeCache()) serverLibraryIds = emptySet()
+                if (!result.canServeCache()) serverLibraries = emptyList()
                 _uiState.update {
                     it.copy(
                         isLoadingLibraries = false,
