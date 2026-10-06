@@ -12,12 +12,13 @@ import io.ktor.client.engine.okhttp.*
  * the process), and per-client dispatchers keep API, diagnostics, and image
  * traffic from queueing behind each other.
  */
-actual fun createPlatformHttpClient(): HttpClient {
+actual fun createPlatformHttpClient(retryOnConnectionFailure: Boolean): HttpClient {
     return HttpClient(OkHttp) {
         engine {
             config {
                 dispatcher(SiloOkHttp.newDispatcher())
                 connectionPool(SiloOkHttp.connectionPool)
+                retryOnConnectionFailure(retryOnConnectionFailure)
             }
         }
     }

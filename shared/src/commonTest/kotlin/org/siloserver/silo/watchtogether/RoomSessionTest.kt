@@ -45,6 +45,7 @@ class RoomSessionTest {
         session.enter("room-a")
         runCurrent()
 
+        repository.membership = 2L
         val replacement = launch { session.enter("room-b") }
         runCurrent()
         assertEquals(listOf("room-a"), repository.started)
@@ -64,6 +65,8 @@ class RoomSessionTest {
         val session = RoomSession(repository, backgroundScope, DefaultIdentityTransitionBarrier())
 
         val first = launch { session.enter("room-a") }
+        runCurrent()
+        repository.membership = 2L
         val second = launch { session.enter("room-b") }
         first.join()
         second.join()
@@ -115,6 +118,36 @@ class RoomSessionTest {
         runCurrent()
 
         assertEquals(1, repository.resetCount)
+        assertTrue(!session.isActive())
+    }
+
+    @Test
+    fun `explicit rejoin of the same room replaces the obsolete connection`() = runTest {
+        val repository = FakeRoomSessionRepository()
+        val session = RoomSession(repository, backgroundScope, DefaultIdentityTransitionBarrier())
+        session.adopt("room-a").join()
+        runCurrent()
+
+        // A fresh join of the same room installs a new membership.
+        repository.membership = 2L
+        session.adopt("room-a").join()
+        runCurrent()
+
+        assertEquals(listOf("room-a", "room-a"), repository.started)
+        assertEquals(listOf("room-a"), repository.canceling)
+        assertTrue(session.isActive())
+        session.leave()
+    }
+
+    @Test
+    fun `enter without a live membership opens no socket`() = runTest {
+        val repository = FakeRoomSessionRepository().apply { membership = null }
+        val session = RoomSession(repository, backgroundScope, DefaultIdentityTransitionBarrier())
+
+        session.enter("room-a")
+        runCurrent()
+
+        assertTrue(repository.started.isEmpty())
         assertTrue(!session.isActive())
     }
 
@@ -220,6 +253,10 @@ class RoomSessionTest {
         val canceling = mutableListOf<String>()
         val finalizerGates = mutableMapOf<String, CompletableDeferred<Unit>>()
         var resetCount = 0
+        /** The live membership; a join bumps it. Null means no membership. */
+        var membership: Long? = 1L
+
+        override suspend fun membershipGeneration(): Long? = membership
 
         override suspend fun connect(roomId: String) {
             started += roomId

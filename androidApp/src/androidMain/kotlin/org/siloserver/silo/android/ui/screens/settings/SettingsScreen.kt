@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CollectionsBookmark
@@ -111,6 +112,9 @@ fun SettingsScreen(
     // The large title scrolls away and the bar takes the title over, the way
     // a large navigation title collapses to an inline one.
     val titleScrolledAway by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    val watchPartyExperiment: org.siloserver.silo.common.watchparty.WatchPartyExperiment =
+        org.koin.compose.koinInject()
+    val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
 
     LaunchedEffect(state.loggedOut) {
         if (state.loggedOut) {
@@ -151,7 +155,9 @@ fun SettingsScreen(
     // External sign-in (OIDC/LDAP): shown only on servers that have it.
     val matchesSignIn = signInState.visible &&
         search.matches("sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso")
-    val matchesExperimental = search.matches("experimental", "beta", "testing", "audiobooks", "navigation")
+    val matchesExperimental = search.matches(
+        "experimental", "beta", "testing", "audiobooks", "navigation", "watch party", "party",
+    )
     val matchesAbout = search.matches("about", "version", versionLabel, "privacy", "policy", "information")
     val matchesSignOut = search.matches("sign out", "account")
 
@@ -370,6 +376,14 @@ fun SettingsScreen(
                             icon = Icons.AutoMirrored.Filled.MenuBook,
                             checked = state.showAudiobooks,
                             onCheckedChange = viewModel::setShowAudiobooks,
+                        )
+                        // Device-local; never synced with the server's settings.
+                        SettingsSwitchRow(
+                            label = "Watch Party",
+                            description = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
+                            icon = Icons.Filled.Groups,
+                            checked = watchPartyEnabled,
+                            onCheckedChange = watchPartyExperiment::setEnabled,
                         )
                     }
                 }

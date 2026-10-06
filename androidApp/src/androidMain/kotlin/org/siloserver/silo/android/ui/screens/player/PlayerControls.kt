@@ -107,9 +107,11 @@ fun PlayerControls(
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
     playbackSpeed: Double = 1.0,
+    // False in a Watch Party, where speed is a session-only 1x.
+    playbackSpeedEnabled: Boolean = true,
     nextEpisode: PlayerViewModel.NextEpisodeInfo? = null,
     brightnessFraction: Float = 0.5f,
-    // Watch Together guest gate: when false the scrubber + skip buttons are
+    // Watch Party guest gate: when false the scrubber + skip buttons are
     // inert and dimmed (seek is host-only, so disabled for all guests).
     // Defaults true for solo playback.
     seekEnabled: Boolean = true,
@@ -246,6 +248,7 @@ fun PlayerControls(
                     progressBar()
                     TabletopUtilityRow(
                         playbackSpeed = playbackSpeed,
+                        playbackSpeedEnabled = playbackSpeedEnabled,
                         nextEpisode = nextEpisode,
                         compact = !showFullUtilityRow,
                         brightnessFraction = brightnessFraction,
@@ -447,6 +450,7 @@ private fun PlayerToolbarTitle(
 @Composable
 private fun TabletopUtilityRow(
     playbackSpeed: Double,
+    playbackSpeedEnabled: Boolean,
     nextEpisode: PlayerViewModel.NextEpisodeInfo?,
     compact: Boolean,
     brightnessFraction: Float,
@@ -514,11 +518,13 @@ private fun TabletopUtilityRow(
             modifier = Modifier.weight(1f),
         )
         brightnessControl(Modifier.weight(1f))
-        TabletopActionButton(
-            icon = Icons.Default.Speed,
-            label = playbackSpeedLabel(playbackSpeed),
-            onClick = { onSetPlaybackSpeed(nextTabletopPlaybackSpeed(playbackSpeed)) },
-        )
+        if (playbackSpeedEnabled) {
+            TabletopActionButton(
+                icon = Icons.Default.Speed,
+                label = playbackSpeedLabel(playbackSpeed),
+                onClick = { onSetPlaybackSpeed(nextTabletopPlaybackSpeed(playbackSpeed)) },
+            )
+        }
         nextEpisode?.let { episode ->
             TabletopActionButton(
                 icon = Icons.Default.SkipNext,
