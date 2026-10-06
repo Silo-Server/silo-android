@@ -36,8 +36,12 @@ open class PersonalDataRepository(
 
     // -- Libraries --
 
-    /** Lists the libraries visible to the current user (offline: last cached list). */
-    suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
+    /**
+     * Lists the libraries visible to the current user (offline: last cached
+     * list). Pass [fallbackToCache] = false when only a fresh server answer
+     * will do, such as confirming that the list really shrank.
+     */
+    suspend fun listUserLibraries(fallbackToCache: Boolean = true): ApiResult<List<UserLibrary>> {
         val requestIdentityGeneration = identityTransitions.generation.value
         val result = personalDataApi.listUserLibraries()
         if (result is ApiResult.Success) {
@@ -46,7 +50,7 @@ open class PersonalDataRepository(
             }
             return result
         }
-        if (result.canServeCache()) {
+        if (fallbackToCache && result.canServeCache()) {
             catalogCache.getCachedLibraries()?.let { return ApiResult.Success(it) }
         }
         return result

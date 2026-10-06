@@ -287,7 +287,9 @@ class LibrariesViewModel(
             // A short list is the failure this re-check exists to recover
             // from, so confirm a shrink with a second read before publishing
             // it. A real removal (revoked access, deleted library) repeats.
-            result = personalDataRepository.listUserLibraries()
+            // The first read just cached the short list, so a failed second
+            // read must not fall back to it.
+            result = personalDataRepository.listUserLibraries(fallbackToCache = false)
         }
         if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
             // A transient failure on a background re-check keeps the list

@@ -52,6 +52,9 @@ import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.repository.port.CatalogCachePort
+import org.siloserver.silo.repository.port.NoOpCatalogCachePort
+import org.siloserver.silo.model.personal.UserLibrary
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -392,7 +395,13 @@ class LibrariesViewModelTest {
     fun libraryListRecheckConfirmsAShrinkBeforePublishingIt() = runTest {
         val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
-        val viewModel = fixture.viewModel()
+        // A real cache, so a failed read can fall back to the list it holds.
+        val cache = object : CatalogCachePort {
+            @Volatile var libraries: List<UserLibrary>? = null
+            override suspend fun cacheLibraries(libraries: List<UserLibrary>) { this.libraries = libraries }
+            override suspend fun getCachedLibraries() = libraries
+        }
+        val viewModel = fixture.viewModel(catalogCache = cache)
         val store = ViewModelStore().also { it.put("libraries", viewModel) }
         try {
             fixture.awaitRequest("libraries")
@@ -408,6 +417,18 @@ class LibrariesViewModelTest {
             fixture.awaitRequest("libraries")
             val state = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2), state.libraries.map { it.id })
+
+            // A short response the repository caches, then a failed confirming
+            // read: the cached short list must not stand in as confirmation.
+            fixture.librariesBodyQueue += """
+                {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
+            """.trimIndent()
+            fixture.librariesStatusQueue += listOf(HttpStatusCode.OK, HttpStatusCode.ServiceUnavailable)
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            fixture.awaitRequest("libraries")
+            val afterFailedConfirm = viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(listOf(1, 2), afterFailedConfirm.libraries.map { it.id })
         } finally {
             store.clear()
             Dispatchers.resetMain()
@@ -459,6 +480,8 @@ class LibrariesViewModelTest {
         @Volatile var librariesBody: String? = null
         /** One-shot bodies served, in order, ahead of [librariesBody]. */
         val librariesBodyQueue = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        /** One-shot statuses served, in order, ahead of [librariesStatus]. */
+        val librariesStatusQueue = java.util.concurrent.ConcurrentLinkedQueue<HttpStatusCode>()
         @Volatile var librariesStatus: HttpStatusCode = HttpStatusCode.OK
         private val tokens = object : TokenManager by TokenManagerImpl() { override suspend fun snapshotCurrentScope() = owner }
         private val requests = Channel<String>(Channel.UNLIMITED)
@@ -501,8 +524,9 @@ class LibrariesViewModelTest {
                 }
                 requests.send(key)
                 val body = responses[key]?.await() ?: immediateBody(key)
-                if (key == "libraries" && librariesStatus != HttpStatusCode.OK) {
-                    respond(content = "", status = librariesStatus)
+                val status = if (key == "libraries") librariesStatusQueue.poll() ?: librariesStatus else HttpStatusCode.OK
+                if (status != HttpStatusCode.OK) {
+                    respond(content = "", status = status)
                 } else {
                     respondJson(body)
                 }
@@ -511,8 +535,11 @@ class LibrariesViewModelTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
 
-        fun viewModel(browsePrefs: BrowsePrefsStore? = null) = LibrariesViewModel(
-            personalDataRepository = PersonalDataRepository(PersonalDataApi(client)),
+        fun viewModel(
+            browsePrefs: BrowsePrefsStore? = null,
+            catalogCache: CatalogCachePort = NoOpCatalogCachePort,
+        ) = LibrariesViewModel(
+            personalDataRepository = PersonalDataRepository(PersonalDataApi(client), catalogCache = catalogCache),
             sectionRepository = SectionRepository(SectionApi(client, sectionItems = LibrarySectionItemsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
             catalogRepository = CatalogRepository(CatalogApi(client)),
             browsePrefs = browsePrefs,
