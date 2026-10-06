@@ -126,6 +126,7 @@ class TvSettingsViewModel(
         val subtitleMatchesDevice: Boolean = false,
         val dvProfile7HDR10Fallback: Boolean = true,
         val forceHdrPassthrough: Boolean = false,
+        val trueBlackBars: Boolean = false,
         val autoSkipCredits: Boolean = false,
         // Seconds to skip back on resume (0 = off); consecutive auto-advances
         // before the "Still watching?" prompt (0 = off).
@@ -396,6 +397,11 @@ class TvSettingsViewModel(
             }
         }
         viewModelScope.launch {
+            playerSettingsStore.trueBlackBarsFlow.collect { value ->
+                _uiState.update { it.copy(trueBlackBars = value) }
+            }
+        }
+        viewModelScope.launch {
             playerSettingsStore.subtitleMatchesDeviceFlow.collect { value ->
                 _uiState.update { it.copy(subtitleMatchesDevice = value) }
             }
@@ -658,6 +664,10 @@ class TvSettingsViewModel(
 
     fun onForceHdrPassthroughChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setForceHdrPassthrough(value) }
+    }
+
+    fun onTrueBlackBarsChanged(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setTrueBlackBars(value) }
     }
 
     fun onIntroSkipModeChanged(value: IntroSkipMode) {

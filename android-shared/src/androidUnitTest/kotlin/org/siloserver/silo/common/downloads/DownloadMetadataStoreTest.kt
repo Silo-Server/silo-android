@@ -206,6 +206,25 @@ class DownloadMetadataStoreTest {
         assertEquals(replacement, store.readSidecar("server", "profile", 7))
     }
 
+    @Test fun `a conditional update leaves a replaced or deleted row as it is`() = runTest {
+        val old = stubSidecar(7)
+        val replacement = old.copy(record = old.record.copy(id = "replacement"))
+        store.writeSidecar("server", "profile", replacement)
+        assertFalse(store.updateSidecarIf("server", "profile", 7, matches = { it.record.id == old.record.id }) {
+            error("A replaced row must not be updated")
+        })
+        assertEquals(replacement, store.readSidecar("server", "profile", 7))
+
+        assertTrue(store.updateSidecarIf("server", "profile", 7, matches = { it.record.id == "replacement" }) {
+            it.copy(updatedAtMs = 42)
+        })
+        assertEquals(42, store.readSidecar("server", "profile", 7)?.updatedAtMs)
+
+        store.deleteSidecar("server", "profile", 7)
+        assertFalse(store.updateSidecarIf("server", "profile", 7, matches = { true }) { it })
+        assertNull(store.readSidecar("server", "profile", 7))
+    }
+
     @Test fun `matching cleanup removes metadata only after byte deletion succeeds`() = runTest {
         val row = stubSidecar(7)
         store.writeSidecar("server", "profile", row)

@@ -202,6 +202,20 @@ val androidModule = module {
     // every collaborator that reports client identity (headers, playback
     // context, diagnostics) resolves this rather than deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    // Settings → Experimental → Watch Party: on by default only in debug builds.
+    single {
+        org.siloserver.silo.common.watchparty.WatchPartyExperiment(
+            prefs = androidContext().getSharedPreferences(
+                org.siloserver.silo.common.watchparty.WatchPartyExperiment.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+            defaultEnabled = BuildConfig.DEBUG,
+            onDisabled = { get<org.siloserver.silo.watchtogether.RoomSession>().depart() },
+        )
+    }
+    single<org.siloserver.silo.model.feature.WatchPartyExposure> {
+        get<org.siloserver.silo.common.watchparty.WatchPartyExperiment>()
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
             androidContext(),
@@ -384,6 +398,18 @@ val androidModule = module {
             profileRepository = get(),
         )
     }
+    worker {
+        org.siloserver.silo.common.downloads.OfflineSubtitleRefreshWorker(
+            appContext = androidContext(),
+            params = get(),
+            metadataStore = get(),
+            storage = get(),
+            httpClient = get(),
+            authorities = get(),
+            transitions = get(),
+            gate = get(),
+        )
+    }
     // Kept for consistency, but DEAD AT RUNTIME: Koin's WorkManager factory
     // returns null on WM 2.10 + Koin 4.1.0, so AppWorkerFactory does the real
     // injection (see AppWorkerFactory). Update both if SyncWorker's deps change.
@@ -419,6 +445,7 @@ val androidModule = module {
             castPlaybackPreparer = get(),
             seekIntervalStore = get(),
             activeProfileStore = get(),
+            shuffleFeatureStore = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
@@ -506,7 +533,10 @@ val androidModule = module {
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get(), get()) }
-    viewModel { ServerSetupViewModel(get(), get()) }
+    viewModel {
+        val tokens = get<org.siloserver.silo.network.TokenManager>()
+        ServerSetupViewModel(get(), get(), hasSession = { !tokens.getAccessToken().isNullOrBlank() })
+    }
     viewModel { LoginViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel {
         org.siloserver.silo.android.ui.screens.settings.SignInSettingsViewModel(get(), get(), get(), get(), get())
@@ -588,13 +618,51 @@ val androidModule = module {
             savedStateHandle = get(),
         )
     }
-    viewModel { org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherEntryViewModel(get()) }
-    viewModel { org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel(get()) }
+    // Watch Party (phone). The shared ViewModels own the state; the handoff
+    // carries invitations and detail-page items to the hub in memory.
+    single { org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHandoff() }
+    viewModel {
+        val registry = get<org.siloserver.silo.network.ServerRegistry>()
+        org.siloserver.silo.viewmodel.WatchPartyHubViewModel(
+            repository = get(),
+            roomSession = get(),
+            availability = get(),
+            recents = get(),
+            isCurrentServer = { url ->
+                org.siloserver.silo.common.watchparty.watchPartyServerMatches(
+                    linkServerUrl = url,
+                    activeServerUrl = registry.activeEntry.value?.url,
+                )
+            },
+        )
+    }
     viewModel { params ->
-        org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherLobbyViewModel(
+        org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel(
             roomId = params.get(),
             repository = get(),
             roomSession = get(),
+            availability = get(),
+        )
+    }
+    viewModel {
+        val catalog = get<org.siloserver.silo.repository.CatalogRepository>()
+        org.siloserver.silo.viewmodel.WatchPartyPickerViewModel(
+            repository = get(),
+            availability = get(),
+            search = { query ->
+                when (val result = catalog.browse(query = query, limit = 30)) {
+                    is org.siloserver.silo.network.ApiResult.Success ->
+                        org.siloserver.silo.network.ApiResult.Success(result.data.items)
+                    is org.siloserver.silo.network.ApiResult.Error -> result
+                    is org.siloserver.silo.network.ApiResult.NetworkError -> result
+                }
+            },
+        )
+    }
+    viewModel {
+        org.siloserver.silo.android.ui.screens.watchparty.WatchPartyDetailViewModel(
+            repository = get(),
+            handoff = get(),
         )
     }
 }

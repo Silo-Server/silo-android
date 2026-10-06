@@ -96,7 +96,7 @@ sealed class TvRoute(val route: String) {
      * Playback route. An optional `fileId` query param lets the detail screen
      * pre-select a specific file version (e.g. 4K vs 1080p). When absent, the
      * player uses `auto` selection. An optional `roomId` query param binds the
-     * player to a Watch Together room (synced playback); absent for solo play.
+     * player to a Watch Party room (synced playback); absent for solo play.
      */
     data class Player(
         val contentId: String,
@@ -127,6 +127,8 @@ sealed class TvRoute(val route: String) {
         /** Opaque key for a process-only, target-bound episode selection handoff. */
         val episodeSelectionHandoffNonce: String? = null,
         val libraryId: Int? = null,
+        /** The running shuffle this item is a pick of; picks play from the beginning. */
+        val shuffleId: String? = null,
     ) : TvRoute(
         buildString {
             append("player/${contentId.routeEncode()}")
@@ -150,6 +152,7 @@ sealed class TvRoute(val route: String) {
                 VideoPlayerRouteArgs.encodeResumePosition(resumePositionSeconds)?.let { value ->
                     add("${VideoPlayerRouteArgs.RESUME_POSITION}=$value")
                 }
+                shuffleId?.takeIf { it.isNotBlank() }?.let { add("$ARG_SHUFFLE_ID=${it.routeEncode()}") }
             }
             if (query.isNotEmpty()) append("?").append(query.joinToString("&"))
         },
@@ -160,7 +163,8 @@ sealed class TvRoute(val route: String) {
                 "&subtitleTrackIndex={subtitleTrackIndex}" +
                 "&subtitleAutoResolved={subtitleAutoResolved}" +
                 "&autoAdvanceCount={autoAdvanceCount}&resumePosition={resumePosition}" +
-                "&episodeSelectionHandoffNonce={episodeSelectionHandoffNonce}"
+                "&episodeSelectionHandoffNonce={episodeSelectionHandoffNonce}" +
+                "&shuffleId={shuffleId}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
             const val ARG_QUALITY = "quality"
@@ -172,6 +176,7 @@ sealed class TvRoute(val route: String) {
             const val ARG_AUTO_ADVANCE_COUNT = "autoAdvanceCount"
             const val ARG_RESUME_POSITION = VideoPlayerRouteArgs.RESUME_POSITION
             const val ARG_EPISODE_SELECTION_HANDOFF_NONCE = "episodeSelectionHandoffNonce"
+            const val ARG_SHUFFLE_ID = "shuffleId"
         }
     }
 
@@ -207,15 +212,32 @@ sealed class TvRoute(val route: String) {
     }
 
     /**
-     * Watch Together lobby — the waiting/vote/pick surface for a room that has
-     * no selection yet. Reached from the entry dialog's Host/Join when the room
-     * snapshot carries no `selectedContentId`.
+     * Watch Party hub: availability, Return to Party, Rejoin, Host, and Join
+     * with a code. [showEnded] explains why the last party ended (the lobby
+     * and player open it this way when a party ends under them).
      */
-    data class WatchTogetherLobby(val roomId: String) :
-        TvRoute("watch_together/lobby/${roomId.routeEncode()}") {
+    data class WatchPartyHub(val showEnded: Boolean = false) :
+        TvRoute(if (showEnded) "watch_party/hub?$ARG_SHOW_ENDED=true" else "watch_party/hub") {
         companion object {
-            const val ROUTE = "watch_together/lobby/{roomId}"
+            const val ROUTE = "watch_party/hub?showEnded={showEnded}"
+            const val ARG_SHOW_ENDED = "showEnded"
+        }
+    }
+
+    /**
+     * Watch Party lobby for one room. Only the room's phase moves it to the
+     * player. [hostStopped] marks a return from playback the host stopped.
+     * The room token is memory-only, so a restored lobby with no live
+     * membership redirects to the hub.
+     */
+    data class WatchPartyLobby(val roomId: String, val hostStopped: Boolean = false) :
+        TvRoute(
+            "watch_party/lobby/${roomId.routeEncode()}" + if (hostStopped) "?$ARG_HOST_STOPPED=true" else "",
+        ) {
+        companion object {
+            const val ROUTE = "watch_party/lobby/{roomId}?hostStopped={hostStopped}"
             const val ARG_ROOM_ID = "roomId"
+            const val ARG_HOST_STOPPED = "hostStopped"
         }
     }
 
@@ -352,6 +374,9 @@ sealed class TvMainRoute(val route: String) {
 internal val TvRemovedRoutes: List<String> = listOf(
     // Diagnostics became a Settings category rather than a top-level screen.
     "diagnostics",
+    // The Watch Together lobby became [TvRoute.WatchPartyLobby]. A restored
+    // room route has no live membership (the room token is memory-only).
+    "watch_together/lobby/{roomId}",
 )
 
 /** Nested [TvRoute.Main] equivalents of [TvRemovedRoutes]. */

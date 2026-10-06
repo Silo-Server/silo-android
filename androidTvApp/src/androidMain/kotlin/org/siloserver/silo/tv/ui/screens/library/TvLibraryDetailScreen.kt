@@ -114,12 +114,27 @@ fun TvLibraryDetailScreen(
     // again rather than being keyed on the section value alone.
     sectionRequestNonce: Int = 0,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    // Plays the first pick of a shuffle started from the Library tab.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvLibraryDetailViewModel = koinViewModel(
         key = "library-$libraryId",
         parameters = { parametersOf(libraryId, libraryTitle, libraryType) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
+    // Movie, TV, and mixed libraries shuffle when the server offers it.
+    val onShuffleLibrary = if (
+        org.siloserver.silo.model.shuffle.isShuffleLibraryType(libraryType) &&
+        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY)
+    ) {
+        { shuffleLauncher.start(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY, libraryId.toString()) }
+    } else {
+        null
+    }
 
     // Apply the committed cascade section on entry / whenever the commit
     // changes it. Keyed on sectionRequestNonce (bumped on every commit) AND the
@@ -161,6 +176,7 @@ fun TvLibraryDetailScreen(
                 onSortKeySelected = viewModel::onSortKeySelected,
                 onFacetSelectionApplied = viewModel::onFacetSelectionApplied,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onShuffle = onShuffleLibrary,
             )
             TvLibraryTab.Genres -> LibraryTab(
                 state = state,
@@ -332,6 +348,7 @@ private fun LibraryTab(
     /** Shell hook for overriding D-pad Up while the A–Z rail holds focus. */
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     onClearAudiobookGroup: (() -> Unit)? = null,
+    onShuffle: (() -> Unit)? = null,
 ) {
     val restoredGridItemFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
@@ -407,6 +424,7 @@ private fun LibraryTab(
                 onOpenSortPanel = { openPanel = TvBrowsePanel.Sort },
                 onOpenFilterPanel = { openPanel = TvBrowsePanel.Filter },
                 onClearFilters = { onFacetSelectionApplied(TvCatalogFacetSelection()) },
+                onShuffle = onShuffle,
             )
         }
         // The A–Z jump rail only makes sense for title-sorted browsing (the
@@ -466,6 +484,7 @@ private fun LibraryGrid(
     onOpenSortPanel: () -> Unit = {},
     onOpenFilterPanel: () -> Unit = {},
     onClearFilters: () -> Unit = {},
+    onShuffle: (() -> Unit)? = null,
 ) {
     var attachedRestoreItemId by remember { mutableStateOf<String?>(null) }
     val nearEnd by remember(
@@ -560,6 +579,7 @@ private fun LibraryGrid(
                         onFilter = onOpenFilterPanel,
                         onClearFilters = onClearFilters,
                         modifier = Modifier.onFocusChanged { controlsFocused = it.hasFocus },
+                        onShuffle = onShuffle,
                     )
                 }
             }

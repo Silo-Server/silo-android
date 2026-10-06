@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Cancel
@@ -106,6 +107,8 @@ fun TvBrowseControlRow(
      * grid below has no card to give it to (an empty or fully-filtered list).
      */
     sortPillFocusRequester: FocusRequester? = null,
+    /** Starts a shuffle of what the grid browses; null where nothing can shuffle. */
+    onShuffle: (() -> Unit)? = null,
 ) {
     // Clearing removes the Clear pill from composition; focus must hop to the
     // Filter pill first or it would snap away to the nearest surviving scope.
@@ -214,6 +217,28 @@ fun TvBrowseControlRow(
                 )
             }
         }
+
+        if (onShuffle != null) TvShufflePill(onClick = onShuffle)
+    }
+}
+
+/** A Shuffle action drawn like the browse control pills beside it. */
+@Composable
+fun TvShufflePill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    BrowseControlPill(onClick = onClick, modifier = modifier) { foreground ->
+        Icon(
+            imageVector = Icons.Filled.Shuffle,
+            contentDescription = null,
+            tint = foreground,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = "Shuffle",
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
+            color = foreground,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 

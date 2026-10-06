@@ -52,6 +52,9 @@ SELECTED=(
   complete_account_identity_link_invalid_grant
   delete_account_identity_last_sign_in_method
   refresh_session_provider_unavailable
+  sign_in_with_network_identity_ok
+  sign_in_with_network_identity_off_overlay
+  link_account_identity_with_network_ok
 )
 
 [ -d "$SRC" ] || { echo "no fixtures at $SRC" >&2; exit 1; }

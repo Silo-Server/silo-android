@@ -8,6 +8,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respondError
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,6 +35,7 @@ import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
 import org.siloserver.silo.model.auth.ExternalSignInCapabilities
 import org.siloserver.silo.model.auth.LoginResponse
+import org.siloserver.silo.model.auth.NetworkIdentity
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInProvider
 import org.siloserver.silo.model.auth.SignInProviders
@@ -75,6 +77,11 @@ class LoginViewModelSsoTest {
         "/api/v2/auth/oauth/5/native/start",
     )
     private val native = OAuthHandshakeCapabilities(available = true, native = true, linking = true, selectAccount = true)
+    private val tailscale = SignInProvider(
+        "plugin:7:tailscale", "Tailscale", SignInProvider.Mode.Network, false, null, "7", null,
+        networkSignInPath = "/api/v2/auth/network/7/sign-in",
+        networkIdentity = NetworkIdentity("Alice Example", "alice@example.test"),
+    )
 
     private class Fixture(
         scope: CoroutineScope,
@@ -89,6 +96,13 @@ class LoginViewModelSsoTest {
         val coordinator = NativeSignInCoordinator(store, SignsIn(), scope, InMemoryAccountChoiceStore())
         private val http = HttpClient(MockEngine { respondError(HttpStatusCode.ServiceUnavailable) })
         val authRepository = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens)
+
+        /** What the network sign-in answers, and where each one was sent (saved base, path). */
+        var networkAnswer: ApiResult<LoginResponse> = ApiResult.Error(403, "network_identity_required", "")
+        val networkCalls = mutableListOf<Pair<String, String>>()
+
+        /** When set, the network sign-in answers only once this completes. */
+        var networkGate: CompletableDeferred<Unit>? = null
         val api = object : ExternalSignInApi {
             override suspend fun listProviders(serverUrl: String) = providers
             override suspend fun oauthCapabilities(serverUrl: String) = handshake
@@ -106,6 +120,13 @@ class LoginViewModelSsoTest {
                 username: String,
                 directoryPassword: String,
             ): ApiResult<AccountIdentity> = TODO()
+            override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> {
+                networkCalls += serverUrl to signInPath
+                networkGate?.await()
+                return networkAnswer
+            }
+            override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String):
+                ApiResult<AccountIdentity> = TODO()
         }
         val identityApi = object : ServerIdentityApi {
             override suspend fun probeIdentity(serverUrl: String) = identity
@@ -429,6 +450,139 @@ class LoginViewModelSsoTest {
         finishOne()
         assertFalse(vm.uiState.value.loginSuccess)
         vm.close(); f.close()
+    }
+
+    // --- Network identity ("Continue as …") ---
+
+    /**
+     * Opened at its Tailscale address, the server lists Tailscale with the
+     * device's owner: one tap signs in, with no browser and no password, on
+     * the saved base (path prefix included), and the session lands like a
+     * password sign-in's.
+     */
+    @Test
+    fun continueAsSignsInWithoutABrowserOnTheSavedBase() = runTest(dispatcher) {
+        val f = fixture(serverUrl = "https://silo.tailnet.ts.net/silo", providers = listOf(keycloak, tailscale))
+        f.networkAnswer = ApiResult.Success(LoginResponse("net-access", "net-refresh", 3600, User("1", "alice", "a@example.test", "user")))
+        val vm = f.viewModel()
+        advanceUntilIdle()
+        assertEquals(tailscale, vm.uiState.value.networkProvider)
+        assertEquals(listOf(keycloak), vm.uiState.value.providers, "the network provider is not a browser sign-in")
+        assertTrue(vm.uiState.value.showPasswordForm, "the password form stays")
+        assertEquals("Continue as Alice Example", continueAsLabel(tailscale))
+        assertEquals("via Tailscale", continueViaLabel(tailscale))
+
+        vm.onNetworkSignIn()
+        assertTrue(vm.uiState.value.networkSignInBusy)
+        advanceUntilIdle()
+        assertEquals(listOf("https://silo.tailnet.ts.net/silo" to "/api/v2/auth/network/7/sign-in"), f.networkCalls)
+        assertTrue(vm.uiState.value.loginSuccess)
+        assertFalse(vm.uiState.value.networkSignInBusy)
+        assertNull(vm.uiState.value.error)
+        assertEquals("net-access", f.tokens.getAccessToken())
+        assertEquals("net-refresh", f.tokens.getRefreshToken())
+        assertNull(vm.uiState.value.browserLaunch)
+        assertNull(f.store.load(), "no native flow was started")
+        vm.close(); f.close()
+    }
+
+    @Test
+    fun aRefusedNetworkSignInSaysWhyAndSavesNothing() = runTest(dispatcher) {
+        val f = fixture(providers = listOf(tailscale))
+        f.networkAnswer = ApiResult.Error(403, "network_identity_required", "raw detail")
+        val vm = f.viewModel()
+        advanceUntilIdle()
+        vm.onNetworkSignIn()
+        advanceUntilIdle()
+        assertEquals("Open this server at its Tailscale address to sign in this way.", vm.uiState.value.error)
+        assertFalse(vm.uiState.value.loginSuccess)
+        assertFalse(vm.uiState.value.networkSignInBusy, "the button can be pressed again")
+        assertNull(f.tokens.getAccessToken())
+
+        f.networkAnswer = ApiResult.NetworkError(RuntimeException("offline"))
+        vm.onNetworkSignIn()
+        advanceUntilIdle()
+        assertEquals("Network error. Please check your connection.", vm.uiState.value.error)
+        assertEquals(2, f.networkCalls.size)
+        vm.close(); f.close()
+    }
+
+    /** Reloading the options while "Continue as …" waits doesn't free the other ways in. */
+    @Test
+    fun theOtherWaysInWaitForContinueAsAcrossAnOptionsReload() = runTest(dispatcher) {
+        val f = fixture(providers = listOf(keycloak, tailscale))
+        val answer = CompletableDeferred<Unit>()
+        f.networkGate = answer
+        val vm = f.viewModel()
+        advanceUntilIdle()
+        vm.onNetworkSignIn()
+        advanceUntilIdle()
+
+        vm.loadOptions()
+        vm.onUsernameChanged("alice")
+        vm.onPasswordChanged("pw")
+        vm.onLoginClick()
+        assertTrue(vm.uiState.value.networkSignInBusy)
+        assertTrue(vm.uiState.value.signInBusy, "the password form is disabled while it waits")
+        assertFalse(vm.uiState.value.isLoading, "no password sign-in starts while the options reload")
+        advanceUntilIdle()
+        vm.onProviderClick(keycloak)
+        assertNull(vm.uiState.value.providerBusy, "no browser sign-in starts either")
+
+        answer.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(vm.uiState.value.networkSignInBusy)
+        assertFalse(vm.uiState.value.signInBusy)
+        assertEquals(1, f.networkCalls.size)
+        vm.close(); f.close()
+    }
+
+    @Test
+    fun noContinueAsWithoutANetworkProvider() = runTest(dispatcher) {
+        val f = fixture(providers = listOf(keycloak, tailscale.copy(networkSignInPath = null)))
+        val vm = f.viewModel()
+        advanceUntilIdle()
+        assertNull(vm.uiState.value.networkProvider)
+        vm.onNetworkSignIn()
+        advanceUntilIdle()
+        assertTrue(f.networkCalls.isEmpty())
+        vm.close(); f.close()
+    }
+
+    @Test
+    fun theButtonNamesTheProviderWhenItNamesNobody() {
+        val nobody = tailscale.copy(networkIdentity = NetworkIdentity("", ""))
+        assertEquals("Continue with Tailscale", continueAsLabel(nobody))
+        assertNull(continueViaLabel(nobody))
+        assertEquals("Continue as alice", continueAsLabel(tailscale.copy(networkIdentity = NetworkIdentity("", "alice"))))
+    }
+
+    @Test
+    fun networkSignInRefusalsHaveTheirOwnText() {
+        val cases = listOf(
+            403 to "network_identity_required",
+            403 to "not_permitted",
+            403 to "account_required",
+            403 to "permission_denied",
+            409 to "email_in_use",
+            409 to "identity_linked_elsewhere",
+            404 to "not_found",
+            503 to "provider_unavailable",
+            429 to "rate_limited",
+            500 to "internal",
+        )
+        val texts = cases.map { (status, code) -> networkSignInMessage(ApiResult.Error(status, code, "server detail"), "Tailscale") }
+        assertEquals(texts.size, texts.toSet().size, texts.joinToString("\n"))
+        texts.forEach { assertFalse(it.contains("server detail"), "the server's detail is never shown") }
+        assertEquals("Tailscale doesn't allow this device on this server.", texts[1])
+        assertEquals(
+            "An account with your email already exists. Sign in with your password, then connect Tailscale in Settings → Sign-in.",
+            texts[4],
+        )
+        // Refusals other operations share read the same here.
+        assertEquals(NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED), texts[2])
+        assertEquals(NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED), texts[8])
+        assertEquals(NativeSignInMessages.forReason("identity_linked_elsewhere", "Tailscale"), texts[5])
     }
 
     @Test

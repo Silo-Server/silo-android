@@ -32,6 +32,8 @@ import org.siloserver.silo.model.auth.DeviceLoginDecisionResponse
 import org.siloserver.silo.model.auth.DeviceLoginLookupResponse
 import org.siloserver.silo.model.auth.DeviceLoginPollResponse
 import org.siloserver.silo.model.auth.DeviceLoginStartResponse
+import org.siloserver.silo.model.auth.LoginResponse
+import org.siloserver.silo.model.auth.NetworkIdentity
 import org.siloserver.silo.model.auth.User
 import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.AccountSessionExpectation
@@ -72,7 +74,8 @@ import kotlin.test.assertTrue
 /**
  * The TV sign-in panel's device-code behavior: #421 (no silent "Loading"
  * hang), #422 (no false "Signed in!"), lifecycle-aware polling (#420) and
- * server-side cancel of an abandoned code.
+ * server-side cancel of an abandoned code; and the other ways in beside it
+ * (the password form, "Continue as …" through a network provider).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TvLoginViewModelDeviceSignInTest {
@@ -536,6 +539,156 @@ class TvLoginViewModelDeviceSignInTest {
         assertEquals(TvLoginError.LocalLoginDisabled, vm.uiState.value.error)
     }
 
+    // --- Network identity ("Continue as …", e.g. Tailscale) ---
+
+    /**
+     * Reached through Tailscale, the server lists it with the TV's owner: one
+     * press signs in with no code and no password, on the saved base, and the
+     * code on screen is withdrawn once the session is saved.
+     */
+    @Test
+    fun continueAsSignsInWithoutACodeAndWithdrawsTheCode() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        signIn.networkAnswer = ApiResult.Success(
+            LoginResponse("net-access", "net-refresh", 3600, User(id = "1", username = "alice", email = "a@example.test", role = "user")),
+        )
+        val tokens = FakeTokens()
+        val api = FakeDeviceApi()
+        val vm = viewModel(tokens, api, registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        assertEquals(TAILSCALE, vm.uiState.value.networkProvider)
+        assertTrue(vm.uiState.value.passwordAvailable, "the password form stays available")
+        assertEquals(TvSignInStatus.Waiting, vm.deviceSignIn.value.status, "and so does the code")
+
+        vm.onNetworkSignInClick()
+        assertTrue(vm.uiState.value.networkBusy)
+        vm.onNetworkSignInClick()
+        advanceUntilIdle()
+        assertEquals(listOf("https://silo.test" to "/api/v2/auth/network/7/sign-in"), signIn.networkCalls, "one sign-in, on the saved base")
+        assertTrue(vm.uiState.value.loginSuccess)
+        assertFalse(vm.uiState.value.networkBusy)
+        assertNull(vm.uiState.value.networkError)
+        assertEquals("net-access", tokens.accessToken)
+        assertEquals(1, tokens.installAttempts)
+        assertEquals(listOf("dev-1"), api.canceled, "the code on screen can't be approved any more")
+    }
+
+    @Test
+    fun aRefusedContinueAsSaysWhyAndKeepsTheCode() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        signIn.networkAnswer = ApiResult.Error(403, "network_identity_required", "raw detail")
+        val tokens = FakeTokens()
+        val api = FakeDeviceApi()
+        val vm = viewModel(tokens, api, registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertEquals(TvLoginError.NetworkIdentityRequired, vm.uiState.value.networkError)
+        assertNull(vm.uiState.value.error, "the password form's error slot is untouched")
+        assertFalse(vm.uiState.value.networkBusy, "the button can be pressed again")
+        assertFalse(vm.uiState.value.loginSuccess)
+        assertNull(tokens.accessToken)
+        assertEquals(TvSignInStatus.Waiting, vm.deviceSignIn.value.status)
+        assertTrue(api.canceled.isEmpty(), "the code still works")
+
+        signIn.networkAnswer = ApiResult.Error(403, "not_permitted", "")
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertEquals(TvLoginError.NetworkNotPermitted, vm.uiState.value.networkError)
+
+        // A phone can still approve the code on screen.
+        api.approveAfterPolls = api.polls + 1
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.loginSuccess)
+        assertEquals("qr-access", tokens.accessToken)
+    }
+
+    /**
+     * A phone approves the code while "Continue as …" waits for the server:
+     * the approval takes the sign-in and cancels the network attempt. When
+     * that approval can't be saved, the button is free again, not left busy.
+     */
+    @Test
+    fun anApprovalThatCancelsContinueAsAndFailsFreesItsButton() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        signIn.networkDelayMs = 60_000L
+        val tokens = FakeTokens(failInstall = true)
+        val api = FakeDeviceApi()
+        api.approveWhen = { signIn.networkCalls.isNotEmpty() }
+        val vm = viewModel(tokens, api, registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertTrue(vm.uiState.value.networkBusy)
+
+        // The next poll is approved; saving it fails.
+        advanceTimeBy(5_001)
+        assertEquals(TvSignInStatus.CouldntFinish, vm.deviceSignIn.value.status)
+        assertEquals(TvLoginError.SaveFailed, vm.uiState.value.error)
+        assertFalse(vm.uiState.value.networkBusy, "the canceled network attempt doesn't hold its button")
+        assertFalse(vm.uiState.value.isLoading)
+
+        tokens.failInstall = false
+        signIn.networkDelayMs = 0L
+        signIn.networkAnswer = ApiResult.Success(
+            LoginResponse("net-access", "net-refresh", 3600, User(id = "1", username = "alice", email = "a@example.test", role = "user")),
+        )
+        vm.onNetworkSignInClick()
+        advanceUntilIdle()
+        assertTrue(vm.uiState.value.loginSuccess)
+        assertEquals("net-access", tokens.accessToken)
+    }
+
+    /** Off the provider's network the server stops listing it: the button and its refusal go. */
+    @Test
+    fun continueAsGoesWhenTheServerNoLongerListsIt() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE), passwordLogin = true))
+        signIn.networkAnswer = ApiResult.Error(403, "network_identity_required", "")
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertEquals(TvLoginError.NetworkIdentityRequired, vm.uiState.value.networkError)
+
+        signIn.providers = SignInProviders(listOf(LOCAL), passwordLogin = true)
+        vm.onStop()
+        vm.onStart()
+        runCurrent()
+        assertNull(vm.uiState.value.networkProvider)
+        assertNull(vm.uiState.value.networkError)
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertEquals(1, signIn.networkCalls.size, "nothing to press")
+    }
+
+    @Test
+    fun aNetworkProviderWithoutItsSignInPathOffersNothing() = runTest(dispatcher) {
+        val signIn = FakeSignInApi(SignInProviders(listOf(LOCAL, TAILSCALE.copy(networkSignInPath = null)), passwordLogin = true))
+        val vm = viewModel(FakeTokens(), FakeDeviceApi(), registry = FakeRegistry(), externalSignIn = signIn)
+        runCurrent()
+        assertNull(vm.uiState.value.networkProvider)
+        vm.onNetworkSignInClick()
+        runCurrent()
+        assertTrue(signIn.networkCalls.isEmpty())
+    }
+
+    @Test
+    fun networkRefusalsMapToTheirErrors() {
+        fun error(status: Int, code: String) = tvNetworkSignInError(ApiResult.Error(status, code, "raw"))
+        assertEquals(TvLoginError.NetworkIdentityRequired, error(403, "network_identity_required"))
+        assertEquals(TvLoginError.NetworkNotPermitted, error(403, "not_permitted"))
+        assertEquals(TvLoginError.NetworkEmailInUse, error(409, "email_in_use"))
+        assertEquals(TvLoginError.NetworkProviderGone, error(404, "not_found"))
+        // The rest read as the other sign-ins' refusals.
+        assertEquals(TvLoginError.AccountRequired, error(403, "account_required"))
+        assertEquals(TvLoginError.AccountDisabled, error(403, "permission_denied"))
+        assertEquals(TvLoginError.IdentityLinkedElsewhere, error(409, "identity_linked_elsewhere"))
+        assertEquals(TvLoginError.ProviderUnavailable, error(503, "provider_unavailable"))
+        assertEquals(TvLoginError.RateLimited, error(429, ""))
+        assertEquals(TvLoginError.IdentityChanged, error(0, "identity_changed"))
+        assertEquals(TvLoginError.Server("raw"), error(500, "internal"))
+    }
+
     private fun TestScope.viewModel(
         tokens: FakeTokens,
         api: FakeDeviceApi,
@@ -679,6 +832,13 @@ class TvLoginViewModelDeviceSignInTest {
     /** Provider discovery; [providers] null = a server that can't list them. */
     private class FakeSignInApi(var providers: SignInProviders?) : ExternalSignInApi {
         val asked = mutableListOf<String>()
+
+        /** What "Continue as …" answers, and where each one was sent (saved base, path). */
+        var networkAnswer: ApiResult<LoginResponse> = ApiResult.Error(404, "not_found", "")
+        val networkCalls = mutableListOf<Pair<String, String>>()
+
+        /** How long "Continue as …" waits for its answer. */
+        var networkDelayMs = 0L
         override suspend fun listProviders(serverUrl: String): ApiResult<SignInProviders> {
             asked += serverUrl
             return providers?.let { ApiResult.Success(it) } ?: ApiResult.Error(404, "not_found", "")
@@ -694,6 +854,13 @@ class TvLoginViewModelDeviceSignInTest {
         override suspend fun linkWithCredentials(
             scope: AuthScopeSnapshot, installationId: String, password: String, username: String, directoryPassword: String,
         ) = error("unused")
+        override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> {
+            networkCalls += serverUrl to signInPath
+            if (networkDelayMs > 0) delay(networkDelayMs)
+            return networkAnswer
+        }
+        override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String) =
+            error("TVs have no Sign-in settings")
     }
 
     private class FakeTokens(
@@ -756,6 +923,11 @@ class TvLoginViewModelDeviceSignInTest {
         )
         val LDAP = SignInProvider("plugin:6:ldap", "Directory", SignInProvider.Mode.Credentials, false, null, "6", null)
         val LOCAL = SignInProvider("local", "Silo account", SignInProvider.Mode.Credentials, true, null, null, null)
+        val TAILSCALE = SignInProvider(
+            "plugin:7:tailscale", "Tailscale", SignInProvider.Mode.Network, false, null, "7", null,
+            networkSignInPath = "/api/v2/auth/network/7/sign-in",
+            networkIdentity = NetworkIdentity("Alice Example", "alice@example.test"),
+        )
         val LOGIN_JSON = """
             {"access_token":"credential-access","refresh_token":"credential-refresh","expires_in":3600,
              "user":{"id":"1","username":"jim","email":"jim@example.com","role":"user","download_allowed":true}}

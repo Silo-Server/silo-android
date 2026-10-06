@@ -302,7 +302,7 @@ class TvPlayerSubtitleIntegrationPolicyTest {
         val row = embeddedPgsRow()
         val track = embeddedPgsTrack()
 
-        val selection = resolveAutoSubtitleSelection(
+        val identity = resolveTvAutoSubtitleIdentity(
             audioTracks = listOf(
                 PlayerTrackEntry(
                     index = 0,
@@ -312,6 +312,7 @@ class TvPlayerSubtitleIntegrationPolicyTest {
                 ),
             ),
             subtitleTracks = listOf(track),
+            subtitleRows = listOf(row),
             preferredLanguage = "en",
             subtitleMode = "always",
             showForced = true,
@@ -319,12 +320,9 @@ class TvPlayerSubtitleIntegrationPolicyTest {
 
         // Bitmap tracks stay deprioritised-but-allowed: it is the only English
         // candidate, so Always must still pick it.
-        val selected = assertIs<SubtitleAutoSelection.Select>(selection)
-        assertEquals(track.index, selected.index)
-
-        val identity = tvMountedSubtitleIdentity(track, listOf(track), listOf(row))
         assertEquals(tvSubtitleIdentity(row), identity)
         assertIs<SubtitleIdentity.Embedded>(identity)
+        assertEquals(identity, tvMountedSubtitleIdentity(track, listOf(track), listOf(row)))
 
         // The identity the auto path commits is the identity the HUD ticks.
         val presentation = buildTvSubtitleHudPresentation(

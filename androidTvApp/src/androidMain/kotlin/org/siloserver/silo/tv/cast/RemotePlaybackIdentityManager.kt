@@ -37,6 +37,8 @@ class RemotePlaybackIdentityManager(
         val controllerDeviceId: String,
         val controllerDeviceName: String?,
         val expiresAtEpochMs: Long,
+        /** The receiver run (see [TvSiloCastReceiver]) that last installed or reused it. */
+        val receiverRun: Long,
     )
 
     private val mutex = Mutex()
@@ -56,12 +58,15 @@ class RemotePlaybackIdentityManager(
         offer: SiloCastHandoffOffer,
         controllerDeviceId: String,
         controllerDeviceName: String?,
+        receiverRun: Long,
         onChallenge: suspend (SiloCastHandoffChallenge) -> Unit,
     ): SiloCastHandoffReady = mutex.withLock {
         validateOffer(offer)
 
         activeIdentity?.takeIf { matches(offer, controllerDeviceId) }?.let { active ->
-            return@withLock active.toReady(offer.requestId, reused = true)
+            val reclaimed = active.copy(receiverRun = receiverRun)
+            activeIdentity = reclaimed
+            return@withLock reclaimed.toReady(offer.requestId, reused = true)
         }
 
         endLocked()
@@ -139,6 +144,7 @@ class RemotePlaybackIdentityManager(
                                 controllerDeviceId = controllerDeviceId,
                                 controllerDeviceName = controllerDeviceName,
                                 expiresAtEpochMs = expiresAtMs,
+                                receiverRun = receiverRun,
                             )
                             activeIdentity = active
                             return@withLock active.toReady(offer.requestId, reused = false)
@@ -160,6 +166,31 @@ class RemotePlaybackIdentityManager(
     }
 
     suspend fun end() = mutex.withLock { endLocked() }
+
+    /**
+     * Ends the identity only if [generationId] is still the active one. The
+     * check runs under the same lock as [prepare], so a delayed cleanup can
+     * never end a replacement identity installed after it was scheduled.
+     */
+    suspend fun end(generationId: String): Boolean = mutex.withLock {
+        if (activeIdentity?.generationId != generationId) return@withLock false
+        endLocked()
+        true
+    }
+
+    /**
+     * Ends the active identity unless a receiver run started after [run] has
+     * installed or reused it. A same-phone handoff keeps the generation, so a
+     * generation check would let a delayed stop cleanup revoke the identity
+     * that handoff just claimed. Claims made by [run] itself (or earlier) do
+     * not protect it: that run is stopped, so nothing else will end it.
+     */
+    suspend fun endIfNotClaimedSince(run: Long): Boolean = mutex.withLock {
+        val active = activeIdentity ?: return@withLock false
+        if (active.receiverRun > run) return@withLock false
+        endLocked()
+        true
+    }
 
     private suspend fun endLocked() {
         val active = activeIdentity

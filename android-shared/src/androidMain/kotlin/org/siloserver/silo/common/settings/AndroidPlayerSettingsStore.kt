@@ -288,6 +288,9 @@ class AndroidPlayerSettingsStore(
                 ?: LetterboxExpansion.Default
         }
 
+    override val trueBlackBarsFlow: Flow<Boolean> =
+        profileScopedFlow(false) { p, s -> p.boolFor(s, PlaybackSettingsKeys.TrueBlackBars, false) }
+
     override val downloadsWifiOnlyFlow: Flow<Boolean> =
         profileScopedFlow(true) { p, s -> p.boolFor(s, PlaybackSettingsKeys.DownloadsWifiOnly, true) }
 
@@ -461,6 +464,9 @@ class AndroidPlayerSettingsStore(
         val safe = if (value in LetterboxExpansion.Valid) value else LetterboxExpansion.Default
         writeStringLocal(PlaybackSettingsKeys.LetterboxExpansion, safe)
     }
+
+    override suspend fun setTrueBlackBars(value: Boolean) =
+        writeBoolLocal(PlaybackSettingsKeys.TrueBlackBars, value)
 
     override suspend fun setDownloadsWifiOnly(value: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.DownloadsWifiOnly, value)
@@ -722,6 +728,7 @@ class AndroidPlayerSettingsStore(
                 it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PictureInPictureEnabled))
                 it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ForceHdrPassthrough))
                 it.remove(stringPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.LetterboxExpansion))
+                it.remove(booleanPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.TrueBlackBars))
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.ResumeRewindSeconds))
                 it.remove(intPreferencesKey(scope.keyPrefix + PlaybackSettingsKeys.PassOutThreshold))
             }

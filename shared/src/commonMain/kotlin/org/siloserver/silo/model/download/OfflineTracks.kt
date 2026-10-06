@@ -4,6 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.playback.orNullIfBlank
 
 /**
  * The part of `GET /api/v2/downloads/{id}/manifest` the offline player needs:
@@ -30,6 +31,14 @@ data class OfflineManifestSubtitle(
     val forced: Boolean = false,
     @SerialName("hearing_impaired") val hearingImpaired: Boolean = false,
     @SerialName("fetch_url") val fetchUrl: String = "",
+    /**
+     * Opaque revision of a stored (`downloaded:{id}`) or external
+     * (`external:{index}`) subtitle. It changes whenever the bytes [fetchUrl]
+     * serves can change: the server retimed the subtitle (a sync, or a timing
+     * set or reset), or an external file was edited on disk. Absent for
+     * embedded tracks and for an external file the server cannot read.
+     */
+    val revision: String? = null,
 )
 
 /**
@@ -75,7 +84,46 @@ data class OfflineSubtitleFile(
     val title: String? = null,
     val forced: Boolean = false,
     val hearingImpaired: Boolean = false,
+    /** The manifest `fetch_url` the file came from; null on captures older than this field. */
+    val fetchUrl: String? = null,
+    /** The manifest `revision` of the fetched bytes, when the manifest gave one. */
+    val revision: String? = null,
 )
+
+/**
+ * Saved sidecars whose subtitle the [manifest] lists at a different revision,
+ * paired with that revision. Captures that predate [OfflineSubtitleFile.fetchUrl]
+ * cannot be matched to a manifest row and are never refreshed. An
+ * `external:{index}` ref names a sidecar by its position, which shifts when the
+ * files next to the media change, so such a row is refreshed only while it
+ * still describes the saved file. Two sidecars alike in every field the
+ * manifest lists can still trade places unnoticed: it has no stable identity
+ * for them.
+ */
+fun OfflineTrackInfo.subtitlesWithNewRevision(
+    manifest: OfflineManifestTracks,
+): List<Pair<OfflineSubtitleFile, String>> {
+    val listed = manifest.subtitles
+        .filter { it.revision != null }
+        .associateBy { it.fetchUrl.trim() }
+    return subtitles.mapNotNull { saved ->
+        val row = saved.fetchUrl?.let(listed::get) ?: return@mapNotNull null
+        val revision = row.revision ?: return@mapNotNull null
+        if (row.isPositionalRef() && !row.describes(saved)) return@mapNotNull null
+        if (revision == saved.revision) null else saved to revision
+    }
+}
+
+private fun OfflineManifestSubtitle.isPositionalRef(): Boolean =
+    fetchUrl.trim().substringAfterLast('/').startsWith("external:")
+
+/** Whether this row lists the same language, title, format, and flags [saved] was captured with. */
+private fun OfflineManifestSubtitle.describes(saved: OfflineSubtitleFile): Boolean =
+    language.orNullIfBlank().equals(saved.language, ignoreCase = true) &&
+        title.orNullIfBlank() == saved.title &&
+        offlineSubtitleFormat(format) == saved.format &&
+        forced == saved.forced &&
+        hearingImpaired == saved.hearingImpaired
 
 private val offlineManifestJson = Json {
     ignoreUnknownKeys = true

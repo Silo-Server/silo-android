@@ -6,6 +6,7 @@ import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
 import org.siloserver.silo.model.auth.ExternalSignInCapabilities
+import org.siloserver.silo.model.auth.LoginResponse
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInOptions
 import org.siloserver.silo.model.auth.SignInProviders
@@ -14,9 +15,10 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.ExternalSignInApi
 
 /**
- * External sign-in (OIDC, LDAP) for the apps: what a sign-in screen offers,
- * and the account's Sign-in section. The native OAuth handoff itself (browser,
- * PKCE, the app redirect) belongs to the phone app; TVs never run it.
+ * External sign-in (OIDC, LDAP, network identity) for the apps: what a
+ * sign-in screen offers, and the account's Sign-in section. The native OAuth
+ * handoff itself (browser, PKCE, the app redirect) belongs to the phone app;
+ * TVs never run it. The network identity sign-in needs neither and runs on both.
  */
 class ExternalSignInRepository(
     private val api: ExternalSignInApi,
@@ -75,4 +77,14 @@ class ExternalSignInRepository(
         username: String,
         directoryPassword: String,
     ): ApiResult<AccountIdentity> = api.linkWithCredentials(scope, installationId, password, username, directoryPassword)
+
+    /** The token pair for this device's owner at a network provider; see [ExternalSignInApi.signInWithNetworkIdentity]. */
+    suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> =
+        api.signInWithNetworkIdentity(serverUrl, signInPath)
+
+    suspend fun linkWithNetwork(
+        scope: AuthScopeSnapshot,
+        installationId: String,
+        password: String,
+    ): ApiResult<AccountIdentity> = api.linkWithNetwork(scope, installationId, password)
 }

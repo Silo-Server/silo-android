@@ -560,10 +560,7 @@ internal data class TvAudiobookPlayerMetrics(
     val transportPrimaryButtonWidthDp: Int,
     val transportPrimaryButtonHeightDp: Int,
     val transportButtonSpacingDp: Int,
-) {
-    val transportRowWidthDp: Int =
-        (transportButtonSizeDp * 4) + transportPrimaryButtonWidthDp + (transportButtonSpacingDp * 4)
-}
+)
 
 internal fun tvAudiobookPlayerMetrics(
     maxWidthDp: Int,

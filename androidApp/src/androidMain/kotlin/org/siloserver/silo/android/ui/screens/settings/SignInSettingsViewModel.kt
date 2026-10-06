@@ -16,7 +16,9 @@ import org.siloserver.silo.android.auth.NativeSignInMessages
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.android.ui.screens.auth.ProviderRefusalText
 import org.siloserver.silo.model.auth.AccountIdentity
+import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInOptions
 import org.siloserver.silo.model.auth.SignInProvider
@@ -44,6 +46,14 @@ data class SignInSettingsUiState(
     val directory: SignInProvider? = null,
     /** Asking for the account password and the directory credentials before connecting [directory]. */
     val directoryPrompt: SignInProvider? = null,
+    /**
+     * A network provider (such as Tailscale) this account can connect: the
+     * server lists one only to a device on that provider's network, and links
+     * the person who owns this device there.
+     */
+    val network: SignInProvider? = null,
+    /** Asking for the account password before connecting [network]. */
+    val networkPrompt: SignInProvider? = null,
     /** Asking for the local password before connecting this provider. */
     val passwordPrompt: SignInProvider? = null,
     val passwordError: String? = null,
@@ -57,15 +67,16 @@ data class SignInSettingsUiState(
     val browserLaunch: String? = null,
 ) {
     /** The section shows once the server has an external provider or the account has an identity. */
-    val visible: Boolean get() = identities.isNotEmpty() || connectable.isNotEmpty() || directory != null
+    val visible: Boolean get() = identities.isNotEmpty() || connectable.isNotEmpty() || directory != null || network != null
 }
 
 /**
  * Account settings "Sign-in" section (silo-server external sign-in spec):
  * the provider identity linked to this account, "Connect <provider>" after
  * the account re-enters its local password (a link ticket, then the native
- * browser flow with `link_ticket`), and "Disconnect", which the server allows
- * only while the account can still sign in another way.
+ * browser flow with `link_ticket`; for a directory or a network provider, one
+ * call with no browser), and "Disconnect", which the server allows only while
+ * the account can still sign in another way.
  */
 class SignInSettingsViewModel(
     private val externalSignIn: ExternalSignInRepository,
@@ -77,8 +88,14 @@ class SignInSettingsViewModel(
 
     private val _uiState = MutableStateFlow(SignInSettingsUiState())
 
-    /** The password prompt's ticket request and flow start, until the browser opens. */
+    /**
+     * The open prompt's work: the ticket request and flow start until the
+     * browser opens, or a directory or network link until it answers.
+     */
     private var connectJob: Job? = null
+
+    /** Bumped by each [load]; only the newest read publishes, so an older one can't overwrite it. */
+    private var loadGeneration = 0
     val uiState: StateFlow<SignInSettingsUiState> = _uiState.asStateFlow()
 
     init {
@@ -98,11 +115,20 @@ class SignInSettingsViewModel(
      * signed in on the same server; otherwise the section is read again.
      */
     private suspend fun load() {
+        val generation = ++loadGeneration
         val scope = tokenManager.snapshotCurrentScope()
         val loginSessionId = scope?.let { tokenManager.loginSessionId(it.serverId) }
         if (scope == null) {
+            if (generation != loadGeneration) return
             _uiState.update {
-                it.copy(loading = false, identities = emptyList(), canUnlink = null, connectable = emptyList(), directory = null)
+                it.copy(
+                    loading = false,
+                    identities = emptyList(),
+                    canUnlink = null,
+                    connectable = emptyList(),
+                    directory = null,
+                    network = null,
+                )
             }
             return
         }
@@ -120,10 +146,14 @@ class SignInSettingsViewModel(
                 handshake = (handshake.await() as? ApiResult.Success)?.data ?: OAuthHandshakeCapabilities.None,
                 credentialsLinking = served?.credentialsLinking == true,
                 canUnlink = listed?.canUnlink,
+                networkSignIn = served?.networkSignIn == true,
             )
         }
         val now = tokenManager.snapshotCurrentScope()
-        if (now?.serverId != scope.serverId || tokenManager.loginSessionId(scope.serverId) != loginSessionId) {
+        val sameLogin = now?.serverId == scope.serverId && tokenManager.loginSessionId(scope.serverId) == loginSessionId
+        // A later read (a reload after a link, say) started meanwhile: it has the newer answer.
+        if (generation != loadGeneration) return
+        if (!sameLogin) {
             load()
             return
         }
@@ -134,6 +164,7 @@ class SignInSettingsViewModel(
                 canUnlink = section.canUnlink,
                 connectable = section.connectable,
                 directory = section.directory,
+                network = section.network,
             )
         }
     }
@@ -142,9 +173,7 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(directoryPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
-    fun onDismissDirectoryPrompt() {
-        _uiState.update { it.copy(directoryPrompt = null, passwordError = null) }
-    }
+    fun onDismissDirectoryPrompt() = dismissPrompt { it.copy(directoryPrompt = null) }
 
     /**
      * Links the directory (LDAP) account whose credentials the person typed,
@@ -159,26 +188,68 @@ class SignInSettingsViewModel(
             _uiState.update { it.copy(passwordError = "Fill in all three fields.") }
             return
         }
+        linkInOneCall(
+            provider = provider,
+            closePrompt = { it.copy(directoryPrompt = null) },
+            refusal = { directoryLinkMessage(it, provider.displayName) },
+        ) { scope -> externalSignIn.linkWithCredentials(scope, installationId, password, username.trim(), directoryPassword) }
+    }
+
+    fun onConnectNetwork(provider: SignInProvider) {
+        _uiState.update { it.copy(networkPrompt = provider, passwordError = null, message = null, error = null) }
+    }
+
+    fun onDismissNetworkPrompt() = dismissPrompt { it.copy(networkPrompt = null) }
+
+    /**
+     * Links the person who owns this device at the network provider, after
+     * confirming this account's own password. Like a directory link, the
+     * server checks both in one call; the device says who the person is.
+     */
+    fun onConfirmNetwork(password: String) {
+        val provider = _uiState.value.networkPrompt ?: return
+        val installationId = provider.installationId ?: return
+        if (_uiState.value.busy) return
+        if (password.isEmpty()) {
+            _uiState.update { it.copy(passwordError = "Enter your password.") }
+            return
+        }
+        linkInOneCall(
+            provider = provider,
+            closePrompt = { it.copy(networkPrompt = null) },
+            refusal = { networkLinkMessage(it, provider.displayName) },
+        ) { scope -> externalSignIn.linkWithNetwork(scope, installationId, password) }
+    }
+
+    /**
+     * A link the server makes in one call, with no browser (directory and
+     * network providers): the open prompt closes on success and on refusals
+     * that typing again won't fix, and stays open for the rest.
+     */
+    private fun linkInOneCall(
+        provider: SignInProvider,
+        closePrompt: (SignInSettingsUiState) -> SignInSettingsUiState,
+        refusal: (ApiResult.Error) -> String,
+        link: suspend (AuthScopeSnapshot) -> ApiResult<AccountIdentity>,
+    ) {
         _uiState.update { it.copy(busy = true, passwordError = null) }
-        viewModelScope.launch {
+        connectJob = viewModelScope.launch {
             val scope = tokenManager.snapshotCurrentScope()
             if (scope == null) {
-                _uiState.update { it.copy(busy = false, directoryPrompt = null, error = ACCOUNT_CHANGED) }
+                _uiState.update { closePrompt(it).copy(busy = false, error = ACCOUNT_CHANGED) }
                 return@launch
             }
-            when (val linked = externalSignIn.linkWithCredentials(scope, installationId, password, username.trim(), directoryPassword)) {
+            when (val linked = link(scope)) {
                 is ApiResult.Success -> {
                     load()
-                    _uiState.update {
-                        it.copy(busy = false, directoryPrompt = null, message = "Connected ${provider.displayName}.")
-                    }
+                    _uiState.update { closePrompt(it).copy(busy = false, message = "Connected ${provider.displayName}.") }
                 }
                 is ApiResult.Error -> {
-                    val message = directoryLinkMessage(linked, provider.displayName)
+                    val message = refusal(linked)
                     if (keepsPromptOpen(linked)) {
                         _uiState.update { it.copy(busy = false, passwordError = message) }
                     } else {
-                        _uiState.update { it.copy(busy = false, directoryPrompt = null, error = message) }
+                        _uiState.update { closePrompt(it).copy(busy = false, error = message) }
                     }
                 }
                 is ApiResult.NetworkError -> _uiState.update {
@@ -192,12 +263,19 @@ class SignInSettingsViewModel(
         _uiState.update { it.copy(passwordPrompt = provider, passwordError = null, message = null, error = null) }
     }
 
-    /** Cancel also stops a ticket or identity check still under way, so no browser opens once the prompt is gone. */
-    fun onDismissPasswordPrompt() {
+    fun onDismissPasswordPrompt() = dismissPrompt { it.copy(passwordPrompt = null) }
+
+    /**
+     * Cancel also stops the prompt's work still under way: no browser opens
+     * and nothing reports back once the prompt is gone. A link the server
+     * made before the cancel shows when the section reloads.
+     */
+    private fun dismissPrompt(close: (SignInSettingsUiState) -> SignInSettingsUiState) {
         val stopped = connectJob?.isActive == true
         connectJob?.cancel()
         connectJob = null
-        _uiState.update { it.copy(passwordPrompt = null, passwordError = null, busy = it.busy && !stopped) }
+        _uiState.update { close(it).copy(passwordError = null, busy = it.busy && !stopped) }
+        if (stopped) refresh()
     }
 
     /**
@@ -338,6 +416,7 @@ class SignInSettingsViewModel(
         val connectable: List<SignInProvider>,
         val directory: SignInProvider?,
         val canUnlink: Boolean? = null,
+        val network: SignInProvider? = null,
     )
 
     companion object {
@@ -358,6 +437,16 @@ class SignInSettingsViewModel(
         fun connectDirectoryPrompt(providerName: String): String =
             "Confirm this account's password, then enter your $providerName username and password. " +
                 "After connecting, you sign in with your $providerName username and password instead."
+
+        /**
+         * The password prompt for a network provider. [owner] is who the
+         * provider says owns this device, the person being connected.
+         */
+        fun connectNetworkPrompt(providerName: String, owner: String?): String {
+            val who = owner?.let { "$it on $providerName" } ?: "the $providerName account this device uses"
+            return "Enter this account's password to connect $who. " +
+                "After connecting, you sign in with $providerName instead of your password."
+        }
 
         /**
          * Linking turns the account's own password off, so Disconnect can't
@@ -385,7 +474,9 @@ class SignInSettingsViewModel(
          * OAuth provider is connectable through the browser when the OAuth
          * handshake also serves app linking, a directory when the external
          * sign-in document serves [credentialsLinking] (directory linking
-         * needs no handshake).
+         * needs no handshake). A network provider is connectable when the
+         * document serves [networkSignIn] and the server listed one, which
+         * it does only to a device on that provider's network.
          */
         fun sectionOf(
             identitiesServed: Boolean,
@@ -394,6 +485,7 @@ class SignInSettingsViewModel(
             handshake: OAuthHandshakeCapabilities,
             credentialsLinking: Boolean,
             canUnlink: Boolean? = null,
+            networkSignIn: Boolean = false,
         ): Section {
             if (!identitiesServed) return Section(emptyList(), emptyList(), null)
             val linked = identities.map { it.installationId }.toSet()
@@ -401,7 +493,8 @@ class SignInSettingsViewModel(
             val options = SignInOptions.of(SignInProviders(unlinked, passwordLogin = false), handshake)
             val connectable = if (handshake.linking) options.oauthProviders else emptyList()
             val directory = options.directoryProvider.takeIf { credentialsLinking }
-            return Section(identities, connectable, directory, canUnlink.takeIf { identities.isNotEmpty() })
+            val network = options.networkProvider.takeIf { networkSignIn }
+            return Section(identities, connectable, directory, canUnlink.takeIf { identities.isNotEmpty() }, network)
         }
 
         fun providerLabel(identity: AccountIdentity): String =
@@ -413,7 +506,7 @@ class SignInSettingsViewModel(
         private fun noLocalPassword(providerName: String) =
             "This account has no password to confirm with. Ask an admin to connect it to $providerName."
 
-        private fun noLongerAvailable(providerName: String) = "$providerName is no longer available on this server."
+        private fun noLongerAvailable(providerName: String) = ProviderRefusalText.providerGone(providerName)
 
         /** Text for a refused link ticket (`createAccountIdentityLinkTicket`). */
         fun linkTicketMessage(error: ApiResult.Error, providerName: String): String = when {
@@ -439,6 +532,25 @@ class SignInSettingsViewModel(
                 error.code == 422 -> CHECK_ENTRIES
                 error.code == 404 -> noLongerAvailable(providerName)
                 else -> NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+            }
+        }
+
+        /**
+         * Text for a refused network link (`linkAccountIdentityWithNetwork`),
+         * by problem code: the contract names one for every refusal.
+         */
+        fun networkLinkMessage(error: ApiResult.Error, providerName: String): String = when (error.error) {
+            DefaultExternalSignInApi.WRONG_PASSWORD -> "That password is incorrect."
+            "local_password_required" -> noLocalPassword(providerName)
+            else -> when (NetworkSignInFailure.of(error.code, error.error)) {
+                NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "connect $providerName")
+                NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
+                NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
+                else -> if (error.code == 422) {
+                    CHECK_ENTRIES
+                } else {
+                    NativeSignInMessages.forProblem(error, providerName) ?: "Couldn't connect $providerName. Try again."
+                }
             }
         }
 

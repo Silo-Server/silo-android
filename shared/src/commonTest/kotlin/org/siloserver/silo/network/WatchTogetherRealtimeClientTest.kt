@@ -1,6 +1,7 @@
 package org.siloserver.silo.network
 
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.cancelAndJoin
@@ -178,6 +179,12 @@ class WatchTogetherRealtimeClientTest {
 
         connection.sendFailure = IllegalStateException("closed")
         assertFalse(client.ping("2026-07-27T10:00:01Z"))
+        // A socket that dies under a pending send cancels its outgoing
+        // channel. That is a failed send, not the caller's cancellation.
+        connection.sendFailure = CancellationException("outgoing channel cancelled")
+        assertFalse(client.stateReport("session-1", 16.5, false))
+        assertFalse(client.transportRequestOnConnection(client.currentConnectionId() ?: -1L, "play", null, false))
+        assertTrue(coroutineContext.isActive)
         job.cancelAndJoin()
         assertFalse(client.attachSession("session-after-close"))
     }

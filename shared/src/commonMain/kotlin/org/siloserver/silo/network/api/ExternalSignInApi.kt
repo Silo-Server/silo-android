@@ -14,11 +14,13 @@ import io.ktor.http.contentType
 import io.ktor.http.encodeURLPathPart
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
 import org.siloserver.silo.model.auth.AccountIdentityLinkTicket
 import org.siloserver.silo.model.auth.ExternalSignInCapabilities
 import org.siloserver.silo.model.auth.LoginResponse
+import org.siloserver.silo.model.auth.NetworkIdentity
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInProvider
 import org.siloserver.silo.model.auth.SignInProviders
@@ -35,8 +37,9 @@ import org.siloserver.silo.network.singleAttempt
 import org.siloserver.silo.network.skipSiloAuth
 
 /**
- * External sign-in (OIDC, LDAP) operations the apps use: provider discovery,
- * the native OAuth handoff's completion, and the account's Sign-in section.
+ * External sign-in (OIDC, LDAP, network identity) operations the apps use:
+ * provider discovery, the native OAuth handoff's completion, the network
+ * identity sign-in, and the account's Sign-in section.
  * Contract: silo-server `docs/auth-api.md` ("External sign-in", "OAuth sign-in
  * flows"). Nothing here retries; the completions are single use.
  */
@@ -55,6 +58,16 @@ interface ExternalSignInApi {
 
     /** `completeOAuthLogin` for a native code: the token pair and the account. */
     suspend fun completeOAuthLogin(serverUrl: String, code: String, codeVerifier: String): ApiResult<LoginResponse>
+
+    /**
+     * `signInWithNetworkIdentity`: POST `{}` to [signInPath] on the saved base
+     * [serverUrl], unauthenticated. [signInPath] is a provider's
+     * [SignInProvider.networkSignInPath], which discovery already reduced to
+     * the base-relative route, so nothing is posted to another origin.
+     * Answers `login`'s token pair and account. Never retried: each attempt
+     * spends the server's login rate-limit budget.
+     */
+    suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse>
 
     /** `listAccountIdentities` for [scope]'s account. */
     suspend fun listIdentities(scope: AuthScopeSnapshot): ApiResult<AccountIdentities>
@@ -83,6 +96,18 @@ interface ExternalSignInApi {
         password: String,
         username: String,
         directoryPassword: String,
+    ): ApiResult<AccountIdentity>
+
+    /**
+     * `linkAccountIdentityWithNetwork`: link [scope]'s account to the person
+     * who owns this device at network provider [installationId], confirming
+     * the account's local [password]. The server allows it only through that
+     * provider's network.
+     */
+    suspend fun linkWithNetwork(
+        scope: AuthScopeSnapshot,
+        installationId: String,
+        password: String,
     ): ApiResult<AccountIdentity>
 }
 
@@ -121,6 +146,17 @@ class DefaultExternalSignInApi(
             setBody(CompleteOAuthLoginV2(code = code, codeVerifier = codeVerifier))
         }.requireAuthStatus(200)
     }.map { it.domain() }
+
+    override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> =
+        safeApiV2Call<TokenPairV2>(apiV2Gate) {
+            client.post("${serverUrl.trimEnd('/')}$signInPath") {
+                skipSiloAuth(); singleAttempt()
+                // The server refuses a sign-in without a JSON body (415), which
+                // keeps a cross-site form post from signing a device in.
+                contentType(ContentType.Application.Json)
+                setBody(JsonObject(emptyMap()))
+            }.requireAuthStatus(200)
+        }.map { it.domain() }
 
     override suspend fun listIdentities(scope: AuthScopeSnapshot): ApiResult<AccountIdentities> =
         safeApiV2Call<AccountIdentityCollectionV2>(apiV2Gate.forServer(scope.serverId)) {
@@ -179,6 +215,20 @@ class DefaultExternalSignInApi(
                     directoryPassword = directoryPassword,
                 ),
             )
+        }
+    }
+
+    override suspend fun linkWithNetwork(
+        scope: AuthScopeSnapshot,
+        installationId: String,
+        password: String,
+    ): ApiResult<AccountIdentity> = locatedCall(scope, expected = 201, decode = { body ->
+        SiloJson.decodeFromString(AccountIdentityV2.serializer(), body).domain()
+    }) {
+        client.post("/api/v2/account/identities/link-network") {
+            authScope(scope); freshSiloAuth(); singleAttempt()
+            contentType(ContentType.Application.Json)
+            setBody(LinkNetworkRequestV2(installationId = installationId, password = password))
         }
     }
 
@@ -243,6 +293,8 @@ internal data class AuthProviderV2(
     @SerialName("icon_url") val iconUrl: String? = null,
     @SerialName("installation_id") val installationId: String? = null,
     @SerialName("native_start_path") val nativeStartPath: String? = null,
+    @SerialName("network_sign_in_path") val networkSignInPath: String? = null,
+    @SerialName("network_identity") val networkIdentity: AuthProviderNetworkIdentityV2? = null,
 ) {
     fun domain(serverUrl: String) = SignInProvider(
         id = id,
@@ -250,15 +302,24 @@ internal data class AuthProviderV2(
         mode = when (mode) {
             "credentials" -> SignInProvider.Mode.Credentials
             "oauth" -> SignInProvider.Mode.OAuth
+            "network" -> SignInProvider.Mode.Network
             else -> SignInProvider.Mode.Unknown
         },
         isDefault = default,
         iconUrl = iconUrl?.trim()?.takeIf { it.isNotEmpty() }?.let { absoluteUrl(it, serverUrl) },
         installationId = installationId?.takeIf { it.isNotBlank() },
-        // Only the path is kept: the app opens it on its own saved server base.
+        // Only the paths are kept: the app uses them on its own saved server base.
         nativeStartPath = nativeStartPath(nativeStartPath),
+        networkSignInPath = networkSignInPath(networkSignInPath),
+        networkIdentity = networkIdentity?.let { NetworkIdentity(displayName = it.displayName, username = it.username) },
     )
 }
+
+@Serializable
+internal data class AuthProviderNetworkIdentityV2(
+    @SerialName("display_name") val displayName: String = "",
+    val username: String = "",
+)
 
 /**
  * The native start relative to the server base: `/api/v2/auth/oauth/{id}/native/start`
@@ -268,17 +329,29 @@ internal data class AuthProviderV2(
  * saved base URL and never open another origin.
  * Null for anything that isn't that route.
  */
-internal fun nativeStartPath(path: String?): String? {
+internal fun nativeStartPath(path: String?): String? = baseRelativeRoute(path, NATIVE_START_PREFIX, NATIVE_START_ROUTE)
+
+/**
+ * `signInWithNetworkIdentity` relative to the server base
+ * (`/api/v2/auth/network/{id}/sign-in`), taken from `network_sign_in_path`
+ * the way [nativeStartPath] takes the native start: a reverse proxy's path
+ * prefix is dropped, and anything that isn't that route is null.
+ */
+internal fun networkSignInPath(path: String?): String? = baseRelativeRoute(path, NETWORK_SIGN_IN_PREFIX, NETWORK_SIGN_IN_ROUTE)
+
+private fun baseRelativeRoute(path: String?, prefix: String, route: Regex): String? {
     val raw = path?.trim()
         ?.takeIf { it.startsWith("/") && !it.startsWith("//") }
         ?.substringBefore('#') ?: return null
-    val start = raw.substringBefore('?').indexOf(NATIVE_START_PREFIX)
+    val start = raw.substringBefore('?').indexOf(prefix)
     if (start < 0) return null
-    return raw.substring(start).takeIf { NATIVE_START_ROUTE.matches(it) }
+    return raw.substring(start).takeIf { route.matches(it) }
 }
 
 private const val NATIVE_START_PREFIX = "/api/v2/auth/oauth/"
 private val NATIVE_START_ROUTE = Regex("^/api/v2/auth/oauth/[A-Za-z0-9._~%-]+/native/start(\\?[^#\\s]*)?$")
+private const val NETWORK_SIGN_IN_PREFIX = "/api/v2/auth/network/"
+private val NETWORK_SIGN_IN_ROUTE = Regex("^/api/v2/auth/network/[A-Za-z0-9._~%-]+/sign-in$")
 
 /** A site-relative icon path (`/api/v2/plugin-content/...`) resolves against the server that listed it. */
 internal fun absoluteUrl(url: String, serverUrl: String): String? = when {
@@ -323,12 +396,14 @@ internal data class ExternalSignInCapabilitiesV2(
     val available: Boolean = false,
     val identities: Boolean = false,
     @SerialName("credentials_linking") val credentialsLinking: Boolean = false,
+    @SerialName("network_sign_in") val networkSignIn: Boolean = false,
 ) {
     fun domain(): ExternalSignInCapabilities {
         val usable = available && (state == null || state == "available")
         return ExternalSignInCapabilities(
             identities = usable && identities,
             credentialsLinking = usable && credentialsLinking,
+            networkSignIn = usable && networkSignIn,
         )
     }
 }
@@ -396,4 +471,12 @@ internal data class LinkCredentialsRequestV2(
     @SerialName("directory_password") val directoryPassword: String,
 ) {
     override fun toString(): String = "LinkCredentialsRequestV2(installationId=$installationId, <credentials redacted>)"
+}
+
+@Serializable
+internal data class LinkNetworkRequestV2(
+    @SerialName("installation_id") val installationId: String,
+    val password: String,
+) {
+    override fun toString(): String = "LinkNetworkRequestV2(installationId=$installationId, password=<redacted>)"
 }

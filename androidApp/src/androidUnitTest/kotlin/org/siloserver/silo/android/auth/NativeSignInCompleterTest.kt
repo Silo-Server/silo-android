@@ -173,6 +173,9 @@ class NativeSignInCompleterTest {
             username: String,
             directoryPassword: String,
         ): ApiResult<AccountIdentity> = TODO()
+        override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String): ApiResult<LoginResponse> = TODO()
+        override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String):
+            ApiResult<AccountIdentity> = TODO()
     }
 
     /**

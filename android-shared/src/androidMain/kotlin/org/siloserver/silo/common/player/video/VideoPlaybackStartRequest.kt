@@ -1,6 +1,7 @@
 package org.siloserver.silo.common.player.video
 
 import org.siloserver.silo.common.player.StartParams
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 
 data class VideoPlaybackStartRequest(
     val contentId: String,
@@ -43,4 +44,10 @@ data class VideoPlaybackStartRequest(
      */
     val recoveryStartParams: StartParams? = null,
     val libraryId: Int? = null,
+    /**
+     * Watch Party playback: the exact room file, position, and paused state.
+     * Room starts never use a downloaded copy, personal resume, or another
+     * version, and pin the file through every replan.
+     */
+    val room: WatchPartyPlaybackContext? = null,
 )

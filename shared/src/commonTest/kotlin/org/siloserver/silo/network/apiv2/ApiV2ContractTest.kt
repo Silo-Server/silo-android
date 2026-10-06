@@ -20,14 +20,17 @@ import org.siloserver.silo.network.api.DevicePollV2
 import org.siloserver.silo.network.api.ServerConnectionsV2
 import org.siloserver.silo.network.api.ServerIdentityV2
 import org.siloserver.silo.network.api.AccountIdentityCollectionV2
+import org.siloserver.silo.network.api.AccountIdentityV2
 import org.siloserver.silo.network.api.AuthProviderCollectionV2
 import org.siloserver.silo.network.api.DefaultExternalSignInApi
 import org.siloserver.silo.network.api.ExternalSignInCapabilitiesV2
 import org.siloserver.silo.network.api.LinkTicketV2
 import org.siloserver.silo.network.api.OAuthHandshakeCapabilitiesV2
 import org.siloserver.silo.network.api.TokenPairV2
+import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.SignInOptions
 import org.siloserver.silo.model.auth.SignInProvider
+import org.siloserver.silo.model.auth.SignInProviders
 import org.siloserver.silo.pairing.PairingEndpoint
 
 /**
@@ -77,6 +80,8 @@ class ApiV2ContractTest {
                     "completeOAuthLogin" -> ApiV2Fixtures.decode<TokenPairV2>(body)
                     "listAccountIdentities" -> ApiV2Fixtures.decode<AccountIdentityCollectionV2>(body)
                     "createAccountIdentityLinkTicket" -> ApiV2Fixtures.decode<LinkTicketV2>(body)
+                    "signInWithNetworkIdentity" -> ApiV2Fixtures.decode<TokenPairV2>(body)
+                    "linkAccountIdentityWithNetwork" -> ApiV2Fixtures.decode<AccountIdentityV2>(body)
                     else -> error("unhandled success fixture ${entry.name} (${entry.operationId})")
                 }
             }
@@ -457,11 +462,90 @@ class ApiV2ContractTest {
             with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "credentials_linking" to null),
         ).domain()
         assertFalse(older.credentialsLinking, "absent credentials_linking means the operation isn't served")
+        assertTrue(capabilities.networkSignIn)
+        val beforeNetwork = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "network_sign_in" to null),
+        ).domain()
+        assertFalse(beforeNetwork.networkSignIn, "absent network_sign_in means the operations aren't served")
+        assertTrue(beforeNetwork.credentialsLinking)
         val unsupported = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
             with(ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok"), "state" to JsonPrimitive("unsupported")),
         ).domain()
         assertFalse(unsupported.identities)
         assertFalse(unsupported.credentialsLinking)
+        assertFalse(unsupported.networkSignIn)
+    }
+
+    // --- Network identity (signInWithNetworkIdentity, linkAccountIdentityWithNetwork) ---
+
+    @Test
+    fun networkSignInFixtureCarriesTheTokenPairLoginAnswers() {
+        val login = ApiV2Fixtures.decode<TokenPairV2>(ApiV2Fixtures.bodyObject("sign_in_with_network_identity_ok").plusUnknown()).domain()
+        assertEquals("acc", login.accessToken)
+        assertEquals("ref", login.refreshToken)
+        assertEquals(3600L, login.expiresIn)
+        assertEquals("laura", login.user.username)
+        // The contract's request is the one the app sends: a POST of an empty JSON object.
+        val request = ApiV2Fixtures.index.fixtures.single { it.name == "sign_in_with_network_identity_ok" }.request
+        assertEquals("POST", request.method)
+        assertEquals("{}", request.body)
+        assertEquals("/api/v2/auth/network/5/sign-in", org.siloserver.silo.network.api.networkSignInPath(request.path))
+    }
+
+    @Test
+    fun networkSignInOffTheOverlayIsNetworkIdentityRequired() {
+        val problem = ApiV2Fixtures.decode<Problem>(ApiV2Fixtures.bodyObject("sign_in_with_network_identity_off_overlay"))
+        assertEquals(403, problem.status)
+        assertEquals("network_identity_required", problem.code)
+        assertEquals(
+            org.siloserver.silo.model.auth.NetworkSignInFailure.NetworkIdentityRequired,
+            org.siloserver.silo.model.auth.NetworkSignInFailure.of(problem.status, problem.code),
+        )
+    }
+
+    @Test
+    fun networkLinkFixtureIsTheLinkedIdentity() {
+        val identity = ApiV2Fixtures.decode<AccountIdentityV2>(
+            ApiV2Fixtures.bodyObject("link_account_identity_with_network_ok").plusUnknown(),
+        ).domain()
+        assertEquals("8", identity.id)
+        assertEquals("5", identity.installationId)
+        assertEquals("Tailscale", identity.providerName)
+        assertEquals("alice@example.test", identity.accountLabel)
+        assertNull(identity.lastSignInAt)
+    }
+
+    /**
+     * A network provider as `listAuthProviders` lists it over its own network
+     * (the provider list fixture is read off it, so it shows none): apps get
+     * the sign-in route relative to the server base, like the native start.
+     */
+    @Test
+    fun networkProviderSignInPathIsReducedToTheBaseRelativeRoute() {
+        fun provider(fields: String) = ApiV2Fixtures.decode<AuthProviderCollectionV2>(
+            ApiV2Fixtures.json.parseToJsonElement(
+                """{"items":[{"id":"plugin:5:tailscale","display_name":"Tailscale","mode":"network","default":false,
+                   "installation_id":"5"$fields}],"password_login":true}""",
+            ).jsonObject,
+        ).domain("https://silo.tailnet.ts.net").providers.single()
+        val route = "/api/v2/auth/network/5/sign-in"
+        val listed = provider(
+            ""","network_sign_in_path":"$route","network_identity":{"display_name":"","username":"alice@example.test"}""",
+        )
+        assertEquals(SignInProvider.Mode.Network, listed.mode)
+        assertEquals(route, listed.networkSignInPath)
+        assertEquals("alice@example.test", listed.networkIdentity?.label)
+        assertEquals(route, provider(""","network_sign_in_path":"/silo/api/v2/auth/network/5/sign-in"""").networkSignInPath)
+        assertNull(provider("").networkIdentity)
+        listOf(
+            "",
+            ""","network_sign_in_path":"/api/v2/auth/network/5/other"""",
+            ""","network_sign_in_path":"//evil.example.test/api/v2/auth/network/5/sign-in"""",
+            ""","network_sign_in_path":"https://public.example.test/api/v2/auth/network/5/sign-in"""",
+            ""","network_sign_in_path":"/api/v2/auth/oauth/5/native/start"""",
+        ).forEach { assertNull(provider(it).networkSignInPath, it) }
+        // Without its path the provider offers nothing.
+        assertNull(SignInOptions.of(SignInProviders(listOf(provider("")), true), OAuthHandshakeCapabilities.None).networkProvider)
     }
 
     @Test
@@ -523,5 +607,6 @@ class ApiV2ContractTest {
         assertTrue(options.showPasswordForm)
         assertEquals(listOf("Example SSO"), options.oauthProviders.map { it.displayName })
         assertNull(options.directoryProvider)
+        assertNull(options.networkProvider, "a listing that didn't come through a network provider offers none")
     }
 }

@@ -23,6 +23,7 @@ and the server ledger `contracts/api/v2/migration.json` (silo-server `origin/api
 | Calendar | `/api/v2/calendar` | migrated |
 | Requests | `/api/v2/requests`, `/api/v2/requests/{id}`, `/api/v2/requests/{id}/cancel`, `/api/v2/requests/{mine,status,search,discover}`, `/api/v2/requests/discover/{section}`, `/api/v2/requests/detail/{media_type}/{tmdb_id}` | migrated (server-gated by `requests_enabled`) |
 | Playback | `/api/v2/playback/capabilities`, `/api/v2/playback/start`, `/api/v2/playback/route-events`, `/api/v2/playback/sessions/{id}/control/ws-ticket`, `/api/v2/playback/sessions/{id}/control/ws` | migrated (start was redesigned server-side; the client uses the v2 `PlaybackDecision` shape) |
+| Shuffle | `/api/v2/shuffles`, `/api/v2/shuffles/capabilities`, `/api/v2/shuffles/{id}`, `/api/v2/shuffles/{id}/{advance,skip}` | v2 only (server-gated by the capability; see [shuffle](../shuffle-api-v2.md)) |
 | Subtitles | `/api/v2/subtitles/{media_file_id}`, `/api/v2/subtitles/{search,download}`, `/api/v2/subtitles/ai/{status,quota,translate,jobs}`, `/api/v2/subtitles/ai/jobs/{id}`, `/api/v2/subtitles/ai/jobs/{id}/cancel` | migrated |
 | Settings | `/api/v2/settings/contract/capabilities`, `/api/v2/settings/values/effective`, `/api/v2/settings/values/{key}`, `/api/v2/settings/overlay-config` | migrated |
 | Downloads | `/api/v2/downloads`, `/api/v2/downloads/{id}`, `/api/v2/capabilities/downloads` | migrated |

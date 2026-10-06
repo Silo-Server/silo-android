@@ -49,6 +49,9 @@ sealed class ServerSetupDestination {
 
     /** Server is ready -- go to login. Signup may or may not be available. */
     data class Login(val signupEnabled: Boolean) : ServerSetupDestination()
+
+    /** A saved server this device is still signed in to: straight to its profiles. */
+    data object Profiles : ServerSetupDestination()
 }
 
 class ServerSetupViewModel(
@@ -67,6 +70,8 @@ class ServerSetupViewModel(
     private val candidateUrls: (ServerSetupUiState) -> List<String> = {
         buildServerSetupCandidateUrls(it.serverUrl, it.selectedScheme, it.port)
     },
+    /** Whether the now-active server already has a signed-in session, as when a saved server is picked from Recent. */
+    private val hasSession: suspend () -> Boolean = { false },
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerSetupUiState())
@@ -103,6 +108,15 @@ class ServerSetupViewModel(
 
     fun onPortChanged(port: String) {
         _uiState.update { it.copy(port = port, error = null) }
+    }
+
+    /**
+     * Fills in a saved server's address. Its URL already names the scheme and
+     * port, so a protocol or port chosen for an earlier attempt must not
+     * override them.
+     */
+    fun useRecent(url: String) {
+        _uiState.update { it.copy(serverUrl = url, selectedScheme = ServerSetupScheme.Auto, port = "", error = null) }
     }
 
     /**
@@ -257,11 +271,18 @@ class ServerSetupViewModel(
         contract: ServerContract?,
     ) {
         authRepository.setServerUrl(serverUrl, contract)
+        // A saved server that is still signed in goes straight to its
+        // profiles; only a server without a session needs sign-in.
+        val next = if (destination is ServerSetupDestination.Login && hasSession()) {
+            ServerSetupDestination.Profiles
+        } else {
+            destination
+        }
         _uiState.update {
             it.copy(
                 isLoading = false,
                 pendingCleartextUrl = null,
-                navigateTo = destination,
+                navigateTo = next,
             )
         }
     }

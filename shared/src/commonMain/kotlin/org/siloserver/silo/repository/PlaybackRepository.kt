@@ -10,15 +10,12 @@ import org.siloserver.silo.network.AuthScopeSnapshot
 
 class PlaybackRepository(private val sequenced: SequencedPlayback) {
     suspend fun controlOwner(sessionId: String): Pair<AuthScopeSnapshot, String?>? = sequenced.controlOwner(sessionId)
-    val pendingPlayback = sequenced.pending
     fun isSequenced(sessionId: String): Boolean = sequenced.owns(sessionId)
-    suspend fun pendingPlaybackCount(): Int = sequenced.pendingForCurrentViewer()
-    suspend fun recoverPlayback(): ApiResult<Unit> = guarded { sequenced.recover() }
     /** [SequencedPlayback] answers null for a session it never journaled. */
     private fun unknownSession() = ApiResult.Error(0, "playback_unavailable", "This playback session is not owned by the app.")
     private suspend fun <T> guarded(block: suspend () -> ApiResult<T>): ApiResult<T> = try { block() }
         catch (e: CancellationException) { throw e }
-        catch (e: Exception) { ApiResult.Error(0, "playback_storage", "Playback recovery storage is unavailable.") }
+        catch (e: Exception) { ApiResult.Error(0, "playback_storage", "Playback storage is unavailable.") }
 
     /** Starts a protocol-v3 playback attempt using the supplied client and route evidence. */
     suspend fun startPlaybackV3(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> =

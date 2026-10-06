@@ -9,6 +9,7 @@ import io.ktor.client.request.HttpResponseData
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
+import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
@@ -19,6 +20,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.siloserver.silo.model.auth.AccountIdentities
 import org.siloserver.silo.model.auth.AccountIdentity
+import org.siloserver.silo.model.auth.LoginResponse
+import org.siloserver.silo.model.auth.NetworkIdentity
+import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.OAuthHandshakeCapabilities
 import org.siloserver.silo.model.auth.PasswordLoginFailure
 import org.siloserver.silo.model.auth.SignInOptions
@@ -42,8 +46,10 @@ import kotlin.test.assertTrue
 
 /**
  * External sign-in on the wire: what the apps send to silo-server's
- * `listAuthProviders`, `completeOAuthLogin`, the identity operations and
- * `linkAccountIdentityWithCredentials`, and how each refusal comes back.
+ * `listAuthProviders`, `completeOAuthLogin`, `signInWithNetworkIdentity`,
+ * the identity operations and the two password-confirmed links
+ * (`linkAccountIdentityWithCredentials`, `linkAccountIdentityWithNetwork`),
+ * and how each refusal comes back.
  */
 class ExternalSignInApiTest {
     private val scope = AuthScopeSnapshot("server-a", "p1", "https://silo.example.test", null, identityGeneration = 1)
@@ -122,6 +128,121 @@ class ExternalSignInApiTest {
                 assertEquals(code, error.error)
             } finally { client.close() }
         }
+    }
+
+    /** A network provider is listed only over its own network, with the owner of the asking device. */
+    @Test
+    fun aNetworkProviderIsReadWithItsSignInPathAndTheDevicesOwner() = runTest {
+        val (client, api) = api {
+            json(
+                """{"items":[{"id":"local","display_name":"Silo account","mode":"credentials","default":true},
+                   {"id":"plugin:5:tailscale","display_name":"Tailscale","mode":"network","default":false,
+                    "installation_id":"5","network_sign_in_path":"/api/v2/auth/network/5/sign-in",
+                    "network_identity":{"display_name":"Alice Example","username":"alice@example.test"}}],
+                   "password_login":true}""",
+            )
+        }
+        try {
+            val listed = assertIs<ApiResult.Success<SignInProviders>>(api.listProviders("https://silo.tailnet.ts.net")).data
+            val network = listed.providers[1]
+            assertEquals(SignInProvider.Mode.Network, network.mode)
+            assertEquals("Tailscale", network.displayName)
+            assertEquals("5", network.installationId)
+            assertEquals("/api/v2/auth/network/5/sign-in", network.networkSignInPath)
+            assertEquals(NetworkIdentity("Alice Example", "alice@example.test"), network.networkIdentity)
+            assertEquals("Alice Example", network.networkIdentity?.label)
+            assertFalse(network.isDefault)
+            assertNull(network.nativeStartPath)
+
+            val options = SignInOptions.of(listed, OAuthHandshakeCapabilities.None)
+            assertEquals(network, options.networkProvider)
+            assertTrue(options.showPasswordForm, "the network provider leaves the password form alone")
+            assertNull(options.directoryProvider, "a network provider is not a directory")
+            assertTrue(options.oauthProviders.isEmpty())
+        } finally { client.close() }
+    }
+
+    @Test
+    fun theOwnersLabelFallsBackToTheUsernameAndThenToNothing() {
+        assertEquals("alice@example.test", NetworkIdentity("", "alice@example.test").label)
+        assertEquals("alice@example.test", NetworkIdentity("  ", "alice@example.test").label)
+        assertNull(NetworkIdentity("", "").label, "the button then names the provider instead")
+    }
+
+    /**
+     * The sign-in posts `{}` as JSON (the server answers 415 without it) to
+     * the listed path on the app's own saved base, which may carry a reverse
+     * proxy's prefix, and lands the same token pair as `login`.
+     */
+    @Test
+    fun networkSignInPostsAnEmptyJsonObjectBelowTheSavedBase() = runTest {
+        val (client, api) = api { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("https://silo.tailnet.ts.net/silo/api/v2/auth/network/5/sign-in", request.url.toString())
+            assertEquals(true, request.attributes.getOrNull(SkipSiloAuthAttributeKey), "no bearer: this is a sign-in")
+            assertEquals(true, request.attributes.getOrNull(SingleAttemptAttributeKey), "never retried")
+            assertNull(request.headers[HttpHeaders.Authorization])
+            assertEquals(ContentType.Application.Json, request.body.contentType?.withoutParameters())
+            assertEquals("{}", (request.body as TextContent).text)
+            json(
+                """{"access_token":"acc","refresh_token":"ref","expires_in":3600,
+                   "user":{"id":"1","username":"laura","email":"laura@example.test","role":"user"}}""",
+            )
+        }
+        try {
+            val login = assertIs<ApiResult.Success<LoginResponse>>(
+                api.signInWithNetworkIdentity("https://silo.tailnet.ts.net/silo/", "/api/v2/auth/network/5/sign-in"),
+            ).data
+            assertEquals("acc", login.accessToken)
+            assertEquals("ref", login.refreshToken)
+            assertEquals(3600L, login.expiresIn)
+            assertEquals("laura", login.user.username)
+        } finally { client.close() }
+    }
+
+    /** Discovery keeps only the listed route, so the sign-in posts nowhere else. */
+    @Test
+    fun networkSignInGoesNowhereButTheListedRoute() {
+        listOf(
+            "//evil.example.test/api/v2/auth/network/5/sign-in",
+            "https://evil.example.test/api/v2/auth/network/5/sign-in",
+            "/api/v2/auth/login",
+            "/api/v2/auth/network/5/sign-in/../../login",
+            "",
+            null,
+        ).forEach { path -> assertNull(networkSignInPath(path), path) }
+        assertEquals("/api/v2/auth/network/5/sign-in", networkSignInPath("/silo/api/v2/auth/network/5/sign-in"))
+    }
+
+    @Test
+    fun networkSignInRefusalsKeepTheirProblemCodes() = runTest {
+        val cases = listOf(
+            "network_identity_required" to 403 to NetworkSignInFailure.NetworkIdentityRequired,
+            "not_permitted" to 403 to NetworkSignInFailure.NotPermitted,
+            "account_required" to 403 to NetworkSignInFailure.AccountRequired,
+            "permission_denied" to 403 to NetworkSignInFailure.AccountDisabled,
+            "email_in_use" to 409 to NetworkSignInFailure.EmailInUse,
+            "identity_linked_elsewhere" to 409 to NetworkSignInFailure.IdentityLinkedElsewhere,
+            "not_found" to 404 to NetworkSignInFailure.NotFound,
+            "provider_unavailable" to 503 to NetworkSignInFailure.ProviderUnavailable,
+            "rate_limited" to 429 to NetworkSignInFailure.RateLimited,
+        )
+        for ((problem, failure) in cases) {
+            val (code, status) = problem
+            val (client, api) = api { problem(code, status) }
+            try {
+                val error = assertIs<ApiResult.Error>(api.signInWithNetworkIdentity("https://silo.example.test", "/api/v2/auth/network/5/sign-in"))
+                assertEquals(status, error.code, code)
+                assertEquals(code, error.error, code)
+                assertEquals(failure, NetworkSignInFailure.of(error.code, error.error), code)
+            } finally { client.close() }
+        }
+        // By status when the problem code is unknown.
+        assertEquals(NetworkSignInFailure.RateLimited, NetworkSignInFailure.of(429, ""))
+        assertEquals(NetworkSignInFailure.ProviderUnavailable, NetworkSignInFailure.of(503, ""))
+        assertEquals(NetworkSignInFailure.NotFound, NetworkSignInFailure.of(404, ""))
+        assertEquals(NetworkSignInFailure.Other, NetworkSignInFailure.of(403, ""))
+        assertEquals(NetworkSignInFailure.Other, NetworkSignInFailure.of(500, "internal"))
     }
 
     @Test
@@ -207,6 +328,67 @@ class ExternalSignInApiTest {
         } finally { client.close() }
     }
 
+    /** Network linking asks only for the account's own password: the device says who the person is. */
+    @Test
+    fun linkWithNetworkSendsTheInstallationAndPasswordOnly() = runTest {
+        val (client, api) = api { request ->
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/v2/account/identities/link-network", request.url.encodedPath)
+            assertEquals(scope, request.attributes.getOrNull(AuthScopeAttributeKey))
+            assertEquals(true, request.attributes.getOrNull(FreshSiloAuthAttributeKey))
+            assertEquals(true, request.attributes.getOrNull(SingleAttemptAttributeKey))
+            val body = request.jsonBody()
+            assertEquals(setOf("installation_id", "password"), body.keys)
+            assertEquals("5", body["installation_id"]?.jsonPrimitive?.content)
+            if (body["password"]?.jsonPrimitive?.content != "local-pw") return@api problem("validation_failed", 422, "body.password")
+            respond(
+                """{"id":"8","installation_id":"5","provider_id":"plugin:5:tailscale","provider_name":"Tailscale",
+                   "username":"alice@example.test","email":"alice@example.test","display_name":"Alice Example",
+                   "linked_at":"2026-01-02T03:04:05.000Z","last_sign_in_at":null,"last_checked_at":"2026-01-03T16:07:08.000Z"}""",
+                HttpStatusCode.Created,
+                headersOf(HttpHeaders.ContentType to listOf("application/json"), HttpHeaders.Location to listOf("/api/v2/account/identities")),
+            )
+        }
+        try {
+            val linked = assertIs<ApiResult.Success<AccountIdentity>>(api.linkWithNetwork(scope, "5", "local-pw")).data
+            assertEquals("Tailscale", linked.providerName)
+            assertEquals("alice@example.test", linked.accountLabel)
+            val wrong = assertIs<ApiResult.Error>(api.linkWithNetwork(scope, "5", "wrong"))
+            assertEquals(422, wrong.code)
+            assertEquals(DefaultExternalSignInApi.WRONG_PASSWORD, wrong.error)
+        } finally { client.close() }
+    }
+
+    @Test
+    fun linkWithNetworkRefusalsAreDistinguishable() = runTest {
+        val cases = listOf(
+            Triple("network_identity_required", 403, null) to "network_identity_required",
+            Triple("validation_failed", 422, "body.password") to DefaultExternalSignInApi.WRONG_PASSWORD,
+            Triple("local_password_required", 409, null) to "local_password_required",
+            Triple("not_permitted", 403, null) to "not_permitted",
+            Triple("permission_denied", 403, null) to "permission_denied",
+            Triple("identity_linked_elsewhere", 409, null) to "identity_linked_elsewhere",
+            Triple("already_linked", 409, null) to "already_linked",
+            Triple("not_found", 404, null) to "not_found",
+            Triple("provider_unavailable", 503, null) to "provider_unavailable",
+            Triple("rate_limited", 429, null) to "rate_limited",
+        )
+        for ((problem, expected) in cases) {
+            val (code, status, location) = problem
+            val (client, api) = api { problem(code, status, location) }
+            try {
+                val error = assertIs<ApiResult.Error>(api.linkWithNetwork(scope, "5", "pw"))
+                assertEquals(status, error.code, code)
+                assertEquals(expected, error.error, code)
+            } finally { client.close() }
+        }
+        // A success other than 201 is not an identity.
+        val (client, api) = api { json("{}") }
+        try {
+            assertEquals("invalid_response", assertIs<ApiResult.Error>(api.linkWithNetwork(scope, "5", "pw")).error)
+        } finally { client.close() }
+    }
+
     @Test
     fun identitiesAreListedAndDisconnectedThroughTheAccountScope() = runTest {
         val calls = mutableListOf<String>()
@@ -239,6 +421,7 @@ class ExternalSignInApiTest {
             CompleteOAuthLoginV2(code = "secret-code", codeVerifier = "secret-verifier").toString(),
             LinkTicketRequestV2(installationId = "3", password = "secret-pw").toString(),
             LinkCredentialsRequestV2("6", "secret-pw", "secret-user", "secret-dir").toString(),
+            LinkNetworkRequestV2(installationId = "5", password = "secret-pw").toString(),
         )
         strings.forEach { assertFalse(it.contains("secret"), it) }
     }
@@ -305,6 +488,21 @@ class SignInOptionsTest {
     }
 
     @Test
+    fun aNetworkProviderNeedsItsSignInPathAndChangesNothingElse() {
+        val network = SignInProvider(
+            "plugin:7:tailscale", "Tailscale", SignInProvider.Mode.Network, false, null, "7", null,
+            networkSignInPath = "/api/v2/auth/network/7/sign-in",
+            networkIdentity = NetworkIdentity("Alice", "alice"),
+        )
+        val withNetwork = SignInOptions.of(SignInProviders(listOf(oidc, network), passwordLogin = false), native)
+        assertEquals(network, withNetwork.networkProvider)
+        assertFalse(withNetwork.showPasswordForm, "a network provider never takes a password")
+        assertEquals(listOf(oidc), withNetwork.oauthProviders)
+        assertNull(SignInOptions.of(SignInProviders(listOf(network.copy(networkSignInPath = null)), true), native).networkProvider)
+        assertNull(SignInOptions.PasswordOnly.networkProvider)
+    }
+
+    @Test
     fun selectAccountNeedsAProviderButton() {
         val choosing = native.copy(selectAccount = true)
         assertTrue(SignInOptions.of(SignInProviders(listOf(oidc), false), choosing).selectAccount)
@@ -341,6 +539,7 @@ class SignInOptionsTest {
         override suspend fun oauthCapabilities(serverUrl: String) = handshake
         override suspend fun externalSignInCapabilities(scope: AuthScopeSnapshot) = TODO()
         override suspend fun completeOAuthLogin(serverUrl: String, code: String, codeVerifier: String) = TODO()
+        override suspend fun signInWithNetworkIdentity(serverUrl: String, signInPath: String) = TODO()
         override suspend fun listIdentities(scope: AuthScopeSnapshot) = TODO()
         override suspend fun deleteIdentity(scope: AuthScopeSnapshot, identityId: String) = TODO()
         override suspend fun createLinkTicket(scope: AuthScopeSnapshot, installationId: String, password: String) = TODO()
@@ -352,5 +551,6 @@ class SignInOptionsTest {
             username: String,
             directoryPassword: String,
         ) = TODO()
+        override suspend fun linkWithNetwork(scope: AuthScopeSnapshot, installationId: String, password: String) = TODO()
     }
 }

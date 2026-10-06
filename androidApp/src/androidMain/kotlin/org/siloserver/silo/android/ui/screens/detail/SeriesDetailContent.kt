@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -76,6 +77,10 @@ fun SeriesDetailContent(
     onEpisodeWatchedChange: (String, Boolean) -> Unit,
     onSeasonSelected: (Int) -> Unit,
     onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
+    // Shuffle the whole series, or the season on screen; null where the
+    // server doesn't offer that scope.
+    onShuffleSeries: (() -> Unit)? = null,
+    onShuffleSeason: ((Season) -> Unit)? = null,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
@@ -88,8 +93,8 @@ fun SeriesDetailContent(
     /** Series-level roll-up across ALL seasons: isDownloaded when every episode
      *  is downloaded, progress = downloaded/total fraction while partial. */
     seriesDownloadState: DetailDownloadState = DetailDownloadState(),
-    onWatchTogether: (() -> Unit)? = null,
-    onSuggestToRoom: (() -> Unit)? = null,
+    /** The Watch Party overflow action (host, add, or suggest), when one applies. */
+    partyAction: org.siloserver.silo.android.ui.screens.watchparty.DetailPartyAction? = null,
     translation: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -121,6 +126,10 @@ fun SeriesDetailContent(
         onSeasonWatchedChange != null && it.episodeCount > 0
     }
     val castCrew = remember(detail) { castCrewCredits(detail) }
+    // Hidden on a season with fewer than two playable episodes.
+    val shuffleableSelectedSeason = selectedSeason?.takeIf {
+        onShuffleSeason != null && org.siloserver.silo.model.shuffle.canShuffleSeason(episodes)
+    }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
         "$count episode${if (count == 1) "" else "s"}"
     }
@@ -290,9 +299,30 @@ fun SeriesDetailContent(
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
                     overflow = if (
-                        markableSelectedSeason != null || onWatchTogether != null || onSuggestToRoom != null
+                        markableSelectedSeason != null || partyAction != null ||
+                        onShuffleSeries != null || shuffleableSelectedSeason != null
                     ) {
                         { dismiss ->
+                            if (onShuffleSeries != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Shuffle Series") },
+                                    leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
+                                    onClick = {
+                                        dismiss()
+                                        onShuffleSeries()
+                                    },
+                                )
+                            }
+                            if (shuffleableSelectedSeason != null && onShuffleSeason != null) {
+                                DropdownMenuItem(
+                                    text = { Text("Shuffle ${phoneSeasonLabel(shuffleableSelectedSeason)}") },
+                                    leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
+                                    onClick = {
+                                        dismiss()
+                                        onShuffleSeason(shuffleableSelectedSeason)
+                                    },
+                                )
+                            }
                             if (markableSelectedSeason != null && onSeasonWatchedChange != null) {
                                 val seasonWatched = markableSelectedSeason.userData?.played == true
                                 DropdownMenuItem(
@@ -318,27 +348,15 @@ fun SeriesDetailContent(
                                     },
                                 )
                             }
-                            if (onSuggestToRoom != null) {
+                            if (partyAction != null) {
                                 DropdownMenuItem(
-                                    text = { Text("Suggest to Watch Together") },
+                                    text = { Text(partyAction.label) },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.Groups, contentDescription = null)
                                     },
                                     onClick = {
                                         dismiss()
-                                        onSuggestToRoom()
-                                    },
-                                )
-                            }
-                            if (onWatchTogether != null) {
-                                DropdownMenuItem(
-                                    text = { Text("Watch Together") },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Groups, contentDescription = null)
-                                    },
-                                    onClick = {
-                                        dismiss()
-                                        onWatchTogether()
+                                        partyAction.onClick()
                                     },
                                 )
                             }

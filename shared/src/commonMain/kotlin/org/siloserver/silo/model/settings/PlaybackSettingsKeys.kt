@@ -151,6 +151,21 @@ object PlaybackSettingsKeys {
      */
     const val ForceHdrPassthrough = "player.force_hdr_passthrough"
 
+    /**
+     * Local-only per-profile TV setting, off by default. Clears the bars
+     * around a picture that doesn't fill the screen to transparent instead of
+     * painting them opaque black.
+     *
+     * Some devices composite the app window's SDR black above reference black
+     * while HDR or Dolby Vision is on, so painted bars glow grey (Onn 4K Pro,
+     * Sony TVs). Others do the reverse and lift the transparent area (Fire TV,
+     * Google TV Streamer). Neither the chip vendor nor any platform signal
+     * tells them apart (silo-android#475), so the user picks what looks right
+     * on their device. It describes this device's compositor, not a playback
+     * preference, so this never enters [DeviceSettings].
+     */
+    const val TrueBlackBars = "player.true_black_bars"
+
     val DeviceSettings = listOf(
         PreferredQuality,
         MaxBitrateKbps,

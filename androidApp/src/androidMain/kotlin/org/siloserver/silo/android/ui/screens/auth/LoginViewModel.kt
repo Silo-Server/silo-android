@@ -8,6 +8,7 @@ import org.siloserver.silo.android.auth.NativeSignInProtocol
 import org.siloserver.silo.android.auth.NativeSignInPurpose
 import org.siloserver.silo.android.auth.NativeSignInResult
 import org.siloserver.silo.android.auth.NativeSignInStart
+import org.siloserver.silo.model.auth.NetworkSignInFailure
 import org.siloserver.silo.model.auth.PasswordLoginFailure
 import org.siloserver.silo.model.auth.SignInOptions
 import org.siloserver.silo.model.auth.SignInProvider
@@ -42,6 +43,12 @@ data class LoginUiState(
     val optionsUnavailable: Boolean = false,
     /** The provider whose browser sign-in is starting or finishing. */
     val providerBusy: String? = null,
+    /**
+     * "Continue as …" is waiting for the server: the password form and the
+     * provider buttons wait too. Its own flag, so reloading the options
+     * can't free them while the request is still out.
+     */
+    val networkSignInBusy: Boolean = false,
     /** A start URL for the screen to open in a Custom Tab, once. */
     val browserLaunch: String? = null,
     /** "Use a different account" with several providers: which one to sign in with. */
@@ -50,8 +57,14 @@ data class LoginUiState(
     val showPasswordForm: Boolean get() = options?.showPasswordForm == true
     val providers: List<SignInProvider> get() = options?.oauthProviders.orEmpty()
 
+    /** "Continue as <owner>": the network provider the server listed for this device, above everything else. */
+    val networkProvider: SignInProvider? get() = options?.networkProvider
+
     /** "Use a different account" under the provider buttons, when the server takes `prompt=select_account`. */
     val offersAccountChoice: Boolean get() = options?.selectAccount == true && providers.isNotEmpty()
+
+    /** A sign-in on this screen is under way, so no other may start. */
+    val signInBusy: Boolean get() = isLoading || providerBusy != null || networkSignInBusy
 }
 
 class LoginViewModel(
@@ -125,7 +138,7 @@ class LoginViewModel(
     }
 
     fun onLoginClick() {
-        if (_uiState.value.isLoading) return
+        if (_uiState.value.signInBusy) return
         val current = _uiState.value
         if (current.username.isBlank()) {
             _uiState.update { it.copy(error = "Username is required") }
@@ -141,9 +154,7 @@ class LoginViewModel(
 
             when (val result = authRepository.login(current.username, current.password)) {
                 is ApiResult.Success -> {
-                    screenServerId?.let(nativeSignIn::clearAccountChoice)
-                    // A provider flow left open in the browser no longer speaks for this session.
-                    nativeSignIn.discardPending()
+                    onSignedIn()
                     _uiState.update { it.copy(isLoading = false, loginSuccess = true) }
                 }
 
@@ -169,6 +180,42 @@ class LoginViewModel(
         }
     }
 
+    /** A sign-in on this screen (password or network identity) saved its session. */
+    private suspend fun onSignedIn() {
+        screenServerId?.let(nativeSignIn::clearAccountChoice)
+        // A provider flow left open in the browser no longer speaks for this session.
+        nativeSignIn.discardPending()
+    }
+
+    /**
+     * "Continue as <owner>": sign in as whoever the server's network provider
+     * (such as Tailscale) says owns this device. No browser and no password:
+     * one POST to the listed path on the saved server base, and the session
+     * lands exactly like a password sign-in's.
+     */
+    fun onNetworkSignIn() {
+        val state = _uiState.value
+        val provider = state.networkProvider ?: return
+        val path = provider.networkSignInPath ?: return
+        if (state.signInBusy) return
+        _uiState.update { it.copy(networkSignInBusy = true, error = null) }
+        viewModelScope.launch {
+            val result = authRepository.signInWith { serverUrl -> externalSignIn.signInWithNetworkIdentity(serverUrl, path) }
+            when (result) {
+                is ApiResult.Success -> {
+                    onSignedIn()
+                    _uiState.update { it.copy(networkSignInBusy = false, loginSuccess = true) }
+                }
+                is ApiResult.Error -> _uiState.update {
+                    it.copy(networkSignInBusy = false, error = networkSignInMessage(result, provider.displayName))
+                }
+                is ApiResult.NetworkError -> _uiState.update {
+                    it.copy(networkSignInBusy = false, error = "Network error. Please check your connection.")
+                }
+            }
+        }
+    }
+
     /**
      * "Sign in with <provider>": record a native flow for the active server
      * and hand its start URL to the screen. The redirect must name this
@@ -179,7 +226,7 @@ class LoginViewModel(
      */
     fun onProviderClick(provider: SignInProvider, chooseAccount: Boolean = false) {
         val startPath = provider.nativeStartPath ?: return
-        if (_uiState.value.isLoading || _uiState.value.providerBusy != null) return
+        if (_uiState.value.signInBusy) return
         _uiState.update { it.copy(providerBusy = provider.id, error = null, choosingAccountProvider = false) }
         viewModelScope.launch {
             val entry = serverRegistry.activeEntry.value
@@ -223,7 +270,7 @@ class LoginViewModel(
      */
     fun onUseDifferentAccount() {
         val state = _uiState.value
-        if (!state.offersAccountChoice || state.isLoading || state.providerBusy != null) return
+        if (!state.offersAccountChoice || state.signInBusy) return
         val only = state.providers.singleOrNull()
         if (only != null) onProviderClick(only, chooseAccount = true) else _uiState.update { it.copy(choosingAccountProvider = true) }
     }
@@ -311,6 +358,47 @@ internal fun passwordLoginMessage(
         PasswordLoginFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
         PasswordLoginFailure.Other -> error.message.ifBlank { "Login failed" }
     }
+
+/**
+ * Text for a refused network identity sign-in ("Continue as …") through
+ * [providerName], such as Tailscale. Refusals other operations share read as
+ * they do there.
+ */
+internal fun networkSignInMessage(error: ApiResult.Error, providerName: String): String =
+    when (NetworkSignInFailure.of(error.code, error.error)) {
+        NetworkSignInFailure.NetworkIdentityRequired -> ProviderRefusalText.addressRequired(providerName, "sign in this way")
+        NetworkSignInFailure.NotPermitted -> ProviderRefusalText.notPermitted(providerName)
+        NetworkSignInFailure.EmailInUse ->
+            "An account with your email already exists. Sign in with your password, then connect $providerName in Settings → Sign-in."
+        NetworkSignInFailure.AccountRequired -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_REQUIRED)
+        NetworkSignInFailure.AccountDisabled -> NativeSignInMessages.forReason("account_disabled")
+        NetworkSignInFailure.IdentityLinkedElsewhere -> NativeSignInMessages.forReason("identity_linked_elsewhere", providerName)
+        NetworkSignInFailure.NotFound -> ProviderRefusalText.providerGone(providerName)
+        NetworkSignInFailure.ProviderUnavailable -> NativeSignInMessages.forReason("provider_unavailable", providerName)
+        NetworkSignInFailure.RateLimited -> NativeSignInMessages.forReason(NativeSignInMessages.RATE_LIMITED)
+        NetworkSignInFailure.Other -> when {
+            // AuthRepository's code for a sign-in whose account or server changed underneath it.
+            error.error == "identity_changed" -> NativeSignInMessages.forReason(NativeSignInMessages.ACCOUNT_CHANGED)
+            error.code == 0 && error.error == NativeSignInMessages.UPDATE_REQUIRED ->
+                NativeSignInMessages.forReason(NativeSignInMessages.UPDATE_REQUIRED)
+            else -> NativeSignInMessages.forReason("login_failed", providerName)
+        }
+    }
+
+/**
+ * The phone's copy for provider refusals that sign-in ("Continue as …") and
+ * "Connect <provider>" in Settings share.
+ */
+internal object ProviderRefusalText {
+    /** `network_identity_required`: the app reached the server some other way; [toDo] is what needs that address. */
+    fun addressRequired(providerName: String, toDo: String) = "Open this server at its $providerName address to $toDo."
+
+    /** `not_permitted`: a tagged device, or one the provider's policy leaves out. */
+    fun notPermitted(providerName: String) = "$providerName doesn't allow this device on this server."
+
+    /** The provider is no longer enabled on the server (404). */
+    fun providerGone(providerName: String) = "$providerName is no longer available on this server."
+}
 
 internal fun loginServerHostLabel(serverUrl: String): String? {
     val trimmed = serverUrl.trim()

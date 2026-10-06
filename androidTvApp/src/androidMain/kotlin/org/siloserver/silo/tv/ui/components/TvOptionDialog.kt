@@ -72,9 +72,12 @@ fun TvOptionDialog(
     title: String,
     options: List<TvDialogOption>,
     onDismiss: () -> Unit,
+    /** The option to focus first, when it is enabled; otherwise the selected or first enabled one. */
+    initialFocusKey: String? = null,
 ) {
     val firstRowFocus = remember { FocusRequester() }
-    val focusedKey = options.firstOrNull { it.selected && it.enabled }?.key
+    val focusedKey = initialFocusKey?.takeIf { key -> options.any { it.key == key && it.enabled } }
+        ?: options.firstOrNull { it.selected && it.enabled }?.key
         ?: options.firstOrNull { it.enabled }?.key
     val focusedIndex = options.indexOfFirst { it.key == focusedKey }
     val listState: LazyListState = rememberLazyListState()

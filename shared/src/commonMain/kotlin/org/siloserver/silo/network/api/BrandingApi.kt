@@ -14,12 +14,30 @@ import org.siloserver.silo.network.apiv2.safeApiV2Call
 data class BrandingStatus(
     @SerialName("server_name")
     val serverName: String? = null,
+    /** White-label line under the sign-in title. */
+    @SerialName("login_subtitle")
+    val loginSubtitle: String? = null,
+    /** `#RRGGBB` the first-run backdrop tints toward. */
+    @SerialName("accent_color")
+    val accentColor: String? = null,
+    /** Site-relative paths; resolve them against the server before use. */
+    @SerialName("mark_url")
+    val markUrl: String? = null,
+    @SerialName("wordmark_url")
+    val wordmarkUrl: String? = null,
 )
 
 open class BrandingApi(private val client: HttpClient) {
     // Public identity probe of a possibly not-yet-connected server; the active entry's verdict must not gate it.
     open suspend fun getBranding(): ApiResult<BrandingStatus> {
         return safeApiV2Call<BrandingStatus>(ApiV2Gate.Unrestricted) { request("/api/v2/theme/branding") }
+    }
+
+    /** The same document from the server at [serverUrl], whether or not it is the active one. */
+    open suspend fun getBranding(serverUrl: String): ApiResult<BrandingStatus> {
+        return safeApiV2Call<BrandingStatus>(ApiV2Gate.Unrestricted) {
+            request("${serverUrl.trimEnd('/')}/api/v2/theme/branding")
+        }
     }
 
     private suspend fun request(path: String) = client.get(path) {

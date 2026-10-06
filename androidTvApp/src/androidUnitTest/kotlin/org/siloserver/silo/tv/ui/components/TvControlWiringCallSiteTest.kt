@@ -39,8 +39,8 @@ class TvControlWiringCallSiteTest {
                 wiring = "enabled = enabled",
             ),
             StructuralControl(
-                path = "ui/components/TvAuroraChrome.kt",
-                composable = "AuroraPrimaryButton",
+                path = "ui/components/marquee/TvMarquee.kt",
+                composable = "TvMarqueeButton",
                 primitive = ".clickable(",
                 wiring = "enabled = enabled",
             ),
@@ -91,7 +91,7 @@ class TvControlWiringCallSiteTest {
         listOf(
             Triple("ui/components/TvPinEntryDialog.kt", "PinKeypad", "PinKey"),
             Triple(
-                "ui/screens/watchtogether/TvJoinCodeDialog.kt",
+                "ui/screens/watchparty/TvJoinCodeDialog.kt",
                 "TvJoinCodeDialog",
                 "JoinCodeKey",
             ),
@@ -169,9 +169,9 @@ class TvControlWiringCallSiteTest {
     fun noControlFakesDisabledStateInsideItsClickHandler() {
         listOf(
             "ui/components/TvOptionDialog.kt",
-            "ui/components/TvAuroraChrome.kt",
+            "ui/components/marquee/TvMarquee.kt",
             "ui/components/TvPinEntryDialog.kt",
-            "ui/screens/watchtogether/TvJoinCodeDialog.kt",
+            "ui/screens/watchparty/TvJoinCodeDialog.kt",
         ).forEach { path ->
             assertFalse(
                 source(path).containsLoosely("onClick = { if ("),

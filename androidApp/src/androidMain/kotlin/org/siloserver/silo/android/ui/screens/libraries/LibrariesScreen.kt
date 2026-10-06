@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.LocalMovies
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
@@ -795,15 +796,28 @@ fun LibrariesScreen(
     onLibrarySelectorClick: () -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher? = null,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
+    // Movie, TV, and mixed libraries shuffle from the Browse tab when the
+    // server offers it.
+    val onShuffle = selectedLibrary
+        ?.takeIf { state.selectedTab == LibrariesSubtab.Browse }
+        ?.takeIf { org.siloserver.silo.model.shuffle.isShuffleLibraryType(it.type) }
+        ?.takeIf { shuffleLauncher?.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY) == true }
+        ?.let { library ->
+            {
+                shuffleLauncher?.start(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY, library.id.toString())
+                Unit
+            }
+        }
 
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.
@@ -926,11 +940,13 @@ fun LibrariesScreen(
             onTabSelected = viewModel::selectTab,
             onSearchClick = onSearchClick,
             onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
+            onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
             onSignOutClick = onSignOutClick,
+            onShuffleClick = onShuffle,
+            shuffleEnabled = shuffleLauncher?.isStarting != true,
             modifier = Modifier.onSizeChanged { chromeHeightPx = it.height },
         )
     }
@@ -1331,11 +1347,13 @@ private fun LibrariesFloatingChrome(
     onTabSelected: (LibrariesSubtab) -> Unit,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
     onSignOutClick: () -> Unit,
+    onShuffleClick: (() -> Unit)? = null,
+    shuffleEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues()
@@ -1377,7 +1395,7 @@ private fun LibrariesFloatingChrome(
                 activeProfile = activeProfile,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
-                onWatchTogetherClick = onWatchTogetherClick,
+                onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
                 onSwitchServerClick = onSwitchServerClick,
@@ -1393,6 +1411,8 @@ private fun LibrariesFloatingChrome(
             onRecommendedClick = { onTabSelected(LibrariesSubtab.Recommended) },
             onBrowseClick = { onTabSelected(LibrariesSubtab.Browse) },
             onCollectionsClick = { onTabSelected(LibrariesSubtab.Collections) },
+            onShuffleClick = onShuffleClick,
+            shuffleEnabled = shuffleEnabled,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
 
@@ -1502,6 +1522,8 @@ private fun LibrarySubtabRow(
     onRecommendedClick: () -> Unit,
     onBrowseClick: () -> Unit,
     onCollectionsClick: () -> Unit,
+    onShuffleClick: (() -> Unit)? = null,
+    shuffleEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -1523,6 +1545,30 @@ private fun LibrarySubtabRow(
             selected = selectedTab == LibrariesSubtab.Collections,
             onClick = onCollectionsClick,
         )
+        if (onShuffleClick != null) {
+            // Starts a shuffle of the whole library; drawn as a chip so it
+            // matches the tabs beside it.
+            Surface(
+                onClick = onShuffleClick,
+                enabled = shuffleEnabled,
+                shape = RoundedCornerShape(999.dp),
+                color = SiloSurfaceElevated,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Shuffle,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(text = "Shuffle", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
     }
 }
 

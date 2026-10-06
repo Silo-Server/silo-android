@@ -99,6 +99,120 @@ class OfflineTrackAssetFetcherTest {
         defaultRequest { url("https://silo.example/") }
     }
 
+    /** A server whose stored subtitle 7 is retimed between [revision]s; it serves [cue] for it. */
+    private class RetimingServer {
+        var revision = "r1"
+        var cue = "00:00:42,148 --> 00:00:44,517"
+        val client = HttpClient(
+            MockEngine { request ->
+                val path = request.url.encodedPath
+                when {
+                    path.endsWith("/manifest") -> respond(
+                        """{"subtitles": [{"language": "en", "format": "srt",
+                           "fetch_url": "/api/v2/downloads/dl_1/subtitles/downloaded:7", "revision": "$revision"}]}""",
+                        HttpStatusCode.OK,
+                    )
+                    path.endsWith("/subtitles/downloaded:7") -> respond("1\n$cue\nFor a moment, everyone was silent.\n")
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(HttpTimeout)
+            defaultRequest { url("https://silo.example/") }
+        }
+    }
+
+    /**
+     * A sidecar next to the media is served with its timing correction
+     * applied. When the server retimes it after the download, the manifest
+     * lists it at a new revision and a refresh replaces the saved file.
+     */
+    @Test
+    fun refreshesASavedExternalSidecarTheServerRetimed() = runBlocking {
+        var revision = "r1"
+        var cue = "00:00:42,148 --> 00:00:44,517"
+        val subtitleFetches = mutableListOf<String>()
+        val http = HttpClient(
+            MockEngine { request ->
+                val path = request.url.encodedPath
+                when {
+                    path.endsWith("/manifest") -> respond(
+                        """{"subtitles": [{"language": "en", "format": "srt", "external": true,
+                           "fetch_url": "/api/v2/downloads/dl_1/subtitles/external:0", "revision": "$revision"}]}""",
+                        HttpStatusCode.OK,
+                    )
+                    path.endsWith("/subtitles/external:0") -> {
+                        subtitleFetches += revision
+                        respond("1\n$cue\nFor a moment, everyone was silent.\n")
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(HttpTimeout)
+            defaultRequest { url("https://silo.example/") }
+        }
+        val fetcher = OfflineTrackAssetFetcher(http, DownloadStorage(tmp.newFolder("filesDir")))
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        assertEquals("r1", saved.subtitles.single().revision)
+
+        // Nothing changed on the server: nothing is fetched.
+        assertNull(fetcher.stageSubtitleRefresh("dl_1", saved) {})
+        assertEquals(listOf("r1"), subtitleFetches)
+
+        revision = "r2"
+        cue = "00:00:39,138 --> 00:00:41,507"
+        val staged = assertNotNull(fetcher.stageSubtitleRefresh("dl_1", saved) {})
+        val refreshed = assertNotNull(staged.publish())
+        staged.discard()
+        assertEquals("r2", refreshed.subtitles.single().revision)
+        assertEquals(saved.subtitles.single().path, refreshed.subtitles.single().path)
+        assertTrue(File(refreshed.subtitles.single().path).readText().contains(cue))
+        http.close()
+    }
+
+    @Test
+    fun aRetimedSidecarIsStagedAndReplacesTheSavedCopyOnlyWhenPublished() = runBlocking {
+        val server = RetimingServer()
+        val fetcher = OfflineTrackAssetFetcher(server.client, DownloadStorage(tmp.newFolder("filesDir")))
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        val file = File(saved.subtitles.single().path)
+        assertEquals("r1", saved.subtitles.single().revision)
+        assertNull(fetcher.stageSubtitleRefresh("dl_1", saved) {}, "nothing changed on the server")
+
+        server.revision = "r2"
+        server.cue = "00:00:39,138 --> 00:00:41,507"
+        val staged = assertNotNull(fetcher.stageSubtitleRefresh("dl_1", saved) {})
+        // Staging leaves the saved copy alone.
+        assertTrue(file.readText().contains("00:00:42,148"))
+
+        val refreshed = assertNotNull(staged.publish())
+        staged.discard()
+        assertEquals("r2", refreshed.subtitles.single().revision)
+        assertTrue(file.readText().contains("00:00:39,138"))
+        assertEquals(listOf(file.name), file.parentFile!!.list()!!.toList())
+        server.client.close()
+    }
+
+    @Test
+    fun aSavedCopyRewrittenAfterStagingKeepsItsNewContents() = runBlocking {
+        val server = RetimingServer()
+        val fetcher = OfflineTrackAssetFetcher(server.client, DownloadStorage(tmp.newFolder("filesDir")))
+        val saved = assertNotNull(fetcher.fetch("dl_1", "srv", "prof", 42) {}).tracks
+        val file = File(saved.subtitles.single().path)
+
+        server.revision = "r2"
+        val staged = assertNotNull(fetcher.stageSubtitleRefresh("dl_1", saved) {})
+        // A new capture for the same file rewrites the copy before publishing.
+        file.writeText("1\n00:00:01,000 --> 00:00:02,000\nA new capture.\n")
+
+        assertNull(staged.publish())
+        staged.discard()
+        assertTrue(file.readText().contains("A new capture."))
+        assertEquals(listOf(file.name), file.parentFile!!.list()!!.toList())
+        server.client.close()
+    }
+
     @Test
     fun capturesAudioTracksAndSavesEveryFetchableSidecar() = runBlocking {
         val storage = DownloadStorage(tmp.newFolder("filesDir"))

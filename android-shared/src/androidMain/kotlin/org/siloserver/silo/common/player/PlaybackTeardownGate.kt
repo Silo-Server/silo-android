@@ -30,9 +30,6 @@ class PlaybackTeardownGate(private val lifecycle: PlaybackSessionLifecycle) {
 
     private val claimed = AtomicBoolean(false)
 
-    /** True once some route has taken ownership of this screen's teardown. */
-    val isClaimed: Boolean get() = claimed.get()
-
     /**
      * Ordered teardown, awaited before navigating to the next item.
      *

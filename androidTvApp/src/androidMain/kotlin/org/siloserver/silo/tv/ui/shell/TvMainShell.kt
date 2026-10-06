@@ -115,10 +115,9 @@ import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
+import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
@@ -151,9 +150,6 @@ import org.siloserver.silo.tv.ui.screens.requests.TvRequestDetailScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestsPage
 import org.siloserver.silo.tv.ui.screens.search.TvSearchScreen
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsScreen
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherMenuEntryDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.koin.compose.koinInject
@@ -207,7 +203,10 @@ fun TvMainShell(
     onSwitchServer: () -> Unit,
     onPairDevice: () -> Unit,
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit,
-    onOpenWatchTogether: (RoomSnapshot) -> Unit,
+    /** Open the Watch Party hub. */
+    onOpenWatchParty: () -> Unit,
+    // Plays the first pick of a shuffle started from a library screen.
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
     onOpenPersonDetail: (personId: Long) -> Unit,
 ) {
     val nestedNav = rememberNavController()
@@ -220,6 +219,7 @@ fun TvMainShell(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
+    val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -231,19 +231,9 @@ fun TvMainShell(
     // while the already-visible Home instance held the populated rows.
     val homeViewModel: HomeViewModel = koinViewModel(key = "tv-main-home")
     val serverUrl = rememberProfileServerUrl()
-    val watchTogetherViewModel = koinViewModel<TvWatchTogetherViewModel>()
-    val watchTogetherState by watchTogetherViewModel.uiState.collectAsState()
-    val currentWatchTogetherRoom by watchTogetherViewModel.currentRoom.collectAsState()
-    var watchTogetherEntryOpen by rememberSaveable { mutableStateOf(false) }
-    var watchTogetherJoinOpen by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(watchTogetherState.result) {
-        val room = watchTogetherState.result ?: return@LaunchedEffect
-        watchTogetherViewModel.consumeResult()
-        watchTogetherEntryOpen = false
-        watchTogetherJoinOpen = false
-        onOpenWatchTogether(room)
-    }
+    // Settings → Experimental → Watch Party decides whether the entry shows.
+    val watchPartyExposure: WatchPartyExposure = koinInject()
+    val watchPartyEnabled by watchPartyExposure.enabled.collectAsState()
 
     // The raw list of libraries visible to this profile on TV, sorted by the
     // server's sort order (ebook-like libraries filtered out by visibleOnTv).
@@ -355,6 +345,8 @@ fun TvMainShell(
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
+        shuffleFeatureStore.reset()
+        shuffleFeatureStore.refresh()
     }
 
     val focusManager = LocalFocusManager.current
@@ -1250,6 +1242,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
@@ -1258,6 +1251,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 // Content-type tabs (Skyline §3.1). Each renders the library
@@ -1279,6 +1273,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Series.route) {
@@ -1295,6 +1290,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Music.route) {
@@ -1311,6 +1307,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Audiobooks.route) {
@@ -1327,6 +1324,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.ForYou.route) {
@@ -1672,12 +1670,8 @@ fun TvMainShell(
                     navigateToSecondary(TvMainRoute.History.route)
                     moveFocusToContent(TvMainRoute.History.route)
                 },
-                showWatchTogether = CLIENT_WATCH_TOGETHER_SURFACE_ENABLED,
-                onWatchTogether = {
-                    focusState.closeProfileMenuForContent()
-                    watchTogetherViewModel.clearError()
-                    watchTogetherEntryOpen = true
-                },
+                showWatchParty = watchPartyEnabled,
+                onWatchParty = closeMenuAnd(onOpenWatchParty),
                 onSettings = {
                     // Keep focus on the dropdown row through the route fade.
                     // TvSettingsScreen closes the menu only after its General
@@ -1698,38 +1692,6 @@ fun TvMainShell(
                     )
                     .zIndex(2f),
             )
-        }
-
-        if (watchTogetherEntryOpen) {
-            if (watchTogetherJoinOpen) {
-                TvJoinCodeDialog(
-                    isBusy = watchTogetherState.isBusy,
-                    error = watchTogetherState.error,
-                    onJoin = watchTogetherViewModel::joinRoom,
-                    onDismiss = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherJoinOpen = false
-                    },
-                )
-            } else {
-                TvWatchTogetherMenuEntryDialog(
-                    canResume = currentWatchTogetherRoom != null,
-                    isBusy = watchTogetherState.isBusy,
-                    error = watchTogetherState.error,
-                    onResume = { watchTogetherViewModel.resumeCurrentRoom() },
-                    onHost = { watchTogetherViewModel.createEmptyVoteRoom() },
-                    onJoin = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherJoinOpen = true
-                    },
-                    onDismiss = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherEntryOpen = false
-                        watchTogetherJoinOpen = false
-                        focusState.dismissProfileMenu()
-                    },
-                )
-            }
         }
     }
 }
@@ -1759,6 +1721,7 @@ private fun TvLibraryTypeContent(
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
 ) {
     if (library == null) {
         // Only assert "no libraries" once loading has settled AND this type
@@ -1802,6 +1765,7 @@ private fun TvLibraryTypeContent(
             initialSection = selectedPill.toLibraryTab(),
             sectionRequestNonce = sectionRequestNonce,
             onContentUpFallbackChanged = onContentUpFallbackChanged,
+            onShuffleStarted = { shuffle -> onPlayShuffle(shuffle, library.id) },
         )
     }
 }
@@ -1916,7 +1880,7 @@ private fun cascadePanelOffset(
  * returns focus to the avatar via [onDismiss].
  *
  * Row set + order mirrors tvOS: Switch Profile · Watchlist · Favorites ·
- * History · Watch Together (client-policy-gated) · Settings · Switch Server ·
+ * History · Watch Party (Settings → Experimental) · Settings · Switch Server ·
  * Sign Out. Calendar and Requests are top-level tabs.
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -1929,8 +1893,8 @@ private fun TvProfileDropdown(
     onWatchlist: () -> Unit,
     onFavorites: () -> Unit,
     onHistory: () -> Unit,
-    showWatchTogether: Boolean,
-    onWatchTogether: () -> Unit,
+    showWatchParty: Boolean,
+    onWatchParty: () -> Unit,
     onSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onSignOut: () -> Unit,
@@ -1976,11 +1940,11 @@ private fun TvProfileDropdown(
         ProfileDropdownRow(label = "Watchlist", icon = Icons.Filled.Bookmark, onClick = onWatchlist)
         ProfileDropdownRow(label = "Favorites", icon = Icons.Filled.Favorite, onClick = onFavorites)
         ProfileDropdownRow(label = "History", icon = Icons.Filled.History, onClick = onHistory)
-        if (showWatchTogether) {
+        if (showWatchParty) {
             ProfileDropdownRow(
-                label = "Watch Together",
+                label = "Watch Party",
                 icon = Icons.Filled.People,
-                onClick = onWatchTogether,
+                onClick = onWatchParty,
             )
         }
 

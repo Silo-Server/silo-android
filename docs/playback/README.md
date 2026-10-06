@@ -36,6 +36,7 @@ and [migration guide](https://developer.android.com/media/media3/exoplayer/migra
 | [Reference review](03-reference-implementation-review.md) | Source-pinned Wholphin/Plezy observations. It is evidence, not another implementation plan. |
 | [Implementation status](04-implementation-status-and-dv-handoff.md) | Code, automated proof, dev-server v3 status, and the 4K Dolby Vision handoff checklist. |
 | [Intro skip](intro-skip.md) | Where the never/ask/always prompt lives, and the rules the server spec pins. |
+| [Watch Party implementation plan](../watch-party-implementation-plan.md) | Room contract, player binding and catch-up, phone/TV experience, milestones and qualification. Server documents own wire semantics. |
 | [Shield 1080p capability audit](05-shield-1080p-playback-capability-audit.md) | Live protocol-v3 route matrix, catalog coverage, current direct-play gaps, and prioritized causes. |
 | [Device-correction evidence and design](06-device-quirk-evidence-and-design.md) | Current Jellyfin Android TV, Jellyfin Android, Wholphin, Plezy, Android platform, and issue evidence for the server/client quirk layer. |
 
@@ -66,18 +67,38 @@ feature token has the same name.
 ## Native embedded subtitles
 
 Android advertises `embedded_subtitles_v1` only when the original-HTTP delivery
-includes a `native_embedded` capability. The first supported pair is MP4 with
-`mov_text`, using `container_track_id`. Media3 1.11.0 sets a timed-text format's
-ID from the MP4 `tkhd` track ID; FFmpeg stream indexes are not Media3 track IDs.
-See the pinned [Media3 MP4 parser](https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/BoxParser.java).
+includes a `native_embedded` capability. Both supported entries use
+`container_track_id`; FFmpeg stream indexes are not Media3 track IDs.
+
+- MP4 with `mov_text`: Media3 1.11.0 sets a timed-text format's ID from the MP4
+  `tkhd` track ID. See the pinned [Media3 MP4 parser](https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/mp4/BoxParser.java).
+- MKV with `subrip` and `ass`: `MatroskaExtractor` sets each track's ID to its
+  Matroska `TrackNumber`. See the pinned [Media3 Matroska extractor](https://github.com/androidx/media/blob/1.11.0/libraries/extractor/src/main/java/androidx/media3/extractor/mkv/MatroskaExtractor.java).
+  Remuxed files keep their original track numbers, so numbers can have gaps
+  and do not equal stream index + 1. The `ass-media` extractor subclass passes
+  formats through unchanged, so ASS keeps the same ID. The MKV entry's
+  `ass_styling` and `font_attachments` report whether libass renders the stream
+  with its attached fonts; when they are false and the user prefers preserved
+  styling, the server keeps ASS on its sidecar path.
+
+The server must record each Matroska subtitle's `TrackNumber` as
+`container_track_id` (proposed in Silo-Server/silo-server#1890). Tracks without
+a recorded ID keep using sidecars. MKV WebVTT (`S_TEXT/WEBVTT`) is not
+advertised because FFmpeg does not recognize that codec, so the server cannot
+identify those tracks. Media3 drops tracks with the legacy `S_ASS` and `S_SSA`
+codec IDs, which FFmpeg still reports as `ass`; the server records no ID for
+them, so they stay on sidecars too.
+
+Known cost of the stream path: after a seek or resume, a cue that began before
+the cluster Media3 resumes from stays hidden until the next cue.
 
 A plan's `subtitle.embedded` selects the exact container track. Inventory URLs
 remain fallback descriptions and are not mounted alongside that selection.
 Phone and TV commit the preference only after the native track is mounted.
 Missing, ambiguous, or unsupported identities produce `subtitle_embedded_failed`
-and let the server replan with its sidecar path. Matroska and tracks without a
-probed container ID keep using sidecars; metadata similarity is not exact
-identity evidence.
+and let the server replan with its sidecar path. Tracks without a probed
+container ID keep using sidecars; metadata similarity is not exact identity
+evidence.
 
 Sidecar cues use absolute source timestamps. Android subtracts the plan's
 `timeline_offset_seconds` once, alongside the user's subtitle delay. Embedded

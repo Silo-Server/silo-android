@@ -290,21 +290,6 @@ internal fun PlayerSheetCard(
 }
 
 @Composable
-internal fun PlayerSheetSectionLabel(
-    text: String,
-    modifier: Modifier = Modifier,
-) {
-    Text(
-        text = text.uppercase(),
-        color = Color.White.copy(alpha = 0.52f),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.8.sp,
-        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
-    )
-}
-
-@Composable
 internal fun PlayerSheetDivider(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier

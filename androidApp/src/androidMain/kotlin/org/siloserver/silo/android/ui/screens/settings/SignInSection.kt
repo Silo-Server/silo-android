@@ -91,6 +91,14 @@ fun SignInSection(
                 enabled = !state.busy,
             )
         }
+        state.network?.let { provider ->
+            SettingsNavigationRow(
+                label = "Connect ${provider.displayName}",
+                description = SignInSettingsViewModel.connectDescription(provider.displayName),
+                onClick = { viewModel.onConnectNetwork(provider) },
+                enabled = !state.busy,
+            )
+        }
         // Connect and disconnect finish after the browser or a dialog closes:
         // announce the outcome, which appears away from where focus is.
         val announced = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
@@ -101,10 +109,23 @@ fun SignInSection(
     state.passwordPrompt?.let { provider ->
         ConfirmPasswordDialog(
             providerName = provider.displayName,
+            body = SignInSettingsViewModel.connectPrompt(provider.displayName),
+            confirmLabel = "Continue",
             error = state.passwordError,
             busy = state.busy,
             onConfirm = viewModel::onConfirmPassword,
             onDismiss = viewModel::onDismissPasswordPrompt,
+        )
+    }
+    state.networkPrompt?.let { provider ->
+        ConfirmPasswordDialog(
+            providerName = provider.displayName,
+            body = SignInSettingsViewModel.connectNetworkPrompt(provider.displayName, provider.networkIdentity?.label),
+            confirmLabel = "Connect",
+            error = state.passwordError,
+            busy = state.busy,
+            onConfirm = viewModel::onConfirmNetwork,
+            onDismiss = viewModel::onDismissNetworkPrompt,
         )
     }
     state.directoryPrompt?.let { provider ->
@@ -145,6 +166,8 @@ private fun formatDate(instant: String): String? = runCatching {
 @Composable
 private fun ConfirmPasswordDialog(
     providerName: String,
+    body: String,
+    confirmLabel: String,
     error: String?,
     busy: Boolean,
     onConfirm: (String) -> Unit,
@@ -160,7 +183,7 @@ private fun ConfirmPasswordDialog(
         title = { Text("Connect $providerName") },
         text = {
             Column {
-                Text(SignInSettingsViewModel.connectPrompt(providerName))
+                Text(body)
                 OutlinedTextField(
                     value = password,
                     onValueChange = { password = it },
@@ -177,7 +200,7 @@ private fun ConfirmPasswordDialog(
         },
         confirmButton = {
             TextButton(enabled = !busy && password.isNotEmpty(), onClick = { onConfirm(password) }) {
-                Text(if (busy) "Checking…" else "Continue")
+                Text(if (busy) "Checking…" else confirmLabel)
             }
         },
         dismissButton = {

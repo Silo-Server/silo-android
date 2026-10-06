@@ -77,10 +77,7 @@ fun TvAiTranslateDialog(
         mutableIntStateOf(audioSources.indexOfFirst { it.isSelected }.coerceAtLeast(0))
     }
     var targetPos by remember {
-        mutableIntStateOf(
-            TvSubtitleLanguageOptions.indexOf(defaultTargetLanguage.take(2).lowercase())
-                .takeIf { it >= 0 } ?: 0,
-        )
+        mutableIntStateOf(tvSubtitleLanguageIndex(defaultTargetLanguage))
     }
     val firstRowFocus = remember { FocusRequester() }
     val initialNonce = remember { aiState.completedNonce }
@@ -345,9 +342,7 @@ fun TvAiTranslateDialog(
                                         val src = audioSources[
                                             audioSourcePos.coerceIn(0, audioSources.lastIndex),
                                         ]
-                                        val sameLanguage = src.language
-                                            ?.take(2)
-                                            ?.equals(targetLanguage.take(2), ignoreCase = true) == true
+                                        val sameLanguage = tvIsSameLanguage(src.language, targetLanguage)
                                         onSubmit(
                                             if (sameLanguage) "transcribe" else "transcribe_translate",
                                             src.index,
