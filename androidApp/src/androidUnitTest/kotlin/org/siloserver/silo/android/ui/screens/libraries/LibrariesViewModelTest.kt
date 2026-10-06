@@ -307,7 +307,7 @@ class LibrariesViewModelTest {
     }
 
     @Test
-    fun libraryListRecheckRecoversAShortListAndKeepsItOnFailure() = runTest {
+    fun libraryListRecheckRecoversAShortListAndKeepsItOnlyOnTransientFailure() = runTest {
         val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
         fixture.librariesBody = """
             {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
@@ -334,6 +334,13 @@ class LibrariesViewModelTest {
             val afterFailure = viewModel.uiState.first { !it.isLoadingLibraries }
             assertEquals(listOf(1, 2), afterFailure.libraries.map { it.id })
             assertEquals(null, afterFailure.librariesError)
+
+            // Revoked access is not transient: the list clears.
+            fixture.librariesStatus = HttpStatusCode.Forbidden
+            viewModel.refreshLibraryList()
+            fixture.awaitRequest("libraries")
+            val afterForbidden = viewModel.uiState.first { !it.isLoadingLibraries }
+            assertEquals(emptyList(), afterForbidden.libraries)
         } finally {
             store.clear()
             Dispatchers.resetMain()

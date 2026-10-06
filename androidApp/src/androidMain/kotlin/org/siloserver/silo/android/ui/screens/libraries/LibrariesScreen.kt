@@ -127,6 +127,7 @@ import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.repository.port.canServeCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -219,6 +220,8 @@ class LibrariesViewModel(
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
+    private var librariesRequestGeneration = 0L
+    private var pendingContentReload = false
     private val pageSize = 42
 
     init {
@@ -246,12 +249,13 @@ class LibrariesViewModel(
      * short — hiding the switcher and every other library — until the process
      * died.
      */
-    fun refreshLibraryList() {
-        if (_uiState.value.isLoadingLibraries) return
-        loadLibraries(reloadContent = false)
-    }
+    fun refreshLibraryList() = loadLibraries(reloadContent = false)
 
     private fun loadLibraries(reloadContent: Boolean) {
+        val requestGeneration = ++librariesRequestGeneration
+        // A full refresh superseded by a newer list request still owes its
+        // content reload; the request that wins applies it.
+        if (reloadContent) pendingContentReload = true
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -261,8 +265,14 @@ class LibrariesViewModel(
             }
 
             val result = personalDataRepository.listUserLibraries()
-            if (result !is ApiResult.Success && !reloadContent && _uiState.value.libraries.isNotEmpty()) {
-                // A failed background re-check keeps the list already on screen.
+            // Only the newest list request publishes, so an older, possibly
+            // shorter response can't overwrite a newer one.
+            if (requestGeneration != librariesRequestGeneration) return@launch
+            val reload = pendingContentReload
+            pendingContentReload = false
+            if (!reload && result.canServeCache() && _uiState.value.libraries.isNotEmpty()) {
+                // A transient failure on a background re-check keeps the list
+                // on screen. Auth failures fall through and clear it.
                 _uiState.update { it.copy(isLoadingLibraries = false) }
                 return@launch
             }
@@ -279,41 +289,20 @@ class LibrariesViewModel(
                     val selectedLibraryId = previousLibraryId
                         ?.takeIf { currentId -> libraries.any { it.id == currentId } }
                         ?: libraries.firstOrNull()?.id
-                    // When this resolves to a *new* library (first load, or the
-                    // prior one vanished), restore its saved browse filter +
-                    // preserve state — same as selectLibrary — so opening Browse
-                    // on the default library isn't an unfiltered grid for a
-                    // profile with saved filters. An unchanged selection keeps
-                    // whatever filters are already active.
-                    val restoreBrowsePrefs =
-                        selectedLibraryId != null && selectedLibraryId != previousLibraryId
-                    // Null when there is nothing to restore, so the branches
-                    // below keep the live state untouched.
-                    val restoredFilterState = if (restoreBrowsePrefs) {
-                        browsePrefs?.savedState(selectedLibraryId) ?: CatalogFilterState()
-                    } else {
-                        null
-                    }
-
+                    // A *new* selection (first load, or the prior library
+                    // vanished) gets the same reset as selectLibrary. An
+                    // unchanged selection keeps its rows and active filters.
+                    val selectionChanged = selectedLibraryId != previousLibraryId
+                    if (selectionChanged) resetForLibrary(selectedLibraryId)
                     _uiState.update {
                         it.copy(
                             isLoadingLibraries = false,
                             libraries = libraries,
-                            selectedLibraryId = selectedLibraryId,
                             librariesError = null,
-                            filterState = restoredFilterState ?: it.filterState,
-                            // The sort lives inside the persisted filter state,
-                            // so derive the chip from what was restored.
-                            browseSort = restoredFilterState
-                                ?.let(LibraryBrowseSort::fromFilterState)
-                                ?: it.browseSort,
-                            preserveFilters = if (restoreBrowsePrefs)
-                                (browsePrefs?.preserveEnabled(selectedLibraryId) ?: true)
-                            else it.preserveFilters,
                         )
                     }
 
-                    if (selectedLibraryId != null && (reloadContent || selectedLibraryId != previousLibraryId)) {
+                    if (selectedLibraryId != null && (reload || selectionChanged)) {
                         loadCurrentTab(selectedLibraryId, force = true)
                     }
                 }
@@ -343,13 +332,22 @@ class LibrariesViewModel(
 
     fun selectLibrary(libraryId: Int) {
         if (_uiState.value.selectedLibraryId == libraryId) return
+        resetForLibrary(libraryId)
+        loadCurrentTab(libraryId, force = true)
+    }
+
+    /**
+     * Point the state at [libraryId], dropping the previous library's rows,
+     * filter vocabulary and letter. Restores this library's persisted
+     * filter/sort state (iOS parity) so a preserved selection doesn't flash the
+     * unfiltered grid; defaults to a clean filter — and therefore
+     * RecentlyAdded — when nothing is saved.
+     */
+    private fun resetForLibrary(libraryId: Int?) {
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
         collectionsLoadedLibraryId = null
-        // Restore this library's persisted filter/sort state (iOS parity) so a
-        // preserved selection doesn't flash the unfiltered grid; default to a
-        // clean filter — and therefore RecentlyAdded — when nothing is saved.
-        val restoredFilterState = browsePrefs?.savedState(libraryId) ?: CatalogFilterState()
+        val restoredFilterState = libraryId?.let { browsePrefs?.savedState(it) } ?: CatalogFilterState()
         _uiState.update {
             it.copy(
                 selectedLibraryId = libraryId,
@@ -361,14 +359,13 @@ class LibrariesViewModel(
                 filterState = restoredFilterState,
                 browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
                 availableFilters = null,
-                preserveFilters = browsePrefs?.preserveEnabled(libraryId) ?: true,
+                preserveFilters = libraryId?.let { id -> browsePrefs?.preserveEnabled(id) } ?: true,
                 selectedNamePrefix = null,
                 catalogError = null,
                 collections = emptyList(),
                 collectionsError = null,
             )
         }
-        loadCurrentTab(libraryId, force = true)
     }
 
     fun selectTab(tab: LibrariesSubtab) {
