@@ -249,10 +249,14 @@ class SiloCastController(
                     // session clears the launch set at the tap.
                     _state.update { if (isCurrentLaunch(self)) it.copy(launch = pending) else it }
                     prepareRemoteIdentity(request, title)
+                    // Read before sending: the TV's state for the new title can
+                    // arrive before the update below, and must not be taken
+                    // for the title being replaced.
+                    val replacing = _state.value.playbackState?.contentId
                     send(SiloCastMessage.Launch(request))
                     _state.update {
                         if (isCurrentLaunch(self) && it.launch == pending) {
-                            it.copy(launch = pending.copy(isSent = true, replacingContentId = it.playbackState?.contentId))
+                            it.copy(launch = pending.copy(isSent = true, replacingContentId = replacing))
                         } else {
                             it
                         }

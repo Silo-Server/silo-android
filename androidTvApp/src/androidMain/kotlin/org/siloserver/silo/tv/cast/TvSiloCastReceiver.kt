@@ -120,6 +120,10 @@ class TvSiloCastReceiver(
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
     private var identityEndJob: Job? = null
+    // A scheduled end that has committed to ending this generation. It and
+    // launch admission decide under the receiver lock, so a launch is never
+    // admitted onto an identity whose end has started.
+    private var endingGenerationId: String? = null
     // stop() cancels the receiver scope, so cleanup for a ready-but-unconsumed
     // temporary identity must have an owner that survives that cancellation.
     private val identityCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -654,7 +658,24 @@ class TvSiloCastReceiver(
                     return true
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
-                pendingPlayerIdentityGeneration = generation
+                val admitted = synchronized(this) {
+                    val stillBorrowable = generation == null ||
+                        (identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation)
+                    if (stillBorrowable) pendingPlayerIdentityGeneration = generation
+                    stillBorrowable
+                }
+                if (!admitted) {
+                    session.remoteLaunchReady = false
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(
+                                code = "handoff_required",
+                                message = "Prepare the phone profile before playing.",
+                            ),
+                        ),
+                    )
+                    return true
+                }
                 if (!launchRequestChannel.trySend(message.launch).isSuccess) {
                     pendingPlayerIdentityGeneration = null
                     session.send(
@@ -739,12 +760,36 @@ class TvSiloCastReceiver(
                 scheduleIdentityEnd(generationId, IDENTITY_IDLE_MS)
                 return@launch
             }
+            // Commit under the lock launch admission uses: a launch admitted
+            // first keeps the identity (its player schedules the next end);
+            // once committed, a later launch is refused.
+            val commit = synchronized(this@TvSiloCastReceiver) {
+                if (isIdentityIdle()) {
+                    endingGenerationId = generationId
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!commit) return@launch
             // Cancellable only while waiting: a new offer may still keep the
             // identity, but once the logout starts it runs to the end, and
             // that offer's prepare() waits for it and takes the full path.
-            if (!withContext(NonCancellable) { identityManager.end(generationId) }) return@launch
-            pendingPlayerIdentityGeneration = null
-            refreshAdvertisement()
+            val ended = try {
+                withContext(NonCancellable) {
+                    identityManager.end(generationId).also { done ->
+                        if (done) {
+                            pendingPlayerIdentityGeneration = null
+                            refreshAdvertisement()
+                        }
+                    }
+                }
+            } finally {
+                synchronized(this@TvSiloCastReceiver) {
+                    if (endingGenerationId == generationId) endingGenerationId = null
+                }
+            }
+            if (!ended) return@launch
             // A newer offer cancelled this mid-logout and now owns the
             // session's authorization; judging it here could drop a phone
             // that is still handing off.
