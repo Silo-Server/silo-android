@@ -94,7 +94,7 @@ fun SignInSection(
         state.network?.let { provider ->
             SettingsNavigationRow(
                 label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName),
+                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName, state.networkLinkKeepsPassword),
                 onClick = { viewModel.onConnectNetwork(provider) },
                 enabled = !state.busy,
             )
@@ -120,7 +120,11 @@ fun SignInSection(
     state.networkPrompt?.let { provider ->
         ConfirmPasswordDialog(
             providerName = provider.displayName,
-            body = SignInSettingsViewModel.connectNetworkPrompt(provider.displayName, provider.networkIdentity?.label),
+            body = SignInSettingsViewModel.connectNetworkPrompt(
+                provider.displayName,
+                provider.networkIdentity?.label,
+                state.networkLinkKeepsPassword,
+            ),
             confirmLabel = "Connect",
             error = state.passwordError,
             busy = state.busy,

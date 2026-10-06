@@ -52,6 +52,8 @@ data class SignInSettingsUiState(
      * the person who owns this device there.
      */
     val network: SignInProvider? = null,
+    /** The server keeps the account's password when [network] is connected (`network_link_keeps_password`). */
+    val networkLinkKeepsPassword: Boolean = false,
     /** Asking for the account password before connecting [network]. */
     val networkPrompt: SignInProvider? = null,
     /** Asking for the local password before connecting this provider. */
@@ -128,6 +130,7 @@ class SignInSettingsViewModel(
                     connectable = emptyList(),
                     directory = null,
                     network = null,
+                    networkLinkKeepsPassword = false,
                 )
             }
             return
@@ -147,6 +150,7 @@ class SignInSettingsViewModel(
                 credentialsLinking = served?.credentialsLinking == true,
                 canUnlink = listed?.canUnlink,
                 networkSignIn = served?.networkSignIn == true,
+                networkLinkKeepsPassword = served?.networkLinkKeepsPassword == true,
             )
         }
         val now = tokenManager.snapshotCurrentScope()
@@ -165,6 +169,7 @@ class SignInSettingsViewModel(
                 connectable = section.connectable,
                 directory = section.directory,
                 network = section.network,
+                networkLinkKeepsPassword = section.networkLinkKeepsPassword,
             )
         }
     }
@@ -417,6 +422,7 @@ class SignInSettingsViewModel(
         val directory: SignInProvider?,
         val canUnlink: Boolean? = null,
         val network: SignInProvider? = null,
+        val networkLinkKeepsPassword: Boolean = false,
     )
 
     companion object {
@@ -427,9 +433,16 @@ class SignInSettingsViewModel(
         fun connectDescription(providerName: String): String =
             "After connecting, you sign in with $providerName instead of your password. You'll confirm your password first."
 
-        /** "Connect <provider>" for a network provider: the account keeps its password. */
-        fun connectNetworkDescription(providerName: String): String =
-            "After connecting, you can sign in with $providerName or your password. You'll confirm your password first."
+        /**
+         * "Connect <provider>" for a network provider. The account keeps its
+         * password only on a server that says so ([keepsPassword]).
+         */
+        fun connectNetworkDescription(providerName: String, keepsPassword: Boolean): String =
+            if (keepsPassword) {
+                "After connecting, you can sign in with $providerName or your password. You'll confirm your password first."
+            } else {
+                connectDescription(providerName)
+            }
 
         fun connectDirectoryDescription(providerName: String): String =
             "After connecting, you sign in with your $providerName username and password instead of this account's password."
@@ -444,17 +457,22 @@ class SignInSettingsViewModel(
 
         /**
          * The password prompt for a network provider. [owner] is who the
-         * provider says owns this device, the person being connected.
+         * provider says owns this device, the person being connected. The
+         * account keeps its password only on a server that says so
+         * ([keepsPassword]).
          */
-        fun connectNetworkPrompt(providerName: String, owner: String?): String {
+        fun connectNetworkPrompt(providerName: String, owner: String?, keepsPassword: Boolean): String {
             val who = owner?.let { "$it on $providerName" } ?: "the $providerName account this device uses"
             return "Enter this account's password to connect $who. " +
-                "You can then sign in with $providerName or your password."
+                if (keepsPassword) {
+                    "You can then sign in with $providerName or your password."
+                } else {
+                    "After connecting, you sign in with $providerName instead of your password."
+                }
         }
 
         /**
-         * Linking an OAuth or directory provider turns the account's own
-         * password off (a network provider keeps it), so Disconnect can't
+         * Linking can turn the account's own password off, so Disconnect can't
          * promise it unless the server said up front ([canUnlink]) that the
          * account keeps another way to sign in.
          */
@@ -491,6 +509,7 @@ class SignInSettingsViewModel(
             credentialsLinking: Boolean,
             canUnlink: Boolean? = null,
             networkSignIn: Boolean = false,
+            networkLinkKeepsPassword: Boolean = false,
         ): Section {
             if (!identitiesServed) return Section(emptyList(), emptyList(), null)
             val linked = identities.map { it.installationId }.toSet()
@@ -499,7 +518,14 @@ class SignInSettingsViewModel(
             val connectable = if (handshake.linking) options.oauthProviders else emptyList()
             val directory = options.directoryProvider.takeIf { credentialsLinking }
             val network = options.networkProvider.takeIf { networkSignIn }
-            return Section(identities, connectable, directory, canUnlink.takeIf { identities.isNotEmpty() }, network)
+            return Section(
+                identities,
+                connectable,
+                directory,
+                canUnlink.takeIf { identities.isNotEmpty() },
+                network,
+                networkLinkKeepsPassword = network != null && networkLinkKeepsPassword,
+            )
         }
 
         fun providerLabel(identity: AccountIdentity): String =

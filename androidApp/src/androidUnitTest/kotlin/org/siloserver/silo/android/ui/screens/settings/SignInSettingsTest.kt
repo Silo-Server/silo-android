@@ -47,6 +47,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -114,13 +115,33 @@ class SignInSettingsTest {
 
     @Test
     fun theNetworkPromptNamesWhoIsConnected() {
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", "Alice Example").contains("connect Alice Example on Tailscale"))
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("the Tailscale account this device uses"))
-        // Connecting a network provider keeps the account's password.
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("sign in with Tailscale or your password"))
-        assertFalse(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("instead of your password"))
-        assertTrue(SignInSettingsViewModel.connectNetworkDescription("Tailscale").contains("sign in with Tailscale or your password"))
-        assertFalse(SignInSettingsViewModel.connectNetworkDescription("Tailscale").contains("instead of your password"))
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", "Alice Example", false).contains("connect Alice Example on Tailscale"))
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, false).contains("the Tailscale account this device uses"))
+    }
+
+    /**
+     * Only a server that reports `network_link_keeps_password` keeps the
+     * password on a network link; on older servers the copy still says the
+     * provider replaces it.
+     */
+    @Test
+    fun theNetworkCopyKeepsThePasswordOnlyWhereTheServerSaysSo() {
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = false).contains("instead of your password"))
+        assertFalse(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null, keepsPassword = true).contains("instead of your password"))
+        assertEquals(
+            SignInSettingsViewModel.connectDescription("Tailscale"),
+            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = false),
+        )
+        assertNotEquals(
+            SignInSettingsViewModel.connectDescription("Tailscale"),
+            SignInSettingsViewModel.connectNetworkDescription("Tailscale", keepsPassword = true),
+        )
+        fun keeps(served: Boolean) = SignInSettingsViewModel.sectionOf(
+            true, emptyList(), listOf(local, tailscale), OAuthHandshakeCapabilities.None,
+            credentialsLinking = false, networkSignIn = true, networkLinkKeepsPassword = served,
+        ).networkLinkKeepsPassword
+        assertTrue(keeps(true))
+        assertFalse(keeps(false))
     }
 
     @Test

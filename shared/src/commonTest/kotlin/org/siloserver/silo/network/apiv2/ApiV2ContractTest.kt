@@ -476,6 +476,21 @@ class ApiV2ContractTest {
         assertFalse(unsupported.networkSignIn)
     }
 
+    @Test
+    fun networkLinkKeepsPasswordDefaultsToFalseOnOlderServers() {
+        val fixture = ApiV2Fixtures.bodyObject("get_external_sign_in_capabilities_ok")
+        val keeps = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(fixture, "network_link_keeps_password" to JsonPrimitive(true)),
+        ).domain()
+        assertTrue(keeps.networkLinkKeepsPassword)
+        val older = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(with(fixture, "network_link_keeps_password" to null)).domain()
+        assertFalse(older.networkLinkKeepsPassword, "absent network_link_keeps_password means a network link turns the password off")
+        val notServed = ApiV2Fixtures.decode<ExternalSignInCapabilitiesV2>(
+            with(fixture, "network_link_keeps_password" to JsonPrimitive(true), "network_sign_in" to JsonPrimitive(false)),
+        ).domain()
+        assertFalse(notServed.networkLinkKeepsPassword, "false while network sign-in isn't served")
+    }
+
     // --- Network identity (signInWithNetworkIdentity, linkAccountIdentityWithNetwork) ---
 
     @Test
