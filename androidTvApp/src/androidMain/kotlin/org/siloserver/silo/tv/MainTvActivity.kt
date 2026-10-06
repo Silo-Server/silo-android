@@ -124,8 +124,18 @@ class MainTvActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val receiver = get<TvSiloCastReceiver>(TvSiloCastReceiver::class.java)
-                castAuthentication().collect { authenticated ->
-                    if (authenticated) receiver.start() else receiver.stop()
+                val identityTransitions =
+                    get<IdentityTransitionBarrier>(IdentityTransitionBarrier::class.java)
+                var running = false
+                castAuthentication(identityTransitions).collect { state ->
+                    // A read that crossed the IO hop after a newer identity
+                    // change is stale. Every generation bump ends in a
+                    // DID_CHANGE that triggers a fresh read, so wait for that
+                    // one; acting on this could stop a handoff that just began.
+                    if (state.generation != identityTransitions.generation.value) return@collect
+                    if (state.authenticated == running) return@collect
+                    running = state.authenticated
+                    if (running) receiver.start() else receiver.stop()
                 }
             }
         }
@@ -378,17 +388,19 @@ class MainTvActivity : ComponentActivity() {
         }
     }
 
+    /** Whether the TV may receive casts, read under identity [generation]. */
+    private data class CastAuthState(val authenticated: Boolean, val generation: Long)
+
     /**
      * Emits whether the TV is signed in far enough to receive casts, re-read
      * after every committed identity change, so signing in, picking a profile
      * or signing out while the app stays open starts or stops the receiver.
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    private fun castAuthentication(): Flow<Boolean> {
+    private fun castAuthentication(identityTransitions: IdentityTransitionBarrier): Flow<CastAuthState> {
         val registry = get<ServerRegistry>(ServerRegistry::class.java)
         // Widened to nullable so a null marker can stand for "subscribed".
-        val transitions: SharedFlow<IdentityTransition?> =
-            get<IdentityTransitionBarrier>(IdentityTransitionBarrier::class.java).transitions
+        val transitions: SharedFlow<IdentityTransition?> = identityTransitions.transitions
         return merge(
             // The marker triggers the first read only once the subscription is
             // live, so a transition finishing at that moment can't be missed.
@@ -399,7 +411,14 @@ class MainTvActivity : ComponentActivity() {
                 .filter { it == null || it.phase == IdentityTransitionPhase.DID_CHANGE },
             registry.activeEntry,
         )
-            .mapLatest { isAuthenticatedForCast() }
+            .mapLatest {
+                // Captured before the read, so a transition landing mid-read
+                // marks the result stale.
+                val generation = identityTransitions.generation.value
+                CastAuthState(isAuthenticatedForCast(), generation)
+            }
+            // Keeps a repeated answer under a new generation: the collector may
+            // have dropped the earlier one as stale.
             .distinctUntilChanged()
             .flowOn(Dispatchers.IO)
     }
