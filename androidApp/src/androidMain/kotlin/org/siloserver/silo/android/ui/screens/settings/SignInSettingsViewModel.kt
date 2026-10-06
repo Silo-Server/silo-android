@@ -427,6 +427,10 @@ class SignInSettingsViewModel(
         fun connectDescription(providerName: String): String =
             "After connecting, you sign in with $providerName instead of your password. You'll confirm your password first."
 
+        /** "Connect <provider>" for a network provider: the account keeps its password. */
+        fun connectNetworkDescription(providerName: String): String =
+            "After connecting, you can sign in with $providerName or your password. You'll confirm your password first."
+
         fun connectDirectoryDescription(providerName: String): String =
             "After connecting, you sign in with your $providerName username and password instead of this account's password."
 
@@ -445,11 +449,12 @@ class SignInSettingsViewModel(
         fun connectNetworkPrompt(providerName: String, owner: String?): String {
             val who = owner?.let { "$it on $providerName" } ?: "the $providerName account this device uses"
             return "Enter this account's password to connect $who. " +
-                "After connecting, you sign in with $providerName instead of your password."
+                "You can then sign in with $providerName or your password."
         }
 
         /**
-         * Linking turns the account's own password off, so Disconnect can't
+         * Linking an OAuth or directory provider turns the account's own
+         * password off (a network provider keeps it), so Disconnect can't
          * promise it unless the server said up front ([canUnlink]) that the
          * account keeps another way to sign in.
          */

@@ -94,7 +94,7 @@ fun SignInSection(
         state.network?.let { provider ->
             SettingsNavigationRow(
                 label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectDescription(provider.displayName),
+                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName),
                 onClick = { viewModel.onConnectNetwork(provider) },
                 enabled = !state.busy,
             )

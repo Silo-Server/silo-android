@@ -116,7 +116,11 @@ class SignInSettingsTest {
     fun theNetworkPromptNamesWhoIsConnected() {
         assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", "Alice Example").contains("connect Alice Example on Tailscale"))
         assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("the Tailscale account this device uses"))
-        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("instead of your password"))
+        // Connecting a network provider keeps the account's password.
+        assertTrue(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("sign in with Tailscale or your password"))
+        assertFalse(SignInSettingsViewModel.connectNetworkPrompt("Tailscale", null).contains("instead of your password"))
+        assertTrue(SignInSettingsViewModel.connectNetworkDescription("Tailscale").contains("sign in with Tailscale or your password"))
+        assertFalse(SignInSettingsViewModel.connectNetworkDescription("Tailscale").contains("instead of your password"))
     }
 
     @Test
