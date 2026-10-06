@@ -119,7 +119,9 @@ fun SiloCastRemoteScreen(
 ) {
     val state by controller.state.collectAsState()
     val playback = state.playbackState
-    val artwork = rememberSiloCastArtwork(playback?.contentId)
+    val launch = state.launch
+    // A title on its way to the TV shows its own artwork, not the outgoing one.
+    val artwork = rememberSiloCastArtwork(launch?.contentId ?: playback?.contentId)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var showTargetPicker by remember { mutableStateOf(false) }
@@ -182,6 +184,14 @@ fun SiloCastRemoteScreen(
             ) {
                 when {
                     state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
+                    // From the tap until the TV reports the title, including
+                    // over an idle TV or the title being replaced.
+                    launch != null -> RemoteLaunching(
+                        title = artwork.title,
+                        targetName = state.connectedTarget?.name,
+                        posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
+                        posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
+                    )
                     playback == null -> RemoteConnecting(
                         targetName = state.connectedTarget?.name,
                         // A fully torn-down session (TV disconnected, reconnect
@@ -189,10 +199,6 @@ fun SiloCastRemoteScreen(
                         error = state.error
                             ?: "Not connected to a TV.".takeIf { state.connectedTarget == null && !state.isConnecting },
                         onChooseTv = { showTargetPicker = true },
-                    )
-                    playback.contentId == null && state.isLaunching -> RemoteStatus(
-                        title = "Starting playback on ${state.connectedTarget?.name ?: "Silo TV"}…",
-                        showSpinner = true,
                     )
                     playback.contentId == null -> RemoteIdleConnected(
                         targetName = state.connectedTarget?.name,
@@ -415,6 +421,49 @@ private fun RemoteStatus(title: String, showSpinner: Boolean) {
     ) {
         if (showSpinner) CircularProgressIndicator(color = RemoteOnSurface)
         Text(title, style = MaterialTheme.typography.titleMedium, color = RemoteSecondary)
+    }
+}
+
+/** A Play on its way to the TV: the title's poster and "Starting on <TV>…". */
+@Composable
+private fun RemoteLaunching(
+    title: String?,
+    targetName: String?,
+    posterUrl: String?,
+    posterThumbhash: String?,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        modifier = Modifier.padding(24.dp),
+    ) {
+        RemotePoster(posterUrl = posterUrl, posterThumbhash = posterThumbhash)
+        if (!title.isNullOrEmpty()) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = RemoteOnSurface,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CircularProgressIndicator(
+                color = RemoteOnSurface,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "Starting on ${targetName ?: "Silo TV"}…",
+                style = MaterialTheme.typography.titleMedium,
+                color = RemoteSecondary,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 

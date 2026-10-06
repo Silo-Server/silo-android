@@ -10,6 +10,8 @@ data class SiloCastArtwork(
     val posterThumbhash: String? = null,
     val backdropUrl: String? = null,
     val backdropThumbhash: String? = null,
+    /** The item's display title (see [castDisplayTitle]), for one the TV has not reported yet. */
+    val title: String? = null,
 ) {
     val isEmpty: Boolean get() = posterUrl == null && backdropUrl == null
 }
@@ -31,7 +33,23 @@ internal suspend fun resolveCastArtwork(
         posterThumbhash = if (series?.posterUrl != null) series.posterThumbhash else detail.posterThumbhash,
         backdropUrl = detail.backdropUrl ?: series?.backdropUrl,
         backdropThumbhash = if (detail.backdropUrl != null) detail.backdropThumbhash else series?.backdropThumbhash,
+        title = castDisplayTitle(detail),
     )
+}
+
+/**
+ * One line naming an item that is starting on a TV. An episode reads
+ * "Series · S1 · E2", the TV player's own subtitle, since its bare title is
+ * often ambiguous ("Pilot").
+ */
+internal fun castDisplayTitle(detail: ItemDetail): String? {
+    val series = detail.seriesTitle?.takeIf { detail.type == "episode" && it.isNotBlank() }
+        ?: return detail.title.takeIf { it.isNotBlank() }
+    return listOfNotNull(
+        series,
+        detail.seasonNumber?.let { "S$it" },
+        detail.episodeNumber?.let { "E$it" },
+    ).joinToString(" · ")
 }
 
 private suspend fun CatalogRepository.detailOrNull(contentId: String): ItemDetail? =

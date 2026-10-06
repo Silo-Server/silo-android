@@ -2,6 +2,10 @@ package org.siloserver.silo.tv.cast
 
 import android.app.Application
 import kotlin.test.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -85,6 +89,28 @@ class RemotePlaybackIdentityClaimTest {
         assertTrue(tokens.hasTemporaryScope())
     }
 
+    @Test fun anIdentityBeingEndedIsNeverReused() = runTest {
+        prepare(offer(), run = STOPPED_RUN)
+        val ending = assertNotNull(manager.activeIdentity)
+        val logout = CompletableDeferred<Unit>()
+        api.endGate = logout
+
+        val end = launch { manager.end(ending.generationId) }
+        runCurrent()
+        // The logout is in flight: nothing outside the lock may launch on it.
+        assertNull(manager.activeIdentity)
+
+        val sameOffer = async { prepare(offer(), run = NEXT_RUN) }
+        runCurrent()
+        logout.complete(Unit)
+        end.join()
+        val ready = sameOffer.await()
+
+        assertFalse(ready.reused)
+        assertEquals(2, api.startCalls)
+        assertNotEquals(ending.generationId, manager.activeIdentity?.generationId)
+    }
+
     private suspend fun prepare(offer: SiloCastHandoffOffer, run: Long) =
         manager.prepare(offer, CONTROLLER, controllerDeviceName = null, receiverRun = run) {}
 
@@ -97,7 +123,9 @@ class RemotePlaybackIdentityClaimTest {
 
     private class FakeRemotePlaybackApi : DeviceLoginApi {
         var endCalls = 0
+        var startCalls = 0
         var approvedProfileId = "profile-1"
+        var endGate: CompletableDeferred<Unit>? = null
 
         override suspend fun remotePlaybackCapabilityAt(serverUrl: String) = ApiResult.Success(
             DeviceLoginCapabilityResponse(
@@ -110,22 +138,25 @@ class RemotePlaybackIdentityClaimTest {
             serverUrl: String,
             deviceName: String?,
             devicePlatform: String?,
-        ) = ApiResult.Success(
-            DeviceLoginStartResponse(
-                deviceCode = "device-code",
-                userCode = "USER",
-                matchCode = "12",
-                verificationUri = "$serverUrl/pair",
-                verificationUriComplete = "$serverUrl/pair?code=USER",
-                expiresAt = "2099-01-01T00:00:00Z",
-                expiresIn = 60,
-                interval = 1,
-                deviceName = deviceName.orEmpty(),
-                devicePlatform = devicePlatform.orEmpty(),
-                clientPurpose = "remote_playback",
-                temporary = true,
-            ),
-        )
+        ): ApiResult<DeviceLoginStartResponse> {
+            startCalls += 1
+            return ApiResult.Success(
+                DeviceLoginStartResponse(
+                    deviceCode = "device-code",
+                    userCode = "USER",
+                    matchCode = "12",
+                    verificationUri = "$serverUrl/pair",
+                    verificationUriComplete = "$serverUrl/pair?code=USER",
+                    expiresAt = "2099-01-01T00:00:00Z",
+                    expiresIn = 60,
+                    interval = 1,
+                    deviceName = deviceName.orEmpty(),
+                    devicePlatform = devicePlatform.orEmpty(),
+                    clientPurpose = "remote_playback",
+                    temporary = true,
+                ),
+            )
+        }
 
         override suspend fun pollDeviceLoginAt(serverUrl: String, deviceCode: String) = ApiResult.Success(
             DeviceLoginPollResponse(
@@ -140,6 +171,7 @@ class RemotePlaybackIdentityClaimTest {
 
         override suspend fun endRemotePlayback(scope: AuthScopeSnapshot): ApiResult<Unit> {
             endCalls += 1
+            endGate?.await()
             return ApiResult.Success(Unit)
         }
 

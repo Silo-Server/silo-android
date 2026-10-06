@@ -374,6 +374,7 @@ val androidTvModule = module {
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
+            tokenManager = get(),
             identityManager = get(),
             deviceNameProvider = ::tvDeviceName,
             deviceIdProvider = {

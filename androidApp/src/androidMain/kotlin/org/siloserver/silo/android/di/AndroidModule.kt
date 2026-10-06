@@ -257,6 +257,7 @@ val androidModule = module {
             serverRegistry = get(),
             tokenManager = get(),
             deviceLoginApi = get(),
+            catalogRepository = get(),
             lastTargetStore = get(),
             deviceNameProvider = {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"

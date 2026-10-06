@@ -4,10 +4,12 @@ import android.util.Log
 import java.io.Closeable
 import java.net.ServerSocket
 import java.net.Socket
+import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
@@ -31,6 +33,8 @@ import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastError
 import org.siloserver.silo.cast.SiloCastHello
 import org.siloserver.silo.cast.SiloCastHandoffCancel
+import org.siloserver.silo.cast.SiloCastHandoffOffer
+import org.siloserver.silo.cast.SiloCastHandoffReady
 import org.siloserver.silo.cast.SiloCastLaunchRequest
 import org.siloserver.silo.cast.SiloCastMessage
 import org.siloserver.silo.cast.SiloCastPeerRole
@@ -44,6 +48,7 @@ import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsSession
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.TokenManager
 
 /**
  * TV-side SiloCast receiver for the cross-platform v2 protocol shared with
@@ -64,10 +69,16 @@ import org.siloserver.silo.network.ServerRegistry
  *   right after every accepted control command.
  * - A deliberate teardown sends a `close` frame ahead of the FIN so the
  *   controller can tell "disconnected on purpose" from a dropped link.
+ * - A same-server phone offering the profile this TV is already signed in
+ *   with gets `handoff_ready` at once and plays on the TV's own identity.
+ *   A borrowed profile stays installed while its phone is connected, so the
+ *   next title reuses it, and is handed back when that phone leaves, another
+ *   controller takes over, or after [IDENTITY_IDLE_MS] with nothing playing.
  */
 class TvSiloCastReceiver(
     private val advertiser: SiloCastNsdAdvertiser,
     private val serverRegistry: ServerRegistry,
+    private val tokenManager: TokenManager,
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
@@ -79,8 +90,12 @@ class TvSiloCastReceiver(
     data class StandbyState(
         val controllerName: String?,
         val serverName: String?,
+        /** Set while a full profile handoff prepares a title the phone is about to play. */
+        val preparing: Preparing? = null,
     ) {
         val controllerLabel: String get() = controllerName?.takeIf { it.isNotBlank() } ?: "phone"
+
+        data class Preparing(val title: String?)
     }
 
     private val json = Json {
@@ -218,6 +233,7 @@ class TvSiloCastReceiver(
             identityGeneration = identityGeneration,
         )
         activePlayer = player
+        activeSession?.let { clearPreparing(it, refresh = false) }
         _standbyState.value = null
         advertiser.updatePlaying(true)
         return Closeable {
@@ -226,8 +242,16 @@ class TvSiloCastReceiver(
                     DiagnosticsCastLogger.event("TV cast player unregistered")
                     activePlayer = null
                     advertiser.updatePlaying(false)
-                    if (player.identityGeneration != null) {
-                        scheduleIdentityEnd(player.identityGeneration)
+                    val generation = player.identityGeneration
+                    if (generation != null) {
+                        // The phone that lent the profile is still here: keep
+                        // it so that phone's next title starts without a new
+                        // handoff, until it leaves or the TV sits idle.
+                        if (isLenderConnected(generation)) {
+                            scheduleIdentityEnd(generation, IDENTITY_IDLE_MS)
+                        } else {
+                            scheduleIdentityEnd(generation, keepIfLenderReturns = true)
+                        }
                     }
                     refreshStandbyState()
                 }
@@ -373,11 +397,6 @@ class TvSiloCastReceiver(
         } catch (t: Throwable) {
             Log.w(TAG, "SiloCast controller session ended", t)
         } finally {
-            val orphanedReadyIdentity = if (session.remoteLaunchReady && activePlayer == null) {
-                identityManager.activeIdentity?.generationId
-            } else {
-                null
-            }
             synchronized(this) {
                 if (activeSession === session) {
                     activeSession = null
@@ -385,8 +404,15 @@ class TvSiloCastReceiver(
                 }
             }
             session.close()
-            if (orphanedReadyIdentity != null) {
-                scheduleIdentityEnd(orphanedReadyIdentity, READY_TIMEOUT_MS)
+            // The phone that lent the profile left (disconnected, dropped, was
+            // disconnected from the TV, or lost the slot to another phone).
+            // Hand the profile back unless a title is playing on it or on its
+            // way to the player; playback outlives a lost socket.
+            // A phone that reconnects within the grace keeps it.
+            val lent = identityManager.activeIdentity
+                ?.takeIf { it.controllerDeviceId == session.controllerDeviceId }
+            if (lent != null && isIdentityIdle()) {
+                scheduleIdentityEnd(lent.generationId, keepIfLenderReturns = true)
             }
         }
     }
@@ -457,19 +483,56 @@ class TvSiloCastReceiver(
                 session.handoffJob?.cancel()
                 identityEndJob?.cancel()
                 identityEndJob = null
+                session.remoteLaunchReady = false
+                session.ownIdentityProfileId = null
                 val run = receiverRun
                 session.handoffJob = scope?.launch {
                     try {
+                        // Another phone's idle profile goes back first: the
+                        // slot is this phone's now, and the TV's own identity
+                        // may be all this offer needs.
+                        identityManager.activeIdentity
+                            ?.takeIf { it.controllerDeviceId != controllerId && isIdentityIdle() }
+                            ?.let { other ->
+                                if (withContext(NonCancellable) { identityManager.end(other.generationId) }) {
+                                    refreshAdvertisement()
+                                }
+                            }
+                        // The hello may have been judged against a phone's
+                        // identity that is gone now; with none installed, the
+                        // TV's own server decides.
+                        if (identityManager.activeIdentity == null) {
+                            session.isAuthorized = AndroidServerRegistry.serverIdsMatch(
+                                session.controllerServerId,
+                                serverRegistry.activeServerId.value,
+                            )
+                            refreshStandbyState()
+                        }
+                        ownIdentityReady(session, offer)?.let { ready ->
+                            clearPreparing(session)
+                            session.ownIdentityProfileId = offer.profileId
+                            DiagnosticsCastLogger.event("TV cast handoff skipped on own profile")
+                            session.send(SiloCastMessage.HandoffReady(ready))
+                            session.send(SiloCastMessage.State(currentState()))
+                            return@launch
+                        }
+                        var fullHandoff = false
                         val ready = identityManager.prepare(
                             offer = offer,
                             controllerDeviceId = controllerId,
                             controllerDeviceName = session.controllerDeviceName,
                             receiverRun = run,
+                            onFullHandoff = {
+                                fullHandoff = true
+                                showPreparing(session, offer.title)
+                            },
                         ) { challenge ->
                             if (activeSession === session) {
                                 session.send(SiloCastMessage.HandoffChallenge(challenge))
                             }
                         }
+                        // A reuse is instant; drop a cancelled offer's title.
+                        if (!fullHandoff) clearPreparing(session)
                         if (activeSession !== session) {
                             identityManager.end()
                             return@launch
@@ -481,33 +544,25 @@ class TvSiloCastReceiver(
                         refreshAdvertisement()
                         session.send(SiloCastMessage.HandoffReady(ready))
                         session.send(SiloCastMessage.State(currentState()))
-                        session.readyTimeoutJob?.cancel()
-                        session.readyTimeoutJob = launch {
-                            delay(READY_TIMEOUT_MS)
-                            // Ready-without-launch only abandons an UNUSED
-                            // identity: with a player active (a reused-identity
-                            // offer mid-playback), ending it would rip the
-                            // token overlay out from under the live stream.
-                            if (activeSession === session && session.remoteLaunchReady) {
-                                session.remoteLaunchReady = false
-                                if (activePlayer == null) {
-                                    identityManager.end()
-                                    refreshAdvertisement()
-                                    session.send(
-                                        SiloCastMessage.Error(
-                                            SiloCastError(
-                                                code = "launch_timeout",
-                                                message = "No content was launched, so the temporary profile was restored.",
-                                            ),
-                                        ),
-                                    )
-                                    session.goodbyeAndClose()
-                                }
+                        // Replaces the old ready-without-launch timeout: with
+                        // nothing playing, the profile goes back after the
+                        // idle limit. A player cancels this when it opens.
+                        if (activePlayer == null) {
+                            identityManager.activeIdentity?.let {
+                                scheduleIdentityEnd(it.generationId, IDENTITY_IDLE_MS)
+                            }
+                        }
+                        if (fullHandoff) {
+                            session.preparingClearJob?.cancel()
+                            session.preparingClearJob = scope?.launch {
+                                delay(PREPARING_AFTER_READY_MS)
+                                clearPreparing(session)
                             }
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (t: Throwable) {
+                        clearPreparing(session)
                         if (session.remoteLaunchReady && activePlayer == null) {
                             identityManager.end()
                             session.remoteLaunchReady = false
@@ -530,16 +585,19 @@ class TvSiloCastReceiver(
             is SiloCastMessage.HandoffCancel -> {
                 session.handoffJob?.cancel()
                 session.handoffJob = null
-                // Disarm the ready-without-launch watchdog: the offer it was
-                // guarding is dead, and with a player active (identity in use
-                // by live playback) letting it fire would end the session.
-                session.readyTimeoutJob?.cancel()
-                session.readyTimeoutJob = null
-                if (session.remoteLaunchReady && activePlayer == null) {
-                    val generation = identityManager.activeIdentity?.generationId
-                    if (generation != null) scheduleIdentityEnd(generation, 0L)
-                }
                 session.remoteLaunchReady = false
+                session.ownIdentityProfileId = null
+                clearPreparing(session)
+                // The phone is still here, so a profile it lent stays for its
+                // next title, as on tvOS. Make sure the idle limit covers one
+                // a cancelled handoff installed without arming it.
+                identityManager.activeIdentity
+                    ?.takeIf {
+                        it.controllerDeviceId == session.controllerDeviceId &&
+                            isIdentityIdle() &&
+                            identityEndJob?.isActive != true
+                    }
+                    ?.let { scheduleIdentityEnd(it.generationId, IDENTITY_IDLE_MS) }
             }
             is SiloCastMessage.Launch -> {
                 if (!requireAuthorized(session)) return true
@@ -562,7 +620,17 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                if (!session.remoteLaunchReady || identityManager.activeIdentity == null) {
+                val ownProfileId = session.ownIdentityProfileId
+                // Launch-ready on the TV's own identity: still signed in as
+                // that profile with no phone's identity installed since.
+                val onOwnIdentity = ownProfileId != null &&
+                    identityManager.activeIdentity == null &&
+                    !tokenManager.hasTemporaryScope() &&
+                    tokenManager.getProfileId() == ownProfileId
+                // activeIdentity is unpublished as soon as an end starts, so a
+                // launch never lands on an identity being handed back.
+                val borrowed = identityManager.activeIdentity?.takeIf { session.remoteLaunchReady }
+                if (!onOwnIdentity && borrowed == null) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -573,11 +641,8 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                if (!AndroidServerRegistry.serverIdsMatch(
-                        message.launch.serverId,
-                        identityManager.activeIdentity?.serverId,
-                    )
-                ) {
+                val launchServerId = if (onOwnIdentity) serverRegistry.activeServerId.value else borrowed?.serverId
+                if (!AndroidServerRegistry.serverIdsMatch(message.launch.serverId, launchServerId)) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -588,9 +653,9 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                val generation = identityManager.activeIdentity?.generationId
+                val generation = if (onOwnIdentity) null else borrowed?.generationId
                 pendingPlayerIdentityGeneration = generation
-                if (generation == null || !launchRequestChannel.trySend(message.launch).isSuccess) {
+                if (!launchRequestChannel.trySend(message.launch).isSuccess) {
                     pendingPlayerIdentityGeneration = null
                     session.send(
                         SiloCastMessage.Error(
@@ -603,9 +668,10 @@ class TvSiloCastReceiver(
                     return true
                 }
                 session.remoteLaunchReady = false
+                session.ownIdentityProfileId = null
+                // The TV is opening the player now; the preparing view is done.
+                clearPreparing(session, refresh = false)
                 _standbyState.value = null
-                session.readyTimeoutJob?.cancel()
-                session.readyTimeoutJob = null
             }
             is SiloCastMessage.Control -> {
                 if (!requireAuthorized(session)) return true
@@ -655,19 +721,37 @@ class TvSiloCastReceiver(
         return false
     }
 
+    /**
+     * Ends [generationId] after [delayMs]. With [keepIfLenderReturns] (the
+     * lending phone left), a phone back in the slot by then keeps it under
+     * the idle limit instead: a dropped link reconnects within seconds.
+     */
     private fun scheduleIdentityEnd(
         generationId: String,
         delayMs: Long = IDENTITY_END_GRACE_MS,
+        keepIfLenderReturns: Boolean = false,
     ) {
         identityEndJob?.cancel()
         val owner = scope ?: return
         identityEndJob = owner.launch {
             delay(delayMs)
-            if (!identityManager.end(generationId)) return@launch
+            if (keepIfLenderReturns && isLenderConnected(generationId) && isIdentityIdle()) {
+                scheduleIdentityEnd(generationId, IDENTITY_IDLE_MS)
+                return@launch
+            }
+            // Cancellable only while waiting: a new offer may still keep the
+            // identity, but once the logout starts it runs to the end, and
+            // that offer's prepare() waits for it and takes the full path.
+            if (!withContext(NonCancellable) { identityManager.end(generationId) }) return@launch
             pendingPlayerIdentityGeneration = null
             refreshAdvertisement()
+            // A newer offer cancelled this mid-logout and now owns the
+            // session's authorization; judging it here could drop a phone
+            // that is still handing off.
+            if (!isActive) return@launch
             val session = activeSession
             if (session != null) {
+                session.remoteLaunchReady = false
                 session.isAuthorized = AndroidServerRegistry.serverIdsMatch(
                     session.controllerServerId,
                     serverRegistry.activeServerId.value,
@@ -682,13 +766,80 @@ class TvSiloCastReceiver(
         }
     }
 
+    /** No title is playing on, or on its way to, a phone's identity. */
+    private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerIdentityGeneration == null
+
+    /** Whether the phone that lent [generationId] holds the controller slot. */
+    private fun isLenderConnected(generationId: String): Boolean {
+        val identity = identityManager.activeIdentity ?: return false
+        val session = activeSession ?: return false
+        return identity.generationId == generationId &&
+            session.isAuthorized &&
+            session.controllerDeviceId == identity.controllerDeviceId
+    }
+
+    /**
+     * The `handoff_ready` for an offer the TV can play on its own identity
+     * (see [RemotePlaybackOwnIdentityPolicy]), or null when the offer needs
+     * the full handoff.
+     */
+    private suspend fun ownIdentityReady(
+        session: ControllerSession,
+        offer: SiloCastHandoffOffer,
+    ): SiloCastHandoffReady? {
+        val ownServerId = serverRegistry.activeServerId.value
+        val ownScope = tokenManager.snapshotCurrentScope()
+        val accepts = RemotePlaybackOwnIdentityPolicy.accepts(
+            authorizedAtHello = session.isAuthorized &&
+                AndroidServerRegistry.serverIdsMatch(session.controllerServerId, ownServerId),
+            holdsTemporaryIdentity = identityManager.activeIdentity != null || tokenManager.hasTemporaryScope(),
+            signedIn = !tokenManager.getAccessToken().isNullOrBlank(),
+            ownServerId = ownScope?.serverId?.takeIf { AndroidServerRegistry.serverIdsMatch(it, ownServerId) },
+            ownProfileId = ownScope?.profileId,
+            offerServerId = offer.serverId,
+            offerProfileId = offer.profileId,
+        )
+        if (!accepts) return null
+        return SiloCastHandoffReady(
+            requestId = offer.requestId,
+            serverId = offer.serverId,
+            profileId = offer.profileId,
+            // Required on the wire, though neither phone reads it. The TV's
+            // own sign-in has no session deadline to report, so this uses
+            // the same one-day fallback as a handoff whose server omits one.
+            sessionExpiresAt = Instant.ofEpochMilli(System.currentTimeMillis() + OWN_IDENTITY_SESSION_MS).toString(),
+            reused = true,
+        )
+    }
+
+    private fun showPreparing(session: ControllerSession, title: String?) {
+        session.preparingClearJob?.cancel()
+        session.preparingClearJob = null
+        session.preparing = StandbyState.Preparing(
+            title = title?.trim()?.take(MAX_PREPARING_TITLE_LENGTH)?.ifBlank { null },
+        )
+        refreshStandbyState()
+    }
+
+    private fun clearPreparing(session: ControllerSession, refresh: Boolean = true) {
+        session.preparingClearJob?.cancel()
+        session.preparingClearJob = null
+        if (session.preparing == null) return
+        session.preparing = null
+        if (refresh) refreshStandbyState()
+    }
+
     private fun refreshStandbyState() {
         val session = activeSession
-        _standbyState.value = if (session != null && session.isAuthorized && activePlayer == null) {
+        val preparing = session?.preparing
+        // A cross-server phone is not authorized until its handoff finishes,
+        // but the TV still shows what it is preparing for that phone.
+        _standbyState.value = if (session != null && activePlayer == null && (session.isAuthorized || preparing != null)) {
             StandbyState(
                 controllerName = session.controllerDeviceName,
                 serverName = identityManager.activeIdentity?.serverName
                     ?: serverRegistry.activeEntry.value?.displayName,
+                preparing = preparing,
             )
         } else {
             null
@@ -801,11 +952,18 @@ class TvSiloCastReceiver(
         @Volatile
         var remoteLaunchReady: Boolean = false
 
+        /** Launch-ready on the TV's own identity for this profile (no handoff ran). */
+        @Volatile
+        var ownIdentityProfileId: String? = null
+
+        @Volatile
+        var preparing: StandbyState.Preparing? = null
+
         @Volatile
         var missedHeartbeats: Int = 0
         var job: Job? = null
         var handoffJob: Job? = null
-        var readyTimeoutJob: Job? = null
+        var preparingClearJob: Job? = null
 
         suspend fun send(message: SiloCastMessage) {
             val payload = json.encodeToString(SiloCastMessage.serializer(), message).encodeToByteArray()
@@ -838,7 +996,7 @@ class TvSiloCastReceiver(
 
         fun close() {
             handoffJob?.cancel()
-            readyTimeoutJob?.cancel()
+            preparingClearJob?.cancel()
             tls.close()
             runCatching { socket.close() }
             job?.cancel()
@@ -860,8 +1018,11 @@ class TvSiloCastReceiver(
         const val MAX_MISSED_HEARTBEATS = 3
         const val AUTH_GRACE_MS = 5_000L
         const val GOODBYE_TIMEOUT_MS = 1_000L
-        const val READY_TIMEOUT_MS = 60_000L
         const val IDENTITY_END_GRACE_MS = 2_000L
         const val PLAYBACK_TEARDOWN_TIMEOUT_MS = 15_000L
+        const val IDENTITY_IDLE_MS = 10 * 60_000L
+        const val PREPARING_AFTER_READY_MS = 20_000L
+        const val OWN_IDENTITY_SESSION_MS = 24 * 60 * 60 * 1_000L
+        const val MAX_PREPARING_TITLE_LENGTH = 120
     }
 }

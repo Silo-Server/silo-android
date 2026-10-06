@@ -183,6 +183,8 @@ data class SiloCastHandoffOffer(
     val serverName: String? = null,
     val profileId: String,
     val profileName: String? = null,
+    /** Display-only: what the phone is about to launch. Older peers omit and ignore it. */
+    val title: String? = null,
 )
 
 @Serializable

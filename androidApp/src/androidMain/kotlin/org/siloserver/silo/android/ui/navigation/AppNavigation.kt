@@ -53,6 +53,7 @@ import kotlinx.coroutines.flow.map
 import org.siloserver.silo.android.cast.GoogleCastMiniBar
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.cast.SiloCastSessionManager
+import org.siloserver.silo.android.ui.screens.cast.SiloCastLaunchHaptics
 import org.siloserver.silo.android.ui.screens.cast.SiloCastMiniBar
 import org.siloserver.silo.android.ui.screens.cast.SiloCastRemoteScreen
 import org.siloserver.silo.android.ui.screens.MainScreen
@@ -231,6 +232,7 @@ fun AppNavigation(
         siloCastController.startBrowsing()
         onDispose { siloCastController.stopBrowsing() }
     }
+    SiloCastLaunchHaptics(siloCastController)
 
     // Graceful handling of server-side session invalidation (refresh 401'd).
     // The TokenManager has already wiped the active server's tokens by the
