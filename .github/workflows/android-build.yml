@@ -1,52 +1,193 @@
-name: Android Builds
+name: Android APK layout pilot
 
-# CI gate: tests, lint, and release readiness on main pushes and pull requests.
-# Release artifacts (Play Store bundles, sideload APKs, GitHub releases) are owned by
-# release.yml — triggered by v* tags or its workflow_dispatch.
-
+# Experimental branch only. The registered filename permits manual dispatch.
+# Never merge this controller into a shipping branch.
 on:
-  push:
-    branches:
-      - main
-  pull_request:
   workflow_dispatch:
     inputs:
-      build_ffmpeg_aar:
-        description: Build the pinned Media3 FFmpeg decoder AAR instead of app jobs
-        required: false
-        default: false
-        type: boolean
-      build_cache:
-        description: Reuse Gradle task outputs (disable for a baseline measurement)
-        required: false
-        default: true
-        type: boolean
-      parallel:
-        description: Benchmark parallel project execution at the existing worker limit
-        required: false
-        default: false
-        type: boolean
-      configuration_cache:
-        description: Check configuration-cache compatibility without publishing artifacts
-        required: false
-        default: false
-        type: boolean
+      source_sha:
+        description: Final validated source sealed in the controller
+        required: true
+        type: string
+      profile:
+        description: One bounded layout or prior-release seed preparation
+        required: true
+        type: choice
+        options: [SEED, M, C0]
+      cache_condition:
+        description: Both measured conditions consume the same exact seed
+        required: true
+        default: fresh-release-warm
+        type: choice
+        options: [task-cache-off, fresh-release-warm]
+      seed_run_id:
+        description: Approved completed SEED run (empty for SEED)
+        type: string
+      seed_artifact_id:
+        description: Exact approved seed artifact (empty for SEED)
+        type: string
+      seed_manifest_sha256:
+        description: Approved seed.json digest (empty for SEED)
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: android-builds-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-apk-layout-pilot
+  cancel-in-progress: false
+
+env:
+  BENCH_SOURCE_SHA: ${{ inputs.source_sha }}
+  BENCH_PROFILE: ${{ inputs.profile }}
+  BENCH_CACHE: ${{ inputs.cache_condition }}
+  BENCH_SEED_RUN: ${{ inputs.seed_run_id }}
+  BENCH_SEED_ARTIFACT: ${{ inputs.seed_artifact_id }}
+  BENCH_SEED_DIGEST: ${{ inputs.seed_manifest_sha256 }}
 
 jobs:
-  ci:
-    # Hosted PR validation must exercise the proposed workflow revision. The
-    # runner group's main-only restriction still applies to self-hosted calls.
-    uses: ./.github/workflows/trusted-linux-ci.yml
-    with:
-      self_hosted: false
-      build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
-      build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
-      parallel: ${{ inputs.parallel || false }}
-      configuration_cache: ${{ inputs.configuration_cache || false }}
+  validate:
+    name: Validate sealed inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: controller
+      - name: Reject unsealed or unexpected inputs
+        env:
+          BENCH_TARGET: ${{ inputs.profile == 'SEED' && 'seed' || (inputs.profile == 'M' && 'phone' || 'combined') }}
+        run: |
+          python3 controller/scripts/apk_benchmark.py validate \
+            --source-sha "$BENCH_SOURCE_SHA" --profile "$BENCH_PROFILE" \
+            --cache "$BENCH_CACHE" --target "$BENCH_TARGET" \
+            --seed-run "$BENCH_SEED_RUN" --seed-artifact "$BENCH_SEED_ARTIFACT" \
+            --seed-manifest-sha256 "$BENCH_SEED_DIGEST"
+
+  build:
+    name: APK ${{ matrix.target }}
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(inputs.profile == 'M' && '["phone","tv"]' || (inputs.profile == 'SEED' && '["seed"]' || '["combined"]')) }}
+    env:
+      BENCH_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Check out reviewed controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: controller
+      - name: Select fresh private Gradle home
+        run: echo "GRADLE_USER_HOME=${RUNNER_TEMP}/apk-benchmark-gradle-home" >> "$GITHUB_ENV"
+      - name: Check out sealed source separately
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Fetch exact approved seed
+        if: inputs.profile != 'SEED'
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          artifact-ids: ${{ inputs.seed_artifact_id }}
+          run-id: ${{ inputs.seed_run_id }}
+          repository: Silo-Server/silo-android
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: seed-download
+      - name: Verify provenance and restore into fresh Gradle home
+        if: inputs.profile != 'SEED'
+        env:
+          GH_BENCHMARK_READ_TOKEN: ${{ github.token }}
+        run: |
+          python3 controller/scripts/apk_benchmark.py restore \
+            --source-sha "$BENCH_SOURCE_SHA" --profile "$BENCH_PROFILE" \
+            --cache "$BENCH_CACHE" --target "$BENCH_TARGET" \
+            --seed-run "$BENCH_SEED_RUN" --seed-artifact "$BENCH_SEED_ARTIFACT" \
+            --seed-manifest-sha256 "$BENCH_SEED_DIGEST" \
+            --seed-dir seed-download --seed-receipt "$RUNNER_TEMP/apk-benchmark-seed-receipt.json"
+      - name: Set up Gradle without automatic cache or publication
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        with:
+          cache-disabled: true
+          cache-cleanup: never
+          dependency-graph: disabled
+          build-scan-publish: false
+          develocity-injection-enabled: false
+          add-job-summary-as-pr-comment: never
+      - name: Run fixed release graph and verify artifacts
+        run: |
+          python3 controller/scripts/apk_benchmark.py build \
+            --source-sha "$BENCH_SOURCE_SHA" --profile "$BENCH_PROFILE" \
+            --cache "$BENCH_CACHE" --target "$BENCH_TARGET" \
+            --seed-run "$BENCH_SEED_RUN" --seed-artifact "$BENCH_SEED_ARTIFACT" \
+            --seed-manifest-sha256 "$BENCH_SEED_DIGEST" \
+            --seed-receipt "$RUNNER_TEMP/apk-benchmark-seed-receipt.json" \
+            --source source --output benchmark-output
+      - name: Save immutable benchmark seed
+        if: success() && inputs.profile == 'SEED'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: apk-benchmark-seed-${{ github.run_id }}
+          path: benchmark-output/seed/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+      - name: Save text measurements and payload inventory
+        if: always() && hashFiles('benchmark-output/report.json') != ''
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: apk-benchmark-report-${{ inputs.profile }}-${{ matrix.target }}-${{ github.run_id }}
+          path: |
+            benchmark-output/report.json
+            benchmark-output/gradle.log
+            source/build/reports/profile/
+          if-no-files-found: error
+          retention-days: 7
+
+  summarize:
+    name: Summarize verified layout
+    needs: [validate, build]
+    if: ${{ !cancelled() && needs.validate.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected build job to succeed
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: test "$BUILD_RESULT" = success
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          path: controller
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: apk-benchmark-report-${{ inputs.profile }}-*-${{ github.run_id }}
+          path: reports
+      - name: Aggregate artifact contracts and assigned runner time
+        env:
+          GH_BENCHMARK_READ_TOKEN: ${{ github.token }}
+          BENCH_TARGET: ${{ inputs.profile == 'SEED' && 'seed' || (inputs.profile == 'M' && 'phone' || 'combined') }}
+        run: |
+          python3 controller/scripts/apk_benchmark.py summarize \
+            --source-sha "$BENCH_SOURCE_SHA" --profile "$BENCH_PROFILE" \
+            --cache "$BENCH_CACHE" --target "$BENCH_TARGET" \
+            --seed-run "$BENCH_SEED_RUN" --seed-artifact "$BENCH_SEED_ARTIFACT" \
+            --seed-manifest-sha256 "$BENCH_SEED_DIGEST" \
+            --reports reports --output summary-output
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: apk-benchmark-summary-${{ inputs.profile }}-${{ github.run_id }}
+          path: summary-output/summary.json
+          if-no-files-found: error
+          retention-days: 7
