@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
@@ -37,12 +38,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ManageAccounts
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -167,29 +166,19 @@ fun ProfileSelectionScreen(
 
     state.deleteDialogProfile?.let { profile ->
         val deletingActive = profile.id == state.activeProfileId
-        AlertDialog(
-            onDismissRequest = viewModel::dismissDeleteDialog,
-            title = { Text("Delete \"${profile.name}\"?") },
-            text = {
-                Text(
-                    if (deletingActive) {
-                        "You're signed in as this profile. Deleting it removes its " +
-                            "watch history and preferences, and you'll pick another " +
-                            "profile to continue."
-                    } else {
-                        "This removes the profile's watch history and preferences. " +
-                            "This can't be undone."
-                    },
-                )
+        SiloConfirmDialog(
+            title = "Delete \"${profile.name}\"?",
+            body = if (deletingActive) {
+                "You're signed in as this profile. Deleting it removes its " +
+                    "watch history and preferences, and you'll pick another " +
+                    "profile to continue."
+            } else {
+                "This removes the profile's watch history and preferences. " +
+                    "This can't be undone."
             },
-            confirmButton = {
-                TextButton(onClick = viewModel::confirmDeleteProfile) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::dismissDeleteDialog) { Text("Cancel") }
-            },
+            confirmLabel = "Delete",
+            onConfirm = viewModel::confirmDeleteProfile,
+            onDismiss = viewModel::dismissDeleteDialog,
         )
     }
 

@@ -76,6 +76,52 @@ fun formatSubtitleTrackDisplayLabel(
         ?: "Subtitle ${index + 1}"
 }
 
+/**
+ * The facts [formatSubtitleTrackDisplayLabel] joins into one string, kept
+ * apart so a picker can lay them out: the language as the row title, Forced
+ * and SDH as chips, the format and provider as a detail line.
+ */
+data class SubtitleTrackLabelParts(
+    val languageName: String?,
+    val forced: Boolean,
+    val sdh: Boolean,
+    val aiGenerated: Boolean,
+    val descriptor: String?,
+    val format: String?,
+    val provider: String?,
+)
+
+fun subtitleTrackLabelParts(
+    rawLabel: String?,
+    language: String?,
+    codecOrMime: String?,
+    isForced: Boolean,
+): SubtitleTrackLabelParts {
+    val cleanRaw = rawLabel?.trim().takeUnless { it.isNullOrBlank() }
+    val providerId = providerIdentifier(cleanRaw)
+    val labelWithoutProvider = cleanRaw?.replace(providerSuffix, "")?.trim()
+    val inferredLanguage = languageCodeFor(language) ?: inferLanguageCode(labelWithoutProvider)
+    val languageName = languageDisplayName(inferredLanguage)
+    val forced = isForced || labelWithoutProvider?.let { forcedToken.containsMatchIn(it) } == true
+    val sdh = labelWithoutProvider?.let { sdhToken.containsMatchIn(it) } == true
+    val aiGenerated = providerId == "translated" ||
+        labelWithoutProvider?.contains(Regex("""(?i)\bAI\b""")) == true
+    return SubtitleTrackLabelParts(
+        languageName = languageName,
+        forced = forced,
+        sdh = sdh,
+        aiGenerated = aiGenerated,
+        descriptor = meaningfulDescriptor(
+            rawLabel = labelWithoutProvider,
+            languageName = languageName,
+            forced = forced,
+            sdh = sdh,
+        ).takeUnless { aiGenerated },
+        format = subtitleFormatLabel(codecOrMime ?: labelWithoutProvider),
+        provider = providerDisplayName(cleanRaw).takeUnless { aiGenerated },
+    )
+}
+
 private fun providerIdentifier(rawLabel: String?): String? =
     rawLabel?.let { providerSuffix.find(it)?.groupValues?.getOrNull(1) }
         ?.trim()

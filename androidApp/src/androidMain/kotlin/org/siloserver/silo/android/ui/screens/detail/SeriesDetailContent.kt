@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,8 +19,6 @@ import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ClosedCaption
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -323,7 +323,7 @@ fun SeriesDetailContent(
                             }
                             if (markableSelectedSeason != null && onSeasonWatchedChange != null) {
                                 val seasonWatched = markableSelectedSeason.userData?.played == true
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = {
                                         Text(
                                             "Mark ${phoneSeasonLabel(markableSelectedSeason)} " +
@@ -347,7 +347,7 @@ fun SeriesDetailContent(
                                 )
                             }
                             if (partyAction != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text(partyAction.label) },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.Groups, contentDescription = null)
@@ -385,12 +385,12 @@ fun SeriesDetailContent(
                                         }
                                     },
                                 )
-                                DropdownMenu(
+                                SiloDropdownMenu(
                                     expanded = showDownloadMenu,
                                     onDismissRequest = { showDownloadMenu = false },
                                 ) {
                                     if (onEpisodeDownloadClick != null) {
-                                        DropdownMenuItem(
+                                        SiloDropdownMenuItem(
                                             text = { Text(when {
                                                 episodeDownloadState.isDownloaded -> "Episode downloaded"
                                                 episodeDownloadState.progress != null -> "Cancel episode download"
@@ -404,7 +404,7 @@ fun SeriesDetailContent(
                                         )
                                     }
                                     if (onSeriesDownloadClick != null) {
-                                        DropdownMenuItem(
+                                        SiloDropdownMenuItem(
                                             text = { Text(if (seriesDownloadState.isDownloaded) "Series downloaded" else "Download series") },
                                             enabled = !seriesDownloadState.isDownloaded,
                                             onClick = {

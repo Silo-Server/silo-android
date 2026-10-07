@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,7 +19,6 @@ import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -220,7 +220,7 @@ fun MovieDetailContent(
                     overflow = if (hasOverflow) {
                         { dismiss ->
                             if (onSeriesClick != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text("Go to Series") },
                                     onClick = {
                                         dismiss()
@@ -229,7 +229,7 @@ fun MovieDetailContent(
                                 )
                             }
                             if (partyAction != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text(partyAction.label) },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.Groups, contentDescription = null)

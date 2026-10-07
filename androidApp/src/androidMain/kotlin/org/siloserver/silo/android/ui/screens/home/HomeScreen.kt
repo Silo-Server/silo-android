@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,8 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SettingsRemote
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -545,18 +545,18 @@ private fun HomeFloatingChrome(
                                 contentDescription = "Remote Control",
                             )
                         }
-                        DropdownMenu(
+                        SiloDropdownMenu(
                             expanded = remoteMenuExpanded,
                             onDismissRequest = { remoteMenuExpanded = false },
                         ) {
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Remote Control") },
                                 onClick = {
                                     remoteMenuExpanded = false
                                     onRemoteControlClick()
                                 },
                             )
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Choose TV") },
                                 onClick = {
                                     remoteMenuExpanded = false
@@ -564,7 +564,7 @@ private fun HomeFloatingChrome(
                                 },
                             )
                             HorizontalDivider()
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = {
                                     Text(
                                         "Turn Off Control Mode",

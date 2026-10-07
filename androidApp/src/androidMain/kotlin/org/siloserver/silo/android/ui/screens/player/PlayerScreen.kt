@@ -1696,6 +1696,22 @@ fun PlayerScreen(
             val controller = mediaController
             val videoGravity by viewModel.videoGravity.collectAsState()
             var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+            // Left edge of a docked player menu (root px), null when none is
+            // open. The subtitle canvas pads its right side by the overlap so
+            // cues re-center in the picture that is still visible.
+            var dockedMenuEdgePx by remember { mutableStateOf<Float?>(null) }
+            LaunchedEffect(playerViewRef, dockedMenuEdgePx) {
+                val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
+                val location = IntArray(2)
+                subtitleView.getLocationInWindow(location)
+                val viewRight = location[0] + subtitleView.width
+                val overlap = dockedMenuEdgePx
+                    ?.let { edge -> (viewRight - edge).toInt().coerceIn(0, subtitleView.width / 2) }
+                    ?: 0
+                if (subtitleView.paddingRight != overlap) {
+                    subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, overlap, subtitleView.paddingBottom)
+                }
+            }
             val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
             // The camera only reaches the picture once expansion pushes it out
             // to the edges — at FIT's 2560px the pillarbox already swallows it.
@@ -1926,10 +1942,11 @@ fun PlayerScreen(
                             }
                         },
                         showBufferingIndicator = activeTabletopPaneLayout == null,
-                        castSlot = {
+                        castSlot = { discModifier ->
                             // No Cast in a party (D7).
                             if (!inRoom) {
                                 SiloCastButton(
+                                    modifier = discModifier,
                                     castManager = castManager,
                                     onStartCast = {
                                         castScope.launch {
@@ -1967,6 +1984,18 @@ fun PlayerScreen(
                         onSelectSubtitle = { viewModel.onSelectSubtitle(it) },
                         onSelectAudio = { viewModel.onSelectAudio(it) },
                         onSelectVersion = { viewModel.onSelectVersion(it) },
+                        pictureInPictureAvailable = activity?.let {
+                            pictureInPictureCoordinator.canOfferPictureInPicture(it, SiloPictureInPictureSurface.Mobile)
+                        } == true,
+                        onEnterPictureInPicture = {
+                            activity?.let {
+                                pictureInPictureCoordinator.enterPictureInPictureOnRequest(
+                                    it,
+                                    SiloPictureInPictureSurface.Mobile,
+                                )
+                            }
+                        },
+                        onDockedMenuEdgeChanged = { edge -> dockedMenuEdgePx = edge },
                         modifier = playerOverlayModifier,
                     )
                 }

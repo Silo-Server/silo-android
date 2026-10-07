@@ -9,7 +9,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,7 +49,7 @@ fun MediaCardContextMenu(
 ) {
     if (actions.isEmpty) return
 
-    DropdownMenu(
+    SiloDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
     ) {
@@ -99,7 +98,7 @@ fun MediaCardContextMenu(
 
 @Composable
 private fun MenuRow(text: String, icon: ImageVector, onClick: () -> Unit) {
-    DropdownMenuItem(
+    SiloDropdownMenuItem(
         text = { Text(text) },
         leadingIcon = { Icon(icon, contentDescription = null) },
         onClick = onClick,
