@@ -21,24 +21,32 @@ on:
         required: false
         default: true
         type: boolean
-      parallel:
-        description: Benchmark parallel project execution for unit tests and lint
+      unit_parallel:
+        description: Benchmark parallel project execution for unit tests
         required: false
         default: false
         type: boolean
-      worker_limit:
-        description: Maximum Gradle workers for unit tests and lint
+      unit_worker_limit:
+        description: Unit test workers (4 requires a measured viable memory budget)
         required: false
         default: "2"
         type: choice
         options:
           - "2"
           - "4"
-      configuration_cache:
-        description: Check configuration-cache compatibility without publishing artifacts
+      lint_parallel:
+        description: Benchmark parallel project execution for lint
         required: false
         default: false
         type: boolean
+      lint_worker_limit:
+        description: Lint workers (4 requires a measured viable memory budget)
+        required: false
+        default: "2"
+        type: choice
+        options:
+          - "2"
+          - "4"
 
 permissions:
   contents: read
@@ -56,6 +64,7 @@ jobs:
       self_hosted: false
       build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
-      parallel: ${{ inputs.parallel || false }}
-      worker_limit: ${{ fromJSON(inputs.worker_limit || '2') }}
-      configuration_cache: ${{ inputs.configuration_cache || false }}
+      unit_parallel: ${{ inputs.unit_parallel || false }}
+      unit_worker_limit: ${{ fromJSON(inputs.unit_worker_limit || '2') }}
+      lint_parallel: ${{ inputs.lint_parallel || false }}
+      lint_worker_limit: ${{ fromJSON(inputs.lint_worker_limit || '2') }}

@@ -110,6 +110,79 @@ class SamplingFixtures(unittest.TestCase):
         self.assertNotIn("private", before["counters"])
         self.assertNotIn(str(mounted), json.dumps(before))
 
+    def test_parent_quota_and_memory_limit_bound_unlimited_child(self):
+        mounted = self.mount("v2", "/", "/job")
+        job = mounted / "job"
+        job.mkdir()
+        (self.proc / "meminfo").write_text("MemTotal: 16777216 kB\n")
+        (mounted / "memory.max").write_text(str(8 * 1024**3))
+        (job / "memory.max").write_text("max\n")
+        (job / "memory.current").write_text("1234\n")
+        (job / "memory.peak").write_text("2345\n")
+        (mounted / "cpu.max").write_text("250000 100000\n")
+        (job / "cpu.max").write_text("max 100000\n")
+        memory = ci.memory_resources(self.proc)
+        self.assertEqual(memory["physical_memory_bytes"], 16 * 1024**3)
+        self.assertEqual(memory["cgroup_memory_max"], {"status": "unlimited", "bytes": None})
+        self.assertEqual(memory["cgroup_memory_limit_bytes"], 8 * 1024**3)
+        self.assertEqual(memory["effective_memory_capacity_bytes"], 8 * 1024**3)
+        self.assertEqual(memory["cgroup_memory_current_bytes"], 1234)
+        self.assertEqual(memory["cgroup_memory_peak_bytes"], 2345)
+        with patch.object(ci, "is_linux", return_value=True), patch.object(os, "cpu_count", return_value=16), patch.object(os, "sched_getaffinity", return_value={0, 1, 2, 3}, create=True):
+            cpu = ci.cpu_resources(self.proc)
+        self.assertEqual(cpu["affinity_cpu_count"], 4)
+        self.assertEqual(cpu["cgroup_quota_cores"], 2.5)
+        self.assertEqual(cpu["effective_cpu_capacity_cores"], 2.5)
+        self.assertNotIn(str(mounted), json.dumps({"cpu": cpu, "memory": memory}))
+
+    def test_missing_capacity_does_not_assume_host_memory(self):
+        memory = ci.memory_resources(self.proc)
+        self.assertIsNone(memory["effective_memory_capacity_bytes"])
+        self.assertEqual(memory["cgroup_memory_max"]["status"], "unavailable")
+        with patch.object(ci, "is_linux", return_value=True), patch.object(os, "cpu_count", return_value=2), patch.object(os, "sched_getaffinity", side_effect=OSError, create=True):
+            cpu = ci.cpu_resources(self.proc)
+        self.assertIsNone(cpu["cgroup_quota_cores"])
+        self.assertIsNone(cpu["affinity_cpu_count"])
+        self.assertEqual(cpu["effective_cpu_capacity_cores"], 2)
+
+    def test_cpu_affinity_can_be_lower_than_quota_and_v1_sentinels(self):
+        mounted = self.mount("v1", "/", "/")
+        (self.proc / "meminfo").write_text("MemTotal: 4194304 kB\n")
+        (mounted / "memory.limit_in_bytes").write_text(str(2**63 - 4096))
+        (mounted / "memory.usage_in_bytes").write_text("1024")
+        (mounted / "memory.max_usage_in_bytes").write_text("2048")
+        resources = ci.memory_resources(self.proc)
+        self.assertEqual(resources["cgroup_memory_max"]["status"], "unlimited")
+        self.assertEqual(resources["effective_memory_capacity_bytes"], 4 * 1024**3)
+        (self.proc / "self/cgroup").write_text("0::/\n4:memory:/\n5:cpu:/\n")
+        (self.proc / "self/mountinfo").write_text(f"1 0 0:1 / {mounted} rw - cgroup cgroup rw,cpu\n")
+        (mounted / "cpu.cfs_quota_us").write_text("300000")
+        (mounted / "cpu.cfs_period_us").write_text("100000")
+        with patch.object(ci, "is_linux", return_value=True), patch.object(os, "cpu_count", return_value=16), patch.object(os, "sched_getaffinity", return_value={0, 1}, create=True):
+            cpu = ci.cpu_resources(self.proc)
+            self.assertEqual(cpu["effective_cpu_capacity_cores"], 2)
+            (mounted / "cpu.cfs_quota_us").write_text("-1")
+            self.assertIsNone(ci.cpu_resources(self.proc)["cgroup_quota_cores"])
+
+    def test_numeric_jvm_role_flags_exclude_args_paths_and_ids(self):
+        roles = (
+            (920001, "org.gradle.launcher.daemon.bootstrap.GradleDaemon", "4g", []),
+            (920002, "org.jetbrains.kotlin.daemon.KotlinCompileDaemon", "4g", []),
+            (920003, "worker.org.gradle.process.internal.worker.GradleWorkerMain", "512m", ["Gradle Test Executor 1"]),
+        )
+        for identifier, role, heap, extra in roles:
+            self.process(identifier, "java", 100)
+            (self.proc / str(identifier) / "cmdline").write_bytes("\0".join(["/PRIVATE_JAVA_PATH", "-Xmx" + heap, "-Dprivate=SECRET_MARKER", role, *extra]).encode())
+        sampler = ci.MemorySampler(self.proc, enabled=True)
+        sampler.sample()
+        result = sampler.summary()
+        self.assertEqual(result["jvm_roles"]["kotlin"]["launch_memory_flags_bytes"]["max_heap_bytes"], [4 * 1024**3])
+        self.assertEqual(result["jvm_roles"]["test"]["launch_memory_flags_bytes"]["max_heap_bytes"], [512 * 1024**2])
+        encoded = json.dumps(result)
+        for private in ("920001", "920002", "920003", "PRIVATE_JAVA_PATH", "SECRET_MARKER", "KotlinCompileDaemon"):
+            self.assertNotIn(private, encoded)
+        self.assertEqual(ci.memory_arguments(["-Xmx4g", "-Xmxinvalid", "-Dsecret=private"]), {"max_heap_bytes": 4 * 1024**3})
+
     def test_cgroup_namespace_root_and_v1(self):
         mounted = self.mount("v1", "/host/subtree", "/")
         (mounted / "memory.failcnt").write_text("7\n")
@@ -138,7 +211,7 @@ class WrapperFixtures(unittest.TestCase):
         return json.loads(lines[0].split(" ", 1)[1])
 
     def test_child_stdout_and_nonzero_exit_are_preserved(self):
-        result = self.command("import sys; print('fixture stdout'); assert sys.argv[1:] == ['--max-workers=4']; sys.exit(17)", workers="4")
+        result = self.command("import sys; print('fixture stdout'); assert sys.argv[1] == '--init-script' and sys.argv[-1] == '--max-workers=4'; sys.exit(17)", workers="4")
         self.assertEqual(result.returncode, 17)
         self.assertIn("fixture stdout", result.stdout)
         summary = self.summary(result)
@@ -163,6 +236,15 @@ class WrapperFixtures(unittest.TestCase):
         summary = self.summary(result)
         self.assertEqual(summary["exit_status"], 17)
         self.assertGreaterEqual(summary["observation_error_count"], 2)
+        self.assertNotIn("PRIVATE_PROCESS_MARKER", output.getvalue())
+
+    def test_memory_observation_errors_preserve_child_status(self):
+        output = io.StringIO()
+        with patch.object(ci, "is_linux", return_value=True), patch.object(ci, "memory_resources", side_effect=RuntimeError("PRIVATE_PROCESS_MARKER")), redirect_stdout(output):
+            status = ci.run([sys.executable, "-c", "import sys; sys.exit(17)"], 2)
+        result = subprocess.CompletedProcess([], status, output.getvalue(), "")
+        self.assertEqual(status, 17)
+        self.assertIsNone(self.summary(result)["memory_before"])
         self.assertNotIn("PRIVATE_PROCESS_MARKER", output.getvalue())
 
     @unittest.skipUnless(os.name == "posix", "POSIX signals")
@@ -199,9 +281,48 @@ class WrapperFixtures(unittest.TestCase):
         result = self.command("print('CHILD_STARTED')", extra=("--max-workers=4",))
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("CHILD_STARTED", result.stdout)
-        result = self.command("print('CHILD_STARTED')", env={"SILO_CI_REQUESTED_WORKERS": "3"})
+        result = self.command("print('CHILD_STARTED')", env={"SILO_CI_WORKER_LIMIT": "3"})
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("CHILD_STARTED", result.stdout)
+        result = self.command("print('CHILD_STARTED')", env={"SILO_CI_WORKER_LIMIT": "4"})
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("CHILD_STARTED", result.stdout)
+        result = self.command("print('CHILD_STARTED')", extra=("--configuration-cache",))
+        self.assertEqual(result.returncode, 2)
+        self.assertNotIn("CHILD_STARTED", result.stdout)
+
+
+@unittest.skipUnless(os.environ.get("SILO_CI_FIXTURE_GRADLE"), "Set SILO_CI_FIXTURE_GRADLE to run isolated real Gradle fixtures")
+class GradleFixtures(unittest.TestCase):
+    def fixture(self, settings):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            (project / "settings.gradle").write_text("rootProject.name = 'ci-jvm-fixture'\n")
+            (project / "build.gradle").write_text("plugins { id 'java' }\ntasks.test { " + settings + " }\n")
+            return subprocess.run([
+                sys.executable, str(WRAPPER), "--max-workers", "2", "--",
+                os.environ["SILO_CI_FIXTURE_GRADLE"], "test", "--offline", "--no-daemon", "--no-configuration-cache", "--console=plain",
+                "-Dorg.gradle.jvmargs=-Xmx512m -Dfile.encoding=UTF-8", "-Pandroid.r8.maxWorkers=1",
+            ], cwd=project, env=os.environ.copy(), capture_output=True, text=True, timeout=90)
+
+    def test_actual_daemon_heap_and_selected_test_settings(self):
+        result = self.fixture("maxHeapSize = '768m'")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        line = next(line for line in result.stdout.splitlines() if line.startswith("SILO_CI_JVM_SETTINGS "))
+        metadata = json.loads(line.split(" ", 1)[1])
+        self.assertEqual(metadata["gradle"]["max_heap_bytes"], 512 * 1024**2)
+        self.assertEqual(metadata["gradle"]["worker_limit"], 2)
+        self.assertEqual(metadata["test"]["selected_task_count"], 1)
+        self.assertEqual(metadata["test"]["max_parallel_forks"], [1])
+        self.assertEqual(metadata["test"]["configured_max_heap_bytes"], [768 * 1024**2])
+        self.assertEqual(metadata["r8_max_workers"], 1)
+
+    def test_multiple_test_forks_are_rejected(self):
+        result = self.fixture("maxParallelForks = 2")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Worker tuning requires every selected Test task to use one fork", result.stdout + result.stderr)
+        line = next(line for line in result.stdout.splitlines() if line.startswith("SILO_CI_RESOURCE_SUMMARY "))
+        self.assertNotEqual(json.loads(line.split(" ", 1)[1])["exit_status"], 0)
 
 
 class WorkflowFixtures(unittest.TestCase):
@@ -227,12 +348,13 @@ class WorkflowFixtures(unittest.TestCase):
         return shlex.split(" ".join(selected))
 
     def test_dispatch_choices_and_typed_default(self):
-        choices = re.search(r"^      worker_limit:\n(.*?)(?=^      \w+:|\Z)", self.controller, re.DOTALL | re.MULTILINE).group(1)
-        self.assertIn('default: "2"', choices)
-        self.assertIn('type: choice', choices)
-        self.assertEqual(re.findall(r'^          - "(\d+)"$', choices, re.MULTILINE), ["2", "4"])
-        self.assertIn("worker_limit: ${{ fromJSON(inputs.worker_limit || '2') }}", self.controller)
-        self.assertRegex(self.child, r"worker_limit:\n        type: number\n        required: false\n        default: 2")
+        for job in ("unit", "lint"):
+            choices = re.search(r"^      " + job + r"_worker_limit:\n(.*?)(?=^      \w+:|\Z)", self.controller, re.DOTALL | re.MULTILINE).group(1)
+            self.assertIn('default: "2"', choices)
+            self.assertIn('type: choice', choices)
+            self.assertEqual(re.findall(r'^          - "(\d+)"$', choices, re.MULTILINE), ["2", "4"])
+            self.assertIn(job + "_worker_limit: ${{ fromJSON(inputs." + job + "_worker_limit || '2') }}", self.controller)
+            self.assertRegex(self.child, job + r"_worker_limit:\n        type: number\n        required: false\n        default: 2")
 
     def test_exact_task_graphs_heap_and_job_worker_policy(self):
         expected = {
@@ -256,7 +378,11 @@ class WorkflowFixtures(unittest.TestCase):
         self.assertIn('SILO_CI_PARALLEL_FLAG: --no-parallel', readiness)
         for name in ("unit-tests", "lint"):
             self.assertNotIn('SILO_CI_WORKER_LIMIT: "2"', self.job(name))
-        self.assertRegex(self.child, r"configuration_cache:\n        type: boolean\n        required: false\n        default: false")
+        self.assertIn("SILO_CI_CONFIGURATION_FLAG: --no-configuration-cache", self.child)
+        self.assertIn("-Pandroid.r8.maxWorkers=1", self.gradle_args(readiness))
+        unit = self.job("unit-tests")
+        self.assertIn("SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}", unit)
+        self.assertIn("SILO_CI_PARALLEL_FLAG: ${{ inputs.lint_parallel && '--parallel' || '--no-parallel' }}", self.job("lint"))
         build = (ROOT / "build.gradle.kts").read_text()
         self.assertIn('outputs.cacheIf("Tests inspect files outside their runtime classpath") { false }', build)
         self.assertIn('outputs.upToDateWhen { false }', build)
@@ -270,23 +396,29 @@ class WorkflowFixtures(unittest.TestCase):
             (root / "gradle/wrapper").mkdir(parents=True)
             (root / "gradle/wrapper/gradle-wrapper.properties").write_text("distributionUrl=gradle-8.12-bin.zip")
             (root / "gradle/libs.versions.toml").write_text('agp = "8.10.1"')
+            (root / "bin").mkdir()
+            java = root / "bin/java"
+            java.write_text('#!/bin/sh\necho "Picked up JAVA_TOOL_OPTIONS: SECRET_JVM_OPTIONS" >&2\necho \'openjdk version "21.0.11" 2026-04-21\' >&2\n')
+            java.chmod(0o755)
             environment = {
                 **os.environ,
-                "SILO_CI_REQUESTED_WORKERS": "4",
                 "SILO_CI_WORKER_LIMIT": "2",
                 "SILO_CI_PARALLEL_FLAG": "--no-parallel",
                 "SILO_CI_CONFIGURATION_FLAG": "--no-configuration-cache",
                 "SILO_CI_CACHE_FLAG": "--build-cache",
                 "GITHUB_JOB": "release-readiness",
+                "PATH": str(root / "bin") + os.pathsep + os.environ.get("PATH", ""),
             }
             environment.pop("GITHUB_EVENT_PATH", None)
             result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True, check=True)
             metadata = json.loads(result.stdout.removeprefix("SILO_CI_BENCHMARK "))
-            self.assertEqual(metadata["requested_worker_limit"], 4)
+            self.assertEqual(metadata["requested_worker_limit"], 2)
             self.assertEqual(metadata["worker_limit"], 2)
             self.assertEqual(metadata["job"], "release-readiness")
             self.assertIn("--no-parallel", metadata["profile"])
-            environment["SILO_CI_REQUESTED_WORKERS"] = "3"
+            self.assertEqual(metadata["java_version"], "21.0.11")
+            self.assertNotIn("SECRET_JVM_OPTIONS", result.stdout)
+            environment["SILO_CI_WORKER_LIMIT"] = "3"
             result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn("SILO_CI_BENCHMARK", result.stdout)

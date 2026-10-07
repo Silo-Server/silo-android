@@ -1,0 +1,59 @@
+// Read settings inside the actual Gradle daemon. This tuning controller keeps
+// configuration cache off; avoid changing task actions and cache fingerprints.
+import groovy.json.JsonOutput
+import java.lang.management.ManagementFactory
+import org.gradle.api.tasks.testing.Test
+
+def memoryBytes = { value ->
+    if (value == null) return null
+    def match = value.toString() =~ /^(\d+)([kKmMgGtT]?)$/
+    if (!match.matches()) return null
+    def suffix = match.group(2).toLowerCase()
+    def exponent = suffix ? 'kmgt'.indexOf(suffix) + 1 : 0
+    return new BigInteger(match.group(1)) * BigInteger.valueOf(1024).pow(exponent)
+}
+def memoryFlags = { arguments ->
+    def result = [:]
+    arguments.each { argument ->
+        ['-Xmx': 'max_heap_bytes', '-Xms': 'min_heap_bytes',
+         '-XX:MaxMetaspaceSize=': 'max_metaspace_bytes',
+         '-XX:ReservedCodeCacheSize=': 'reserved_code_cache_bytes'].each { prefix, field ->
+            if (argument.startsWith(prefix)) {
+                def value = memoryBytes(argument.substring(prefix.length()))
+                if (value != null) result[field] = value
+            }
+        }
+    }
+    result
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def tests = graph.allTasks.findAll { it instanceof Test }
+    if (tests.any { it.maxParallelForks != 1 }) {
+        throw new GradleException('Worker tuning requires every selected Test task to use one fork')
+    }
+    def kotlin = graph.allTasks.findAll { it.hasProperty('kotlinDaemonJvmArguments') }
+    def metadata = [
+        gradle: [max_heap_bytes: Runtime.runtime.maxMemory(),
+                 available_processors: Runtime.runtime.availableProcessors(),
+                 worker_limit: gradle.startParameter.maxWorkerCount,
+                 launch_memory_flags_bytes: memoryFlags(ManagementFactory.runtimeMXBean.inputArguments)],
+        test: [selected_task_count: tests.size(),
+               max_parallel_forks: tests.collect { it.maxParallelForks }.unique().sort(),
+               configured_max_heap_bytes: tests.collect { memoryBytes(it.maxHeapSize) }.unique(),
+               configured_min_heap_bytes: tests.collect { memoryBytes(it.minHeapSize) }.unique(),
+               unset_heap_launcher_default_bytes: 512 * 1024 * 1024,
+               launcher_default_scope: 'Gradle 8.12 sets 512m when Test.maxHeapSize is unset',
+               fork_every: tests.collect { it.forkEvery }.unique().sort()],
+        kotlin: [selected_task_count: kotlin.size(),
+                 configured_daemon_memory_flags_bytes: kotlin.collect { memoryFlags(it.kotlinDaemonJvmArguments.getOrElse([])) }.unique(),
+                 configured_execution_strategies: kotlin.collect {
+                     def strategy = it.compilerExecutionStrategy.get().toString()
+                     strategy in ['DAEMON', 'IN_PROCESS', 'OUT_OF_PROCESS'] ? strategy : 'unavailable'
+                 }.unique(),
+                 limits: 'Configured overrides omit inherited memory limits and cannot prove the daemon used; inspect sampled launch flags separately'],
+        r8_max_workers: graph.allTasks.collect { it.project.findProperty('android.r8.maxWorkers') }.find { it != null }?.toString() == '1' ? 1 : null,
+        r8_limits: 'android.r8.maxWorkers limits concurrent R8 tasks, not internal threads'
+    ]
+    println 'SILO_CI_JVM_SETTINGS ' + JsonOutput.toJson(metadata)
+}

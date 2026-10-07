@@ -12,7 +12,6 @@ from importlib.util import module_from_spec, spec_from_file_location
 spec = spec_from_file_location("ci_gradle", Path(__file__).with_name("ci-gradle.py"))
 ci_gradle = module_from_spec(spec)
 spec.loader.exec_module(ci_gradle)
-requested_workers = ci_gradle.worker_limit(os.environ.get("SILO_CI_REQUESTED_WORKERS", "2"))
 workers = ci_gradle.worker_limit(os.environ.get("SILO_CI_WORKER_LIMIT", "2"))
 
 source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
@@ -25,6 +24,13 @@ event_path = os.environ.get("GITHUB_EVENT_PATH")
 event = json.loads(Path(event_path).read_text()) if event_path else {}
 pull_request = event.get("pull_request") or {}
 head_repository = (pull_request.get("head") or {}).get("repo") or {}
+try:
+    version_output = subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT, text=True)
+except (OSError, subprocess.SubprocessError):
+    raise SystemExit("Could not read Java version")
+# The JVM can echo JAVA_TOOL_OPTIONS before its version. Never publish those
+# lines; they may contain arguments or private system properties.
+version_match = re.search(r'^(?:openjdk|java) version "([0-9][0-9A-Za-z.+_-]{0,64})"', version_output, re.MULTILINE)
 metadata = {
     "source_sha": source_sha,
     "workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA", os.environ.get("GITHUB_SHA", "local")),
@@ -32,16 +38,18 @@ metadata = {
     "cache_regime": "unverified",
     "cache_namespace": os.environ.get("GITHUB_REF", "local"),
     "job": os.environ.get("GITHUB_JOB", "local"),
-    "requested_worker_limit": requested_workers,
+    "requested_worker_limit": workers,
     "worker_limit": workers,
     "runner_cpu_count": os.cpu_count(),
     "runner_memory_total_kib": ci_gradle.memory_value(Path("/proc"), "MemTotal") if ci_gradle.is_linux() else None,
+    "cpu": ci_gradle.cpu_resources(),
+    "memory": ci_gradle.memory_resources() if ci_gradle.is_linux() else None,
     "profile": " ".join(
         os.environ.get(key, "")
         for key in ("SILO_CI_CACHE_FLAG", "SILO_CI_PARALLEL_FLAG", "SILO_CI_CONFIGURATION_FLAG")
     ).strip(),
     "toolchain": f"JDK 21 / Gradle {gradle} / AGP {agp}",
-    "java_version": subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT, text=True).splitlines()[0],
+    "java_version": version_match.group(1) if version_match else "unavailable",
     "runner_image": os.environ.get("ImageVersion", "unavailable"),
     "cache_policy": {
         "read_only": os.environ.get("SILO_CI_CACHE_READ_ONLY", "unavailable"),
