@@ -5,6 +5,7 @@ import java.io.Closeable
 import java.net.ServerSocket
 import java.net.Socket
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -221,6 +222,7 @@ class TvSiloCastReceiver(
         _standbyState.value = null
         advertiser.updatePlaying(true)
         return Closeable {
+            player.unregistered.complete(Unit)
             synchronized(this) {
                 if (activePlayer === player) {
                     DiagnosticsCastLogger.event("TV cast player unregistered")
@@ -460,6 +462,9 @@ class TvSiloCastReceiver(
                 val run = receiverRun
                 session.handoffJob = scope?.launch {
                     try {
+                        if (!identityManager.matches(offer, controllerId)) {
+                            stopPlayerBeforeIdentitySwap()
+                        }
                         val ready = identityManager.prepare(
                             offer = offer,
                             controllerDeviceId = controllerId,
@@ -643,6 +648,25 @@ class TvSiloCastReceiver(
             -> Unit
         }
         return true
+    }
+
+    /**
+     * Stops the registered player and waits for its server session to close.
+     * A handoff that installs a new identity runs this first, including for a
+     * title the TV started under its own account: the player's stop rides on
+     * the identity it started under, so once the swap lands that stop is
+     * refused and the session lingers on the server beside the phone's.
+     */
+    private suspend fun stopPlayerBeforeIdentitySwap() {
+        val player = activePlayer ?: return
+        withContext(Dispatchers.Main.immediate) {
+            player.adapter.handle(SiloCastControlCommand(name = SiloCastControlCommand.Stop))
+        }
+        withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) {
+            // The exit queues the session stop before the route unregisters.
+            player.unregistered.await()
+            awaitPlaybackTeardown()
+        }
     }
 
     private suspend fun requireAuthorized(session: ControllerSession): Boolean {
@@ -849,6 +873,7 @@ class TvSiloCastReceiver(
         val adapter: TvSiloCastPlayerAdapter,
         val stateProvider: () -> SiloCastPlaybackState,
         val identityGeneration: String?,
+        val unregistered: CompletableDeferred<Unit> = CompletableDeferred(),
     )
 
     private companion object {
