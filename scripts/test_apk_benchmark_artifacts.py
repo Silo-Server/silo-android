@@ -175,6 +175,35 @@ class ArtifactTests(unittest.TestCase):
                 self.assertIn("classes10.dex", apk["entries"])
         json.dumps(report)  # Reports remain plain JSON data.
 
+    def test_invalid_universal_native_entry_retains_actual_zip_inventory(self):
+        path = self.apk(abi="universal")
+        entry = "lib/x86/libdependency.so"
+        self.change_zip(path, {entry: b"actual dependency bytes"})
+        with self.assertRaises(artifacts.NativePayloadContractError) as caught:
+            self.inventory(modules=["androidApp"])
+        error = caught.exception
+        self.assertEqual(str(error), "androidApp/universal: invalid native library entry")
+        self.assertNotIn(entry, str(error))
+        self.assertEqual(error.details["label"], "androidApp/universal")
+        self.assertEqual(error.details["invalid_entry"], entry)
+        with zipfile.ZipFile(path) as archive:
+            expected = [{"path": info.filename, "size": info.file_size,
+                         "sha256": artifacts._digest(archive.read(info))}
+                        for info in archive.infolist() if info.filename.startswith("lib/")]
+        self.assertEqual(error.details["native_entries"], sorted(expected, key=lambda value: value["path"]))
+        self.assertEqual(len(error.details["native_entries"]), 4)
+
+    def test_native_diagnostic_rejects_count_and_path_budget_excess(self):
+        for entries in [{f"lib/x86/lib{index}.so": b"native" for index in range(129)},
+                        {"lib/x86/" + "n" * 513 + ".so": b"native"}]:
+            with self.subTest(count=len(entries)):
+                path = self.apk(abi="universal")
+                original = path.read_bytes()
+                self.change_zip(path, entries)
+                with self.assertRaisesRegex(ValueError, "native APK diagnostic exceeds its budget"):
+                    self.inventory(modules=["androidApp"])
+                path.write_bytes(original)
+
     def test_matrix_aggregation_matches_combined_with_independent_signing_and_zip_timestamps(self):
         combined_source = Path(self.temp.name) / "combined"
         self.make_source(combined_source, OTHER_CERT, timestamp=(2026, 10, 7, 2, 0, 0))

@@ -21,6 +21,9 @@ from apk_benchmark_seed import SEED_METADATA, export_seed, restore_seed
 SEALED_SOURCE_SHA = '78f6b3e2ec8898755da381365f8f7d21e2e63dd9'
 BENCHMARK_BRANCH = 'ci/android-apk-layout-pilot'
 REPOSITORY = 'Silo-Server/silo-android'
+APPROVED_PARENT_SEED = ('37667888296', '11503849598',
+                        '3612997cf57cc12cfdace48e81f01769abb6d28272635fdf1fa5f0495f47c763')
+APPROVED_PARENT_SEED_CONTROLLER = '540d0514d3f795f742c3afc75f19491cb189b1ed'
 FIXTURE = {
     'project_info': {'project_number': '100000000001', 'project_id': 'silo-ci-benchmark',
                      'storage_bucket': 'silo-ci-benchmark.invalid'},
@@ -112,6 +115,15 @@ def provenance(run_id):
     return {'repository': REPOSITORY, 'source_sha': SEALED_SOURCE_SHA,
             'controller_sha': controller, 'run_id': run_id, 'seed_mode': 'prior-release-warm',
             'seed_metadata': SEED_METADATA, 'fixture_sha256': FIXTURE_SHA256}
+
+
+def seed_provenance(arguments):
+    expected = provenance(arguments.seed_run)
+    # Only this root-approved immutable seed may cross the diagnostic revision.
+    # Application source, fixture, toolchain and full archive checks still apply.
+    if (arguments.seed_run, arguments.seed_artifact, arguments.seed_manifest_sha256) == APPROVED_PARENT_SEED:
+        expected['controller_sha'] = APPROVED_PARENT_SEED_CONTROLLER
+    return expected
 
 
 def toolchain(source):
@@ -257,7 +269,7 @@ def run_build(arguments):
     if arguments.profile != 'SEED':
         receipt = json.loads(Path(arguments.seed_receipt).read_text())
         if (receipt.get('manifest_sha256') != arguments.seed_manifest_sha256
-                or receipt.get('provenance') != provenance(arguments.seed_run)):
+                or receipt.get('provenance') != seed_provenance(arguments)):
             raise ValueError('Approved seed restore receipt mismatch')
         for key in ('java', 'gradle', 'agp', 'runner_image'):
             if receipt.get('toolchain', {}).get(key) != observations[key]:
@@ -312,10 +324,14 @@ def run_build(arguments):
             report['seed'] = export_seed(gradle_home, output/'seed',
                                         provenance(os.environ['GITHUB_RUN_ID']) | {'toolchain': observations})
         else:
-            from apk_benchmark_artifacts import inventory
+            from apk_benchmark_artifacts import inventory, NativePayloadContractError
             tools = Path(os.environ['ANDROID_HOME'])/'build-tools/36.0.0'
-            report['artifacts'] = inventory(source, MODULES[arguments.target], certificate,
-                                            tools/'apksigner', tools/'aapt')
+            try:
+                report['artifacts'] = inventory(source, MODULES[arguments.target], certificate,
+                                                tools/'apksigner', tools/'aapt')
+            except NativePayloadContractError as error:
+                report['native_verification_failure'] = error.details
+                raise
         report['artifact_validation_seconds'] = time.monotonic() - verification_start
         report['qualified'] = True
     finally:
@@ -395,13 +411,14 @@ def main():
     elif arguments.operation == 'restore':
         if arguments.profile == 'SEED':
             raise ValueError('SEED cannot restore an earlier seed')
-        verify_seed_run(arguments.seed_run, arguments.seed_artifact, os.environ['GITHUB_WORKFLOW_SHA'])
+        expected_provenance = seed_provenance(arguments)
+        verify_seed_run(arguments.seed_run, arguments.seed_artifact, expected_provenance['controller_sha'])
         restore_start = time.monotonic()
         report = restore_seed(arguments.seed_dir, Path(os.environ['GRADLE_USER_HOME']),
-                              arguments.seed_manifest_sha256, provenance(arguments.seed_run))
+                              arguments.seed_manifest_sha256, expected_provenance)
         Path(arguments.seed_receipt).write_text(json.dumps({
             'manifest_sha256': arguments.seed_manifest_sha256,
-            'provenance': provenance(arguments.seed_run),
+            'provenance': expected_provenance,
             'toolchain': report['provenance'].get('toolchain', {}),
             'restore_seconds': time.monotonic() - restore_start}, sort_keys=True) + '\n')
     else:

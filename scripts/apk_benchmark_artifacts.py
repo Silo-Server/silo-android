@@ -35,6 +35,23 @@ MODULES = {
 }
 
 
+class NativePayloadContractError(ValueError):
+    """Keep a bounded native ZIP diagnostic in the failed report artifact."""
+
+    def __init__(self, label: str, invalid_entry: str, native: dict):
+        if len(native) > 128 or any(len(name.encode()) > 512 for name in native):
+            raise ValueError(f"{label}: native APK diagnostic exceeds its budget")
+        super().__init__(f"{label}: invalid native library entry")
+        self.details = {
+            "schema_version": 1,
+            "label": label,
+            "invalid_entry": invalid_entry,
+            "native_entries": [
+                {"path": name, **value} for name, value in sorted(native.items())
+            ],
+        }
+
+
 def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -198,7 +215,7 @@ def _zip_payload(apk: Path, abi: str, schemes: dict, label: str) -> dict:
     for name, value in native.items():
         parts = name.split("/")
         if len(parts) != 3 or parts[1] not in ABIS or not parts[2].endswith(".so") or not value["size"]:
-            raise ValueError(f"{label}: invalid native library entry")
+            raise NativePayloadContractError(label, name, native)
         native_abis.add(parts[1])
     expected = set(ABIS) if abi == "universal" else {abi}
     if native_abis != expected:

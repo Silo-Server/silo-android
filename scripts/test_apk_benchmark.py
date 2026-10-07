@@ -92,6 +92,48 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Seed artifact'):
                     bench.verify_seed_run('123', '456', 'c'*40)
 
+    def test_parent_seed_compatibility_requires_the_complete_accepted_tuple(self):
+        args = bench.argparse.Namespace(seed_run='37667888296', seed_artifact='11503849598',
+                    seed_manifest_sha256='3612997cf57cc12cfdace48e81f01769abb6d28272635fdf1fa5f0495f47c763')
+        with patch.dict(bench.os.environ, {'GITHUB_WORKFLOW_SHA': 'c'*40}):
+            expected = bench.seed_provenance(args)
+            self.assertEqual(expected['controller_sha'], '540d0514d3f795f742c3afc75f19491cb189b1ed')
+            self.assertEqual(expected['source_sha'], bench.SEALED_SOURCE_SHA)
+            self.assertEqual(expected['fixture_sha256'], bench.FIXTURE_SHA256)
+            self.assertEqual(expected['repository'], bench.REPOSITORY)
+            self.assertEqual(expected['seed_metadata'], bench.SEED_METADATA)
+            for field, value in [('seed_run', '37667888297'), ('seed_artifact', '11503849599'),
+                                 ('seed_manifest_sha256', 'b'*64)]:
+                with self.subTest(field=field):
+                    changed = bench.argparse.Namespace(**vars(args) | {field: value})
+                    self.assertEqual(bench.seed_provenance(changed)['controller_sha'], 'c'*40)
+
+    def test_parent_seed_still_requires_actual_current_controller_identity(self):
+        args = bench.argparse.Namespace(seed_run='37667888296', seed_artifact='11503849598',
+                    seed_manifest_sha256='3612997cf57cc12cfdace48e81f01769abb6d28272635fdf1fa5f0495f47c763')
+        with patch.dict(bench.os.environ, {'GITHUB_WORKFLOW_SHA': 'not-a-commit'}):
+            with self.assertRaisesRegex(ValueError, 'Controller revision missing'):
+                bench.seed_provenance(args)
+
+    def test_parent_seed_api_binding_rejects_a_different_controller(self):
+        args = bench.argparse.Namespace(seed_run='37667888296', seed_artifact='11503849598',
+                    seed_manifest_sha256='3612997cf57cc12cfdace48e81f01769abb6d28272635fdf1fa5f0495f47c763')
+        run = {'id': 37667888296, 'event': 'workflow_dispatch', 'conclusion': 'success',
+               'head_sha': '540d0514d3f795f742c3afc75f19491cb189b1ed', 'head_branch': bench.BENCHMARK_BRANCH,
+               'path': '.github/workflows/android-build.yml'}
+        artifact = {'id': 11503849598, 'expired': False, 'name': 'apk-benchmark-seed-37667888296',
+                    'workflow_run': {'id': 37667888296, 'head_sha': run['head_sha']}}
+        with patch.dict(bench.os.environ, {'GITHUB_WORKFLOW_SHA': 'c'*40}):
+            controller = bench.seed_provenance(args)['controller_sha']
+            with patch.object(bench, 'api', side_effect=[run, artifact]):
+                bench.verify_seed_run(args.seed_run, args.seed_artifact, controller)
+            with patch.object(bench, 'api', side_effect=[run | {'head_sha': 'c'*40}, artifact]):
+                with self.assertRaisesRegex(ValueError, 'Seed run'):
+                    bench.verify_seed_run(args.seed_run, args.seed_artifact, controller)
+            with patch.object(bench, 'api', side_effect=[run, artifact | {'workflow_run': {'id': run['id'], 'head_sha': 'c'*40}}]):
+                with self.assertRaisesRegex(ValueError, 'Seed artifact'):
+                    bench.verify_seed_run(args.seed_run, args.seed_artifact, controller)
+
     def test_seed_bundle_requires_actual_verification_and_local_certificate(self):
         with tempfile.TemporaryDirectory() as directory:
             bundle = Path(directory)/'test.aab'
@@ -209,6 +251,52 @@ class ControllerTests(unittest.TestCase):
                                           'M', 'phone', 'task-cache-off')
         bench.check_task_contract(tasks | {':androidApp:minifyReleaseWithR8': 'FROM-CACHE'},
                                   'M', 'phone', 'fresh-release-warm')
+
+    def test_native_contract_failure_retains_unqualified_report_and_actual_controller(self):
+        import apk_benchmark_artifacts as artifacts
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root/'source', root/'output'
+            source.mkdir()
+            receipt = root/'receipt.json'
+            args = bench.argparse.Namespace(source=str(source), output=str(output), profile='M',
+                                            cache='task-cache-off', target='phone', seed_receipt=str(receipt),
+                                            seed_manifest_sha256='3612997cf57cc12cfdace48e81f01769abb6d28272635fdf1fa5f0495f47c763',
+                                            seed_run='37667888296', seed_artifact='11503849598')
+            names = ['minifyReleaseWithR8', 'lintVitalAnalyzeRelease', 'lintVitalRelease',
+                     'assembleRelease', 'processReleaseResources', 'convertShrunkResourcesToBinaryRelease',
+                     'optimizeReleaseResources', 'mergeReleaseArtProfile', 'compileReleaseArtProfile',
+                     'processReleaseGoogleServices']
+            process = Mock(stdout=['> Task :androidApp:' + name + '\n' for name in names])
+            process.wait.return_value = 0
+            sampler = Mock(result={'samples': 0})
+            sampler.thread.is_alive.return_value = False
+            toolchain = {'java': '21', 'gradle': '8.12', 'agp': '8.10.1', 'runner_image': 'fixture'}
+            environment = {'GRADLE_USER_HOME': str(root/'gradle-home'), 'RUNNER_TEMP': str(root),
+                           'ANDROID_HOME': str(root/'sdk'), 'GITHUB_WORKFLOW_SHA': 'a'*40}
+            error = artifacts.NativePayloadContractError('androidApp/universal', 'lib/x86/libdependency.so',
+                        {'lib/x86/libdependency.so': {'size': 7, 'sha256': 'c'*64}})
+            with patch.dict(bench.os.environ, environment):
+                receipt.write_text(json.dumps({'manifest_sha256': args.seed_manifest_sha256, 'restore_seconds': 1,
+                                               'provenance': bench.seed_provenance(args), 'toolchain': toolchain}))
+                with patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
+                        patch.object(bench, 'toolchain', return_value=toolchain), \
+                        patch.object(bench, 'fixtures', return_value=({}, 'ab'*32)), \
+                        patch.object(bench, 'MemorySampler', return_value=sampler), \
+                        patch.object(bench.subprocess, 'Popen', return_value=process), \
+                        patch.object(bench, 'verify_google_services'), \
+                        patch.object(artifacts, 'inventory', side_effect=error):
+                    with self.assertRaises(artifacts.NativePayloadContractError):
+                        bench.run_build(args)
+            report = json.loads((output/'report.json').read_text())
+            self.assertEqual(report['returncode'], 0)
+            self.assertIs(report['qualified'], False)
+            self.assertEqual(report['native_verification_failure'], error.details)
+            self.assertEqual(report['controller_sha'], 'a'*40)
+            self.assertEqual(report['seed_run_id'], '37667888296')
+            self.assertEqual(report['seed_manifest_sha256'], args.seed_manifest_sha256)
+            self.assertNotIn('artifacts', report)
+            self.assertNotIn('seed', report)
 
     def test_fresh_output_check_includes_shared_libraries_and_project_history(self):
         with tempfile.TemporaryDirectory() as directory:
