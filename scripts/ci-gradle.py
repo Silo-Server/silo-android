@@ -246,6 +246,13 @@ def memory_arguments(arguments):
     return result
 
 
+def is_test_executor(argument):
+    # Gradle 8.12 passes literal single quotes around its display-name argv.
+    if len(argument) >= 2 and argument[0] == argument[-1] == "'":
+        argument = argument[1:-1]
+    return re.fullmatch(r"Gradle Test Executor [0-9]+", argument) is not None
+
+
 def observed_jvm_roles(proc):
     """Parse launch flags in memory; return numeric role aggregates only."""
     roles = {role: [] for role in ("gradle", "kotlin", "test")}
@@ -267,7 +274,7 @@ def observed_jvm_roles(proc):
             role = "gradle"
         elif "org.jetbrains.kotlin.daemon.KotlinCompileDaemon" in arguments:
             role = "kotlin"
-        elif "worker.org.gradle.process.internal.worker.GradleWorkerMain" in arguments and any(argument.startswith("Gradle Test Executor ") for argument in arguments):
+        elif "worker.org.gradle.process.internal.worker.GradleWorkerMain" in arguments and any(is_test_executor(argument) for argument in arguments):
             role = "test"
         if role:
             roles[role].append(memory_arguments(arguments))

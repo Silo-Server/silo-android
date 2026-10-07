@@ -175,7 +175,7 @@ class SamplingFixtures(unittest.TestCase):
         roles = (
             (920001, "org.gradle.launcher.daemon.bootstrap.GradleDaemon", "4g", []),
             (920002, "org.jetbrains.kotlin.daemon.KotlinCompileDaemon", "4g", []),
-            (920003, "worker.org.gradle.process.internal.worker.GradleWorkerMain", "512m", ["Gradle Test Executor 1"]),
+            (920003, "worker.org.gradle.process.internal.worker.GradleWorkerMain", "512m", ["'Gradle Test Executor 1'"]),
         )
         for identifier, role, heap, extra in roles:
             self.process(identifier, "java", 100)
@@ -189,6 +189,36 @@ class SamplingFixtures(unittest.TestCase):
         for private in ("920001", "920002", "920003", "PRIVATE_JAVA_PATH", "SECRET_MARKER", "KotlinCompileDaemon"):
             self.assertNotIn(private, encoded)
         self.assertEqual(ci.memory_arguments(["-Xmx4g", "-Xmxinvalid", "-Dsecret=private"]), {"max_heap_bytes": 4 * 1024**3})
+
+    def test_real_test_display_name_quotes_and_unknown_workers(self):
+        worker = "worker.org.gradle.process.internal.worker.GradleWorkerMain"
+        cases = (
+            (worker, "'Gradle Test Executor 1'", True),
+            (worker, "Gradle Test Executor 12", True),
+            (worker, "'Gradle Test Executor 1", False),
+            (worker, "Gradle Test Executor 1'", False),
+            (worker, "\"Gradle Test Executor 1\"", False),
+            (worker, "'Gradle Test Executor 1''", False),
+            (worker, "'Gradle Test Executor 1' trailing", False),
+            (worker, "'Gradle Test Executor arbitrary'", False),
+            (worker, "'Gradle Worker Daemon 1'", False),
+            ("org.example.UnrelatedWorker", "'Gradle Test Executor 1'", False),
+        )
+        self.process(920004, "java", 100)
+        for main_class, display_name, expected in cases:
+            with self.subTest(display_name=display_name, main_class=main_class):
+                (self.proc / "920004" / "cmdline").write_bytes("\0".join(["/PRIVATE_JAVA_PATH", "-Xmx512m", "-Dprivate=SECRET_MARKER", main_class, display_name]).encode())
+                sampler = ci.MemorySampler(self.proc, enabled=True)
+                sampler.sample()
+                result = sampler.summary()
+                role = result["jvm_roles"]["test"]
+                self.assertEqual(role["max_observed_process_count"], int(expected))
+                self.assertEqual(role["launch_memory_flags_bytes"], {"max_heap_bytes": [512 * 1024**2]} if expected else {})
+                for private in ("920004", "PRIVATE_JAVA_PATH", "SECRET_MARKER", display_name, main_class):
+                    self.assertNotIn(private, json.dumps(result))
+        # A recognized executor without an observed heap flag remains unknown.
+        (self.proc / "920004" / "cmdline").write_bytes("\0".join(["java", worker, "'Gradle Test Executor 1'"]).encode())
+        self.assertEqual(ci.observed_jvm_roles(self.proc)["test"], [{}])
 
     def test_cgroup_namespace_root_and_v1(self):
         mounted = self.mount("v1", "/host/subtree", "/")
