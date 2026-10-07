@@ -494,7 +494,7 @@ class WorkflowFixtures(unittest.TestCase):
             choices = re.search(r"^      " + job + r"_worker_limit:\n(.*?)(?=^      \w+:|\Z)", self.controller, re.DOTALL | re.MULTILINE).group(1)
             self.assertIn('default: "2"', choices)
             self.assertIn('type: choice', choices)
-            self.assertEqual(re.findall(r'^          - "(\d+)"$', choices, re.MULTILINE), ["2", "4"])
+            self.assertEqual(re.findall(r'^          - "(\d+)"$', choices, re.MULTILINE), ["2"])
             self.assertIn(job + "_worker_limit: ${{ fromJSON(inputs." + job + "_worker_limit || '2') }}", self.controller)
             self.assertRegex(self.child, job + r"_worker_limit:\n        type: number\n        required: false\n        default: 2")
         forks = re.search(r"^      unit_shared_test_forks:\n(.*?)(?=^      \w+:|\Z)", self.controller, re.DOTALL | re.MULTILINE).group(1)
@@ -504,15 +504,17 @@ class WorkflowFixtures(unittest.TestCase):
         self.assertIn("unit_shared_test_forks: ${{ fromJSON(inputs.unit_shared_test_forks || '1') }}", self.controller)
         self.assertRegex(self.child, r"unit_shared_test_forks:\n        type: number\n        required: false\n        default: 1")
 
-    def test_fork_override_is_exported_only_by_the_unit_job(self):
+    def test_fork_override_is_exported_only_by_debug_test_jobs(self):
         self.assertIn("SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}", self.job("unit-tests"))
-        self.assertEqual(self.child.count("SILO_CI_ANDROID_SHARED_TEST_FORKS:"), 1)
+        self.assertIn("SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}", self.job("combined-debug"))
+        self.assertEqual(self.child.count("SILO_CI_ANDROID_SHARED_TEST_FORKS:"), 2)
         for name in ("lint", "release-readiness", "ffmpeg-aar"):
             self.assertNotIn("SILO_CI_ANDROID_SHARED_TEST_FORKS:", self.job(name))
 
     def test_exact_task_graphs_heap_and_job_worker_policy(self):
         expected = {
             "unit-tests": ["testDebugUnitTest"],
+            "combined-debug": ["testDebugUnitTest", ":android-shared:lintDebug", ":androidApp:lintDebug", ":androidTvApp:lintDebug"],
             "lint": [":android-shared:lintDebug", ":androidApp:lintDebug", ":androidTvApp:lintDebug"],
             "release-readiness": [":androidApp:bundleRelease", ":androidTvApp:bundleRelease"],
         }
@@ -553,8 +555,8 @@ class WorkflowFixtures(unittest.TestCase):
         aggregate = self.job("android-ci")
         self.assertIn("if: always()", aggregate)
         needs = re.search(r"^    needs: \[(.*)\]$", aggregate, re.MULTILINE).group(1)
-        self.assertEqual({job.strip() for job in needs.split(",")}, {"changes", "unit-tests", "lint", "release-readiness", "ffmpeg-aar"})
-        self.assertIn("run: python3 scripts/ci-result.py", aggregate)
+        self.assertEqual({job.strip() for job in needs.split(",")}, {"changes", "unit-tests", "lint", "combined-debug", "release-readiness", "ffmpeg-aar"})
+        self.assertIn("run: python3 scripts/ci-debug-benchmark.py result", aggregate)
         self.assertIn("SILO_CI_NEEDS_JSON: ${{ toJSON(needs) }}", aggregate)
         for check in ("test-check-build-supply-chain.sh", "check-build-supply-chain.sh", "test-release-workflow.sh", "test-ci-routing.py", "test-ci-result.py", "test-ci-gradle.py"):
             self.assertIn("scripts/" + check, changes)

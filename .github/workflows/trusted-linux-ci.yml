@@ -1,10 +1,13 @@
-name: Trusted Linux CI
+name: Debug layout benchmark jobs
 
-# Runner-group policy allows this file only at refs/heads/main.
-# The host controller checks live membership and creates a runner for this run.
+# This isolated experiment rejects every event/ref except its manual branch.
 on:
   workflow_call:
     inputs:
+      debug_layout:
+        type: string
+        required: false
+        default: separate
       self_hosted:
         type: boolean
         required: false
@@ -42,6 +45,7 @@ permissions:
   contents: read
 
 env:
+  SILO_CI_DEBUG_LAYOUT: ${{ inputs.debug_layout }}
   SILO_CI_CACHE_FLAG: ${{ inputs.build_cache && '--build-cache' || '--no-build-cache' }}
   # This controller isolates worker scheduling with configuration cache off.
   SILO_CI_CONFIGURATION_FLAG: --no-configuration-cache
@@ -69,6 +73,15 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Require the isolated manual benchmark
+        run: python3 scripts/ci-debug-benchmark.py guard
+        env:
+          SILO_CI_UNIT_WORKERS: ${{ inputs.unit_worker_limit }}
+          SILO_CI_LINT_WORKERS: ${{ inputs.lint_worker_limit }}
+          SILO_CI_UNIT_PARALLEL: ${{ inputs.unit_parallel }}
+          SILO_CI_LINT_PARALLEL: ${{ inputs.lint_parallel }}
+          SILO_CI_SHARED_FORKS: ${{ inputs.unit_shared_test_forks }}
+
       - name: Check build supply chain and CI scripts
         run: |
           ./scripts/test-check-build-supply-chain.sh
@@ -77,6 +90,7 @@ jobs:
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
           python3 scripts/test-ci-gradle.py
+          python3 scripts/test-ci-debug-benchmark.py
 
       - name: Select validation jobs
         id: route
@@ -225,7 +239,10 @@ jobs:
   unit-tests:
     name: Unit tests
     needs: changes
-    if: needs.changes.outputs.unit_tests == 'true'
+    if: needs.changes.outputs.unit_tests == 'true' && inputs.debug_layout == 'separate'
+    outputs:
+      unit_proof: ${{ steps.coverage.outputs.unit_proof }}
+      lint_proof: ${{ steps.coverage.outputs.lint_proof }}
     env:
       SILO_CI_WORKER_LIMIT: ${{ inputs.unit_worker_limit }}
       SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}
@@ -282,6 +299,9 @@ jobs:
           restore-keys: |
             robolectric-${{ runner.os }}-
 
+      - name: Record coverage start
+        run: python3 scripts/ci-debug-benchmark.py start --kind unit
+
       - name: Run unit tests
         shell: bash
         run: |
@@ -321,6 +341,24 @@ jobs:
           print('SILO_CI_TEST_TOTALS ' + json.dumps({**totals, 'reports': len(reports)}, sort_keys=True))
           PY
 
+      - name: Verify frozen debug coverage
+        id: coverage
+        run: python3 scripts/ci-debug-benchmark.py coverage --kind unit
+
+      - name: Preserve original debug evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: debug-benchmark-unit-evidence
+          path: |
+            .ci-debug-benchmark/*.json
+            **/build/test-results/testDebugUnitTest/TEST-*.xml
+            **/build/reports/tests/testDebugUnitTest/**
+            **/build/reports/lint-results-debug.*
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload Gradle profile
         if: always()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -342,7 +380,10 @@ jobs:
   lint:
     name: Lint
     needs: changes
-    if: needs.changes.outputs.lint == 'true'
+    if: needs.changes.outputs.lint == 'true' && inputs.debug_layout == 'separate'
+    outputs:
+      unit_proof: ${{ steps.coverage.outputs.unit_proof }}
+      lint_proof: ${{ steps.coverage.outputs.lint_proof }}
     env:
       SILO_CI_WORKER_LIMIT: ${{ inputs.lint_worker_limit }}
       SILO_CI_PARALLEL_FLAG: ${{ inputs.lint_parallel && '--parallel' || '--no-parallel' }}
@@ -371,6 +412,9 @@ jobs:
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
 
+      - name: Record coverage start
+        run: python3 scripts/ci-debug-benchmark.py start --kind lint
+
       - name: Run lint
         shell: bash
         run: |
@@ -389,6 +433,24 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
             "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
+
+      - name: Verify frozen debug coverage
+        id: coverage
+        run: python3 scripts/ci-debug-benchmark.py coverage --kind lint
+
+      - name: Preserve original debug evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: debug-benchmark-lint-evidence
+          path: |
+            .ci-debug-benchmark/*.json
+            **/build/test-results/testDebugUnitTest/TEST-*.xml
+            **/build/reports/tests/testDebugUnitTest/**
+            **/build/reports/lint-results-debug.*
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload Gradle profile
         if: always()
@@ -409,10 +471,152 @@ jobs:
             **/build/reports/lint-results-*.xml
           if-no-files-found: ignore
 
+  combined-debug:
+    name: Combined debug validation
+    needs: changes
+    if: needs.changes.outputs.unit_tests == 'true' && inputs.debug_layout == 'combined'
+    outputs:
+      unit_proof: ${{ steps.coverage.outputs.unit_proof }}
+      lint_proof: ${{ steps.coverage.outputs.lint_proof }}
+    env:
+      SILO_CI_WORKER_LIMIT: ${{ inputs.unit_worker_limit }}
+      SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}
+      SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        with:
+          # Writes are scoped to the default branch, manual runs requiring write
+          # access, or internal PRs from an explicit trusted association.
+          # Forks retain read-only access and cannot seed another ref's cache.
+          cache-read-only: ${{ env.SILO_CI_CACHE_READ_ONLY }}
+
+      - name: Record build inputs
+        run: ./scripts/ci-build-metadata.py
+
+      # Robolectric does NOT resolve its Android runtimes through Gradle. At test
+      # execution time it fetches android-all-instrumented straight from Maven
+      # Central into ~/.m2, which setup-gradle's cache does not cover — so every
+      # run re-downloaded 85-204 MB per SDK level. On 2026-08-11 Maven Central
+      # answered 403 and took out 31 unrelated tests in android-shared, and the
+      # download time is a large part of this job.
+      #
+      # Which runtimes get fetched depends on the Robolectric version AND on the
+      # SDK each test resolves to, so the key hashes the version catalogue and
+      # the module build files (min/target SDK) together. A new @Config(sdk=NN)
+      # in a test is deliberately NOT in the key: hashing test sources would
+      # bust this cache on nearly every pull request, which costs more than it
+      # saves. The residual gap is bounded — that one runtime is re-fetched each
+      # run until something else moves the key — and the restore-key prefix
+      # still seeds from the previous cache rather than starting cold.
+      #
+      # A run-id-suffixed key would close the gap by saving every run, but this
+      # cache is hundreds of MB; a new entry per run would evict the Gradle
+      # cache against the repository's 10 GB budget.
+      - name: Cache Robolectric Android runtimes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
+      - name: Record coverage start
+        run: python3 scripts/ci-debug-benchmark.py start --kind combined
+
+      - name: Run combined debug validation
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # CI exercises debug variants; release.yml retains the host tests for
+          # distinct release behavior and BuildConfig values.
+          ./scripts/ci-gradle.py --max-workers "${SILO_CI_WORKER_LIMIT}" -- ./gradlew \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            testDebugUnitTest \
+            :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = sorted(Path('.').glob('*/build/test-results/testDebugUnitTest/TEST-*.xml'))
+          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+          if not reports:
+              raise SystemExit('No JUnit reports were produced')
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              if suite.tag != 'testsuite':
+                  raise SystemExit(f'Invalid JUnit suite: {report}')
+              cases = suite.findall('testcase')
+              actual = {'tests': len(cases), **{
+                  key: sum(case.find(tag) is not None for case in cases)
+                  for key, tag in (('failures', 'failure'), ('errors', 'error'), ('skipped', 'skipped'))
+              }}
+              for key in totals:
+                  count = int(suite.attrib[key])
+                  if count != actual[key]:
+                      raise SystemExit(f'Inconsistent JUnit {key}: {report}')
+                  totals[key] += count
+          if totals['tests'] == 0 or totals['failures'] or totals['errors']:
+              raise SystemExit(f'JUnit validation failed: {totals}')
+          print('SILO_CI_TEST_TOTALS ' + json.dumps({**totals, 'reports': len(reports)}, sort_keys=True))
+          PY
+
+      - name: Verify frozen debug coverage
+        id: coverage
+        run: python3 scripts/ci-debug-benchmark.py coverage --kind combined
+
+      - name: Preserve original debug evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: debug-benchmark-combined-evidence
+          path: |
+            .ci-debug-benchmark/*.json
+            **/build/test-results/testDebugUnitTest/TEST-*.xml
+            **/build/reports/tests/testDebugUnitTest/**
+            **/build/reports/lint-results-debug.*
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload Gradle profile
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: gradle-profile-combined-debug
+          path: build/reports/profile/*.html
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: combined-test-reports
+          path: |
+            **/build/reports/tests/**
+          if-no-files-found: ignore
+
   android-ci:
-    name: Android CI
+    name: Debug layout benchmark result
     if: always()
-    needs: [changes, unit-tests, lint, release-readiness, ffmpeg-aar]
+    needs: [changes, unit-tests, lint, combined-debug, release-readiness, ffmpeg-aar]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -423,6 +627,6 @@ jobs:
           persist-credentials: false
 
       - name: Require every selected validation job to succeed
-        run: python3 scripts/ci-result.py
+        run: python3 scripts/ci-debug-benchmark.py result
         env:
           SILO_CI_NEEDS_JSON: ${{ toJSON(needs) }}

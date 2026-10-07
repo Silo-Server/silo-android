@@ -1,16 +1,18 @@
-name: Android Builds
+name: Android debug layout benchmark
 
-# CI gate: tests, lint, and release readiness on main pushes and pull requests.
-# Release artifacts (Play Store bundles, sideload APKs, GitHub releases) are owned by
-# release.yml — triggered by v* tags or its workflow_dispatch.
+# Private branch experiment; expensive jobs require the exact manual ref.
 
 on:
-  push:
-    branches:
-      - main
-  pull_request:
   workflow_dispatch:
     inputs:
+      debug_layout:
+        description: Keep separate debug jobs or measure one combined invocation
+        required: false
+        default: separate
+        type: choice
+        options:
+          - separate
+          - combined
       build_ffmpeg_aar:
         description: Build the pinned Media3 FFmpeg decoder AAR instead of app jobs
         required: false
@@ -27,13 +29,12 @@ on:
         default: false
         type: boolean
       unit_worker_limit:
-        description: Unit test workers (4 requires a measured viable memory budget)
+        description: Unit test workers for the qualified two-worker experiment
         required: false
         default: "2"
         type: choice
         options:
           - "2"
-          - "4"
       unit_shared_test_forks:
         description: Test forks for android-shared debug unit tests only
         required: false
@@ -48,13 +49,12 @@ on:
         default: false
         type: boolean
       lint_worker_limit:
-        description: Lint workers (4 requires a measured viable memory budget)
+        description: Lint workers for the qualified two-worker experiment
         required: false
         default: "2"
         type: choice
         options:
           - "2"
-          - "4"
 
 permissions:
   contents: read
@@ -70,6 +70,7 @@ jobs:
     uses: ./.github/workflows/trusted-linux-ci.yml
     with:
       self_hosted: false
+      debug_layout: ${{ inputs.debug_layout }}
       build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
       unit_parallel: ${{ inputs.unit_parallel || false }}
