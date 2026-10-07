@@ -44,8 +44,13 @@ class WatchNextSeeder(
 
     fun seedNow() {
         val pending = clearJob
+        // A clear() after this call supersedes it: clear() invalidates the
+        // write generation first, so a seed still waiting on an older wipe
+        // must not enqueue after that clear()'s cancellation.
+        val generation = repository.writeGate.capture()
         scope.launch {
             pending?.join()
+            if (!repository.writeGate.current(generation)) return@launch
             val request = OneTimeWorkRequestBuilder<WatchNextSyncWorker>()
                 .setConstraints(networkConstraints)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
