@@ -65,7 +65,6 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
-import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
@@ -1198,14 +1197,24 @@ class PlayerViewModel(
             normalizedRequestedQuality = normalizedPreferredQuality,
             preserveCurrent = preserveRouteIntent,
         )
+        // A quality picked during this title's playback, or this room epoch,
+        // outlives reloads of it (recovery, retry, the next shuffle part), so
+        // they start with it rather than the route's quality.
+        val carriesPickedQuality = keepsPickedQuality(
+            contentId = contentId,
+            previousContentId = lastLoadArgs?.contentId,
+            routeNamesQuality = !preserveRouteIntent && normalizedPreferredQuality != null,
+            room = room,
+            currentRoom = currentRoomContext,
+        )
+        if (room == null && !carriesPickedQuality) sessionQualityOverride = null
+        val loadQuality = sessionQualityOverride.takeIf { carriesPickedQuality } ?: effectivePreferredQuality
         loadJob?.cancel()
         val loadOwner = loadOwners.begin(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = effectivePreferredQuality,
+            preferredQuality = loadQuality,
         )
-        // A quality picked during solo playback lasts for that title only.
-        if (room == null && contentId != lastLoadArgs?.contentId) sessionQualityOverride = null
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
         lastLoadArgs = LoadArgs(
@@ -1282,7 +1291,7 @@ class PlayerViewModel(
                         libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
-                        preferredQualityOverride = effectivePreferredQuality,
+                        preferredQualityOverride = loadQuality,
                         roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
@@ -3525,7 +3534,7 @@ class PlayerViewModel(
         val state = _uiState.value
         val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
         if (menu.none { it.id == id }) return
-        if (id == activePlaybackQualityId(menu, state.committedQualityPreference)) return
+        if (id == state.activeQualityId(menu)) return
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
         mobileSubtitleTransactions.selectQuality(id)
     }
@@ -5772,4 +5781,24 @@ internal fun authoritativePlaybackSubtitleOrdinal(
     -1 -> -1
     else -> playbackTracks.indexOfFirst { it.index == serverIndex }
         .takeIf { it >= 0 }
+}
+
+/**
+ * Whether a quality picked earlier carries into this load. It does for a
+ * reload of the same title outside a room, unless the route itself names a
+ * quality, and for a reload inside the same room epoch. Any other title or
+ * room epoch starts from the route's quality.
+ */
+internal fun keepsPickedQuality(
+    contentId: String,
+    previousContentId: String?,
+    routeNamesQuality: Boolean,
+    room: WatchPartyPlaybackContext?,
+    currentRoom: WatchPartyPlaybackContext?,
+): Boolean = if (room == null) {
+    contentId == previousContentId && !routeNamesQuality
+} else {
+    currentRoom != null &&
+        currentRoom.roomId == room.roomId &&
+        currentRoom.selectionRevision == room.selectionRevision
 }

@@ -180,6 +180,7 @@ internal fun PlaybackPlanV3.toSessionResponse(
         decisionTrace = listOf(decisionReason),
         requestedMediaFileId = requestedMediaFileId ?: mediaFileId,
         effectiveMediaFileId = effectiveFileId,
+        effectiveRecipe = effectiveRecipe,
     )
     return PlaybackSessionResponse(
         sessionId = sessionId,

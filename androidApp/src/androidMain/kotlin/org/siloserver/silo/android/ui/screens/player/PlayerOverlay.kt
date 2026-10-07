@@ -47,7 +47,6 @@ import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
 import org.siloserver.silo.model.playback.PlaybackQualityOption
-import org.siloserver.silo.model.playback.activePlaybackQualityId
 import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
@@ -130,7 +129,7 @@ fun PlayerOverlay(
     val qualityOptions = remember(state.playbackPlan) {
         playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
     }
-    val activeQualityId = activePlaybackQualityId(qualityOptions, state.committedQualityPreference)
+    val activeQualityId = state.activeQualityId(qualityOptions)
     val hasQualityMenu = qualityOptions.isNotEmpty()
     // A party plays exactly the room's file: no version picker.
     val hasVersionMenu = state.versions.size > 1 && !inRoom

@@ -31,6 +31,15 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.playback.PlaybackQualityOption
+import org.siloserver.silo.model.playback.activePlaybackQualityId
+
+/**
+ * The [menu] row the committed preference selects, judged against what the
+ * plan actually delivers, so a stored "1080p" that a bitrate cap held to
+ * 720p marks the 720p entry.
+ */
+internal fun PlayerViewModel.PlayerUiState.activeQualityId(menu: List<PlaybackQualityOption>): String? =
+    activePlaybackQualityId(menu, committedQualityPreference, playbackPlan?.effectiveRecipe)
 
 /**
  * Bottom sheet listing the plan's Quality menu: Auto, then the server's

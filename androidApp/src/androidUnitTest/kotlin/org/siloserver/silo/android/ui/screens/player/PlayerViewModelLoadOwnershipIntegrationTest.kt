@@ -256,6 +256,33 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         }
 
     @Test
+    fun sameTitleReloadsStartWithThePickedQualityAndAnotherTitleDropsIt() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent(contentId = "movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            assertNull(starter.request(0).preferredQualityOverride)
+
+            // What a committed Quality menu pick leaves behind.
+            viewModel.setPickedQuality("720p-medium")
+            starter.complete(0, VideoPlaybackStartResult.ServerUnreachable(contentId = "movie"))
+            viewModel.awaitState { it.serverUnreachable }
+            viewModel.playIgnoringServerReachability()
+            starter.awaitRequestCount(2)
+            assertEquals("720p-medium", starter.request(1).preferredQualityOverride)
+
+            viewModel.loadContent(contentId = "other", preferredFileId = 2)
+            starter.awaitRequestCount(3)
+            assertNull(starter.request(2).preferredQualityOverride)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun staleErrorCannotOverwriteCurrentReady() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
@@ -689,6 +716,13 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             it.isAccessible = true
             it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
         }
+
+    private fun PlayerViewModel.setPickedQuality(quality: String) {
+        PlayerViewModel::class.java.getDeclaredField("sessionQualityOverride").let {
+            it.isAccessible = true
+            it.set(this, quality)
+        }
+    }
 
     private fun PlayerViewModel.offerNextEpisode() {
         mutableUiState().update { it.copy(nextEpisode = PlayerViewModel.NextEpisodeInfo(
