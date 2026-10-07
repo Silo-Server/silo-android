@@ -65,7 +65,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-builds-${{ github.workflow }}-${{ github.ref }}
+  group: android-builds-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/private/android-changed-profile-controller' && inputs.cache_read_only && format('-{0}', github.sha) || '' }}
   cancel-in-progress: true
 
 jobs:
