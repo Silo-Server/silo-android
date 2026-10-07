@@ -142,6 +142,41 @@ def toolchain(source):
     return result
 
 
+def emit_toolchain_observation(current, seed=None):
+    """Emit only complete, bounded version and runner facts before comparison."""
+    def safe(values):
+        patterns = {
+            'java': r'(?:openjdk|java) version "[0-9A-Za-z_.+\-]+"(?: [0-9\-]+)?(?: LTS)?',
+            'gradle': r'[0-9]+(?:\.[0-9]+){1,3}',
+            'agp': r'[0-9]+(?:\.[0-9]+){1,3}',
+            'runner_image': r'(?:[0-9]{8}\.[0-9]+\.[0-9]+|unavailable)',
+        }
+        keys = set(patterns) | {'cpu_count', 'memory_total_kib', 'sdk_platforms', 'build_tools'}
+        if not isinstance(values, dict) or set(values) != keys:
+            raise ValueError('Incomplete or unexpected toolchain observation fields')
+        for key, pattern in patterns.items():
+            if not isinstance(values[key], str) or len(values[key]) > 256 or not re.fullmatch(pattern, values[key]):
+                raise ValueError('Unsafe toolchain observation value')
+        for key in ('cpu_count', 'memory_total_kib'):
+            if type(values[key]) is not int or not 0 < values[key] <= 2**40:
+                raise ValueError('Invalid toolchain observation capacity')
+        for key, pattern in [('sdk_platforms', r'android-[A-Za-z0-9_.\-]+'),
+                             ('build_tools', r'[0-9]+(?:\.[0-9]+){1,3}(?:-[A-Za-z0-9]+)?')]:
+            items = values[key]
+            if (not isinstance(items, list) or len(items) > 128
+                    or any(not isinstance(item, str) or len(item) > 80 or not re.fullmatch(pattern, item) for item in items)
+                    or items != sorted(set(items))):
+                raise ValueError('Unsafe toolchain observation SDK inventory')
+        return values
+    current, seed = safe(current), None if seed is None else safe(seed)
+    guard_fields = ['java', 'gradle', 'agp', 'runner_image']
+    differing = [] if seed is None else sorted(key for key in current if current[key] != seed[key])
+    observation = {'schema_version': 1, 'current_toolchain': current, 'seed_toolchain': seed,
+                   'guard_fields': guard_fields, 'differing_fields': differing,
+                   'differing_guard_fields': [key for key in guard_fields if key in differing]}
+    print(json.dumps({'toolchain_observation': observation}, sort_keys=True), flush=True)
+
+
 class MemorySampler:
     def __init__(self):
         self.stop = threading.Event()
@@ -271,9 +306,12 @@ def run_build(arguments):
         if (receipt.get('manifest_sha256') != arguments.seed_manifest_sha256
                 or receipt.get('provenance') != seed_provenance(arguments)):
             raise ValueError('Approved seed restore receipt mismatch')
+        emit_toolchain_observation(observations, receipt.get('toolchain') or {})
         for key in ('java', 'gradle', 'agp', 'runner_image'):
             if receipt.get('toolchain', {}).get(key) != observations[key]:
                 raise ValueError('Seed and runner toolchain mismatch')
+    else:
+        emit_toolchain_observation(observations)
     temporary = Path(os.environ['RUNNER_TEMP'])/'silo-apk-benchmark-fixture'
     config = source/'androidApp/google-services.json'
     sampler, tasks, report = MemorySampler(), {}, None

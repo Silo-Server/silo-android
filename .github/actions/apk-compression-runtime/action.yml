@@ -1,0 +1,10 @@
+name: Observe selected APK archive action runtime
+description: Record the actual Node24 action binary for the optional local archive observer
+outputs:
+  node:
+    description: Actual action runtime executable
+  receipt:
+    description: Local runtime receipt
+runs:
+  using: node24
+  main: index.cjs

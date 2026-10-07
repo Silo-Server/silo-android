@@ -29,6 +29,10 @@ on:
       seed_manifest_sha256:
         description: Approved seed.json digest (empty for SEED)
         type: string
+      observe_compression:
+        description: Separate C0 archive observation; excluded from primary whole-job timing
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -45,6 +49,7 @@ env:
   BENCH_SEED_RUN: ${{ inputs.seed_run_id }}
   BENCH_SEED_ARTIFACT: ${{ inputs.seed_artifact_id }}
   BENCH_SEED_DIGEST: ${{ inputs.seed_manifest_sha256 }}
+  BENCH_OBSERVE_COMPRESSION: ${{ inputs.observe_compression }}
 
 jobs:
   validate:
@@ -60,6 +65,10 @@ jobs:
         env:
           BENCH_TARGET: ${{ inputs.profile == 'SEED' && 'seed' || (inputs.profile == 'M' && 'phone' || 'combined') }}
         run: |
+          if [ "$BENCH_OBSERVE_COMPRESSION" = true ] && [ "$BENCH_PROFILE" != C0 ]; then
+            echo "Archive observation requires the separate C0 profile"
+            exit 1
+          fi
           python3 controller/scripts/apk_benchmark.py validate \
             --source-sha "$BENCH_SOURCE_SHA" --profile "$BENCH_PROFILE" \
             --cache "$BENCH_CACHE" --target "$BENCH_TARGET" \
@@ -155,6 +164,25 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Observe actual selected archive action runtime
+        if: success() && inputs.profile == 'C0' && inputs.observe_compression
+        id: archive-runtime
+        uses: ./controller/.github/actions/apk-compression-runtime
+      - name: Observe local archive creation after qualified C0 assembly
+        if: success() && inputs.profile == 'C0' && inputs.observe_compression
+        env:
+          OBSERVED_ACTION_NODE: ${{ steps.archive-runtime.outputs.node }}
+          OBSERVED_ACTION_RUNTIME: ${{ steps.archive-runtime.outputs.receipt }}
+        run: |
+          python3 controller/scripts/apk_benchmark_compression.py --enable \
+            --source source --report benchmark-output/report.json \
+            --seed-receipt "$RUNNER_TEMP/apk-benchmark-seed-receipt.json" \
+            --runtime-receipt "$OBSERVED_ACTION_RUNTIME" --node "$OBSERVED_ACTION_NODE" \
+            --upload-bundle "$RUNNER_TEMP/../_actions/actions/upload-artifact/330a01c490aca151604b8cf639adc76d48f6c5d4/dist/upload/index.js" \
+            --apksigner "$ANDROID_HOME/build-tools/36.0.0/apksigner" \
+            --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt" \
+            --receipt "$RUNNER_TEMP/apk-compression-observer.json"
+
   summarize:
     name: Summarize verified layout
     needs: [validate, build]
@@ -185,6 +213,18 @@ jobs:
             --seed-run "$BENCH_SEED_RUN" --seed-artifact "$BENCH_SEED_ARTIFACT" \
             --seed-manifest-sha256 "$BENCH_SEED_DIGEST" \
             --reports reports --output summary-output
+      - name: Mark separate archive observation outside primary timing
+        if: inputs.observe_compression
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          path = Path('summary-output/summary.json')
+          summary = json.loads(path.read_text())
+          summary.update(compression_observation_enabled=True, primary_whole_job_timing_eligible=False)
+          path.write_text(json.dumps(summary, sort_keys=True, indent=2) + '\n')
+          print('Separate archive observation: whole-job timing is ineligible for primary comparison')
+          PYTHON
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: apk-benchmark-summary-${{ inputs.profile }}-${{ github.run_id }}

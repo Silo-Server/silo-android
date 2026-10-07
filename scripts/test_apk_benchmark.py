@@ -9,6 +9,13 @@ import apk_benchmark as bench
 class ControllerTests(unittest.TestCase):
     context = {'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REPOSITORY': bench.REPOSITORY,
                'GITHUB_REF': 'refs/heads/' + bench.BENCHMARK_BRANCH}
+    observed_toolchain = {
+        'java': 'openjdk version "21.0.12.1" 2026-08-18 LTS',
+        'gradle': '8.12', 'agp': '8.10.1', 'runner_image': '20260927.320.1',
+        'cpu_count': 4, 'memory_total_kib': 16373452,
+        'sdk_platforms': ['android-36', 'android-37.2-beta3'],
+        'build_tools': ['36.0.0', '37.0.0'],
+    }
 
     def inputs(self, profile='M', target='phone', cache='task-cache-off', **changes):
         values = dict(source_sha='a'*40, profile=profile, cache=cache, target=target,
@@ -134,6 +141,128 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Seed artifact'):
                     bench.verify_seed_run(args.seed_run, args.seed_artifact, controller)
 
+    def test_complete_toolchain_observation_preserves_both_safe_dictionaries(self):
+        old = self.observed_toolchain | {'runner_image': '20261004.327.1'}
+        with patch('builtins.print') as output:
+            bench.emit_toolchain_observation(self.observed_toolchain, old)
+        value = json.loads(output.call_args.args[0])['toolchain_observation']
+        self.assertEqual(value, {'schema_version': 1, 'current_toolchain': self.observed_toolchain,
+                                 'seed_toolchain': old, 'guard_fields': ['java', 'gradle', 'agp', 'runner_image'],
+                                 'differing_fields': ['runner_image'], 'differing_guard_fields': ['runner_image']})
+        self.assertEqual(output.call_args.kwargs, {'flush': True})
+        with patch('builtins.print') as output:
+            bench.emit_toolchain_observation(self.observed_toolchain)
+        self.assertIsNone(json.loads(output.call_args.args[0])['toolchain_observation']['seed_toolchain'])
+
+    def test_unsafe_or_incomplete_toolchains_reject_before_any_observation_output(self):
+        valid = self.observed_toolchain
+        invalid = [None, {}, valid | {'credential': 'PRIVATE_TOOLCHAIN_VALUE'},
+                   {key: value for key, value in valid.items() if key != 'cpu_count'}]
+        invalid += [valid | {key: value} for key, value in (
+            ('java', 'PRIVATE_TOOLCHAIN_VALUE'), ('java', valid['java'] + '\nPRIVATE_TOOLCHAIN_VALUE'),
+            ('gradle', '/PRIVATE_TOOLCHAIN_VALUE'), ('runner_image', 'PRIVATE_TOOLCHAIN_VALUE'),
+            ('cpu_count', True), ('memory_total_kib', -1), ('memory_total_kib', 2**41),
+            ('sdk_platforms', ['android-36/PRIVATE_TOOLCHAIN_VALUE']),
+            ('sdk_platforms', ['android-36', 'android-36']),
+            ('sdk_platforms', ['android-37', 'android-36']),
+            ('build_tools', ['36.0.0\nPRIVATE_TOOLCHAIN_VALUE']),
+            ('build_tools', ['36.0.0'] * 129), ('build_tools', 'PRIVATE_TOOLCHAIN_VALUE'),
+        )]
+        for value in invalid:
+            for seed_side in (False, True):
+                if value is None and seed_side:
+                    continue  # None is the explicit SEED observation form.
+                with self.subTest(seed_side=seed_side, value=value), patch('builtins.print') as output:
+                    with self.assertRaises(ValueError) as rejected:
+                        bench.emit_toolchain_observation(valid if seed_side else value, value if seed_side else valid)
+                    self.assertNotIn('PRIVATE_TOOLCHAIN_VALUE', str(rejected.exception))
+                    output.assert_not_called()
+
+    def test_toolchain_mismatch_emits_full_observation_before_preserved_guard(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            for key, value in [('java', 'openjdk version "21.0.11" 2026-04-21 LTS'),
+                               ('gradle', '8.13'), ('agp', '8.10.2'), ('runner_image', '20261004.327.1')]:
+                with self.subTest(changed_guard_field=key):
+                    receipt = root / 'receipt.json'
+                    output_path = root / key
+                    args = bench.argparse.Namespace(source=str(source), output=str(output_path), profile='M',
+                        cache='task-cache-off', target='phone', seed_receipt=str(receipt),
+                        seed_manifest_sha256=bench.APPROVED_PARENT_SEED[2],
+                        seed_run=bench.APPROVED_PARENT_SEED[0], seed_artifact=bench.APPROVED_PARENT_SEED[1])
+                    environment = {'GRADLE_USER_HOME': str(root / 'gradle'), 'GITHUB_WORKFLOW_SHA': 'a' * 40}
+                    prior = self.observed_toolchain | {key: value}
+                    with patch.dict(bench.os.environ, environment):
+                        receipt.write_text(json.dumps({'manifest_sha256': args.seed_manifest_sha256,
+                            'provenance': bench.seed_provenance(args), 'toolchain': prior, 'restore_seconds': 1}))
+                        with patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
+                                patch.object(bench, 'toolchain', return_value=self.observed_toolchain), \
+                                patch.object(bench, 'fixtures') as fixtures, \
+                                patch.object(bench.subprocess, 'Popen') as gradle, patch('builtins.print') as output:
+                            with self.assertRaisesRegex(ValueError, '^Seed and runner toolchain mismatch$'):
+                                bench.run_build(args)
+                    self.assertEqual(output.call_count, 1)
+                    observation = json.loads(output.call_args.args[0])['toolchain_observation']
+                    self.assertEqual(observation['current_toolchain'], self.observed_toolchain)
+                    self.assertEqual(observation['seed_toolchain'], prior)
+                    self.assertEqual(observation['differing_fields'], [key])
+                    self.assertEqual(observation['differing_guard_fields'], [key])
+                    fixtures.assert_not_called()
+                    gradle.assert_not_called()
+                    self.assertFalse((output_path / 'report.json').exists())
+
+    def test_untrusted_seed_receipt_is_rejected_before_toolchain_emission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            receipt = root / 'receipt.json'
+            args = bench.argparse.Namespace(source=str(source), output=str(root / 'output'), profile='M',
+                cache='task-cache-off', target='phone', seed_receipt=str(receipt),
+                seed_manifest_sha256=bench.APPROVED_PARENT_SEED[2],
+                seed_run=bench.APPROVED_PARENT_SEED[0], seed_artifact=bench.APPROVED_PARENT_SEED[1])
+            receipt.write_text(json.dumps({'manifest_sha256': 'b' * 64, 'provenance': {},
+                                           'toolchain': {'credential': 'PRIVATE_TOOLCHAIN_VALUE'}}))
+            with patch.dict(bench.os.environ, {'GRADLE_USER_HOME': str(root / 'gradle')}), \
+                    patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
+                    patch.object(bench, 'toolchain', return_value=self.observed_toolchain), patch('builtins.print') as output:
+                with self.assertRaisesRegex(ValueError, 'Approved seed restore receipt mismatch'):
+                    bench.run_build(args)
+            output.assert_not_called()
+
+    def test_retained_capacity_difference_does_not_change_the_four_guard_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            receipt = root / 'receipt.json'
+            args = bench.argparse.Namespace(source=str(source), output=str(root / 'output'), profile='M',
+                cache='task-cache-off', target='phone', seed_receipt=str(receipt),
+                seed_manifest_sha256=bench.APPROVED_PARENT_SEED[2],
+                seed_run=bench.APPROVED_PARENT_SEED[0], seed_artifact=bench.APPROVED_PARENT_SEED[1])
+            environment = {'GRADLE_USER_HOME': str(root / 'gradle'), 'RUNNER_TEMP': str(root),
+                           'GITHUB_WORKFLOW_SHA': 'a' * 40}
+            prior = self.observed_toolchain | {'cpu_count': 8}
+            sampler = Mock()
+            sampler.thread.is_alive.return_value = False
+            with patch.dict(bench.os.environ, environment):
+                receipt.write_text(json.dumps({'manifest_sha256': args.seed_manifest_sha256,
+                    'provenance': bench.seed_provenance(args), 'toolchain': prior, 'restore_seconds': 1}))
+                with patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
+                        patch.object(bench, 'toolchain', return_value=self.observed_toolchain), \
+                        patch.object(bench, 'fixtures', side_effect=ValueError('fixture boundary')) as fixtures, \
+                        patch.object(bench, 'MemorySampler', return_value=sampler), \
+                        patch.object(bench.subprocess, 'Popen') as gradle, patch('builtins.print') as output:
+                    with self.assertRaisesRegex(ValueError, '^fixture boundary$'):
+                        bench.run_build(args)
+            observation = json.loads(output.call_args.args[0])['toolchain_observation']
+            self.assertEqual(observation['differing_fields'], ['cpu_count'])
+            self.assertEqual(observation['differing_guard_fields'], [])
+            fixtures.assert_called_once()
+            gradle.assert_not_called()
+
     def test_seed_bundle_requires_actual_verification_and_local_certificate(self):
         with tempfile.TemporaryDirectory() as directory:
             bundle = Path(directory)/'test.aab'
@@ -214,7 +343,7 @@ class ControllerTests(unittest.TestCase):
                            'GITHUB_WORKFLOW_SHA': 'a'*40}
             with patch.dict(bench.os.environ, environment), \
                     patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
-                    patch.object(bench, 'toolchain', return_value={'gradle': '8.12'}), \
+                    patch.object(bench, 'toolchain', return_value=self.observed_toolchain), \
                     patch.object(bench, 'fixtures', return_value=({}, 'ab'*32)), \
                     patch.object(bench, 'MemorySampler', return_value=sampler), \
                     patch.object(bench.subprocess, 'Popen', return_value=process), \
@@ -271,7 +400,7 @@ class ControllerTests(unittest.TestCase):
             process.wait.return_value = 0
             sampler = Mock(result={'samples': 0})
             sampler.thread.is_alive.return_value = False
-            toolchain = {'java': '21', 'gradle': '8.12', 'agp': '8.10.1', 'runner_image': 'fixture'}
+            toolchain = self.observed_toolchain
             environment = {'GRADLE_USER_HOME': str(root/'gradle-home'), 'RUNNER_TEMP': str(root),
                            'ANDROID_HOME': str(root/'sdk'), 'GITHUB_WORKFLOW_SHA': 'a'*40}
             error = artifacts.NativePayloadContractError('androidApp/universal', 'lib/x86/libdependency.so',
