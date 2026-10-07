@@ -20,6 +20,10 @@ on:
         type: boolean
         required: false
         default: true
+      cache_read_only:
+        type: boolean
+        required: false
+        default: false
       unit_parallel:
         type: boolean
         required: false
@@ -51,7 +55,7 @@ env:
   SILO_CI_CONFIGURATION_FLAG: --no-configuration-cache
   # Pass a literal string to action inputs and record the same policy decision.
   # Internal PR writes stay scoped to their merge ref; forks remain read-only.
-  SILO_CI_CACHE_READ_ONLY: ${{ inputs.build_cache && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && 'false' || 'true' }}
+  SILO_CI_CACHE_READ_ONLY: ${{ !inputs.cache_read_only && inputs.build_cache && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && 'false' || 'true' }}
 
 jobs:
   changes:
@@ -480,6 +484,8 @@ jobs:
       lint_proof: ${{ steps.coverage.outputs.lint_proof }}
     env:
       SILO_CI_WORKER_LIMIT: ${{ inputs.unit_worker_limit }}
+      # One invocation shares unit_parallel across Tests and lint. lint_parallel
+      # records the separate layout baseline and cannot govern this union.
       SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}
       SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}
     runs-on: ubuntu-latest

@@ -40,10 +40,8 @@ def guard(env):
         raise ValueError("Unsupported parallel setting")
     if env.get("SILO_CI_SHARED_FORKS") not in {"1", "2"}:
         raise ValueError("Unsupported shared Test forks")
-    if layout == "combined" and any(
-        env[f"SILO_CI_UNIT_{setting}"] != env[f"SILO_CI_LINT_{setting}"] for setting in ("WORKERS", "PARALLEL")
-    ):
-        raise ValueError("One invocation requires identical unit/lint worker and parallel settings")
+    # Both worker limits are fixed at two above. The combined invocation uses
+    # UNIT_PARALLEL for its entire graph; LINT_PARALLEL describes the control.
     return layout
 
 
@@ -175,7 +173,11 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "guard":
-            print("Debug benchmark layout: " + guard(os.environ))
+            layout = guard(os.environ)
+            print("Debug benchmark layout: " + layout)
+            if layout == "combined":
+                print("Combined Tests and lint use unit_parallel=" + os.environ["SILO_CI_UNIT_PARALLEL"]
+                      + "; separate lint_parallel=" + os.environ["SILO_CI_LINT_PARALLEL"])
         elif args.command == "result":
             print("Debug layout benchmark passed (" + result(json.loads(os.environ["SILO_CI_NEEDS_JSON"]), os.environ["SILO_CI_DEBUG_LAYOUT"]) + ")")
         else:

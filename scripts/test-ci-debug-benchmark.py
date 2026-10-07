@@ -59,12 +59,16 @@ class GuardAndResults(unittest.TestCase):
                 env = environment();env[key] = value
                 with self.assertRaises(ValueError): benchmark.guard(env)
 
-    def test_mixed_settings_are_preserved_for_control_but_declined_for_union(self):
-        for key, value in (("SILO_CI_UNIT_PARALLEL", "true"),):
-            env = environment();env[key] = value
-            self.assertEqual(benchmark.guard(env), "separate")
-            env["SILO_CI_DEBUG_LAYOUT"] = "combined"
-            with self.assertRaises(ValueError): benchmark.guard(env)
+    def test_selected_parallel_unit_serial_lint_control_is_accepted_for_both_layouts(self):
+        for layout in ("separate", "combined"):
+            env = environment(layout);env["SILO_CI_UNIT_PARALLEL"] = "true"
+            self.assertEqual(benchmark.guard(env), layout)
+
+    def test_combined_guard_discloses_effective_graph_and_separate_lint_request(self):
+        env = {**os.environ, **environment("combined"), "SILO_CI_UNIT_PARALLEL": "true"}
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-debug-benchmark.py"), "guard"], env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Combined Tests and lint use unit_parallel=true; separate lint_parallel=false", result.stdout)
 
     def test_four_workers_are_declined_in_both_layouts(self):
         for layout in ("separate", "combined"):
@@ -261,6 +265,15 @@ class Coverage(unittest.TestCase):
 
 
 class Controller(unittest.TestCase):
+    def test_manual_read_only_input_can_restore_without_widening_writer_policy(self):
+        entry = (ROOT / ".github/workflows/android-build.yml").read_text()
+        workflow = (ROOT / ".github/workflows/trusted-linux-ci.yml").read_text()
+        self.assertRegex(entry, r"cache_read_only:\n        description: [^\n]+\n        required: false\n        default: true\n        type: boolean")
+        self.assertIn("cache_read_only: ${{ github.event_name == 'workflow_dispatch' && inputs.cache_read_only }}", entry)
+        self.assertRegex(workflow, r"cache_read_only:\n        type: boolean\n        required: false\n        default: false")
+        self.assertIn("SILO_CI_CACHE_READ_ONLY: ${{ !inputs.cache_read_only && inputs.build_cache && (", workflow)
+        self.assertEqual(workflow.count("cache-read-only: ${{ env.SILO_CI_CACHE_READ_ONLY }}"), 4)
+
     def test_registered_entry_is_manual_only_and_defaults_to_control(self):
         entry = (ROOT / ".github/workflows/android-build.yml").read_text()
         self.assertIn("on:\n  workflow_dispatch:", entry)
@@ -275,6 +288,7 @@ class Controller(unittest.TestCase):
         self.assertIn("needs: changes", block("release-readiness"))
         self.assertNotIn("combined-debug", block("release-readiness"))
         union = block("combined-debug")
+        self.assertIn("SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}", union)
         for task in ("testDebugUnitTest", ":android-shared:lintDebug", ":androidApp:lintDebug", ":androidTvApp:lintDebug"):
             self.assertIn(task, union)
         self.assertEqual(union.count("./scripts/ci-gradle.py --max-workers"), 1)

@@ -23,6 +23,11 @@ on:
         required: false
         default: true
         type: boolean
+      cache_read_only:
+        description: Restore fixed Gradle cache state without saving during layout profiling
+        required: false
+        default: true
+        type: boolean
       unit_parallel:
         description: Benchmark parallel project execution for unit tests
         required: false
@@ -73,6 +78,7 @@ jobs:
       debug_layout: ${{ inputs.debug_layout }}
       build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
+      cache_read_only: ${{ github.event_name == 'workflow_dispatch' && inputs.cache_read_only }}
       unit_parallel: ${{ inputs.unit_parallel || false }}
       unit_worker_limit: ${{ fromJSON(inputs.unit_worker_limit || '2') }}
       unit_shared_test_forks: ${{ fromJSON(inputs.unit_shared_test_forks || '1') }}
