@@ -127,6 +127,8 @@ sealed class TvRoute(val route: String) {
         /** Opaque key for a process-only, target-bound episode selection handoff. */
         val episodeSelectionHandoffNonce: String? = null,
         val libraryId: Int? = null,
+        /** The running shuffle this item is a pick of; picks play from the beginning. */
+        val shuffleId: String? = null,
     ) : TvRoute(
         buildString {
             append("player/${contentId.routeEncode()}")
@@ -150,6 +152,7 @@ sealed class TvRoute(val route: String) {
                 VideoPlayerRouteArgs.encodeResumePosition(resumePositionSeconds)?.let { value ->
                     add("${VideoPlayerRouteArgs.RESUME_POSITION}=$value")
                 }
+                shuffleId?.takeIf { it.isNotBlank() }?.let { add("$ARG_SHUFFLE_ID=${it.routeEncode()}") }
             }
             if (query.isNotEmpty()) append("?").append(query.joinToString("&"))
         },
@@ -160,7 +163,8 @@ sealed class TvRoute(val route: String) {
                 "&subtitleTrackIndex={subtitleTrackIndex}" +
                 "&subtitleAutoResolved={subtitleAutoResolved}" +
                 "&autoAdvanceCount={autoAdvanceCount}&resumePosition={resumePosition}" +
-                "&episodeSelectionHandoffNonce={episodeSelectionHandoffNonce}"
+                "&episodeSelectionHandoffNonce={episodeSelectionHandoffNonce}" +
+                "&shuffleId={shuffleId}"
             const val ARG_CONTENT_ID = "contentId"
             const val ARG_FILE_ID = "fileId"
             const val ARG_QUALITY = "quality"
@@ -172,6 +176,7 @@ sealed class TvRoute(val route: String) {
             const val ARG_AUTO_ADVANCE_COUNT = "autoAdvanceCount"
             const val ARG_RESUME_POSITION = VideoPlayerRouteArgs.RESUME_POSITION
             const val ARG_EPISODE_SELECTION_HANDOFF_NONCE = "episodeSelectionHandoffNonce"
+            const val ARG_SHUFFLE_ID = "shuffleId"
         }
     }
 

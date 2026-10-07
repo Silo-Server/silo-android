@@ -39,6 +39,7 @@ File pointers are repository-relative.
 | AI subtitle transcription / translation (quota-tracked) | ✅ | ✅ | TV: `TvAiTranslateDialog` |
 | AI description translation (on-view, server-gated) | ✅ | ✅ | `DescriptionTranslationController`; gated by `/api/v1/metadata/ai/status`; metadata-language setting in Settings |
 | Intro auto-skip (+ manual skip banner) | ✅ | ✅ | |
+| Shuffle (library, series, season, collection) | ✅ | ✅ | Server-picked random movies and episodes, gated by `/api/v2/shuffles/capabilities`. Picks play from the start; the up-next screen offers Pick Another and Stop shuffling. TV has no mixed-library screen, so mixed libraries shuffle on phone only. [docs](docs/shuffle-api-v2.md) |
 | Chapters | ✅ | ✅ | Server-extracted; TV scrubber markers |
 | Sleep timer | ✅ | ✅ | Configurable default |
 | Playback speed | ✅ | ✅ | |

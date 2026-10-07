@@ -148,6 +148,13 @@ fun TvProfileSelectionScreen(
     }
     DisposableEffect(Unit) { onDispose { MarqueeScene.personalTint = null } }
 
+    LaunchedEffect(state.openAddProfile) {
+        if (state.openAddProfile) {
+            viewModel.onAddProfileConsumed()
+            onAddProfile()
+        }
+    }
+
     LaunchedEffect(state.selectedProfileId) {
         if (state.selectedProfileId != null) {
             viewModel.onSelectionConsumed()
@@ -260,7 +267,7 @@ fun TvProfileSelectionScreen(
                         onProfileSelected = viewModel::onProfileSelected,
                         onEditProfile = { onEditProfile(it.id) },
                         onDeleteProfile = viewModel::requestDelete,
-                        onAddProfile = onAddProfile,
+                        onAddProfile = viewModel::requestAddProfile,
                     )
 
                     if (state.error != null) {
@@ -306,13 +313,15 @@ fun TvProfileSelectionScreen(
         }
     }
 
-    // PIN entry — shown when a PIN-protected profile is selected.
+    // PIN entry — shown when a PIN-protected profile is selected, or for the
+    // primary profile's PIN before manage mode.
     val pinProfile = state.pinProfile
     if (pinProfile != null) {
         TvPinEntryDialog(
             profile = pinProfile,
             errorMessage = state.pinError,
             isVerifying = state.isVerifyingPin,
+            prompt = if (state.pinForManagement) "Enter this PIN to manage profiles" else "Enter your PIN",
             onPinEntered = viewModel::onPinEntered,
             onDismiss = { viewModel.onPinDialogDismissed() },
         )

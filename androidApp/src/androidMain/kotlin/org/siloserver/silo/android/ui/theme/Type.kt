@@ -2,12 +2,26 @@ package org.siloserver.silo.android.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import org.siloserver.silo.android.R
 
 // Mirrors iosApp/iosApp/Theme/Typography.swift — system sans (Roboto on Android, the
 // closest analog to SF), no custom display font, exact iOS pt sizes mapped to sp.
+
+/**
+ * Inter, the face the TV app already uses for all of its type. On the phone
+ * it is reserved for the video player's chrome, where tabular figures keep
+ * timecodes from jittering and the controls should read the same as on TV.
+ */
+val SiloInterFamily = FontFamily(
+    Font(R.font.inter_regular, FontWeight.Normal),
+    Font(R.font.inter_medium, FontWeight.Medium),
+    Font(R.font.inter_semibold, FontWeight.SemiBold),
+    Font(R.font.inter_bold, FontWeight.Bold),
+)
 
 val SiloHeroTitle = TextStyle(
     fontFamily = FontFamily.Default,

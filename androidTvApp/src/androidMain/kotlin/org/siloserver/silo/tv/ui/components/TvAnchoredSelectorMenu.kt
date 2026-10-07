@@ -27,9 +27,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -73,6 +73,7 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
+import org.siloserver.silo.tv.ui.screens.player.TvPlayerType
 
 // ---------------------------------------------------------------------------
 // Anchored selector popover — Compose-for-TV port of the silo-apple tvOS
@@ -307,9 +308,9 @@ internal fun TvAnchoredSelectorMenu(
         // The Material3 DropdownMenu is kept only as the anchored popup host
         // (positioning under the trigger, focus capture, dismiss-on-Back); its
         // own surface is made transparent and the content draws the same
-        // Skyline glass panel, dim uppercase header, inverted-capsule rows and
-        // hint footer as the top-bar cascade / For You selector, so every
-        // dropdown in the app reads as one component.
+        // opaque Skyline panel as the top-bar cascade / For You selector, with
+        // an eyebrow header and two-line rows, so every dropdown in the app
+        // reads as one component. No hint footer: TV viewers know the remote.
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = {
@@ -347,9 +348,9 @@ internal fun TvAnchoredSelectorMenu(
                 // it the handler below is never called and the d-pad falls
                 // straight through to Compose's own focus search.
                 modifier = Modifier
-                    .widthIn(min = CascadeLibraryColumnWidth, max = TvCascadeSelectorMaxPanelWidth)
-                    .tvSkylinePanelChrome()
-                    .padding(CascadePanelPadding)
+                    .widthIn(min = SelectorMenuMinWidth, max = SelectorMenuMaxWidth)
+                    .tvSkylinePanelChrome(corner = 20.dp)
+                    .padding(start = 10.dp, end = 10.dp, top = 14.dp, bottom = 10.dp)
                     .focusGroup()
                     .onPreviewKeyEvent { event ->
                         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -370,10 +371,15 @@ internal fun TvAnchoredSelectorMenu(
                         true
                     },
             ) {
-                CascadePanelHeader(label.uppercase())
-                // The rows scroll inside a capped list while the header and
-                // footer stay pinned — a long subtitle list would otherwise
-                // grow the panel past the bottom of the screen.
+                Text(
+                    text = label.uppercase(),
+                    style = TvPlayerType.Eyebrow,
+                    maxLines = 1,
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
+                )
+                // The rows scroll inside a capped list while the header stays
+                // pinned — a long subtitle list would otherwise grow the panel
+                // past the bottom of the screen.
                 Box {
                 Column(
                     modifier = Modifier
@@ -433,7 +439,6 @@ internal fun TvAnchoredSelectorMenu(
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
-                CascadePanelFooter(caption = "Press selects · Back closes")
             }
         }
     }
@@ -520,15 +525,17 @@ private fun ConnectedSelectorTrigger(
 }
 
 private val SelectorMenuGap = 6.dp
+private val SelectorMenuMinWidth = 300.dp
+private val SelectorMenuMaxWidth = 400.dp
 
-/** Six rows of options; anything longer scrolls within the panel. */
-private val SelectorMenuMaxListHeight = 230.dp
+/** Five two-line rows of options; anything longer scrolls within the panel. */
+private val SelectorMenuMaxListHeight = 270.dp
 private val SelectorMenuScrollEdgeHeight = 26.dp
 
 /**
  * Fades the rows out toward whichever edge still has more of them, by masking
  * the list's own pixels (DstIn) rather than painting a colour over it — a
- * painted fade can never quite match the panel's translucent gradient and
+ * painted fade can never quite match the panel's vertical gradient and
  * shows up as a band.
  */
 private fun Modifier.selectorMenuEdgeFade(fadeTop: Boolean, fadeBottom: Boolean): Modifier {
@@ -577,11 +584,11 @@ private fun SelectorMenuScrollEdge(visible: Boolean, top: Boolean, modifier: Mod
 }
 
 /**
- * One option row, drawn with the cascade's row chrome (see `CascadeRowChrome`):
- * a leading check slot (kept even when unselected so titles stay aligned, the
- * way the cascade's leading icon does), the title in semibold and the detail
- * dimmed, inverting to a solid [SiloOnSurface] capsule on focus. Disabled rows
- * are dimmed and skipped by focus.
+ * One option row: a leading check slot (kept even when unselected so titles
+ * stay aligned), the title, and the detail on its own line so it never
+ * competes with the option name. Focus inverts to a Paper capsule; the
+ * current choice keeps a soft fill. Disabled rows are dimmed and skipped by
+ * focus.
  */
 @Composable
 private fun SelectorMenuRow(
@@ -592,11 +599,10 @@ private fun SelectorMenuRow(
     modifier: Modifier = Modifier,
 ) {
     val visual = tvSelectorRowVisualState(focused, option.selected, option.enabled)
-    val shape = RoundedCornerShape(CascadeRowCornerRadius)
+    val shape = RoundedCornerShape(10.dp)
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp)
             .clip(shape)
             .background(visual.container)
             .clickable(
@@ -606,34 +612,37 @@ private fun SelectorMenuRow(
                 onClick = onClick,
             )
             .semantics { this.selected = option.selected }
-            .padding(horizontal = CascadeRowPaddingHorizontal, vertical = CascadeRowPaddingVertical),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        Icon(
-            imageVector = Icons.Filled.Check,
-            contentDescription = null,
-            tint = if (option.selected) visual.content else Color.Transparent,
-            modifier = Modifier.size(CascadeRowIconSize),
-        )
-        Text(
-            text = option.title,
-            color = visual.content,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = CascadeRowTextSize,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (option.detail.isNotBlank()) {
+        Box(modifier = Modifier.width(28.dp).padding(top = 1.dp)) {
+            if (option.selected) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = visual.content,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+        }
+        Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = option.detail,
-                color = visual.content.copy(alpha = 0.6f),
-                fontWeight = FontWeight.Medium,
-                fontSize = CascadeRowTextSize,
+                text = option.title,
+                style = TvPlayerType.Row,
+                color = visual.content,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
             )
+            if (option.detail.isNotBlank()) {
+                Text(
+                    text = option.detail,
+                    style = TvPlayerType.RowDetail,
+                    color = visual.content.copy(alpha = 0.6f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }

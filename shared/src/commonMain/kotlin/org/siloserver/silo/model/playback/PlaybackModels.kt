@@ -249,6 +249,11 @@ data class PlaybackExecutionPlan(
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
     @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
+    /**
+     * What the plan delivers (resolution, bitrate). The Quality menu reads it
+     * to mark the entry a stored resolution preference actually landed on.
+     */
+    @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3? = null,
 )
 
 /**

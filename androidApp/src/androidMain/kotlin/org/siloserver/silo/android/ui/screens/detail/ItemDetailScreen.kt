@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,15 +37,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.SettingsRemote
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -138,10 +137,13 @@ fun ItemDetailScreen(
     // Auto-presents the cast remote after "Play on device" launches, mirroring
     // Apple's playOnTV: the connect/handoff handshake renders in the remote.
     onOpenCastRemote: () -> Unit = {},
+    // Plays the first pick of a shuffle started from the series overflow menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
     val seriesRedirect = remember(state.detail) { state.detail?.let(::seriesDetailRedirect) }
     var seriesRedirectFailed by rememberSaveable(state.detail?.contentId) { mutableStateOf(false) }
     LaunchedEffect(seriesRedirect) {
@@ -742,6 +744,30 @@ fun ItemDetailScreen(
                             onSeasonWatchedChange = { season, watched ->
                                 viewModel.setSeasonWatched(season, watched)
                             },
+                            onShuffleSeries = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                            ) {
+                                {
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                        detail.contentId,
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            onShuffleSeason = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                            ) {
+                                { season ->
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                        season.contentId,
+                                    )
+                                }
+                            } else {
+                                null
+                            },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
@@ -1019,25 +1045,16 @@ fun ItemDetailScreen(
         }
 
         pendingCancelDownloadAction?.let { confirmAction ->
-            AlertDialog(
-                onDismissRequest = { pendingCancelDownloadAction = null },
-                title = { Text("Cancel download?") },
-                text = { Text("The partially downloaded data will be discarded.") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            pendingCancelDownloadAction = null
-                            confirmAction()
-                        },
-                    ) {
-                        Text("Discard Download")
-                    }
+            SiloConfirmDialog(
+                title = "Cancel download?",
+                body = "The partially downloaded data will be discarded.",
+                confirmLabel = "Discard Download",
+                dismissLabel = "Keep Download",
+                onConfirm = {
+                    pendingCancelDownloadAction = null
+                    confirmAction()
                 },
-                dismissButton = {
-                    TextButton(onClick = { pendingCancelDownloadAction = null }) {
-                        Text("Keep Download")
-                    }
-                },
+                onDismiss = { pendingCancelDownloadAction = null },
             )
         }
 
@@ -1077,18 +1094,18 @@ fun ItemDetailScreen(
                         tint = Color.White,
                     )
                 }
-                DropdownMenu(
+                SiloDropdownMenu(
                     expanded = remoteMenuExpanded,
                     onDismissRequest = { remoteMenuExpanded = false },
                 ) {
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text("Remote Control") },
                         onClick = {
                             remoteMenuExpanded = false
                             onOpenCastRemote()
                         },
                     )
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text("Choose TV") },
                         onClick = {
                             remoteMenuExpanded = false
@@ -1096,7 +1113,7 @@ fun ItemDetailScreen(
                         },
                     )
                     HorizontalDivider()
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = {
                             Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
                         },

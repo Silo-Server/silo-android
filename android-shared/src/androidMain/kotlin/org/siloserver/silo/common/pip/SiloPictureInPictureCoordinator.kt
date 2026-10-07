@@ -121,6 +121,33 @@ class SiloPictureInPictureCoordinator(
         }
     }
 
+    /**
+     * Whether the player may show its own Picture in Picture button. Unlike
+     * auto-enter on leaving the app, a viewer who asks for PiP gets it while
+     * paused too, so playing is not required here.
+     */
+    fun canOfferPictureInPicture(activity: Activity, surface: SiloPictureInPictureSurface): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val state = stateBySurface[surface] ?: return false
+        return siloCanEnterPictureInPicture(
+            surface = surface,
+            sdkInt = Build.VERSION.SDK_INT,
+            deviceSupportsPictureInPicture = activity.supportsPictureInPicture(),
+            enabled = state.enabled,
+            videoActive = state.videoActive,
+            isPlaying = true,
+        )
+    }
+
+    /** Enters PiP because the viewer pressed the player's PiP button. */
+    fun enterPictureInPictureOnRequest(activity: Activity, surface: SiloPictureInPictureSurface): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!canOfferPictureInPicture(activity, surface)) return false
+        val state = stateBySurface[surface] ?: return false
+        activity.enterPictureInPictureMode(buildParams(activity, surface, state))
+        return true
+    }
+
     fun enterPictureInPictureIfEligible(
         activity: Activity,
         surface: SiloPictureInPictureSurface,

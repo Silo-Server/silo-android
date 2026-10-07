@@ -39,6 +39,14 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.rounded.CheckCircleOutline
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.HeartBroken
+import androidx.compose.material.icons.rounded.RemoveDone
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -194,12 +202,18 @@ fun TvItemDetailScreen(
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the More menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
         key = "item-detail-$contentId-$libraryId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
         parameters = { parametersOf(contentId, libraryId) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
     val seriesRedirect = remember(state.detail) {
         state.detail?.let(::tvSeriesDetailRedirect)
     }
@@ -327,6 +341,7 @@ fun TvItemDetailScreen(
             onSeasonClick = onSeasonClick,
             onWatchParty = onWatchParty,
             onOpenPerson = onOpenPerson,
+            shuffleLauncher = shuffleLauncher,
         )
     }
 }
@@ -347,6 +362,7 @@ private fun TvDetailContent(
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
+    shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
     // The circular Version control in the hero action cluster. Hoisted here so
@@ -864,6 +880,35 @@ private fun TvDetailContent(
                                     watchedSeason = state.seasons
                                         .firstOrNull { it.seasonNumber == state.selectedSeason }
                                         ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
+                                    onShuffleSeries = if (
+                                        isSeriesDetail &&
+                                        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                                    ) {
+                                        {
+                                            shuffleLauncher.start(
+                                                org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                                detail.contentId,
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    // Season mode offers the season on screen,
+                                    // hidden with fewer than two playable episodes.
+                                    shuffleSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { season ->
+                                            isSeriesDetail && !isShowingSeriesOverview && !state.episodesLoading &&
+                                                state.episodes.all { it.seasonNumber == season.seasonNumber } &&
+                                                org.siloserver.silo.model.shuffle.canShuffleSeason(state.episodes) &&
+                                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                                        },
+                                    onShuffleSeason = { season ->
+                                        shuffleLauncher.start(
+                                            org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                            season.contentId,
+                                        )
+                                    },
                                 )
                             },
                         )
@@ -1512,6 +1557,9 @@ private fun HeroActionRow(
     libraryId: Int?,
     onWatchParty: (WatchPartyDestination?) -> Unit,
     watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeries: (() -> Unit)? = null,
+    shuffleSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeason: (org.siloserver.silo.model.catalog.Season) -> Unit = {},
 ) {
     val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
@@ -1790,11 +1838,39 @@ private fun HeroActionRow(
 
     if (moreOpen) {
         val options = buildList {
+            // Shuffle leads the menu, as on the web.
+            if (onShuffleSeries != null) {
+                add(
+                    TvDialogOption(
+                        key = "shuffle-series",
+                        title = "Shuffle Series",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeries()
+                        },
+                    ),
+                )
+            }
+            shuffleSeason?.let { season ->
+                add(
+                    TvDialogOption(
+                        key = "shuffle-season",
+                        title = "Shuffle ${tvSeasonPickerLabel(season)}",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeason(season)
+                        },
+                    ),
+                )
+            }
             add(
                 TvDialogOption(
                     key = "favorite",
                     title = if (state.isFavorite) "Remove from Favorites" else "Add to Favorites",
-                    selected = state.isFavorite,
+                    // Actions take icons, not checks: a check means "selected".
+                    icon = if (state.isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,
                     onClick = {
                         moreOpen = false
                         viewModel.onToggleFavorite()
@@ -1805,7 +1881,7 @@ private fun HeroActionRow(
                 TvDialogOption(
                     key = "watched",
                     title = if (state.isWatched) watchedUnmarkLabel(detail) else watchedMarkLabel(detail),
-                    selected = state.isWatched,
+                    icon = if (state.isWatched) Icons.Rounded.RemoveDone else Icons.Rounded.CheckCircleOutline,
                     onClick = {
                         moreOpen = false
                         viewModel.onToggleWatched()
@@ -1819,7 +1895,7 @@ private fun HeroActionRow(
                         key = "season-watched",
                         title = "Mark ${tvSeasonPickerLabel(season)} " +
                             if (seasonWatched) "Unwatched" else "Watched",
-                        selected = seasonWatched,
+                        icon = if (seasonWatched) Icons.Rounded.RemoveDone else Icons.Rounded.CheckCircleOutline,
                         onClick = {
                             moreOpen = false
                             viewModel.onSetSeasonWatched(season, !seasonWatched)
@@ -1833,6 +1909,7 @@ private fun HeroActionRow(
                         key = "watch-party",
                         title = option.title,
                         subtitle = option.subtitle,
+                        icon = Icons.Rounded.Groups,
                         onClick = {
                             moreOpen = false
                             option.onSelect()
@@ -1851,6 +1928,7 @@ private fun HeroActionRow(
                                     key = "season-$season",
                                     title = "Go to Season $season",
                                     subtitle = detail.seriesTitle,
+                                    icon = Icons.Rounded.VideoLibrary,
                                     onClick = {
                                         moreOpen = false
                                         onSeasonClick(seriesId, season)
@@ -1864,6 +1942,7 @@ private fun HeroActionRow(
                             key = "series",
                             title = "Go to Series",
                             subtitle = detail.seriesTitle,
+                            icon = Icons.Rounded.Tv,
                             onClick = {
                                 moreOpen = false
                                 onSeriesClick(seriesId)
@@ -1877,6 +1956,8 @@ private fun HeroActionRow(
             title = "More Actions",
             options = options,
             onDismiss = { moreOpen = false },
+            // Shuffle is first and takes focus over a selected toggle below it.
+            initialFocusKey = options.firstOrNull()?.key?.takeIf { it.startsWith("shuffle-") },
         )
     }
 

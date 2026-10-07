@@ -163,6 +163,7 @@ fun MainScreen(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
+    val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
@@ -284,6 +285,8 @@ fun MainScreen(
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
+        shuffleFeatureStore.reset()
+        shuffleFeatureStore.refresh()
     }
 
     fun signOutFromProfileMenu() {
@@ -441,7 +444,16 @@ fun MainScreen(
                         )
                     }
                     Tab.Libraries -> {
+                        val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher { shuffle ->
+                            navController.navigate(
+                                org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(
+                                    shuffle,
+                                    libraryId = shuffle.scope.id.toIntOrNull(),
+                                ),
+                            )
+                        }
                         LibrariesScreen(
+                            shuffleLauncher = shuffleLauncher,
                             onItemClick = { contentId, libraryId ->
                                 navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },

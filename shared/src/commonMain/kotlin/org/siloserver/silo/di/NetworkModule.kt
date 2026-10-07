@@ -40,6 +40,7 @@ val networkModule = module {
     single { SimilarCardsV2Api(get(), get(), get()) }
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }
+    single { ShufflesV2Api(get(), get(), get()) }
     single { RecommendationApi(get(), get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<MetadataAiApi> { DefaultMetadataAiApi(get(), get(), get()) }

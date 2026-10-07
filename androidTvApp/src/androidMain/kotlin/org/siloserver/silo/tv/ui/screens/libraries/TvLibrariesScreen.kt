@@ -26,6 +26,8 @@ fun TvLibrariesScreen(
     // route to the user-collection detail rather than the library one (#69).
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit = {},
+    /** Plays a shuffle the library page started, bound to that library. */
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit,
     viewModel: TvLibrariesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -65,6 +67,7 @@ fun TvLibrariesScreen(
                         }
                     },
                     onInitialContentFocus = onInitialContentFocus,
+                    onShuffleStarted = { shuffle -> onPlayShuffle(shuffle, selectedLibrary.id) },
                 )
             }
         }

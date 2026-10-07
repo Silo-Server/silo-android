@@ -205,6 +205,8 @@ fun TvMainShell(
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit,
     /** Open the Watch Party hub. */
     onOpenWatchParty: () -> Unit,
+    // Plays the first pick of a shuffle started from a library screen.
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
     onOpenPersonDetail: (personId: Long) -> Unit,
 ) {
     val nestedNav = rememberNavController()
@@ -217,6 +219,7 @@ fun TvMainShell(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
+    val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -342,6 +345,8 @@ fun TvMainShell(
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
+        shuffleFeatureStore.reset()
+        shuffleFeatureStore.refresh()
     }
 
     val focusManager = LocalFocusManager.current
@@ -1237,6 +1242,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
@@ -1245,6 +1251,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 // Content-type tabs (Skyline §3.1). Each renders the library
@@ -1266,6 +1273,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Series.route) {
@@ -1282,6 +1290,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Music.route) {
@@ -1298,6 +1307,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Audiobooks.route) {
@@ -1314,6 +1324,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.ForYou.route) {
@@ -1710,6 +1721,7 @@ private fun TvLibraryTypeContent(
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
 ) {
     if (library == null) {
         // Only assert "no libraries" once loading has settled AND this type
@@ -1753,6 +1765,7 @@ private fun TvLibraryTypeContent(
             initialSection = selectedPill.toLibraryTab(),
             sectionRequestNonce = sectionRequestNonce,
             onContentUpFallbackChanged = onContentUpFallbackChanged,
+            onShuffleStarted = { shuffle -> onPlayShuffle(shuffle, library.id) },
         )
     }
 }

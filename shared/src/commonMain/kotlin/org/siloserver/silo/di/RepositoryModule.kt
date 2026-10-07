@@ -110,6 +110,7 @@ val repositoryModule = module {
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
+    single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
     single { SettingsRepository(get()) }
     // Profile-scoped canonical settings, shared by the phone and TV screens so

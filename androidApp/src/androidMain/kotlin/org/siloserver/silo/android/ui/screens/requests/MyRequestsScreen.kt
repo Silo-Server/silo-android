@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.model.request.MediaRequest
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -20,8 +22,6 @@ import androidx.compose.material.icons.outlined.HowToReg
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.SyncProblem
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -186,7 +186,7 @@ private fun FilterMenu(
                 tint = Color.White,
             )
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+        SiloDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             FilterItem(label = "All Requests", icon = Icons.Outlined.Inventory2, selected = filter == null) {
                 open = false
                 onFilter(null)
@@ -208,7 +208,7 @@ private fun FilterMenu(
 
 @Composable
 private fun FilterItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
-    DropdownMenuItem(
+    SiloDropdownMenuItem(
         text = { Text(label) },
         leadingIcon = {
             Box(modifier = Modifier.size(24.dp), contentAlignment = Alignment.Center) {

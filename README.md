@@ -226,9 +226,15 @@ On first launch, point the app at your Silo server URL, sign in, and pick a prof
 
 ## Contributing
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Features,
-navigation or behavior changes, large refactors, and shared contract changes
-should start as an issue.
+Right now, the most helpful way to contribute is a clear, accurate issue. We
+implement and review changes through our own workflow, and pull request volume
+has outgrown what we can review carefully, so a good issue usually helps us
+more than a pull request.
+
+Pull requests are still welcome from contributors who've had one merged in a
+Silo repository, or when a maintainer asks for one. We close other pull
+requests without review. [CONTRIBUTING.md](CONTRIBUTING.md) explains what makes
+an issue useful.
 
 ---
 

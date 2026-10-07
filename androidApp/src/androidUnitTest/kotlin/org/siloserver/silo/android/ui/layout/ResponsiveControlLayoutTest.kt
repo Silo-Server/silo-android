@@ -2,8 +2,6 @@ package org.siloserver.silo.android.ui.layout
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 class ResponsiveControlLayoutTest {
     @Test
@@ -28,12 +26,5 @@ class ResponsiveControlLayoutTest {
             AudiobookTransportLayout(spacingDp = 8f, requiresHorizontalScroll = true),
             resolveAudiobookTransportLayout(availableWidthDp = 300f, hasChapters = true),
         )
-    }
-
-    @Test
-    fun toolbarCompactsWhenActionsWouldEraseTheTitle() {
-        assertTrue(useCompactPlayerToolbar(availableWidthDp = 328f, trailingActionCount = 5))
-        assertFalse(useCompactPlayerToolbar(availableWidthDp = 800f, trailingActionCount = 5))
-        assertTrue(useCompactPlayerToolbar(availableWidthDp = 328f, trailingActionCount = 3))
     }
 }

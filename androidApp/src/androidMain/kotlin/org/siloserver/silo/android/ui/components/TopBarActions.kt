@@ -135,6 +135,7 @@ fun TopBarProfileMenu(
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
             onSignOutClick = onSignOutClick,
+            activeProfile = activeProfile,
         )
     }
 }

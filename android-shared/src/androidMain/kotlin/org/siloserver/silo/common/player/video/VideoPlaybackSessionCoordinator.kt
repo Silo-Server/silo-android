@@ -47,6 +47,8 @@ class VideoPlaybackSessionCoordinator(
                     chapters = result.chapters,
                     seriesId = result.seriesId,
                     seriesTitle = result.seriesTitle,
+                    year = result.year,
+                    contentType = result.contentType,
                     seasonNumber = result.seasonNumber,
                     episodeNumber = result.episodeNumber,
                     resolvedEpisodeSelection = result.resolvedEpisodeSelection,

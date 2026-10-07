@@ -52,6 +52,31 @@ open class PersonalDataRepository(
         return result
     }
 
+    /**
+     * Background re-check of a library list already on screen ([knownIds]).
+     * A list missing any known library is read again before it is trusted,
+     * and only the accepted list is cached, so one transient short response
+     * can't replace the full list on screen or in the offline cache. A failed
+     * read returns the failure rather than the cache — even with nothing on
+     * screen, where the cache may hold a list whose access was since denied —
+     * so the caller keeps what it shows.
+     */
+    suspend fun recheckUserLibraries(knownIds: Set<Int>): ApiResult<List<UserLibrary>> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        val first = personalDataApi.listUserLibraries()
+        val result = if (first is ApiResult.Success && !first.data.map { it.id }.containsAll(knownIds)) {
+            personalDataApi.listUserLibraries()
+        } else {
+            first
+        }
+        if (result is ApiResult.Success) {
+            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+                catalogCache.cacheLibraries(result.data, cacheWriteLease)
+            }
+        }
+        return result
+    }
+
     // -- Favorites --
 
     suspend fun isFavorite(itemId: String): ApiResult<Boolean> =

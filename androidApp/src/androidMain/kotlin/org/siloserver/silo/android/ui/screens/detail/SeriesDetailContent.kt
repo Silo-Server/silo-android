@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,13 +13,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.ClosedCaption
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -75,6 +76,10 @@ fun SeriesDetailContent(
     onEpisodeWatchedChange: (String, Boolean) -> Unit,
     onSeasonSelected: (Int) -> Unit,
     onSeasonWatchedChange: ((Season, Boolean) -> Unit)? = null,
+    // Shuffle the whole series, or the season on screen; null where the
+    // server doesn't offer that scope.
+    onShuffleSeries: (() -> Unit)? = null,
+    onShuffleSeason: ((Season) -> Unit)? = null,
     onFavoriteClick: () -> Unit,
     onWatchlistClick: () -> Unit,
     onToggleWatched: () -> Unit,
@@ -118,6 +123,10 @@ fun SeriesDetailContent(
     val fixedSeriesCredit = remember(detail.contentId, detail.cast) { seriesStarringCredit(detail) }
     val markableSelectedSeason = selectedSeason?.takeIf {
         onSeasonWatchedChange != null && it.episodeCount > 0
+    }
+    // Hidden on a season with fewer than two playable episodes.
+    val shuffleableSelectedSeason = selectedSeason?.takeIf {
+        onShuffleSeason != null && org.siloserver.silo.model.shuffle.canShuffleSeason(episodes)
     }
     val episodeCountSubtitle = selectedSeason?.episodeCount?.takeIf { it > 0 }?.let { count ->
         "$count episode${if (count == 1) "" else "s"}"
@@ -287,11 +296,34 @@ fun SeriesDetailContent(
                     onToggleFavorite = onFavoriteClick,
                     onToggleWatchlist = onWatchlistClick,
                     onToggleWatched = onToggleWatched,
-                    overflow = if (markableSelectedSeason != null || partyAction != null) {
+                    overflow = if (
+                        markableSelectedSeason != null || partyAction != null ||
+                        onShuffleSeries != null || shuffleableSelectedSeason != null
+                    ) {
                         { dismiss ->
+                            if (onShuffleSeries != null) {
+                                SiloDropdownMenuItem(
+                                    text = { Text("Shuffle Series") },
+                                    leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
+                                    onClick = {
+                                        dismiss()
+                                        onShuffleSeries()
+                                    },
+                                )
+                            }
+                            if (shuffleableSelectedSeason != null && onShuffleSeason != null) {
+                                SiloDropdownMenuItem(
+                                    text = { Text("Shuffle ${phoneSeasonLabel(shuffleableSelectedSeason)}") },
+                                    leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
+                                    onClick = {
+                                        dismiss()
+                                        onShuffleSeason(shuffleableSelectedSeason)
+                                    },
+                                )
+                            }
                             if (markableSelectedSeason != null && onSeasonWatchedChange != null) {
                                 val seasonWatched = markableSelectedSeason.userData?.played == true
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = {
                                         Text(
                                             "Mark ${phoneSeasonLabel(markableSelectedSeason)} " +
@@ -315,7 +347,7 @@ fun SeriesDetailContent(
                                 )
                             }
                             if (partyAction != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text(partyAction.label) },
                                     leadingIcon = {
                                         Icon(Icons.Outlined.Groups, contentDescription = null)
@@ -353,12 +385,12 @@ fun SeriesDetailContent(
                                         }
                                     },
                                 )
-                                DropdownMenu(
+                                SiloDropdownMenu(
                                     expanded = showDownloadMenu,
                                     onDismissRequest = { showDownloadMenu = false },
                                 ) {
                                     if (onEpisodeDownloadClick != null) {
-                                        DropdownMenuItem(
+                                        SiloDropdownMenuItem(
                                             text = { Text(when {
                                                 episodeDownloadState.isDownloaded -> "Episode downloaded"
                                                 episodeDownloadState.progress != null -> "Cancel episode download"
@@ -372,7 +404,7 @@ fun SeriesDetailContent(
                                         )
                                     }
                                     if (onSeriesDownloadClick != null) {
-                                        DropdownMenuItem(
+                                        SiloDropdownMenuItem(
                                             text = { Text(if (seriesDownloadState.isDownloaded) "Series downloaded" else "Download series") },
                                             enabled = !seriesDownloadState.isDownloaded,
                                             onClick = {

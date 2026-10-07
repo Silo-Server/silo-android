@@ -74,6 +74,7 @@ fun TvPinEntryDialog(
     onDismiss: () -> Unit,
     errorMessage: String? = null,
     isVerifying: Boolean = false,
+    prompt: String = "Enter your PIN",
 ) {
     var pin by remember { mutableStateOf("") }
     val fiveFocusRequester = remember { FocusRequester() }
@@ -126,7 +127,7 @@ fun TvPinEntryDialog(
                     when {
                         latestError != null -> Text(latestError, fontSize = 14.sp, color = MarqueeColors.Error)
                         isVerifying -> Text("Checking…", fontSize = 14.sp, color = MarqueeColors.InkSecondary)
-                        else -> Text("Enter your PIN", fontSize = 14.sp, color = MarqueeColors.InkSecondary)
+                        else -> Text(prompt, fontSize = 14.sp, color = MarqueeColors.InkSecondary)
                     }
                 }
                 Spacer(modifier = Modifier.height(15.dp))

@@ -90,6 +90,9 @@ import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
+import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.activePlaybackQualityId
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -194,17 +197,26 @@ internal fun PlayerTrackEntry.toMountedAudioTrack(): MountedAudioTrack = Mounted
     label = displayLabel.ifBlank { label },
 )
 
-/** Projects the protocol-v3 quality menu verbatim, preserving server order. */
+/**
+ * The protocol-v3 Quality menu: Auto, then the server's entries in server
+ * order, with the row [selectedLabel] resolves to marked selected.
+ */
 internal fun authoritativePlaybackQualityOptions(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
-): List<VideoQualityOption> = available.map { quality ->
-    VideoQualityOption(
-        id = quality.label,
-        label = quality.displayName?.takeIf { it.isNotBlank() } ?: quality.label,
-        isSelected = quality.label == selectedLabel,
-        resolution = quality.height.takeIf { it > 0 }?.let { "${it}p" },
-    )
+    delivered: PlaybackEffectiveRecipeV3? = null,
+): List<VideoQualityOption> {
+    val menu = playbackQualityMenu(available)
+    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered)
+    return menu.map { option ->
+        VideoQualityOption(
+            id = option.id,
+            label = option.name,
+            isSelected = option.id == activeId,
+            resolution = option.height.takeIf { it > 0 }?.let { "${it}p" },
+            bitrateLabel = option.bitrateLabel,
+        )
+    }
 }
 
 internal fun clampTvScrubPreview(seconds: Double, duration: Double): Double =
@@ -603,6 +615,21 @@ data class NextEpisodeState(
     val overview: String? = null,
     val seriesTitle: String? = null,
     val runtimeMinutes: Int = 0,
+    /** False for a shuffled movie, which has no season or episode line. */
+    val isEpisode: Boolean = true,
+)
+
+/**
+ * Set while a shuffle plays: the Up Next overlay announces the server's random
+ * pick from the scope [scopeLabel] names, and no sequential next episode is
+ * offered.
+ */
+data class TvShuffleUiState(
+    /** Null until the shuffle has been read. */
+    val scopeLabel: String? = null,
+    val pickingAnother: Boolean = false,
+    /** A transient failure to continue or pick another. */
+    val message: String? = null,
 )
 
 data class TvPlayerLaunchArgs(
@@ -634,6 +661,8 @@ data class TvPlayerLaunchArgs(
      */
     val autoAdvanceCount: Int = 0,
     val episodeSelectionHandoff: EpisodeSelectionHandoff? = null,
+    /** The running shuffle this item is a pick of; picks play from the beginning. */
+    val shuffleId: String? = null,
 )
 
 /**
@@ -710,6 +739,9 @@ class TvPlayerViewModel(
     // Pre-play reachability gate (issue #33): drives Retry's fresh probe.
     private val serverReachabilityMonitor: ServerReachabilityMonitor,
     private val launchArgs: TvPlayerLaunchArgs,
+    // Shuffle: the server picks what plays next. Optional so tests that
+    // construct the VM directly stay source-compatible.
+    private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
 ) : ViewModel() {
 
     companion object {
@@ -735,6 +767,8 @@ class TvPlayerViewModel(
         // How long a coordinated source fallback may take before the original
         // refusal is shown after all.
         private const val ROOM_FALLBACK_WAIT_MS = 15_000L
+        const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
+        const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
     }
 
     // Up-Next auto-play countdown ticker. Cancelled on dismiss / Play Now /
@@ -963,6 +997,8 @@ class TvPlayerViewModel(
         val serverUnreachable: Boolean = false,
         val title: String = "",
         val seriesTitle: String? = null,
+        val year: Int? = null,
+        val contentType: String? = null,
         /**
          * Artwork URL for Now Playing lock-screen / Bluetooth / Wear surfaces.
          * Sourced from `WatchDetail.posterUrl` with `backdropUrl` fallback.
@@ -1116,6 +1152,7 @@ class TvPlayerViewModel(
         val nextUpVideoEnded: Boolean = false,
         val nextUpCountdownSeconds: Int? = null,
         val nextUpCountdownTotalSeconds: Int = NEXT_UP_COUNTDOWN_SECONDS,
+        val shuffle: TvShuffleUiState? = null,
         // Live player statistics — reduced from [PlaybackAnalyticsListener.Event]s
         // by [reducePlayerStats]. Always non-null so the HUD Stats pane has a
         // snapshot to read; populates field-by-field as events arrive.
@@ -1125,7 +1162,12 @@ class TvPlayerViewModel(
         val videoFillMode: VideoFillMode = VideoFillMode.Fit,
     )
 
-    private val _uiState = MutableStateFlow(UiState(contentId = contentId))
+    private val _uiState = MutableStateFlow(
+        UiState(
+            contentId = contentId,
+            shuffle = TvShuffleUiState().takeIf { !launchArgs.shuffleId.isNullOrBlank() && shuffleFeatureStore != null },
+        ),
+    )
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
     val presentationState: StateFlow<UiState> = uiState
         .map(UiState::withoutPlaybackClock)
@@ -1335,6 +1377,16 @@ class TvPlayerViewModel(
     // so the Up-Next overlay couldn't arm its countdown. Carries the "video has
     // ended" flag forward so the countdown re-arms once nextEpisode resolves.
     private var pendingApproachingEndVideoEnded: Boolean? = null
+    // The running shuffle this player plays picks from; null outside a shuffle.
+    private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? =
+        launchArgs.shuffleId?.takeIf { it.isNotBlank() }?.let { id -> shuffleFeatureStore?.playback(id) }
+    // The later part of a multi-part pick that plays before the shuffle moves on.
+    private var shuffleNextPartFileId: Int? = null
+    // Once per item: the server re-checks the next pick when the overlay opens.
+    private var shuffleRefreshedForPostRoll = false
+    private var shuffleAdvanceJob: Job? = null
+    private var shufflePickJob: Job? = null
+    private var shuffleMessageJob: Job? = null
     /**
      * Transient player notice (server reconnecting, suspend warnings, etc.) emitted by
      * [PlaybackSessionLifecycle]. `null` means show nothing.
@@ -1813,6 +1865,7 @@ class TvPlayerViewModel(
                 videoQualities = authoritativePlaybackQualityOptions(
                     available = ready.plan.availableQualities,
                     selectedLabel = adoption.committed.qualityPreference,
+                    delivered = ready.plan.effectiveRecipe,
                 ),
                 container = ready.plan.stream.container ?: version?.container ?: state.container,
                 duration = duration,
@@ -2251,6 +2304,8 @@ class TvPlayerViewModel(
                                 contentId = contentId,
                                 title = result.title,
                                 seriesTitle = result.seriesTitle,
+                                year = result.year,
+                                contentType = result.contentType,
                                 artworkUrl = result.artworkUrl,
                                 sessionId = result.sessionId,
                                 playMethod = result.playMethod,
@@ -2275,6 +2330,7 @@ class TvPlayerViewModel(
                                     selectedLabel = qualityOverride
                                         ?: preferredQuality
                                         ?: PlaybackQuality.Auto.wireValue,
+                                    delivered = result.playbackPlanV3?.effectiveRecipe,
                                 ),
                                 mediaFileId = result.mediaFileId,
                                 startPosition = result.startPositionSeconds,
@@ -2773,6 +2829,7 @@ class TvPlayerViewModel(
                                         ?: qualityOverride
                                         ?: preferredQuality
                                         ?: PlaybackQuality.Auto.wireValue,
+                                    delivered = decision.plan.effectiveRecipe,
                                 ),
                                 container = effectiveContainer,
                                 duration = effectiveDuration,
@@ -4297,6 +4354,10 @@ class TvPlayerViewModel(
     private fun resolveNextEpisode() {
         // The room owns what plays next; nothing here may offer it.
         if (roomId != null) return
+        if (shufflePlayback != null) {
+            resolveShuffleNext()
+            return
+        }
         val state = _uiState.value
         val seriesId = state.seriesId ?: return
         val curSeason = state.seasonNumber ?: return
@@ -4370,6 +4431,17 @@ class TvPlayerViewModel(
         // (it would silently leave/desync the room). Mirrors the remote-control
         // transport gate.
         if (roomId != null) return
+        if (shufflePlayback != null) {
+            // A multi-part pick plays its later parts before the shuffle moves on.
+            shuffleNextPartFileId?.let { fileId ->
+                if (videoEnded) playNextShufflePart(fileId)
+                return
+            }
+            if (!shuffleRefreshedForPostRoll) {
+                shuffleRefreshedForPostRoll = true
+                refreshShuffleNext()
+            }
+        }
         // Playback end reopens a dismissed card without restarting its timer.
         // A card still showing keeps its existing countdown.
         if (autoAdvanceHandled) {
@@ -4422,7 +4494,8 @@ class TvPlayerViewModel(
         // The room owns what plays next; Play Now could never advance.
         if (roomId != null) return false
         val state = _uiState.value
-        return state.nextEpisode != null && !state.showNextUp
+        // A shuffle replaces the series order: no sequential next episode.
+        return state.nextEpisode != null && !state.showNextUp && state.shuffle == null
     }
 
     /**
@@ -4549,12 +4622,31 @@ class TvPlayerViewModel(
         // collector enforced this guard; keep it here now that TV advances
         // in place so a remote Next command cannot desynchronise the room.
         if (!shouldNavigateToLocalNext(inWatchTogetherRoom = roomId != null)) return
+        if (shufflePlayback != null) {
+            advanceShuffle(nextAutoAdvanceCount)
+            return
+        }
+        val next = _uiState.value.nextEpisode ?: return
+        playInPlace(next.contentId, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+    }
+
+    /**
+     * Replaces the mounted item in place with [targetContentId] (and
+     * [targetFileId], when a specific file must play) from the beginning.
+     * [showCard] keeps the Up Next overlay up through the handoff; a later
+     * part of the same item plays without it.
+     */
+    private fun playInPlace(
+        targetContentId: String,
+        targetFileId: Int?,
+        nextAutoAdvanceCount: Int,
+        showCard: Boolean = true,
+    ) {
         val state = _uiState.value
-        val next = state.nextEpisode ?: return
-        if (!nextUpTransitionGate.begin(next.contentId)) return
+        if (!nextUpTransitionGate.begin(targetContentId)) return
         _uiState.update {
             it.copy(
-                showNextUp = true,
+                showNextUp = it.showNextUp || showCard,
                 isNextUpTransitioning = true,
                 nextUpCountdownSeconds = null,
             )
@@ -4594,8 +4686,8 @@ class TvPlayerViewModel(
             if (!nextUpTransitionGate.isActive) return@launch
 
             lastAdoptedSessionId = null
-            contentId = next.contentId
-            preferredFileId = null
+            contentId = targetContentId
+            preferredFileId = targetFileId
             preferredQuality = null
             qualityOverride = null
             initialAudioTrackIndex = null
@@ -4606,6 +4698,8 @@ class TvPlayerViewModel(
             autoAdvanceCount = nextAutoAdvanceCount
             autoAdvanceHandled = false
             pendingApproachingEndVideoEnded = null
+            shuffleNextPartFileId = null
+            shuffleRefreshedForPostRoll = false
             episodeSelectionHandoffSlot.replace(handoff)
             loadContent(
                 startPositionOverride = 0.0,
@@ -4645,6 +4739,163 @@ class TvPlayerViewModel(
         val stopped = sessionLifecycle.stop(expectedSessionId = expectedSessionId)
         if (stopped) finalPositionScope = null
         return stopped
+    }
+
+    // ---- Shuffle ----
+
+    private fun resolveShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val state = _uiState.value
+        val forContentId = state.contentId
+        // The overlay waits for the last part of a multi-part pick.
+        shuffleNextPartFileId = org.siloserver.silo.playback.nextPlaybackPartFileId(
+            versions = state.fileVersions,
+            currentFileId = state.selectedFileId ?: state.mediaFileId,
+        )
+        if (shuffleNextPartFileId != null) return
+        resolveNextEpisodeJob?.cancel()
+        // The advance that started this item already returned its next pick.
+        if (shuffle.latest?.current?.contentId == forContentId) {
+            publishShuffleNext(forContentId)
+            return
+        }
+        resolveNextEpisodeJob = viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Re-reads the shuffle as the overlay opens: the server replaces a next pick that can no longer play. */
+    private fun refreshShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val forContentId = _uiState.value.contentId
+        viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Shows the shuffle's pick after [forContentId], or the finished state when there is none. */
+    private fun publishShuffleNext(forContentId: String) {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.contentId != forContentId || nextUpTransitionGate.isActive) return
+        val next = shuffle.nextPickAfter(forContentId)?.let { pick ->
+            NextEpisodeState(
+                contentId = pick.contentId,
+                seasonNumber = pick.seasonNumber,
+                episodeNumber = pick.episodeNumber,
+                title = pick.title,
+                stillUrl = pick.stillUrl,
+                overview = pick.overview,
+                seriesTitle = pick.seriesTitle,
+                runtimeMinutes = pick.runtimeMinutes,
+                isEpisode = pick.isEpisode,
+            )
+        }
+        val previous = _uiState.value.nextEpisode
+        _uiState.update {
+            it.copy(
+                nextEpisode = next,
+                shuffle = it.shuffle?.copy(scopeLabel = shuffle.scopeLabel ?: it.shuffle.scopeLabel),
+            )
+        }
+        val countingDownAtEnd = nextUpCountdownJob?.isActive == true && _uiState.value.nextUpVideoEnded
+        when {
+            next == null -> {
+                nextUpCountdownJob?.cancel()
+                nextUpCountdownJob = null
+                _uiState.update { it.copy(nextUpCountdownSeconds = null) }
+            }
+            // A different pick, such as Pick Another, gets the full countdown
+            // rather than whatever was left of the previous one.
+            previous != null && previous.contentId != next.contentId && countingDownAtEnd -> {
+                _uiState.update {
+                    it.copy(
+                        nextUpCountdownSeconds = NEXT_UP_COUNTDOWN_SECONDS,
+                        nextUpCountdownTotalSeconds = NEXT_UP_COUNTDOWN_SECONDS,
+                    )
+                }
+                startNextUpCountdown()
+            }
+            previous == null && !autoAdvanceHandled ->
+                pendingApproachingEndVideoEnded?.let { videoEnded -> commitApproachingEnd(next, videoEnded) }
+        }
+    }
+
+    /** Plays the next part of a multi-part pick from its start, without the overlay. */
+    private fun playNextShufflePart(fileId: Int) {
+        shuffleNextPartFileId = null
+        playInPlace(contentId, targetFileId = fileId, nextAutoAdvanceCount = autoAdvanceCount, showCard = false)
+    }
+
+    /**
+     * Moves the shuffle past the item that played and plays the returned
+     * pick from the beginning. The server moves on only while that item is
+     * still current, so a repeated press or a retry plays the same pick.
+     */
+    private fun advanceShuffle(nextAutoAdvanceCount: Int) {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.nextEpisode == null) return
+        if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val fromContentId = _uiState.value.contentId
+        _uiState.update { it.copy(nextUpCountdownSeconds = null) }
+        val pendingPick = shufflePickJob
+        shuffleAdvanceJob = viewModelScope.launch {
+            // A Pick Another still in flight decides what plays; wait for it.
+            pendingPick?.join()
+            if (shufflePlayback !== shuffle) return@launch
+            val result = shuffle.advance(fromContentId)
+            if (_uiState.value.contentId != fromContentId || shufflePlayback !== shuffle) return@launch
+            val target = (result as? ApiResult.Success)?.data?.current?.contentId
+            if (target == null) {
+                if (shuffle.exhausted) publishShuffleNext(fromContentId) else showShuffleMessage(SHUFFLE_CONTINUE_FAILED)
+                return@launch
+            }
+            // Like the first pick, every shuffled item plays from the start.
+            playInPlace(target, targetFileId = null, nextAutoAdvanceCount = nextAutoAdvanceCount)
+        }
+    }
+
+    /** Up Next "Pick Another": the server replaces the announced pick. */
+    fun pickAnotherShuffle() {
+        val shuffle = shufflePlayback ?: return
+        if (shufflePickJob?.isActive == true || shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val forContentId = _uiState.value.contentId
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = true)) }
+        shufflePickJob = viewModelScope.launch {
+            val result = shuffle.pickAnother()
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = false)) }
+            if (_uiState.value.contentId != forContentId || shufflePlayback !== shuffle) return@launch
+            if (result !is ApiResult.Success && !shuffle.exhausted) {
+                showShuffleMessage(SHUFFLE_PICK_FAILED)
+                return@launch
+            }
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /**
+     * Up Next "Stop shuffling": ends the shuffle on the server. The screen
+     * leaves the player right after, back to where the shuffle started.
+     */
+    fun stopShuffling() {
+        val shuffle = shufflePlayback ?: return
+        shufflePlayback = null
+        shuffleAdvanceJob?.cancel()
+        shufflePickJob?.cancel()
+        nextUpCountdownJob?.cancel()
+        nextUpCountdownJob = null
+        shuffle.stopInBackground()
+        _uiState.update { it.copy(shuffle = null, nextEpisode = null, nextUpCountdownSeconds = null) }
+    }
+
+    private fun showShuffleMessage(message: String) {
+        shuffleMessageJob?.cancel()
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = message)) }
+        shuffleMessageJob = viewModelScope.launch {
+            delay(4_000)
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = null)) }
+        }
     }
 
     /** Up-Next "Keep Watching" — dismiss the overlay and stay on the current episode. */

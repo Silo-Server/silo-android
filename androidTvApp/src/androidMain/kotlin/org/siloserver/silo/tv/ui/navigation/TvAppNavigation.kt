@@ -267,6 +267,24 @@ private fun tvIsWatchPartyEntry(entry: NavBackStackEntry, destination: WatchPart
                 entry.arguments?.getString(TvRoute.Player.ARG_ROOM_ID) == destination.roomId
     }
 
+/** Plays a shuffle's first pick, from the beginning like every pick. */
+private fun NavHostController.navigateToTvShufflePlayback(
+    shuffle: org.siloserver.silo.model.shuffle.Shuffle,
+    libraryId: Int?,
+    lastPlaybackNavigation: MutableState<TvPlaybackNavigation?>,
+) {
+    navigateToTvPlayback(
+        destination = TvRoute.Player(
+            contentId = shuffle.current.contentId,
+            resumePositionSeconds = 0.0,
+            libraryId = libraryId,
+            shuffleId = shuffle.id,
+        ).route,
+        contentId = shuffle.current.contentId,
+        lastPlaybackNavigation = lastPlaybackNavigation,
+    )
+}
+
 /**
  * Shows a Watch Party screen: the hub (null), the room's lobby, or its
  * player. A party screen already on the back stack is returned to instead of
@@ -970,6 +988,9 @@ fun TvAppNavigation(
                         launchSingleTop = true
                     }
                 },
+                onPlayShuffle = { shuffle, libraryId ->
+                    navController.navigateToTvShufflePlayback(shuffle, libraryId, lastPlaybackNavigation)
+                },
                 onPlayItem = { playContentId, itemType, resumePositionSeconds ->
                     // A fast double Select otherwise stacks a second player,
                     // starting two sessions and leaving Back on a duplicate.
@@ -1063,6 +1084,9 @@ fun TvAppNavigation(
                 // actually binds to that version instead of always defaulting
                 // to the server's first listed file (which for multi-version
                 // titles is often the lower-resolution encode).
+                onShuffleStarted = { shuffle ->
+                    navController.navigateToTvShufflePlayback(shuffle, libraryId, lastPlaybackNavigation)
+                },
                 onPlay = { playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds ->
                     // A fast Select after entering detail can overlap the route
                     // transition. Collapse an identical second Play request
@@ -1253,6 +1277,11 @@ fun TvAppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(TvRoute.Player.ARG_SHUFFLE_ID) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStack ->
             val contentId = backStack.arguments
@@ -1336,6 +1365,7 @@ fun TvAppNavigation(
                 autoAdvanceCount = autoAdvanceCount,
                 episodeSelectionHandoff = episodeSelectionHandoff,
                 navigationSettled = !transition.isRunning,
+                shuffleId = backStack.arguments?.getString(TvRoute.Player.ARG_SHUFFLE_ID),
                 onExit = { navController.popBackStack() },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.
@@ -1509,6 +1539,9 @@ fun TvAppNavigation(
                     navController.navigateToTvItemDetail(contentId, libraryId = libraryId)
                 },
                 onBack = { navController.popBackStack() },
+                onShuffleStarted = { shuffle ->
+                    navController.navigateToTvShufflePlayback(shuffle, libraryId, lastPlaybackNavigation)
+                },
             )
         }
 
@@ -1535,6 +1568,9 @@ fun TvAppNavigation(
                     navController.navigateToTvItemDetail(contentId)
                 },
                 onBack = { navController.popBackStack() },
+                onShuffleStarted = { shuffle ->
+                    navController.navigateToTvShufflePlayback(shuffle, null, lastPlaybackNavigation)
+                },
             )
         }
     }
@@ -1544,6 +1580,7 @@ fun TvAppNavigation(
         Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
     )
 
+    org.siloserver.silo.tv.ui.screens.profiles.TvHouseholdReverifyHost(profileRepository)
     siloCastStandby?.let { state ->
         TvSiloCastStandbyView(
             state = state,

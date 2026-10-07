@@ -56,6 +56,10 @@ sealed interface VideoPlaybackStartResult {
         /** TV's target-catalog resolution of [VideoPlaybackStartRequest.episodeSelectionHandoff]. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
         val seriesTitle: String? = null,
+        /** Release year, for the player's "MOVIE · 2026" line. */
+        val year: Int? = null,
+        /** Catalog item type ("movie", "episode", …); the same line names a film. */
+        val contentType: String? = null,
     ) : VideoPlaybackStartResult
 
     data class Error(

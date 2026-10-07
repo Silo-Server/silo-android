@@ -5,7 +5,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import org.siloserver.silo.android.ui.theme.SiloDestructive
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Inbox
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.SwitchAccount
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.unit.dp
+import org.koin.compose.koinInject
+import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
+import org.siloserver.silo.common.ui.components.avatarRef
+import org.siloserver.silo.common.ui.marquee.ServerBranding
+import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.network.ServerRegistry
 
 /**
  * The profile-avatar dropdown, in one place.
@@ -36,8 +50,12 @@ fun ProfileMenu(
     onSignOutClick: () -> Unit,
     onRequestsClick: (() -> Unit)? = null,
     onWatchPartyClick: (() -> Unit)? = null,
+    // Who is signed in, for the header. Null hides the header.
+    activeProfile: Profile? = null,
 ) {
     var confirmSignOut by rememberSaveable { mutableStateOf(false) }
+    val serverRegistry: ServerRegistry = koinInject()
+    val activeServer by serverRegistry.activeEntry.collectAsState()
 
     // Whether anything sits above the account actions.
     //
@@ -54,9 +72,22 @@ fun ProfileMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
     ) {
+        if (activeProfile != null) {
+            SiloMenuHeader(
+                title = activeProfile.name,
+                detail = activeServer?.let { server ->
+                    listOf(server.displayName, ServerBranding.hostLabel(server.url)).distinct().joinToString(" · ")
+                },
+                leading = {
+                    ProfileAvatar(avatar = activeProfile.avatarRef(), name = activeProfile.name, size = 40.dp)
+                },
+            )
+            SiloMenuDivider()
+        }
         if (onRequestsClick != null) {
             SiloMenuItem(
                 label = "Requests",
+                icon = Icons.Rounded.Inbox,
                 onClick = {
                     onDismissRequest()
                     onRequestsClick()
@@ -66,6 +97,7 @@ fun ProfileMenu(
         if (onWatchPartyClick != null) {
             SiloMenuItem(
                 label = "Watch Party",
+                icon = Icons.Rounded.Groups,
                 onClick = {
                     onDismissRequest()
                     onWatchPartyClick()
@@ -74,6 +106,7 @@ fun ProfileMenu(
         }
         SiloMenuItem(
             label = "Settings",
+            icon = Icons.Rounded.Settings,
             showDivider = hasFeatureGroup,
             onClick = {
                 onDismissRequest()
@@ -82,6 +115,7 @@ fun ProfileMenu(
         )
         SiloMenuItem(
             label = "Switch profile",
+            icon = Icons.Rounded.SwitchAccount,
             onClick = {
                 onDismissRequest()
                 onSwitchProfileClick()
@@ -89,6 +123,7 @@ fun ProfileMenu(
         )
         SiloMenuItem(
             label = "Switch server",
+            icon = Icons.Rounded.Dns,
             onClick = {
                 onDismissRequest()
                 onSwitchServerClick()
@@ -96,7 +131,9 @@ fun ProfileMenu(
         )
         SiloMenuItem(
             label = "Sign out",
-            labelColor = SiloDestructive,
+            icon = Icons.AutoMirrored.Rounded.Logout,
+            destructive = true,
+            showDivider = true,
             onClick = {
                 onDismissRequest()
                 confirmSignOut = true

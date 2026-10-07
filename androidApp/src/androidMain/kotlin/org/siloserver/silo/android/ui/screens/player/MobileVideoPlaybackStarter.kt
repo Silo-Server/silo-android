@@ -219,7 +219,14 @@ internal class MobileVideoPlaybackStarter(
                         watchDetail.versions,
                         watchDetail.userData?.lastFileId,
                         preferredQuality,
-                    )
+                    ).let { selected ->
+                        // A start from the beginning opens a multi-part item at its first part.
+                        if (org.siloserver.silo.model.playback.isExplicitStartOver(request.resumePositionOverride)) {
+                            org.siloserver.silo.playback.firstPlaybackPart(watchDetail.versions, selected)
+                        } else {
+                            selected
+                        }
+                    }
             }
             // Room starts keep the file through every replan; renewals keep
             // whatever the original start chose.

@@ -8,7 +8,10 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,14 +24,15 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.outlined.Bedtime
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
@@ -46,6 +51,8 @@ import androidx.compose.ui.zIndex
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
+import org.siloserver.silo.model.playback.PlaybackQualityOption
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
@@ -57,7 +64,7 @@ import org.siloserver.silo.playback.timingActionsFor
  * Full-screen overlay composable that layers gesture handling, transport controls,
  * and contextual buttons (skip intro, next episode) on top of the video surface.
  *
- * Also manages bottom sheet display for subtitle, audio, and quality selection.
+ * Also manages bottom sheet display for subtitle, audio, quality, and version selection.
  */
 @Composable
 fun PlayerOverlay(
@@ -90,8 +97,14 @@ fun PlayerOverlay(
     onSelectSubtitle: (Int) -> Unit,
     onSelectAudio: (Int) -> Unit,
     onSelectVersion: (Int) -> Unit,
-    // Google Cast (Chromecast) button rendered in the transport top bar.
-    castSlot: @Composable () -> Unit = {},
+    // Google Cast (Chromecast) button rendered in the transport top bar; the
+    // modifier dresses it as a player disc.
+    castSlot: @Composable (Modifier) -> Unit = {},
+    pictureInPictureAvailable: Boolean = false,
+    onEnterPictureInPicture: () -> Unit = {},
+    // Left edge (root px) of an open docked menu, null when none is open, so
+    // the subtitle canvas can re-center in the visible part of the picture.
+    onDockedMenuEdgeChanged: (Float?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     // Sheet visibility — one bool per sheet. iOS uses a sealed `activeSheet`
@@ -99,7 +112,9 @@ fun PlayerOverlay(
     // `rememberModalBottomSheetState`, so per-sheet bools are the natural
     // fit (and the sheets can't be nested anyway).
     var tracksSheetVisible by remember { mutableStateOf(false) }
-    var showQualitySelector by remember { mutableStateOf(false) }
+    var tracksInitialTab by remember { mutableStateOf(TracksTab.Subtitles) }
+    var qualitySheetVisible by remember { mutableStateOf(false) }
+    var versionSheetVisible by remember { mutableStateOf(false) }
     var settingsSheetVisible by remember { mutableStateOf(false) }
     var subtitleStyleVisible by remember { mutableStateOf(false) }
     var sleepTimerVisible by remember { mutableStateOf(false) }
@@ -120,6 +135,16 @@ fun PlayerOverlay(
     // In a party an intro never skips on its own; members who may seek get
     // the Skip pill as a room seek, and nobody else sees it (D8).
     val introPillAllowed = !inRoom || seekEnabled
+
+    // The plan's Quality menu, shown whenever there is a plan (a single entry
+    // still lists Auto + Original). A download playing offline has none.
+    val qualityOptions = remember(state.playbackPlan) {
+        playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+    }
+    val activeQualityId = state.activeQualityId(qualityOptions)
+    val hasQualityMenu = qualityOptions.isNotEmpty()
+    // A party plays exactly the room's file: no version picker.
+    val hasVersionMenu = state.versions.size > 1 && !inRoom
 
     // In a party, Back opens the party panel (PlayerScreen); solo backs out.
     val handleBack: () -> Unit = onBack
@@ -205,7 +230,26 @@ fun PlayerOverlay(
     // stream URLs); hidden for offline/local playback.
     val subtitleToolsAvailable = state.sessionId != null && state.mediaFileId != null
 
-    Box(modifier = modifier.fillMaxSize()) {
+    val menuHandoff = remember { PlayerMenuHandoff() }
+    // A menu that is not drawn (no plan, or Version in a party) must not hide the controls.
+    val anyMenuOpen = tracksSheetVisible || (qualitySheetVisible && hasQualityMenu) ||
+        (versionSheetVisible && hasVersionMenu) || settingsSheetVisible ||
+        subtitleStyleVisible || sleepTimerVisible || chaptersSheetVisible || statsSheetVisible ||
+        subtitleSearchVisible || aiTranslateVisible
+
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val menuPresentation = playerMenuPresentationFor(
+            widthDp = maxWidth.value,
+            heightDp = maxHeight.value,
+            tabletopMode = tabletopMode || tabletopPaneHeight != null,
+        )
+        // A docked menu replaces the controls; the picture beside it stays clear.
+        val menuDocked = anyMenuOpen && menuPresentation == PlayerMenuPresentation.Docked
+        CompositionLocalProvider(
+            LocalPlayerMenuPresentation provides menuPresentation,
+            LocalPlayerMenuHandoff provides menuHandoff,
+            LocalPlayerMenuDockReporter provides onDockedMenuEdgeChanged,
+        ) {
         // Gesture layer stays out of the tree while controls are visible so
         // full-screen pointer handlers cannot consume taps meant for buttons.
         if (!alwaysShowControls && !state.showControls && !state.showUpNext) {
@@ -237,7 +281,7 @@ fun PlayerOverlay(
                 modifier = Modifier
                     .size(56.dp)
                     .align(Alignment.Center),
-                color = Color.White,
+                color = PlayerChrome.Paper,
                 strokeWidth = 3.dp,
             )
         }
@@ -252,16 +296,8 @@ fun PlayerOverlay(
                 .padding(top = 64.dp)
                 .zIndex(3f),
         ) {
-            Surface(
-                color = Color.Black.copy(alpha = 0.72f),
-                shape = RoundedCornerShape(999.dp),
-            ) {
-                Text(
-                    text = "2x",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
-                )
+            PlayerStatusChip {
+                Text(text = "2×", style = PlayerType.PillLabel.copy(fontSize = 15.sp))
             }
         }
 
@@ -304,17 +340,15 @@ fun PlayerOverlay(
                     .zIndex(10f),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                Surface(
-                    color = Color.Black.copy(alpha = 0.78f),
-                    shape = MaterialTheme.shapes.medium,
-                ) {
-                    Text(
-                        text = message.text,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                    )
-                }
+                Text(
+                    text = message.text,
+                    style = PlayerType.RowTitle,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(PlayerChrome.Smoke)
+                        .border(1.dp, PlayerChrome.PanelStroke, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                )
             }
         }
 
@@ -329,34 +363,24 @@ fun PlayerOverlay(
                     .padding(top = 16.dp),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                Row(
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+                PlayerStatusChip {
                     Icon(
-                        imageVector = Icons.Filled.Group,
+                        imageVector = Icons.Rounded.Groups,
                         contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(14.dp),
+                        tint = PlayerChrome.Paper,
+                        modifier = Modifier.size(15.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     val label = roomStatus ?: "${roomSnapshot.memberCount} watching"
                     Text(
                         text = label,
-                        color = Color.White,
-                        fontSize = 13.sp,
+                        style = PlayerType.PillLabel.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
                         maxLines = 2,
                         modifier = Modifier.widthIn(max = 360.dp),
                     )
                     if (isRoomHost && roomSnapshot.code.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Code ${roomSnapshot.code}",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                        )
+                        Text(text = "Code ${roomSnapshot.code}", style = PlayerType.Time.copy(color = PlayerChrome.Graphite))
                     }
                 }
             }
@@ -364,7 +388,7 @@ fun PlayerOverlay(
 
         // Transport controls (shown/hidden with animation)
         AnimatedVisibility(
-            visible = (alwaysShowControls || state.showControls) && !state.showUpNext,
+            visible = (alwaysShowControls || state.showControls) && !state.showUpNext && !menuDocked,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
@@ -374,6 +398,12 @@ fun PlayerOverlay(
             PlayerControls(
                 title = state.title,
                 subtitle = state.subtitle,
+                eyebrow = playerEyebrow(state),
+                tracksValue = playerTracksValue(state),
+                chapterValue = chapterTitleAt(state.chapters, state.position),
+                qualityValue = playerQualityLabel(qualityOptions, activeQualityId),
+                pictureInPictureAvailable = pictureInPictureAvailable,
+                onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
                 isPaused = state.isPaused,
                 position = state.position,
@@ -386,15 +416,15 @@ fun PlayerOverlay(
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
-                // A party plays exactly the room's file: no version picker.
-                hasMultipleVersions = state.versions.size > 1 && !inRoom,
+                hasQualityMenu = hasQualityMenu,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
                 playbackSpeed = playbackSpeed,
                 // A party plays at 1x; the saved speed is never changed from it.
                 playbackSpeedEnabled = !inRoom,
-                nextEpisode = state.nextEpisode.takeUnless { inRoom },
+                // A shuffle replaces the series order: no sequential next episode.
+                nextEpisode = state.nextEpisode.takeUnless { inRoom || state.shuffle != null },
                 brightnessFraction = brightnessFraction,
                 seekEnabled = seekEnabled,
                 playPauseEnabled = playPauseEnabled,
@@ -411,12 +441,16 @@ fun PlayerOverlay(
                     }
                 },
                 onOpenChapters = { chaptersSheetVisible = true },
-                onOpenTracks = { tracksSheetVisible = true },
-                onOpenQuality = { showQualitySelector = true },
+                onOpenTracks = {
+                    tracksInitialTab = TracksTab.Subtitles
+                    tracksSheetVisible = true
+                },
+                onOpenQuality = { qualitySheetVisible = true },
                 onOpenSettings = { settingsSheetVisible = true },
                 onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
                 onPlayNextEpisode = viewModel::playUpNextNow,
                 onSetBrightness = onSetBrightness,
+                onScrubbingChange = viewModel::onScrubbingChanged,
                 castSlot = castSlot,
             )
         }
@@ -482,7 +516,10 @@ fun PlayerOverlay(
             modifier = Modifier.zIndex(3f),
         ) {
             PlayerNextUpScreen(
-                nextEpisode = state.nextEpisode ?: retainedUpNextInfo,
+                // The retained card covers the fade-out only; a shuffle that
+                // can no longer play anything shows Finished while open.
+                nextEpisode = state.nextEpisode
+                    ?: retainedUpNextInfo.takeUnless { state.showUpNext && state.shuffle != null },
                 onVideoBoundsChanged = onNextUpVideoBoundsChanged,
                 onDeckItems = state.onDeckItems,
                 videoEnded = state.upNextVideoEnded,
@@ -497,6 +534,13 @@ fun PlayerOverlay(
                 onPlayOnDeckItem = viewModel::playOnDeckItemNow,
                 onBack = handleBack,
                 compactTabletop = tabletopMode,
+                shuffle = state.shuffle,
+                onPickAnother = viewModel::pickAnotherShuffle,
+                onStopShuffling = {
+                    // Stop shuffling leaves the player, back to where the shuffle started.
+                    viewModel.stopShuffling()
+                    handleBack()
+                },
             )
         }
 
@@ -523,205 +567,226 @@ fun PlayerOverlay(
                 SleepTimerChip(remainingSeconds = active.remainingSeconds)
             }
         }
-    }
 
-    // Combined audio + subtitle picker — opened from the top-bar
-    // captions.bubble icon (iOS parity). Replaces the previous side-popup
-    // "SettingsPanel" + individual SubtitleSelector / AudioTrackSelector
-    // sheets with a single sectioned ModalBottomSheet.
-    TracksSheet(
-        isVisible = tracksSheetVisible,
-        audioTracks = state.audioTracks,
-        selectedAudioIndex = state.selectedAudioIndex,
-        subtitles = state.subtitleTracks,
-        selectedSubtitleIndex = state.selectedSubtitleIndex,
-        onSelectAudio = onSelectAudio,
-        onSelectSubtitle = onSelectSubtitle,
-        onDismiss = { tracksSheetVisible = false },
-        showSearchAction = subtitleToolsAvailable,
-        showTranslateAction = subtitleToolsAvailable &&
-            subtitleTools.aiStatus?.let { it.enabled || it.transcribeEnabled } == true,
-        onSearchSubtitles = {
-            tracksSheetVisible = false
-            subtitleSearchVisible = true
-        },
-        onTranslateWithAi = {
-            tracksSheetVisible = false
-            aiTranslateVisible = true
-        },
-        subtitleStatus = subtitleSync::statusLabelFor,
-        timingActions = subtitleSync.timingActionsFor(
-            state.subtitleTracks.getOrNull(state.selectedSubtitleIndex)?.syncKey,
-        ),
-        onSyncSubtitle = viewModel::requestSubtitleSync,
-        onResetTiming = viewModel::resetSubtitleTiming,
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
-
-    if (subtitleSearchVisible) {
-        SubtitleSearchSheet(
-            tools = subtitleTools,
-            defaultLanguage = LanguageNames.searchCode(state.preferredTextLanguage),
-            onSearch = viewModel::searchSubtitles,
-            onDownload = viewModel::downloadSubtitle,
-            onDismiss = {
-                subtitleSearchVisible = false
-                viewModel.onSearchSheetClosed()
-            },
-            onBack = {
-                subtitleSearchVisible = false
-                tracksSheetVisible = true
-                viewModel.onSearchSheetClosed()
-            },
-            tabletopPaneHeight = tabletopPaneHeight,
-        )
-    }
-
-    if (aiTranslateVisible) {
-        AiTranslateSheet(
-            tools = subtitleTools,
-            subtitleTracks = state.subtitleTracks,
+        // Player menus. In landscape they dock beside the picture (see
+        // PlayerMenu); the controls step aside while one is open.
+        // Audio & Subtitles — opened from its action pill or a settings row.
+        TracksSheet(
+            isVisible = tracksSheetVisible,
             audioTracks = state.audioTracks,
-            defaultTargetLanguage = LanguageNames.searchCode(state.preferredTextLanguage),
-            onRefreshQuota = viewModel::refreshAiQuota,
-            onSubmit = viewModel::startAiJob,
-            onCancelJob = viewModel::cancelAiJob,
-            onDismiss = {
-                aiTranslateVisible = false
-                viewModel.onTranslateSheetClosed()
+            selectedAudioIndex = state.selectedAudioIndex,
+            subtitles = state.subtitleTracks,
+            selectedSubtitleIndex = state.selectedSubtitleIndex,
+            onSelectAudio = onSelectAudio,
+            onSelectSubtitle = onSelectSubtitle,
+            onDismiss = { tracksSheetVisible = false },
+            initialTab = tracksInitialTab,
+            showSearchAction = subtitleToolsAvailable,
+            showTranslateAction = subtitleToolsAvailable &&
+                subtitleTools.aiStatus?.let { it.enabled || it.transcribeEnabled } == true,
+            onSearchSubtitles = {
+                tracksSheetVisible = false
+                subtitleSearchVisible = true
             },
-            onBack = {
-                aiTranslateVisible = false
+            onTranslateWithAi = {
+                tracksSheetVisible = false
+                aiTranslateVisible = true
+            },
+            subtitleStatus = subtitleSync::statusLabelFor,
+            timingActions = subtitleSync.timingActionsFor(
+                state.subtitleTracks.getOrNull(state.selectedSubtitleIndex)?.syncKey,
+            ),
+            onSyncSubtitle = viewModel::requestSubtitleSync,
+            onResetTiming = viewModel::resetSubtitleTiming,
+            tabletopPaneHeight = tabletopPaneHeight,
+        )
+
+        if (subtitleSearchVisible) {
+            SubtitleSearchSheet(
+                tools = subtitleTools,
+                defaultLanguage = LanguageNames.searchCode(state.preferredTextLanguage),
+                onSearch = viewModel::searchSubtitles,
+                onDownload = viewModel::downloadSubtitle,
+                onDismiss = {
+                    subtitleSearchVisible = false
+                    viewModel.onSearchSheetClosed()
+                },
+                onBack = {
+                    subtitleSearchVisible = false
+                    tracksSheetVisible = true
+                    viewModel.onSearchSheetClosed()
+                },
+                tabletopPaneHeight = tabletopPaneHeight,
+            )
+        }
+
+        if (aiTranslateVisible) {
+            AiTranslateSheet(
+                tools = subtitleTools,
+                subtitleTracks = state.subtitleTracks,
+                audioTracks = state.audioTracks,
+                defaultTargetLanguage = LanguageNames.searchCode(state.preferredTextLanguage),
+                onRefreshQuota = viewModel::refreshAiQuota,
+                onSubmit = viewModel::startAiJob,
+                onCancelJob = viewModel::cancelAiJob,
+                onDismiss = {
+                    aiTranslateVisible = false
+                    viewModel.onTranslateSheetClosed()
+                },
+                onBack = {
+                    aiTranslateVisible = false
+                    tracksSheetVisible = true
+                    viewModel.onTranslateSheetClosed()
+                },
+                tabletopPaneHeight = tabletopPaneHeight,
+            )
+        }
+
+        if (qualitySheetVisible && hasQualityMenu) {
+            PlaybackQualitySheet(
+                options = qualityOptions,
+                activeId = activeQualityId,
+                inRoom = inRoom,
+                onSelect = viewModel::onSelectQuality,
+                onDismiss = { qualitySheetVisible = false },
+                tabletopPaneHeight = tabletopPaneHeight,
+            )
+        }
+
+        if (versionSheetVisible && hasVersionMenu) {
+            VersionSelector(
+                versions = state.versions,
+                selectedIndex = state.selectedVersionIndex,
+                onSelect = onSelectVersion,
+                onDismiss = { versionSheetVisible = false },
+                tabletopPaneHeight = tabletopPaneHeight,
+            )
+        }
+
+        // Glass-style playback settings sheet (speed / aspect / HDR / auto-skip / auto-play)
+        PlayerSettingsSheet(
+            isVisible = settingsSheetVisible,
+            onDismiss = { settingsSheetVisible = false },
+            playbackSpeed = playbackSpeed,
+            onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
+            videoGravity = videoGravity,
+            onSetVideoGravity = viewModel::onSetVideoGravity,
+            letterboxExpansion = viewModel.letterboxExpansion.collectAsState().value,
+            onSetLetterboxExpansion = viewModel::onSetLetterboxExpansion,
+            introSkipMode = viewModel.introSkipMode.collectAsState().value,
+            onSetIntroSkipMode = viewModel::onSetIntroSkipMode,
+            autoPlayNextEnabled = viewModel.autoPlayNextEnabled.collectAsState().value,
+            onSetAutoPlayNext = viewModel::onSetAutoPlayNext,
+            hdrEnabled = viewModel.hdrEnabled.collectAsState().value,
+            onSetHdrEnabled = viewModel::onSetHdrEnabled,
+            dolbyVisionEnabled = viewModel.dolbyVisionEnabled.collectAsState().value,
+            onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
+            // A party hides speed (session-only 1x) and the version picker.
+            showPlaybackSpeed = !inRoom,
+            showQuality = hasQualityMenu,
+            qualityLabel = playerQualityLabel(qualityOptions, activeQualityId),
+            onOpenQuality = {
+                settingsSheetVisible = false
+                qualitySheetVisible = true
+            },
+            showVersion = hasVersionMenu,
+            versionLabel = playerVersionLabel(state.versions, state.selectedVersionIndex),
+            onOpenVersion = {
+                settingsSheetVisible = false
+                versionSheetVisible = true
+            },
+            audioLabel = playerAudioLabel(state.audioTracks, state.selectedAudioIndex),
+            subtitleLabel = playerSubtitleLabel(state.subtitleTracks, state.selectedSubtitleIndex),
+            subtitleStyleLabel = subtitleStyleSummary(viewModel.subtitleAppearance.collectAsState().value),
+            onOpenTracks = { tab ->
+                settingsSheetVisible = false
+                tracksInitialTab = tab
                 tracksSheetVisible = true
-                viewModel.onTranslateSheetClosed()
+            },
+            onOpenSubtitleStyle = {
+                settingsSheetVisible = false
+                subtitleStyleVisible = true
+            },
+            onOpenSleepTimer = {
+                settingsSheetVisible = false
+                sleepTimerVisible = true
+            },
+            stats = state.stats,
+            onOpenPlaybackStats = {
+                settingsSheetVisible = false
+                statsSheetVisible = true
+            },
+            audioDelayMs = viewModel.audioDelayMs.collectAsState().value,
+            audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
+            onSetAudioDelay = viewModel::onSetAudioDelay,
+            subtitleDelayMs = viewModel.subtitleDelayMs.collectAsState().value,
+            onSetSubtitleDelay = viewModel::onSetSubtitleDelay,
+            sleepTimerState = sleepTimerState,
+            tabletopPaneHeight = tabletopPaneHeight,
+        )
+
+        PlaybackStatsSheet(
+            isVisible = statsSheetVisible,
+            stats = state.stats,
+            onDismiss = { statsSheetVisible = false },
+            onBack = {
+                statsSheetVisible = false
+                settingsSheetVisible = true
             },
             tabletopPaneHeight = tabletopPaneHeight,
         )
-    }
 
-    if (showQualitySelector && !inRoom) {
-        QualitySelector(
-            versions = state.versions,
-            selectedIndex = state.selectedVersionIndex,
-            onSelect = onSelectVersion,
-            onDismiss = { showQualitySelector = false },
+        // Chapters picker — opened from the HUD chapters button (HUD product
+        // decision: chapters + tracks + quality; no longer reachable from the
+        // gear sheet). Selecting a row seeks the player to the chapter's
+        // startSeconds. The HUD button hides when the active version has no
+        // embedded chapters.
+        ChaptersSheet(
+            isVisible = chaptersSheetVisible,
+            chapters = state.chapters,
+            position = state.position,
+            duration = state.duration,
+            // A room seek in a party (a guest is told only the host can seek).
+            onSelect = { idx ->
+                viewModel.onSeekToChapter(idx)?.let(onSeek)
+            },
+            onDismiss = { chaptersSheetVisible = false },
             tabletopPaneHeight = tabletopPaneHeight,
         )
+
+        // Subtitle styling sheet — opened from the "Subtitle Style" row in
+        // PlayerSettingsSheet. Material 3 sheets can't nest, so the parent sheet
+        // dismisses itself before we open this one.
+        SubtitleStyleSheet(
+            isVisible = subtitleStyleVisible,
+            appearance = viewModel.subtitleAppearance.collectAsState().value,
+            showTextOpacity = viewModel.subtitleTextOpacitySupported.collectAsState().value,
+            onUpdate = viewModel::onEditSubtitleAppearance,
+            onDismiss = { subtitleStyleVisible = false },
+            onBack = {
+                subtitleStyleVisible = false
+                settingsSheetVisible = true
+            },
+            tabletopPaneHeight = tabletopPaneHeight,
+        )
+
+        // Sleep timer picker — opened from the "Sleep Timer" row in
+        // PlayerSettingsSheet. Same nested-sheet caveat as Subtitle Style above.
+        SleepTimerSheet(
+            isVisible = sleepTimerVisible,
+            activeState = sleepTimerState,
+            defaultMinutes = sleepTimerDefault,
+            onStart = viewModel::onStartSleepTimer,
+            onCancel = viewModel::onCancelSleepTimer,
+            onDismiss = { sleepTimerVisible = false },
+            onBack = {
+                sleepTimerVisible = false
+                settingsSheetVisible = true
+            },
+            tabletopPaneHeight = tabletopPaneHeight,
+        )
+        }
     }
-
-    // Glass-style playback settings sheet (speed / aspect / HDR / auto-skip / auto-play)
-    PlayerSettingsSheet(
-        isVisible = settingsSheetVisible,
-        onDismiss = { settingsSheetVisible = false },
-        playbackSpeed = playbackSpeed,
-        onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
-        videoGravity = videoGravity,
-        onSetVideoGravity = viewModel::onSetVideoGravity,
-        letterboxExpansion = viewModel.letterboxExpansion.collectAsState().value,
-        onSetLetterboxExpansion = viewModel::onSetLetterboxExpansion,
-        introSkipMode = viewModel.introSkipMode.collectAsState().value,
-        onSetIntroSkipMode = viewModel::onSetIntroSkipMode,
-        autoPlayNextEnabled = viewModel.autoPlayNextEnabled.collectAsState().value,
-        onSetAutoPlayNext = viewModel::onSetAutoPlayNext,
-        hdrEnabled = viewModel.hdrEnabled.collectAsState().value,
-        onSetHdrEnabled = viewModel::onSetHdrEnabled,
-        dolbyVisionEnabled = viewModel.dolbyVisionEnabled.collectAsState().value,
-        onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
-        // A party hides speed (session-only 1x) and the version picker.
-        showPlaybackSpeed = !inRoom,
-        showQuality = !inRoom,
-        qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
-        onOpenQuality = {
-            settingsSheetVisible = false
-            showQualitySelector = true
-        },
-        audioLabel = playerAudioLabel(state.audioTracks, state.selectedAudioIndex),
-        subtitleLabel = playerSubtitleLabel(state.subtitleTracks, state.selectedSubtitleIndex),
-        onOpenTracks = {
-            settingsSheetVisible = false
-            tracksSheetVisible = true
-        },
-        onOpenSubtitleStyle = {
-            settingsSheetVisible = false
-            subtitleStyleVisible = true
-        },
-        onOpenSleepTimer = {
-            settingsSheetVisible = false
-            sleepTimerVisible = true
-        },
-        stats = state.stats,
-        onOpenPlaybackStats = {
-            settingsSheetVisible = false
-            statsSheetVisible = true
-        },
-        audioDelayMs = viewModel.audioDelayMs.collectAsState().value,
-        audioDelayEnabled = state.playbackPlan?.claims?.audio?.passthrough != true,
-        onSetAudioDelay = viewModel::onSetAudioDelay,
-        subtitleDelayMs = viewModel.subtitleDelayMs.collectAsState().value,
-        onSetSubtitleDelay = viewModel::onSetSubtitleDelay,
-        sleepTimerState = sleepTimerState,
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
-
-    PlaybackStatsSheet(
-        isVisible = statsSheetVisible,
-        stats = state.stats,
-        onDismiss = { statsSheetVisible = false },
-        onBack = {
-            statsSheetVisible = false
-            settingsSheetVisible = true
-        },
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
-
-    // Chapters picker — opened from the HUD chapters button (HUD product
-    // decision: chapters + tracks + quality; no longer reachable from the
-    // gear sheet). Selecting a row seeks the player to the chapter's
-    // startSeconds. The HUD button hides when the active version has no
-    // embedded chapters.
-    ChaptersSheet(
-        isVisible = chaptersSheetVisible,
-        chapters = state.chapters,
-        position = state.position,
-        // A room seek in a party (a guest is told only the host can seek).
-        onSelect = { idx ->
-            viewModel.onSeekToChapter(idx)?.let(onSeek)
-        },
-        onDismiss = { chaptersSheetVisible = false },
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
-
-    // Subtitle styling sheet — opened from the "Subtitle Style" row in
-    // PlayerSettingsSheet. Material 3 sheets can't nest, so the parent sheet
-    // dismisses itself before we open this one.
-    SubtitleStyleSheet(
-        isVisible = subtitleStyleVisible,
-        appearance = viewModel.subtitleAppearance.collectAsState().value,
-        showTextOpacity = viewModel.subtitleTextOpacitySupported.collectAsState().value,
-        onUpdate = viewModel::onEditSubtitleAppearance,
-        onDismiss = { subtitleStyleVisible = false },
-        onBack = {
-            subtitleStyleVisible = false
-            settingsSheetVisible = true
-        },
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
-
-    // Sleep timer picker — opened from the "Sleep Timer" row in
-    // PlayerSettingsSheet. Same nested-sheet caveat as Subtitle Style above.
-    SleepTimerSheet(
-        isVisible = sleepTimerVisible,
-        activeState = sleepTimerState,
-        defaultMinutes = sleepTimerDefault,
-        onStart = viewModel::onStartSleepTimer,
-        onCancel = viewModel::onCancelSleepTimer,
-        onDismiss = { sleepTimerVisible = false },
-        onBack = {
-            sleepTimerVisible = false
-            settingsSheetVisible = true
-        },
-        tabletopPaneHeight = tabletopPaneHeight,
-    )
 }
 
 /**
@@ -730,28 +795,77 @@ fun PlayerOverlay(
  */
 @Composable
 private fun SleepTimerChip(remainingSeconds: Int) {
-    Row(
-        modifier = Modifier
-            .background(
-                color = Color.Black.copy(alpha = 0.55f),
-                shape = RoundedCornerShape(20.dp),
-            )
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    PlayerStatusChip {
         Icon(
-            imageVector = Icons.Outlined.Bedtime,
+            imageVector = Icons.Rounded.Bedtime,
             contentDescription = "Sleep timer active",
-            tint = Color.White,
+            tint = PlayerChrome.Paper,
             modifier = Modifier.size(14.dp),
         )
         Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = formatRemaining(remainingSeconds),
-            color = Color.White,
-            fontSize = 13.sp,
-        )
+        Text(text = formatRemaining(remainingSeconds), style = PlayerType.Time)
     }
+}
+
+/** A small smoked capsule for status that sits on the picture. */
+@Composable
+private fun PlayerStatusChip(content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .border(1.dp, PlayerChrome.DiscStroke, RoundedCornerShape(20.dp))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
+}
+
+/**
+ * The small line above the title: "MOVIE · 2026", or "SEVERANCE · S2:E4" for
+ * an episode, whose title is then the episode's own.
+ */
+internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
+    val series = state.seriesTitle?.takeIf { it.isNotBlank() }
+    if (series != null) {
+        val code = if (state.seasonNumber != null && state.episodeNumber != null) {
+            "S${state.seasonNumber}:E${state.episodeNumber}"
+        } else {
+            null
+        }
+        return listOfNotNull(series, code).joinToString(" · ")
+    }
+    val kind = when {
+        state.contentType == "movie" -> "Movie"
+        else -> null
+    }
+    return listOfNotNull(kind, state.subtitle.takeIf { it.isNotBlank() }).joinToString(" · ")
+}
+
+/** The value on the Audio & Subtitles pill: the subtitle language when one is on. */
+internal fun playerTracksValue(state: PlayerViewModel.PlayerUiState): String? =
+    if (state.selectedSubtitleIndex >= 0) {
+        subtitleTrackShortLabel(state.subtitleTracks.getOrNull(state.selectedSubtitleIndex), state.selectedSubtitleIndex)
+    } else {
+        null
+    }
+
+/** "Large · White · Box" for the settings menu's Subtitle style row. */
+internal fun subtitleStyleSummary(appearance: org.siloserver.silo.model.settings.SubtitleAppearance): String {
+    val size = when (appearance.fontSize) {
+        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Small -> "Small"
+        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Medium -> "Medium"
+        org.siloserver.silo.model.settings.SubtitleFontSizePreset.Large -> "Large"
+        org.siloserver.silo.model.settings.SubtitleFontSizePreset.XLarge -> "Extra large"
+        else -> "Largest"
+    }
+    val background = when (appearance.backgroundStyle) {
+        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Box -> "Box"
+        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Shadow -> "Shadow"
+        org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset.Outline -> "Outline"
+        else -> "No background"
+    }
+    return "$size · $background"
 }
 
 // Directional gravity steps, clamped at both ends (iOS nextVideoGravity /
@@ -776,11 +890,14 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
 }
 
 /**
- * Root-list values for the gear menu. These mirror what the quality and
- * tracks sheets show when opened, so the menu can state the current pick
+ * Root-list values for the gear menu. These mirror what the quality, version,
+ * and tracks sheets show when opened, so the menu can state the current pick
  * without the user having to open anything.
  */
-internal fun playerQualityLabel(
+internal fun playerQualityLabel(options: List<PlaybackQualityOption>, activeId: String?): String =
+    options.firstOrNull { it.id == activeId }?.name ?: "Auto"
+
+internal fun playerVersionLabel(
     versions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedIndex: Int,
 ): String {
@@ -799,22 +916,8 @@ internal fun playerAudioLabel(
     val track = tracks.getOrNull(selectedIndex) ?: return "Default"
     // Language first, not title: a container's audio title is often the full
     // codec string ("ATSC A/52B (AC-3, E-AC-3)") and swamps the row.
-    val name = track.language?.takeIf { it.isNotBlank() }?.uppercase()
-        ?: track.title?.takeIf { it.isNotBlank() }
-        ?: "Audio ${selectedIndex + 1}"
-    val detail = listOfNotNull(
-        track.codec?.takeIf { it.isNotBlank() }?.uppercase(),
-        track.channels?.let(::audioChannelLabel),
-    ).joinToString(" ")
-    return if (detail.isBlank()) name else "$name · $detail"
-}
-
-private fun audioChannelLabel(channels: Int): String = when (channels) {
-    1 -> "Mono"
-    2 -> "Stereo"
-    6 -> "5.1"
-    8 -> "7.1"
-    else -> "${channels}ch"
+    val presentation = audioTrackPresentation(track, selectedIndex)
+    return listOfNotNull(presentation.title, audioChannelsDisplayName(track.channels)).joinToString(" · ")
 }
 
 internal fun playerSubtitleLabel(
@@ -822,6 +925,5 @@ internal fun playerSubtitleLabel(
     selectedIndex: Int,
 ): String {
     if (selectedIndex < 0) return "Off"
-    val track = tracks.getOrNull(selectedIndex) ?: return "Off"
-    return subtitleTrackLabel(track, selectedIndex)
+    return subtitleTrackShortLabel(tracks.getOrNull(selectedIndex), selectedIndex) ?: "Off"
 }

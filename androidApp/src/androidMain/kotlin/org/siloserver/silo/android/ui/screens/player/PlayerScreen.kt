@@ -249,6 +249,8 @@ fun PlayerScreen(
     // party. When set, a WatchPartyPlayback binds this player to the room and
     // the room's playback context, not the route, decides what plays.
     roomId: String? = null,
+    // The running shuffle this item is a pick of (see PlayerViewModel.attachShuffle).
+    shuffleId: String? = null,
     navController: NavHostController,
     viewModel: PlayerViewModel = koinViewModel(),
 ) {
@@ -841,6 +843,7 @@ fun PlayerScreen(
         // the route, so nothing plays solo first.
         if (inRoom) return@LaunchedEffect
         if (!viewModel.claimInitialRouteLoad()) return@LaunchedEffect
+        viewModel.attachShuffle(shuffleId)
         viewModel.loadContent(
             libraryId = libraryId,
             contentId = contentId,
@@ -1693,6 +1696,24 @@ fun PlayerScreen(
             val controller = mediaController
             val videoGravity by viewModel.videoGravity.collectAsState()
             var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+            // Left edge of a docked player menu (root px), null when none is
+            // open. The subtitle canvas pads its right side by the overlap so
+            // cues re-center in the picture that is still visible.
+            var dockedMenuEdgePx by remember { mutableStateOf<Float?>(null) }
+            val latestDockedMenuEdgePx by rememberUpdatedState(dockedMenuEdgePx)
+            LaunchedEffect(playerViewRef, dockedMenuEdgePx) {
+                playerViewRef?.subtitleView?.let { padSubtitlesClearOfDock(it, dockedMenuEdgePx) }
+            }
+            // The subtitle manager resizes and moves the canvas on its own
+            // (video size, aspect, letterbox), so re-pad after each layout too.
+            DisposableEffect(playerViewRef) {
+                val subtitleView = playerViewRef?.subtitleView ?: return@DisposableEffect onDispose { }
+                val listener = android.view.View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                    view.post { padSubtitlesClearOfDock(view, latestDockedMenuEdgePx) }
+                }
+                subtitleView.addOnLayoutChangeListener(listener)
+                onDispose { subtitleView.removeOnLayoutChangeListener(listener) }
+            }
             val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
             // The camera only reaches the picture once expansion pushes it out
             // to the edges — at FIT's 2560px the pillarbox already swallows it.
@@ -1923,10 +1944,11 @@ fun PlayerScreen(
                             }
                         },
                         showBufferingIndicator = activeTabletopPaneLayout == null,
-                        castSlot = {
+                        castSlot = { discModifier ->
                             // No Cast in a party (D7).
                             if (!inRoom) {
                                 SiloCastButton(
+                                    modifier = discModifier,
                                     castManager = castManager,
                                     onStartCast = {
                                         castScope.launch {
@@ -1964,6 +1986,18 @@ fun PlayerScreen(
                         onSelectSubtitle = { viewModel.onSelectSubtitle(it) },
                         onSelectAudio = { viewModel.onSelectAudio(it) },
                         onSelectVersion = { viewModel.onSelectVersion(it) },
+                        pictureInPictureAvailable = activity?.let {
+                            pictureInPictureCoordinator.canOfferPictureInPicture(it, SiloPictureInPictureSurface.Mobile)
+                        } == true,
+                        onEnterPictureInPicture = {
+                            activity?.let {
+                                pictureInPictureCoordinator.enterPictureInPictureOnRequest(
+                                    it,
+                                    SiloPictureInPictureSurface.Mobile,
+                                )
+                            }
+                        },
+                        onDockedMenuEdgeChanged = { edge -> dockedMenuEdgePx = edge },
                         modifier = playerOverlayModifier,
                     )
                 }
@@ -2122,4 +2156,21 @@ private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
         ?.takeIf { plan.claims.audio.passthrough }
         ?.let { listOf(it) }
         .orEmpty()
+}
+
+/**
+ * Pads the subtitle canvas's right side by its overlap with a docked player
+ * menu whose left edge is [dockedMenuEdgePx] (root px), so cues re-center in
+ * the picture that is still visible. Null clears the padding.
+ */
+private fun padSubtitlesClearOfDock(subtitleView: android.view.View, dockedMenuEdgePx: Float?) {
+    val location = IntArray(2)
+    subtitleView.getLocationInWindow(location)
+    val viewRight = location[0] + subtitleView.width
+    val overlap = dockedMenuEdgePx
+        ?.let { edge -> (viewRight - edge).toInt().coerceIn(0, subtitleView.width / 2) }
+        ?: 0
+    if (subtitleView.paddingRight != overlap) {
+        subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, overlap, subtitleView.paddingBottom)
+    }
 }

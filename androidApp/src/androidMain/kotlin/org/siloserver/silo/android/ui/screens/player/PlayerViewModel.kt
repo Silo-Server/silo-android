@@ -65,6 +65,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
@@ -304,6 +305,8 @@ class PlayerViewModel(
     // Cached active profile; offline playback reads subtitle preferences from
     // it instead of waiting on the server. Optional for the same reason.
     private val activeProfileStore: org.siloserver.silo.model.profile.ActiveProfileStore? = null,
+    // Shuffle: the server picks what plays next. Optional for the same reason.
+    private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -341,6 +344,8 @@ class PlayerViewModel(
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
+        const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
+        const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
         // Stored orientation-mode values — raw-value parity with iOS
         // `PlayerOrientationMode` so the device-scoped setting round-trips.
@@ -378,10 +383,29 @@ class PlayerViewModel(
         val runtimeMinutes: Int,
         val seriesTitle: String? = null,
         val overview: String? = null,
+        /** False for a shuffled movie, which has no season or episode line. */
+        val isEpisode: Boolean = true,
     ) {
         val label: String
-            get() = "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
+            get() = if (!isEpisode) {
+                title.orEmpty()
+            } else {
+                "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
+            }
     }
+
+    /**
+     * Set while a shuffle plays: the Up Next card announces the server's
+     * random pick from the scope [scopeLabel] names, and the player offers no
+     * sequential next episode.
+     */
+    data class ShuffleUiState(
+        /** Null until the shuffle has been read. */
+        val scopeLabel: String? = null,
+        val pickingAnother: Boolean = false,
+        /** A transient failure to continue or pick another. */
+        val message: String? = null,
+    )
 
     data class PlayerUiState(
         val isLoading: Boolean = true,
@@ -403,6 +427,8 @@ class PlayerViewModel(
         val title: String = "",
         val subtitle: String = "",
         val seriesTitle: String? = null,
+        /** Catalog item type ("movie", "episode", …), for the controls' "MOVIE · 2026" line. */
+        val contentType: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -414,6 +440,8 @@ class PlayerViewModel(
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        /** The quality preference the playing plan was built for; null is Auto. */
+        val committedQualityPreference: String? = null,
         val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
@@ -474,6 +502,7 @@ class PlayerViewModel(
         val upNextVideoEnded: Boolean = false,
         /** Remaining auto-play countdown seconds; null = no countdown (gated / auto-play off). */
         val upNextCountdownSeconds: Int? = null,
+        val shuffle: ShuffleUiState? = null,
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,
         /**
@@ -699,6 +728,15 @@ class PlayerViewModel(
     private var pendingApproachingEndVideoEnded: Boolean? = null
     private var upNextCountdownJob: Job? = null
     private val nextUpTransitionGate = NextUpTransitionGate()
+    // The running shuffle this player plays picks from; null outside a shuffle.
+    private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? = null
+    // The later part of a multi-part pick that plays before the shuffle moves on.
+    private var shuffleNextPartFileId: Int? = null
+    // Once per item: the server re-checks the next pick when the card opens.
+    private var shuffleRefreshedForPostRoll = false
+    private var shuffleAdvanceJob: Job? = null
+    private var shufflePickJob: Job? = null
+    private var shuffleMessageJob: Job? = null
     // Auto-dismiss timer for the transient version-switch failure pill. A new
     // failure cancels the prior job so a stale one can't clear the fresh
     // message early (repeated identical failures used to be dismissed within a
@@ -875,6 +913,8 @@ class PlayerViewModel(
     private var aiJobHandle: Job? = null
 
     private var controlsHideJob: Job? = null
+    // True while the seek bar is dragged; see onScrubbingChanged.
+    private var scrubbing = false
     private var introObserverJob: Job? = null
     private var lifecycleObserverJob: Job? = null
     private var resolveNextEpisodeJob: Job? = null
@@ -1161,11 +1201,23 @@ class PlayerViewModel(
             normalizedRequestedQuality = normalizedPreferredQuality,
             preserveCurrent = preserveRouteIntent,
         )
+        // A quality picked during this title's playback, or this room epoch,
+        // outlives reloads of it (recovery, retry, the next shuffle part), so
+        // they start with it rather than the route's quality.
+        val carriesPickedQuality = keepsPickedQuality(
+            contentId = contentId,
+            previousContentId = lastLoadArgs?.contentId,
+            routeNamesQuality = !preserveRouteIntent && normalizedPreferredQuality != null,
+            room = room,
+            currentRoom = currentRoomContext,
+        )
+        if (room == null && !carriesPickedQuality) sessionQualityOverride = null
+        val loadQuality = sessionQualityOverride.takeIf { carriesPickedQuality } ?: effectivePreferredQuality
         loadJob?.cancel()
         val loadOwner = loadOwners.begin(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = effectivePreferredQuality,
+            preferredQuality = loadQuality,
         )
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
@@ -1186,6 +1238,8 @@ class PlayerViewModel(
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
         autoAdvanceHandled = false
         pendingApproachingEndVideoEnded = null
+        shuffleNextPartFileId = null
+        shuffleRefreshedForPostRoll = false
         resetPlaybackRecoveryState()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
@@ -1241,7 +1295,7 @@ class PlayerViewModel(
                         libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
-                        preferredQualityOverride = effectivePreferredQuality,
+                        preferredQualityOverride = loadQuality,
                         roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
@@ -1558,6 +1612,7 @@ class PlayerViewModel(
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
                 seriesTitle = watchDetail?.seriesTitle,
+                contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -3282,7 +3337,8 @@ class PlayerViewModel(
     private var roomObservedSessionId: String? = null
     private var roomLastUiSessionId: String? = null
 
-    // Quality chosen during this room epoch (the lower-quality offer).
+    // Quality chosen during this title's playback, or this room epoch's (the
+    // Quality menu or the lower-quality offer).
     private var sessionQualityOverride: String? = null
 
     /**
@@ -3475,10 +3531,27 @@ class PlayerViewModel(
         return true
     }
 
-    private fun noteRoomQualityCommitted(committed: String?) {
+    /**
+     * Quality menu pick: replans at [id], a plan entry's label sent verbatim,
+     * or auto to hand the choice back to the server. The active row is a no-op.
+     */
+    fun onSelectQuality(id: String) {
+        val state = _uiState.value
+        val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+        if (menu.none { it.id == id }) return
+        if (id == state.activeQualityId(menu)) return
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        mobileSubtitleTransactions.selectQuality(id)
+    }
+
+    /**
+     * Keeps a committed quality for later replans, seek recoveries and
+     * restarts of this title, which otherwise fall back to the route's.
+     */
+    private fun noteQualityCommitted(committed: String?) {
         if (committed == null || committed == currentMobileQualityPreference()) return
         sessionQualityOverride = committed
-        _roomQualityChanges.tryEmit(Unit)
+        if (inRoom) _roomQualityChanges.tryEmit(Unit)
     }
 
     private fun roomMediaTransitioning(state: PlayerUiState): Boolean =
@@ -3646,6 +3719,7 @@ class PlayerViewModel(
                 pendingSubtitleIdentity = snapshot.pendingIdentity,
                 localSubtitleMountIdentity = snapshot.localMountIdentity,
                 subtitleApplying = snapshot.subtitleApplying,
+                committedQualityPreference = snapshot.transition.committed.qualityPreference,
             )
         }
         val state = _uiState.value
@@ -3657,9 +3731,15 @@ class PlayerViewModel(
             transactionActive = mobileSubtitleTransactions.hasActiveTransaction,
         )
         snapshot.failureMessage?.let {
-            showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
+            showVersionSwitchMessage(
+                if (snapshot.qualityChangeFailed) {
+                    "Couldn't change quality. Try again."
+                } else {
+                    "Couldn't apply subtitles — playback continues unchanged."
+                },
+            )
         }
-        if (inRoom) noteRoomQualityCommitted(snapshot.transition.committed.qualityPreference)
+        noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -4545,7 +4625,18 @@ class PlayerViewModel(
         autoPlayGuard.recordUserAction()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
-        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+        // An On Deck item is outside the shuffle: playback leaves it, but the
+        // shuffle stays on the server for another device to continue. An
+        // advance, part change, or Pick Another still running must not move
+        // the shuffle or load over the On Deck item.
+        if (shuffleAdvanceJob?.isActive == true) {
+            shuffleAdvanceJob?.cancel()
+            // An advance may already hold the transition for its pick.
+            nextUpTransitionGate.cancel()
+        }
+        shufflePickJob?.cancel()
+        shufflePlayback = null
+        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null, shuffle = null) }
         viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
             if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
@@ -4554,6 +4645,10 @@ class PlayerViewModel(
     }
 
     private fun resolveNextEpisode() {
+        if (shufflePlayback != null) {
+            resolveShuffleNext()
+            return
+        }
         val state = _uiState.value
         val seriesId = state.seriesId ?: return
         val curSeason = state.seasonNumber ?: return
@@ -4620,6 +4715,17 @@ class PlayerViewModel(
         if (nextUpTransitionGate.isActive) return
         // Watch Party is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
+        if (shufflePlayback != null) {
+            // A multi-part pick plays its later parts before the shuffle moves on.
+            shuffleNextPartFileId?.let { fileId ->
+                if (videoEnded) playNextShufflePart(fileId)
+                return
+            }
+            if (!shuffleRefreshedForPostRoll) {
+                shuffleRefreshedForPostRoll = true
+                refreshShuffleNext()
+            }
+        }
         if (autoAdvanceHandled) {
             if (videoEnded) {
                 // Keep Watching dismisses the credits prompt, but finishing the
@@ -4768,6 +4874,10 @@ class PlayerViewModel(
             _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
             return
         }
+        if (shufflePlayback != null) {
+            advanceShuffle()
+            return
+        }
         val nextContentId = _uiState.value.nextEpisode?.contentId ?: return
         if (!nextUpTransitionGate.begin(nextContentId)) return
         _uiState.update {
@@ -4790,6 +4900,204 @@ class PlayerViewModel(
                 resumePositionOverride = 0.0,
                 suppressResumeRewind = true,
             )
+        }
+    }
+
+    // ---- Shuffle ----------------------------------------------------------------
+
+    /**
+     * Plays this player's items as picks of the running shuffle [shuffleId]:
+     * the Up Next card announces the server's next pick, and no sequential
+     * next episode is offered. Called once, before the route's first load.
+     */
+    fun attachShuffle(shuffleId: String?) {
+        if (shuffleId.isNullOrBlank() || shufflePlayback?.shuffleId == shuffleId) return
+        val store = shuffleFeatureStore ?: return
+        shufflePlayback = store.playback(shuffleId)
+        _uiState.update { it.copy(shuffle = ShuffleUiState()) }
+    }
+
+    private fun resolveShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val state = _uiState.value
+        val forContentId = state.contentId
+        // The post-roll waits for the last part of a multi-part pick.
+        shuffleNextPartFileId = org.siloserver.silo.playback.nextPlaybackPartFileId(
+            versions = state.versions,
+            currentFileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId,
+        )
+        if (shuffleNextPartFileId != null) return
+        resolveNextEpisodeJob?.cancel()
+        // The advance that started this item already returned its next pick.
+        if (shuffle.latest?.current?.contentId == forContentId) {
+            publishShuffleNext(forContentId)
+            return
+        }
+        resolveNextEpisodeJob = viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Re-reads the shuffle as the card opens: the server replaces a next pick that can no longer play. */
+    private fun refreshShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val forContentId = _uiState.value.contentId
+        viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Shows the shuffle's pick after [forContentId], or the finished state when there is none. */
+    private fun publishShuffleNext(forContentId: String) {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.contentId != forContentId || nextUpTransitionGate.isActive) return
+        val info = shuffle.nextPickAfter(forContentId)?.let { pick ->
+            NextEpisodeInfo(
+                contentId = pick.contentId,
+                seasonNumber = pick.seasonNumber,
+                episodeNumber = pick.episodeNumber,
+                title = pick.title,
+                stillUrl = pick.stillUrl,
+                stillThumbhash = pick.stillThumbhash,
+                runtimeMinutes = pick.runtimeMinutes,
+                seriesTitle = pick.seriesTitle,
+                overview = pick.overview,
+                isEpisode = pick.isEpisode,
+            )
+        }
+        val previous = _uiState.value.nextEpisode
+        _uiState.update {
+            it.copy(
+                nextEpisode = info,
+                shuffle = it.shuffle?.copy(scopeLabel = shuffle.scopeLabel ?: it.shuffle.scopeLabel),
+            )
+        }
+        val countingDownAtEnd = upNextCountdownJob?.isActive == true && _uiState.value.upNextVideoEnded
+        when {
+            info == null -> cancelUpNextCountdown()
+            // A different pick, such as Pick Another, gets the full countdown
+            // rather than whatever was left of the previous one.
+            previous != null && previous.contentId != info.contentId && countingDownAtEnd -> {
+                _uiState.update { it.copy(upNextCountdownSeconds = UP_NEXT_COUNTDOWN_SECONDS) }
+                startUpNextCountdown()
+            }
+            previous == null && !autoAdvanceHandled ->
+                pendingApproachingEndVideoEnded?.let { videoEnded -> commitApproachingEnd(info, videoEnded) }
+        }
+    }
+
+    /** Plays the next part of a multi-part pick from its start. */
+    private fun playNextShufflePart(fileId: Int) {
+        if (shuffleAdvanceJob?.isActive == true) return
+        shuffleNextPartFileId = null
+        val contentId = _uiState.value.contentId
+        val shuffle = shufflePlayback
+        // Every load moves this counter, so a reload of the same item during the stop also ends the part change.
+        val loadGeneration = aiPlaybackGeneration
+        fun stillCurrent() = loadGeneration == aiPlaybackGeneration &&
+            shufflePlayback === shuffle && _uiState.value.contentId == contentId
+        shuffleAdvanceJob = viewModelScope.launch {
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                // Nothing played, so the part is still next when playback ends.
+                if (stillCurrent() && shuffleNextPartFileId == null) shuffleNextPartFileId = fileId
+                return@launch
+            }
+            if (!stillCurrent()) return@launch
+            loadContent(
+                contentId = contentId,
+                preferredFileId = fileId,
+                resumePositionOverride = 0.0,
+                suppressResumeRewind = true,
+                preserveRouteIntent = true,
+            )
+        }
+    }
+
+    /**
+     * Moves the shuffle past the item that played and plays the returned
+     * pick from the beginning. The server moves on only while that item is
+     * still current, so a repeated press or a retry plays the same pick.
+     */
+    private fun advanceShuffle() {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.nextEpisode == null) return
+        if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val fromContentId = _uiState.value.contentId
+        _uiState.update { it.copy(upNextCountdownSeconds = null) }
+        val pendingPick = shufflePickJob
+        shuffleAdvanceJob = viewModelScope.launch {
+            // A Pick Another still in flight decides what plays; wait for it.
+            pendingPick?.join()
+            if (shufflePlayback !== shuffle) return@launch
+            val result = shuffle.advance(fromContentId)
+            if (_uiState.value.contentId != fromContentId || shufflePlayback !== shuffle) return@launch
+            val target = (result as? ApiResult.Success)?.data?.current?.contentId
+            if (target == null) {
+                if (shuffle.exhausted) publishShuffleNext(fromContentId) else showShuffleMessage(SHUFFLE_CONTINUE_FAILED)
+                return@launch
+            }
+            if (!nextUpTransitionGate.begin(target)) return@launch
+            _uiState.update {
+                it.copy(showUpNext = true, isNextUpTransitioning = true, upNextCountdownSeconds = null)
+            }
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                nextUpTransitionGate.cancel()
+                _uiState.update { it.copy(showUpNext = false, isNextUpTransitioning = false) }
+                return@launch
+            }
+            if (!nextUpTransitionGate.isActive) return@launch
+            loadContent(
+                contentId = target,
+                // Like the first pick, every shuffled item plays from the start.
+                resumePositionOverride = 0.0,
+                suppressResumeRewind = true,
+            )
+        }
+    }
+
+    /** Up Next "Pick Another": the server replaces the announced pick. */
+    fun pickAnotherShuffle() {
+        val shuffle = shufflePlayback ?: return
+        if (shufflePickJob?.isActive == true || shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val forContentId = _uiState.value.contentId
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = true)) }
+        shufflePickJob = viewModelScope.launch {
+            val result = shuffle.pickAnother()
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = false)) }
+            if (_uiState.value.contentId != forContentId || shufflePlayback !== shuffle) return@launch
+            if (result !is ApiResult.Success && !shuffle.exhausted) {
+                showShuffleMessage(SHUFFLE_PICK_FAILED)
+                return@launch
+            }
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /**
+     * Up Next "Stop shuffling": ends the shuffle on the server. The screen
+     * leaves the player right after, back to where the shuffle started.
+     */
+    fun stopShuffling() {
+        val shuffle = shufflePlayback ?: return
+        shufflePlayback = null
+        shuffleAdvanceJob?.cancel()
+        shufflePickJob?.cancel()
+        upNextCountdownJob?.cancel()
+        upNextCountdownJob = null
+        shuffle.stopInBackground()
+        _uiState.update { it.copy(shuffle = null, nextEpisode = null, upNextCountdownSeconds = null) }
+    }
+
+    private fun showShuffleMessage(message: String) {
+        shuffleMessageJob?.cancel()
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = message)) }
+        shuffleMessageJob = viewModelScope.launch {
+            delay(4_000)
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = null)) }
         }
     }
 
@@ -4907,6 +5215,9 @@ class PlayerViewModel(
             routeIntentState.recoverVersionSelection(state.contentId)
         } else {
             routeIntentState.beginVersionSelection(state.contentId, version.fileId)
+            // Choosing a file drops a picked quality: a quality served by
+            // another version would move playback straight off this one.
+            sessionQualityOverride = null
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
@@ -5010,6 +5321,16 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Holds the controls on screen while the seek bar is dragged: an auto-hide
+     * mid-drag would remove the bar and drop the seek. The timer restarts when
+     * the drag ends.
+     */
+    fun onScrubbingChanged(active: Boolean) {
+        scrubbing = active
+        scheduleControlsHide()
+    }
+
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
@@ -5082,6 +5403,7 @@ class PlayerViewModel(
 
     private fun scheduleControlsHide() {
         controlsHideJob?.cancel()
+        if (scrubbing) return
         controlsHideJob = viewModelScope.launch {
             delay(CONTROLS_AUTO_HIDE_MS)
             val state = _uiState.value
@@ -5220,6 +5542,7 @@ class PlayerViewModel(
                 error = null,
                 title = title,
                 subtitle = subtitle,
+                contentType = watchDetail?.type,
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no
                 // server session needed.
@@ -5475,4 +5798,24 @@ internal fun authoritativePlaybackSubtitleOrdinal(
     -1 -> -1
     else -> playbackTracks.indexOfFirst { it.index == serverIndex }
         .takeIf { it >= 0 }
+}
+
+/**
+ * Whether a quality picked earlier carries into this load. It does for a
+ * reload of the same title outside a room, unless the route itself names a
+ * quality, and for a reload inside the same room epoch. Any other title or
+ * room epoch starts from the route's quality.
+ */
+internal fun keepsPickedQuality(
+    contentId: String,
+    previousContentId: String?,
+    routeNamesQuality: Boolean,
+    room: WatchPartyPlaybackContext?,
+    currentRoom: WatchPartyPlaybackContext?,
+): Boolean = if (room == null) {
+    contentId == previousContentId && !routeNamesQuality
+} else {
+    currentRoom != null &&
+        currentRoom.roomId == room.roomId &&
+        currentRoom.selectionRevision == room.selectionRevision
 }

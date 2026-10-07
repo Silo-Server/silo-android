@@ -32,6 +32,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -72,6 +73,11 @@ fun PlayerNextUpScreen(
     onBack: () -> Unit,
     onVideoBoundsChanged: (Rect) -> Unit,
     compactTabletop: Boolean = false,
+    // Set while a shuffle plays: the next item is a random pick, and the
+    // viewer can pick another or stop shuffling.
+    shuffle: PlayerViewModel.ShuffleUiState? = null,
+    onPickAnother: () -> Unit = {},
+    onStopShuffling: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -83,9 +89,35 @@ fun PlayerNextUpScreen(
                 horizontalAlignment = panelAlignment,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                shuffle?.scopeLabel?.let { scope ->
+                    Row(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .padding(horizontal = 12.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Shuffle,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Text(
+                            text = "Shuffling $scope",
+                            color = Color.White.copy(alpha = 0.75f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
                 Text(
                     text = when {
                         nextEpisode == null -> "FINISHED"
+                        shuffle != null -> "UP NEXT AT RANDOM"
                         videoEnded -> "PLAYING NEXT"
                         else -> "UP NEXT"
                     },
@@ -95,7 +127,10 @@ fun PlayerNextUpScreen(
                     letterSpacing = 2.sp,
                 )
                 if (nextEpisode != null) {
-                    nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }?.let { title ->
+                    // A shuffled movie has no series line; its own title heads the card.
+                    val heading = nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }
+                        ?: nextEpisode.title.takeUnless { nextEpisode.isEpisode }
+                    heading?.let { title ->
                         Text(
                             text = title,
                             color = Color.White,
@@ -105,14 +140,16 @@ fun PlayerNextUpScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    Text(
-                        text = nextEpisode.label,
-                        color = Color.White,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (nextEpisode.isEpisode) {
+                        Text(
+                            text = nextEpisode.label,
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     if (nextEpisode.runtimeMinutes > 0) {
                         Text(
                             text = "${nextEpisode.runtimeMinutes} min",
@@ -142,18 +179,38 @@ fun PlayerNextUpScreen(
                         onPlayNow = onPlayNow,
                         onKeepWatching = onKeepWatching,
                         onBack = onBack,
+                        pickAnother = if (shuffle != null && nextEpisode != null) {
+                            PickAnotherAction(enabled = !shuffle.pickingAnother, onClick = onPickAnother)
+                        } else {
+                            null
+                        },
                     )
                     if (countdownSeconds != null) {
                         CountdownRing(countdownSeconds, countdownTotalSeconds)
                     }
                 }
-                Text(
-                    text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
-                    color = Color.White.copy(alpha = 0.54f),
-                    fontSize = 12.sp,
-                    modifier = Modifier.clip(CircleShape).clickable(onClick = onToggleAutoPlay)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
+                shuffle?.message?.let { message ->
+                    Text(message, color = Color(0xFFFFB4AB), fontSize = 13.sp)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                        color = Color.White.copy(alpha = 0.54f),
+                        fontSize = 12.sp,
+                        modifier = Modifier.clip(CircleShape).clickable(onClick = onToggleAutoPlay)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    if (shuffle != null) {
+                        Text("·", color = Color.White.copy(alpha = 0.54f), fontSize = 12.sp)
+                        Text(
+                            text = "Stop shuffling",
+                            color = Color.White.copy(alpha = 0.54f),
+                            fontSize = 12.sp,
+                            modifier = Modifier.clip(CircleShape).clickable(onClick = onStopShuffling)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                }
                 if (!compactTabletop && onDeckItems.isNotEmpty()) {
                     Text("On Deck", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     val onDeckState = rememberLazyListState()
@@ -204,6 +261,8 @@ private fun NextUpVideoPane(onBoundsChanged: (Rect) -> Unit, modifier: Modifier)
     )
 }
 
+private class PickAnotherAction(val enabled: Boolean, val onClick: () -> Unit)
+
 @Composable
 private fun NextUpActionButtons(
     hasNextEpisode: Boolean,
@@ -211,6 +270,7 @@ private fun NextUpActionButtons(
     onPlayNow: () -> Unit,
     onKeepWatching: () -> Unit,
     onBack: () -> Unit,
+    pickAnother: PickAnotherAction? = null,
     modifier: Modifier = Modifier,
 ) {
     if (hasNextEpisode) {
@@ -229,6 +289,22 @@ private fun NextUpActionButtons(
             )
             Spacer(modifier = Modifier.width(6.dp))
             Text("Play Now")
+        }
+    }
+    if (pickAnother != null) {
+        OutlinedButton(
+            onClick = pickAnother.onClick,
+            enabled = pickAnother.enabled,
+            modifier = modifier,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Shuffle,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Pick Another", color = Color.White)
         }
     }
     if (!videoEnded) {

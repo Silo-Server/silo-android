@@ -446,6 +446,7 @@ val androidModule = module {
             castPlaybackPreparer = get(),
             seekIntervalStore = get(),
             activeProfileStore = get(),
+            shuffleFeatureStore = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }

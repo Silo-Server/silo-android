@@ -46,12 +46,31 @@ fun TvLibraryCollectionDetailScreen(
     libraryType: String,
     onItemClick: (contentId: String) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the header.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvLibraryCollectionDetailViewModel = koinViewModel(
         key = "library-collection-$libraryId-$collectionId",
         parameters = { parametersOf(libraryId, collectionId, title) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
+    val onShuffle = if (
+        state.items.isNotEmpty() &&
+        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY_COLLECTION)
+    ) {
+        {
+            shuffleLauncher.start(
+                org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY_COLLECTION,
+                collectionId,
+            )
+        }
+    } else {
+        null
+    }
 
     BackHandler(onBack = onBack)
 
@@ -125,6 +144,7 @@ fun TvLibraryCollectionDetailScreen(
                     onSort = { openPanel = TvCollectionPanel.Sort },
                     onFilter = { openPanel = TvCollectionPanel.Filter },
                     onClearFilters = viewModel::clearFilters,
+                    onShuffle = onShuffle,
                 )
             },
             emptyState = {
@@ -174,6 +194,7 @@ private fun CollectionHeader(
     onSort: () -> Unit,
     onFilter: () -> Unit,
     onClearFilters: () -> Unit,
+    onShuffle: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -195,6 +216,7 @@ private fun CollectionHeader(
                 onSort = onSort,
                 onFilter = onFilter,
                 onClearFilters = onClearFilters,
+                onShuffle = onShuffle,
             )
             Spacer(modifier = Modifier.weight(1f))
             itemCountLabel(state)?.let { label ->

@@ -36,7 +36,7 @@ Start with the root [README](../README.md) for architecture/build instructions a
   [collections](collections-api-v2.md), [ebook reader](ebook-reader-api-v2.md),
   [history](history-api-v2.md), [membership](membership-api-v2.md),
   [notifications](notifications-api-v2.md), [requests](requests-api-v2.md),
-  [subtitle AI](subtitle-ai-api-v2.md),
+  [shuffle](shuffle-api-v2.md), [subtitle AI](subtitle-ai-api-v2.md),
   [push registration](api-v2/android-push-registration.md)
 
 ## Folders
