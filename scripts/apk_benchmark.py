@@ -186,6 +186,21 @@ def fixtures(source, temporary):
     return environment, digest
 
 
+def verify_google_services(source):
+    # Google Services 4.5.0 delegates this output directory to AGP 8.10.1.
+    values = source/'androidApp/build/generated/res/processReleaseGoogleServices/values/values.xml'
+    if not values.is_file():
+        raise ValueError('Missing pinned Google Services release values.xml output')
+    try:
+        resources = {item.attrib.get('name'): item.text for item in ElementTree.parse(values).getroot()}
+    except (ElementTree.ParseError, OSError):
+        raise ValueError('Cannot read pinned Google Services release values.xml output') from None
+    if (resources.get('google_app_id') != FIXTURE['client'][0]['client_info']['mobilesdk_app_id']
+            or resources.get('project_id') != FIXTURE['project_info']['project_id']
+            or resources.get('google_api_key') != FIXTURE['client'][0]['api_key'][0]['current_key']):
+        raise ValueError('Generated Google Services resource contract mismatch')
+
+
 def verify_bundle(bundle, certificate):
     if not bundle.is_file() or not bundle.stat().st_size:
         raise ValueError('Seed bundle missing or empty')
@@ -283,12 +298,11 @@ def run_build(arguments):
         verification_start = time.monotonic()
         check_task_contract(tasks, arguments.profile, arguments.target, arguments.cache)
         if 'androidApp' in MODULES[arguments.target]:
-            values = source/'androidApp/build/generated/res/google-services/release/values/values.xml'
-            resources = {item.attrib.get('name'): item.text for item in ElementTree.parse(values).getroot()}
-            if (resources.get('google_app_id') != FIXTURE['client'][0]['client_info']['mobilesdk_app_id']
-                    or resources.get('project_id') != FIXTURE['project_info']['project_id']
-                    or resources.get('google_api_key') != FIXTURE['client'][0]['api_key'][0]['current_key']):
-                raise ValueError('Generated Google Services resource contract mismatch')
+            try:
+                verify_google_services(source)
+            except ValueError as error:
+                report['verification_failure'] = str(error)[:160]
+                raise
         if arguments.profile == 'SEED':
             for module in MODULES['seed']:
                 bundle = source/module/'build/outputs/bundle/release'/(module + '-release.aab')

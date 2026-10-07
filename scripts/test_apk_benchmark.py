@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import apk_benchmark as bench
 
 
@@ -104,6 +104,90 @@ class ControllerTests(unittest.TestCase):
             with patch.object(bench.subprocess, 'check_output', side_effect=['jar verified.\n', 'SHA256: ' + 'CD:'*31 + 'CD']):
                 with self.assertRaisesRegex(ValueError, 'signer'):
                     bench.verify_bundle(bundle, 'ab'*32)
+
+    def google_services_values(self, source, **changes):
+        values = source/'androidApp/build/generated/res/processReleaseGoogleServices/values/values.xml'
+        values.parent.mkdir(parents=True, exist_ok=True)
+        resources = {'google_app_id': bench.FIXTURE['client'][0]['client_info']['mobilesdk_app_id'],
+                     'project_id': bench.FIXTURE['project_info']['project_id'],
+                     'google_api_key': bench.FIXTURE['client'][0]['api_key'][0]['current_key']}
+        resources.update(changes)
+        root = bench.ElementTree.Element('resources')
+        for name, value in resources.items():
+            if value is not None:
+                bench.ElementTree.SubElement(root, 'string', name=name).text = value
+        bench.ElementTree.ElementTree(root).write(values)
+        return values
+
+    def test_google_services_current_producer_layout_is_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            self.google_services_values(source)
+            bench.verify_google_services(source)
+
+    def test_google_services_missing_current_output_rejects_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            values = self.google_services_values(source)
+            legacy = source/'androidApp/build/generated/res/google-services/release/values/values.xml'
+            legacy.parent.mkdir(parents=True)
+            values.rename(legacy)
+            with self.assertRaisesRegex(ValueError, 'Missing pinned Google Services'):
+                bench.verify_google_services(source)
+
+    def test_google_services_every_fixture_value_is_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            for name in ('google_app_id', 'project_id', 'google_api_key'):
+                for value in (None, 'wrong'):
+                    with self.subTest(name=name, value=value):
+                        self.google_services_values(source, **{name: value})
+                        with self.assertRaisesRegex(ValueError, 'resource contract mismatch'):
+                            bench.verify_google_services(source)
+
+    def test_google_services_malformed_xml_has_bounded_failure_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            values = self.google_services_values(source)
+            values.write_text('<invalid>')
+            with self.assertRaisesRegex(ValueError, '^Cannot read pinned Google Services release values.xml output$'):
+                bench.verify_google_services(source)
+
+    def test_missing_google_services_output_retains_unqualified_report_before_seed_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, output = root/'source', root/'output'
+            (source/'androidApp').mkdir(parents=True)
+            args = bench.argparse.Namespace(source=str(source), output=str(output), profile='SEED',
+                                            cache='fresh-release-warm', target='seed',
+                                            seed_manifest_sha256='', seed_run='', seed_artifact='')
+            names = [':' + module + ':' + task for module in bench.MODULES['seed']
+                     for task in ('minifyReleaseWithR8', 'signReleaseBundle', 'bundleRelease')]
+            process = Mock(stdout=['> Task ' + name + '\n' for name in names]
+                           + ['> Task :androidApp:processReleaseGoogleServices\n'])
+            process.wait.return_value = 0
+            sampler = Mock(result={'samples': 0})
+            sampler.thread.is_alive.return_value = False
+            environment = {'GRADLE_USER_HOME': str(root/'gradle-home'), 'RUNNER_TEMP': str(root),
+                           'GITHUB_WORKFLOW_SHA': 'a'*40}
+            with patch.dict(bench.os.environ, environment), \
+                    patch.object(bench.subprocess, 'check_output', side_effect=[bench.SEALED_SOURCE_SHA, '']), \
+                    patch.object(bench, 'toolchain', return_value={'gradle': '8.12'}), \
+                    patch.object(bench, 'fixtures', return_value=({}, 'ab'*32)), \
+                    patch.object(bench, 'MemorySampler', return_value=sampler), \
+                    patch.object(bench.subprocess, 'Popen', return_value=process), \
+                    patch.object(bench, 'verify_bundle') as verify_bundle, \
+                    patch.object(bench, 'export_seed') as export_seed:
+                with self.assertRaisesRegex(ValueError, 'Missing pinned Google Services'):
+                    bench.run_build(args)
+            report = json.loads((output/'report.json').read_text())
+            self.assertEqual(report['returncode'], 0)
+            self.assertIs(report['qualified'], False)
+            self.assertEqual(report['verification_failure'],
+                             'Missing pinned Google Services release values.xml output')
+            verify_bundle.assert_not_called()
+            export_seed.assert_not_called()
+            self.assertNotIn('seed', report)
 
     def test_task_contract_rejects_omitted_work_and_invalid_cold_r8_reuse(self):
         names = ['minifyReleaseWithR8', 'lintVitalAnalyzeRelease', 'lintVitalRelease',
