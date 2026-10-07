@@ -142,7 +142,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
@@ -187,7 +187,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
@@ -264,7 +264,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
