@@ -239,7 +239,7 @@ jobs:
           import json
           from pathlib import Path
           import xml.etree.ElementTree as ET
-          reports = sorted(Path('.').glob('*/build/test-results/*/TEST-*.xml'))
+          reports = sorted(Path('.').glob('*/build/test-results/testDebugUnitTest/TEST-*.xml'))
           totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
           if not reports:
               raise SystemExit('No JUnit reports were produced')
