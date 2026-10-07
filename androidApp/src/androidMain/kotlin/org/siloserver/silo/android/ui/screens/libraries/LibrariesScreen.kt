@@ -50,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -69,7 +70,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.android.ui.components.TopBarRowTopInset
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
@@ -124,12 +128,14 @@ import org.siloserver.silo.network.apiv2.CatalogContinuationV2
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.repository.port.canServeCache
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
@@ -216,6 +222,17 @@ class LibrariesViewModel(
     private var catalogRequestGeneration = 0L
     private var catalogQueryGeneration = 0L
     private var collectionsRequestGeneration = 0L
+    // Library-list loads run one at a time, in order, so an older response
+    // can't overwrite a newer one (on screen or in the offline cache). A
+    // request made mid-load queues one follow-up pass.
+    private var librariesJob: Job? = null
+    private var librariesRecheckQueued = false
+    // The last library list the server confirmed, hidden audiobook
+    // libraries included. Later loads confirm a shrink against it, so a
+    // partial list can't hide libraries or reach the offline cache, and a
+    // transient failure re-shows it instead of the cache.
+    private var serverLibraries: List<UserLibrary> = emptyList()
+    private var pendingContentReload = false
     private val pageSize = 42
 
     init {
@@ -233,85 +250,112 @@ class LibrariesViewModel(
     private fun isHiddenAudiobookLibrary(library: UserLibrary): Boolean =
         !showAudiobooks && library.type.trim().lowercase() in setOf("audiobook", "audiobooks")
 
-    fun refresh() {
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isLoadingLibraries = true,
-                    librariesError = null,
-                )
+    fun refresh() = loadLibraries(reloadContent = true)
+
+    /**
+     * Re-fetch the library list, reloading the open library's content only when
+     * the selection has to change. The screen calls this on every resume: this
+     * VM outlives tab switches, so a list that loaded short (a partial server
+     * response, or the cached fallback after a failed request) used to stay
+     * short — hiding the switcher and every other library — until the process
+     * died.
+     */
+    fun refreshLibraryList() = loadLibraries(reloadContent = false)
+
+    private fun loadLibraries(reloadContent: Boolean) {
+        if (reloadContent) pendingContentReload = true
+        if (librariesJob?.isActive == true) {
+            librariesRecheckQueued = true
+            return
+        }
+        librariesJob = viewModelScope.launch {
+            do {
+                librariesRecheckQueued = false
+                // Each pass takes the reload owed so far, so a background
+                // re-check never inherits a full refresh it didn't run.
+                val reload = pendingContentReload
+                pendingContentReload = false
+                loadLibrariesPass(reload)
+            } while (librariesRecheckQueued)
+        }
+    }
+
+    private suspend fun loadLibrariesPass(reload: Boolean) {
+        _uiState.update {
+            it.copy(
+                isLoadingLibraries = true,
+                librariesError = null,
+            )
+        }
+
+        // Once a list is known, every load confirms a shrink before trusting
+        // it (a short list is the failure this screen recovers from); a real
+        // removal (revoked access, deleted library) repeats and applies. Only
+        // the first load may fall back to the offline cache.
+        val known = serverLibraries
+        val fetched = if (reload && known.isEmpty()) {
+            personalDataRepository.listUserLibraries()
+        } else {
+            personalDataRepository.recheckUserLibraries(known.mapTo(mutableSetOf()) { it.id })
+        }
+        // A transient failure re-shows the known list, re-filtered so a Show
+        // Audiobooks change still applies. Auth failures fall through and clear it.
+        val result = if (fetched.canServeCache() && known.isNotEmpty()) ApiResult.Success(known) else fetched
+        when (result) {
+            is ApiResult.Success -> {
+                serverLibraries = result.data
+                // Libraries is the unified hub for every library type
+                // (video / audio / reading). The selector lists them all
+                // and ItemDetail routes each item to the right player or
+                // reader by its type.
+                val libraries = result.data
+                    .filterNot(::isHiddenAudiobookLibrary)
+                    .sortedBy { library -> library.sortOrder }
+                // Recovering from an emptied list (an earlier failure
+                // cleared it, sections included) owes a content reload too.
+                val recovering = _uiState.value.libraries.isEmpty()
+                val previousLibraryId = _uiState.value.selectedLibraryId
+                val selectedLibraryId = previousLibraryId
+                    ?.takeIf { currentId -> libraries.any { it.id == currentId } }
+                    ?: libraries.firstOrNull()?.id
+                // A *new* selection (first load, or the prior library
+                // vanished) gets the same reset as selectLibrary. An
+                // unchanged selection keeps its rows and active filters.
+                val selectionChanged = selectedLibraryId != previousLibraryId
+                if (selectionChanged) resetForLibrary(selectedLibraryId)
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = libraries,
+                        librariesError = null,
+                    )
+                }
+
+                if (selectedLibraryId != null && (reload || selectionChanged || recovering)) {
+                    loadCurrentTab(selectedLibraryId, force = true)
+                }
             }
-
-            when (val result = personalDataRepository.listUserLibraries()) {
-                is ApiResult.Success -> {
-                    // Libraries is the unified hub for every library type
-                    // (video / audio / reading). The selector lists them all
-                    // and ItemDetail routes each item to the right player or
-                    // reader by its type.
-                    val libraries = result.data
-                        .filterNot(::isHiddenAudiobookLibrary)
-                        .sortedBy { library -> library.sortOrder }
-                    val previousLibraryId = _uiState.value.selectedLibraryId
-                    val selectedLibraryId = previousLibraryId
-                        ?.takeIf { currentId -> libraries.any { it.id == currentId } }
-                        ?: libraries.firstOrNull()?.id
-                    // When this resolves to a *new* library (first load, or the
-                    // prior one vanished), restore its saved browse filter +
-                    // preserve state — same as selectLibrary — so opening Browse
-                    // on the default library isn't an unfiltered grid for a
-                    // profile with saved filters. An unchanged selection keeps
-                    // whatever filters are already active.
-                    val restoreBrowsePrefs =
-                        selectedLibraryId != null && selectedLibraryId != previousLibraryId
-                    // Null when there is nothing to restore, so the branches
-                    // below keep the live state untouched.
-                    val restoredFilterState = if (restoreBrowsePrefs) {
-                        browsePrefs?.savedState(selectedLibraryId) ?: CatalogFilterState()
-                    } else {
-                        null
-                    }
-
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = libraries,
-                            selectedLibraryId = selectedLibraryId,
-                            librariesError = null,
-                            filterState = restoredFilterState ?: it.filterState,
-                            // The sort lives inside the persisted filter state,
-                            // so derive the chip from what was restored.
-                            browseSort = restoredFilterState
-                                ?.let(LibraryBrowseSort::fromFilterState)
-                                ?: it.browseSort,
-                            preserveFilters = if (restoreBrowsePrefs)
-                                (browsePrefs?.preserveEnabled(selectedLibraryId) ?: true)
-                            else it.preserveFilters,
-                        )
-                    }
-
-                    if (selectedLibraryId != null) {
-                        loadCurrentTab(selectedLibraryId, force = true)
-                    }
+            is ApiResult.Error -> {
+                // Revoked access drops the baseline; a transient failure keeps
+                // it, since hidden libraries can outlive an empty screen.
+                if (!result.canServeCache()) serverLibraries = emptyList()
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = emptyList(),
+                        sections = emptyList(),
+                        librariesError = result.message.ifBlank { "Failed to load libraries" },
+                    )
                 }
-                is ApiResult.Error -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = emptyList(),
-                            sections = emptyList(),
-                            librariesError = result.message.ifBlank { "Failed to load libraries" },
-                        )
-                    }
-                }
-                is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
-                            isLoadingLibraries = false,
-                            libraries = emptyList(),
-                            sections = emptyList(),
-                            librariesError = "Network error: ${result.exception.message ?: "unknown"}",
-                        )
-                    }
+            }
+            is ApiResult.NetworkError -> {
+                _uiState.update {
+                    it.copy(
+                        isLoadingLibraries = false,
+                        libraries = emptyList(),
+                        sections = emptyList(),
+                        librariesError = "Network error: ${result.exception.message ?: "unknown"}",
+                    )
                 }
             }
         }
@@ -319,13 +363,22 @@ class LibrariesViewModel(
 
     fun selectLibrary(libraryId: Int) {
         if (_uiState.value.selectedLibraryId == libraryId) return
+        resetForLibrary(libraryId)
+        loadCurrentTab(libraryId, force = true)
+    }
+
+    /**
+     * Point the state at [libraryId], dropping the previous library's rows,
+     * filter vocabulary and letter. Restores this library's persisted
+     * filter/sort state (iOS parity) so a preserved selection doesn't flash the
+     * unfiltered grid; defaults to a clean filter — and therefore
+     * RecentlyAdded — when nothing is saved.
+     */
+    private fun resetForLibrary(libraryId: Int?) {
         recommendedLoadedLibraryId = null
         browseLoadedLibraryId = null
         collectionsLoadedLibraryId = null
-        // Restore this library's persisted filter/sort state (iOS parity) so a
-        // preserved selection doesn't flash the unfiltered grid; default to a
-        // clean filter — and therefore RecentlyAdded — when nothing is saved.
-        val restoredFilterState = browsePrefs?.savedState(libraryId) ?: CatalogFilterState()
+        val restoredFilterState = libraryId?.let { browsePrefs?.savedState(it) } ?: CatalogFilterState()
         _uiState.update {
             it.copy(
                 selectedLibraryId = libraryId,
@@ -337,14 +390,13 @@ class LibrariesViewModel(
                 filterState = restoredFilterState,
                 browseSort = LibraryBrowseSort.fromFilterState(restoredFilterState),
                 availableFilters = null,
-                preserveFilters = browsePrefs?.preserveEnabled(libraryId) ?: true,
+                preserveFilters = libraryId?.let { id -> browsePrefs?.preserveEnabled(id) } ?: true,
                 selectedNamePrefix = null,
                 catalogError = null,
                 collections = emptyList(),
                 collectionsError = null,
             )
         }
-        loadCurrentTab(libraryId, force = true)
     }
 
     fun selectTab(tab: LibrariesSubtab) {
@@ -818,6 +870,18 @@ fun LibrariesScreen(
                 Unit
             }
         }
+
+    // Re-check the library list on every resume: entering the tab (the observer
+    // replays ON_RESUME when added) and returning to the app. The VM loads once
+    // and outlives tab switches, so a short list otherwise stuck until restart.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshLibraryList()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Recommended tab scroll state — drives the chrome scrim opacity so the
     // header fades in its scrim once the user scrolls the rows underneath it.

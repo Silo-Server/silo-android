@@ -11,11 +11,12 @@ import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.catalog.editionLabel
 
 /**
- * Picks a file version (quality/resolution): resolution and HDR as the title,
- * codecs and size as the detail.
+ * Picks which file version of the title plays: resolution and HDR as the
+ * title, codecs and size as the detail. The server's streaming qualities are
+ * a separate menu, [PlaybackQualitySheet].
  */
 @Composable
-fun QualitySelector(
+fun VersionSelector(
     versions: List<FileVersion>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
@@ -25,7 +26,7 @@ fun QualitySelector(
     val controller = rememberPlayerMenuController(onDismiss)
 
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
-        PlayerPanelHeader(title = "Quality", onClose = { controller.dismiss() })
+        PlayerPanelHeader(title = "Version", onClose = { controller.dismiss() })
         PlayerMenuScrollColumn {
             Spacer(Modifier.height(4.dp))
             versions.forEachIndexed { index, version ->

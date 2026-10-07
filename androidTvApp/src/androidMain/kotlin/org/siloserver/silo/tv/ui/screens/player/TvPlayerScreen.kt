@@ -3479,20 +3479,22 @@ private fun Format.subtitleCodecOrMime(): String? =
     }
 
 /**
- * A selectable video quality variant. Unlike [extractTrackEntries] (which
- * collapses every video group to a single group-level entry), this flattens the
- * individual formats *inside* the video group(s) — the real resolution / bitrate
- * variants of the stream — so the HUD Quality picker can surface genuine
- * options. [id] encodes `"<groupOrdinal>:<trackIndex>"`; the synthetic `"-1"`
- * id means Auto (adaptive — clears any override).
+ * A row of the HUD Quality picker, built from the plan's quality menu by
+ * [authoritativePlaybackQualityOptions]. [id] is the `quality_preference` a
+ * pick sends: a server entry's label, or `auto`.
  */
 data class VideoQualityOption(
     val id: String,
     val label: String,
     val isSelected: Boolean,
     val resolution: String? = null,
+    val bitrateLabel: String? = null,
 )
 
+/**
+ * Silo Cast's Auto id from before the menu carried its own `auto` row: still
+ * accepted from remotes, and reported when no row is selected.
+ */
 internal const val VIDEO_QUALITY_AUTO_ID = "-1"
 
 internal fun resizeModeForVideoFillMode(mode: VideoFillMode): Int = when (mode) {

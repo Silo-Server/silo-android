@@ -102,8 +102,10 @@ fun PlayerControls(
     bufferedPosition: Double,
     hasChapters: Boolean,
     hasTracks: Boolean,
-    // Quality lives on the HUD; hidden when the item has a single version.
-    hasMultipleVersions: Boolean,
+    // The plan's Quality menu; hidden only when there is no playback plan
+    // (offline downloads). Version, for a title with several files, lives in
+    // the settings menu behind ⋯.
+    hasQualityMenu: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
     credits: org.siloserver.silo.model.catalog.TimeRange? = null,
@@ -257,7 +259,7 @@ fun PlayerControls(
                 PlayerActionPillRow(
                     hasTracks = hasTracks,
                     hasChapters = hasChapters,
-                    hasMultipleVersions = hasMultipleVersions,
+                    hasQualityMenu = hasQualityMenu,
                     tracksValue = tracksValue,
                     chapterValue = chapterValue,
                     qualityValue = qualityValue,
@@ -484,7 +486,7 @@ private enum class ActionPillDensity { Full, Labels, Icons }
 private fun PlayerActionPillRow(
     hasTracks: Boolean,
     hasChapters: Boolean,
-    hasMultipleVersions: Boolean,
+    hasQualityMenu: Boolean,
     tracksValue: String?,
     chapterValue: String?,
     qualityValue: String?,
@@ -523,7 +525,7 @@ private fun PlayerActionPillRow(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            if (hasMultipleVersions) {
+            if (hasQualityMenu) {
                 PlayerActionPill(
                     icon = Icons.Rounded.Tune,
                     label = "Quality",

@@ -22,7 +22,7 @@ import org.siloserver.silo.domain.player.IntroSkipMode
  * Audio & Subtitles, This session, Advanced — with every current value in a
  * right-aligned column, so the menu answers "what am I watching with?" without
  * opening anything. Value pickers replace the list in place; menus with their
- * own surface (quality, tracks, style, sleep timer, stats) hand over to it.
+ * own surface (quality, version, tracks, style, sleep timer, stats) hand over to it.
  */
 private enum class SettingsRoute {
     Root,
@@ -63,12 +63,17 @@ fun PlayerSettingsSheet(
     onSetHdrEnabled: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onSetDolbyVisionEnabled: (Boolean) -> Unit,
-    // False in a Watch Party: speed is a session-only 1x and the version
-    // picker is off, since the room plays exactly its own file.
+    // False in a Watch Party: speed is a session-only 1x.
     showPlaybackSpeed: Boolean = true,
+    // Shown whenever there is a playback plan, in a Watch Party too.
     showQuality: Boolean = true,
+    // Shown for a title with several files, except in a Watch Party, which
+    // plays exactly the room's file.
+    showVersion: Boolean = false,
     qualityLabel: String = "",
     onOpenQuality: () -> Unit = {},
+    versionLabel: String = "",
+    onOpenVersion: () -> Unit = {},
     audioLabel: String = "",
     subtitleLabel: String = "",
     subtitleStyleLabel: String = "",
@@ -108,19 +113,27 @@ fun PlayerSettingsSheet(
                         if (showQuality) {
                             PlayerValueRow("Quality", qualityLabel, onClick = { handOff(onOpenQuality) })
                         }
+                        if (showVersion) {
+                            PlayerValueRow(
+                                label = "Version",
+                                value = versionLabel,
+                                onClick = { handOff(onOpenVersion) },
+                                separator = showQuality,
+                            )
+                        }
                         if (showPlaybackSpeed) {
                             PlayerValueRow(
                                 label = "Speed",
                                 value = speedLabel(playbackSpeed),
                                 onClick = { routeOrdinal = SettingsRoute.Speed.ordinal },
-                                separator = showQuality,
+                                separator = showQuality || showVersion,
                             )
                         }
                         PlayerValueRow(
                             label = "Picture size",
                             value = pictureSizeLabel(videoGravity),
                             onClick = { routeOrdinal = SettingsRoute.PictureSize.ordinal },
-                            separator = showQuality || showPlaybackSpeed,
+                            separator = showQuality || showVersion || showPlaybackSpeed,
                         )
                         PlayerValueRow(
                             label = "Fill the screen",

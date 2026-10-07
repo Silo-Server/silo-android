@@ -1688,6 +1688,7 @@ fun AppNavigation(
         org.siloserver.silo.android.ui.screens.pairing.CompanionPairingHost(
             enabled = currentRoute != null && currentRoute !in companionHiddenRoutes,
         )
+        org.siloserver.silo.android.ui.screens.profiles.HouseholdReverifyHost()
     }
     }
     }

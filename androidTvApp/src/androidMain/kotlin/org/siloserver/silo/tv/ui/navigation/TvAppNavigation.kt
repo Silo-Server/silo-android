@@ -1580,6 +1580,7 @@ fun TvAppNavigation(
         Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth(),
     )
 
+    org.siloserver.silo.tv.ui.screens.profiles.TvHouseholdReverifyHost(profileRepository)
     siloCastStandby?.let { state ->
         TvSiloCastStandbyView(
             state = state,

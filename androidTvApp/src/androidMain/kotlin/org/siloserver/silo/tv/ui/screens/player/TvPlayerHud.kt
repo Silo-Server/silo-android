@@ -1098,7 +1098,9 @@ private fun HudVideoPane(
     // actually focusable. A disabled row is not focusable, so pointing the
     // requester at it would cancel the move in from the rail.
     val hasVersionRow = fileVersions.size > 1
-    val hasQualityRow = videoQualities.size > 1
+    // The quality menu exists whenever a plan does: even a single entry
+    // lists Auto + Original.
+    val hasQualityRow = videoQualities.isNotEmpty()
     val entryRow = when {
         hasVersionRow -> "version"
         hasQualityRow -> "quality"
@@ -1111,14 +1113,6 @@ private fun HudVideoPane(
             // Playback column — Version / Quality / Speed / Aspect.
             HudEyebrow("Playback")
             Column {
-                // Quality — derived from the real per-format video variants
-                // (resolution / bitrate) flattened from the video group. This is
-                // a genuine Media3 track override (setOverrideForType on the
-                // video group), not a no-op. When there is only one real variant
-                // (Auto + 0 or 1 format) there is nothing to switch, so the row
-                // is shown disabled with an "Auto" value rather than faking it.
-                // (videoQualities, when present, always contains a synthetic
-                // "Auto" entry, so a genuine choice means size > 2.)
                 // Version — the server's file versions (4K / 1080p encodes).
                 // Switching restarts the session on that file at the current
                 // position (QA 2026-07-08 / tvOS parity).
@@ -1155,30 +1149,30 @@ private fun HudVideoPane(
                     )
                 }
 
-                // The server-transcode quality ladder always offers at least
-                // Auto + Original (plus downscale rungs below the source), so the
-                // row is enabled whenever there is more than one option.
-                val hasQualityChoice = videoQualities.size > 1
-                val selectedQuality = videoQualities.firstOrNull { it.isSelected }
-                val qualityValue = selectedQuality?.label ?: "Auto"
-                HudFocusedSettingRow(
-                    label = "Quality",
-                    value = qualityValue,
-                    enabled = enabled && hasQualityChoice,
-                    entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
-                    onActivate = {
-                        onPresentPicker(
-                            HudPickerPresentation(
-                                title = "Quality",
-                                options = videoQualities.map {
-                                    HudPickerOption(id = it.id, label = it.label)
-                                },
-                                selectedId = (selectedQuality?.id ?: VIDEO_QUALITY_AUTO_ID),
-                                onSelect = { id -> onSelectVideoQuality(id) },
-                            ),
-                        )
-                    },
-                )
+                // Quality — the plan's quality menu: Auto, then the server's
+                // entries in its order, each re-planned on the server when
+                // picked. Hidden only when there is no plan.
+                if (hasQualityRow) {
+                    val selectedQuality = videoQualities.firstOrNull { it.isSelected }
+                    HudFocusedSettingRow(
+                        label = "Quality",
+                        value = selectedQuality?.label ?: "Auto",
+                        enabled = enabled,
+                        entryFocusRequester = entryFocusRequester.takeIf { entryRow == "quality" },
+                        onActivate = {
+                            onPresentPicker(
+                                HudPickerPresentation(
+                                    title = "Quality",
+                                    options = videoQualities.map {
+                                        HudPickerOption(id = it.id, label = it.label, trailing = it.bitrateLabel)
+                                    },
+                                    selectedId = selectedQuality?.id.orEmpty(),
+                                    onSelect = { id -> onSelectVideoQuality(id) },
+                                ),
+                            )
+                        },
+                    )
+                }
 
                 if (speedRowVisible) {
                     HudFocusedSettingRow(
@@ -2605,7 +2599,7 @@ internal data class HudPickerOption(
     val colorHex: String? = null,
     /** A short second line under the label, such as a subtitle's sync status. */
     val detail: String? = null,
-    /** A short value at the row's end, such as "1×" beside "Normal". */
+    /** A short value at the row's end, such as "1×" beside "Normal" or a bitrate. */
     val trailing: String? = null,
 )
 
