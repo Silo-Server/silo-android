@@ -213,6 +213,15 @@ jobs:
           test -s androidApp/build/outputs/bundle/release/androidApp-release.aab
           test -s androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
 
+      - name: Upload Gradle profile
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: gradle-profile-release-readiness
+          path: build/reports/profile/*.html
+          retention-days: 7
+          if-no-files-found: warn
+
   unit-tests:
     name: Unit tests
     needs: changes
@@ -312,6 +321,15 @@ jobs:
           print('SILO_CI_TEST_TOTALS ' + json.dumps({**totals, 'reports': len(reports)}, sort_keys=True))
           PY
 
+      - name: Upload Gradle profile
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: gradle-profile-unit-tests
+          path: build/reports/profile/*.html
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Upload test reports
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -371,6 +389,15 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
             "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
+
+      - name: Upload Gradle profile
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: gradle-profile-lint
+          path: build/reports/profile/*.html
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Upload lint reports
         if: failure()

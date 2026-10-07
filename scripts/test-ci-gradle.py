@@ -538,6 +538,38 @@ class WorkflowFixtures(unittest.TestCase):
         self.assertNotIn("lintVitalRelease", self.job("lint"))
         self.assertIn("Release readiness builds both release bundles, which run fatal", self.job("lint"))
 
+    def test_profiles_persist_after_success_or_failure_with_narrow_scope(self):
+        names = set()
+        for name in ("unit-tests", "lint", "release-readiness"):
+            with self.subTest(job=name):
+                job = self.job(name)
+                steps = re.findall(r"^      - name: Upload Gradle profile\n(.*?)(?=^      - name:|\Z)", job, re.MULTILINE | re.DOTALL)
+                self.assertEqual(len(steps), 1)
+                step = steps[0]
+                # always() has no success prerequisite and keeps the profile
+                # upload eligible after the Gradle step succeeds or fails.
+                self.assertRegex(step, re.compile(r"^        if: always\(\)$", re.MULTILINE))
+                self.assertIn("uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5", step)
+                self.assertIn("retention-days: 7", step)
+                self.assertIn("if-no-files-found: warn", step)
+                self.assertNotIn("continue-on-error", step)
+                artifact = re.search(r"^          name: (.+)$", step, re.MULTILINE).group(1)
+                self.assertEqual(artifact, "gradle-profile-" + name)
+                names.add(artifact)
+                pattern = re.search(r"^          path: (.+)$", step, re.MULTILINE).group(1)
+                self.assertEqual(pattern, "build/reports/profile/*.html")
+                self.assertGreater(job.index("- name: Upload Gradle profile"), job.index("./scripts/ci-gradle.py"))
+                with tempfile.TemporaryDirectory() as temporary:
+                    workspace = Path(temporary)
+                    files = ("build/reports/profile/profile-a.html", "build/reports/profile/profile-b.html", "build/reports/profile/private.txt", "build/reports/profile/nested/private.html", "build/reports/tests/private.html", "build/private.log", ".gradle/private.env")
+                    for path in files:
+                        target = workspace / path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text("fixture")
+                    selected = {str(path.relative_to(workspace)) for path in workspace.glob(pattern)}
+                    self.assertEqual(selected, set(files[:2]))
+        self.assertEqual(len(names), 3)
+
     def test_metadata_reports_effective_job_workers_and_flags(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
