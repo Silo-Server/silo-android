@@ -1,52 +1,140 @@
 name: Android Builds
+run-name: Android CI contracts - ${{ inputs.fixture_case }}
 
-# CI gate: tests, lint, and release readiness on main pushes and pull requests.
-# Release artifacts (Play Store bundles, sideload APKs, GitHub releases) are owned by
-# release.yml — triggered by v* tags or its workflow_dispatch.
-
+# Temporary validation branch only: exercise GitHub dependency results through
+# the unchanged production verifier. This workflow has no app or release jobs.
 on:
-  push:
-    branches:
-      - main
-  pull_request:
   workflow_dispatch:
     inputs:
-      build_ffmpeg_aar:
-        description: Build the pinned Media3 FFmpeg decoder AAR instead of app jobs
-        required: false
-        default: false
-        type: boolean
-      build_cache:
-        description: Reuse Gradle task outputs (disable for a baseline measurement)
-        required: false
-        default: true
-        type: boolean
-      parallel:
-        description: Benchmark parallel project execution at the existing worker limit
-        required: false
-        default: false
-        type: boolean
-      configuration_cache:
-        description: Check configuration-cache compatibility without publishing artifacts
-        required: false
-        default: false
-        type: boolean
+      fixture_case:
+        description: Aggregate result contract to exercise
+        type: choice
+        required: true
+        default: success
+        options: [success, selected_failure, selected_skip, docs, empty_diff, ffmpeg, partial_rerun, cancel]
 
 permissions:
   contents: read
 
-concurrency:
-  group: android-builds-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  ci:
-    # Hosted PR validation must exercise the proposed workflow revision. The
-    # runner group's main-only restriction still applies to self-hosted calls.
-    uses: ./.github/workflows/trusted-linux-ci.yml
-    with:
-      self_hosted: false
-      build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
-      build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
-      parallel: ${{ inputs.parallel || false }}
-      configuration_cache: ${{ inputs.configuration_cache || false }}
+  changes:
+    name: Select fixture CI work
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      schema: ${{ steps.route.outputs.schema }}
+      mode: ${{ steps.route.outputs.mode }}
+      unit_tests: ${{ steps.route.outputs.unit_tests }}
+      lint: ${{ steps.route.outputs.lint }}
+      release_readiness: ${{ steps.route.outputs.release_readiness }}
+      ffmpeg_aar: ${{ steps.route.outputs.ffmpeg_aar }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Select a fixture through the production classifier
+        id: route
+        env:
+          FIXTURE_CASE: ${{ inputs.fixture_case }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('routing', 'scripts/ci-routing.py')
+          routing = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(routing)
+          case = os.environ['FIXTURE_CASE']
+          if case == 'ffmpeg':
+              mode, reason = routing.classify_environment({
+                  'GITHUB_EVENT_NAME': 'workflow_dispatch', 'SILO_CI_FFMPEG_ONLY': 'true'})
+          else:
+              diff = b'' if case == 'empty_diff' else b'M\0README.md\0' if case == 'docs' else b'M\0androidApp/src/androidMain/Fixture.kt\0'
+              mode, reason = routing.classify_diff(diff)
+          selected = routing.outputs(mode)
+          print(json.dumps({**selected, 'reason': reason}, sort_keys=True))
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              for key, value in selected.items():
+                  output.write(f'{key}={value}\n')
+          PY
+
+  unit-tests:
+    name: Fixture unit tests
+    needs: changes
+    if: needs.changes.outputs.unit_tests == 'true' && inputs.fixture_case != 'selected_skip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Exercise selected success or failure
+        env:
+          FIXTURE_CASE: ${{ inputs.fixture_case }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if { [ "$FIXTURE_CASE" = selected_failure ] || [ "$FIXTURE_CASE" = partial_rerun ]; } && [ "$RUN_ATTEMPT" = 1 ]; then
+            echo 'Intentional first-attempt selected-job failure; rerun failed jobs to exercise carry-forward.'
+            exit 1
+          fi
+          if [ "$FIXTURE_CASE" = cancel ]; then sleep 90; fi
+          echo 'Fixture unit tests passed.'
+
+  lint:
+    name: Fixture lint
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Exercise selected success
+        env:
+          FIXTURE_CASE: ${{ inputs.fixture_case }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          if [ "$FIXTURE_CASE" = partial_rerun ] && [ "$RUN_ATTEMPT" = 1 ]; then
+            echo 'Intentional first-attempt failure retained when only unit tests rerun.'
+            exit 1
+          fi
+          if [ "$FIXTURE_CASE" = cancel ]; then sleep 90; fi
+          echo 'Fixture lint passed.'
+
+  release-readiness:
+    name: Fixture release readiness
+    needs: changes
+    if: needs.changes.outputs.release_readiness == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Exercise selected success
+        env:
+          FIXTURE_CASE: ${{ inputs.fixture_case }}
+        run: |
+          set -euo pipefail
+          if [ "$FIXTURE_CASE" = cancel ]; then sleep 90; fi
+          echo 'Fixture release readiness passed.'
+
+  ffmpeg-aar:
+    name: Fixture FFmpeg AAR
+    needs: changes
+    if: needs.changes.outputs.ffmpeg_aar == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo 'Fixture FFmpeg validation passed.'
+
+  android-ci:
+    name: Android CI
+    if: always()
+    needs: [changes, unit-tests, lint, release-readiness, ffmpeg-aar]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - name: Require every selected validation job to succeed
+        run: python3 scripts/ci-result.py
+        env:
+          SILO_CI_NEEDS_JSON: ${{ toJSON(needs) }}
