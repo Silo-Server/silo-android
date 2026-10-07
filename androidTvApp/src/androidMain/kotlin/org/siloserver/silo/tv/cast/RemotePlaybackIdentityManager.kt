@@ -54,11 +54,20 @@ class RemotePlaybackIdentityManager(
             active.controllerDeviceId == controllerDeviceId
     }
 
+    /**
+     * Installs the phone's temporary identity once the server approves it.
+     * [beforeActivation] runs after approval and before anything changes, while
+     * the outgoing identity (the TV's own or an earlier phone's) still owns the
+     * credentials, so whatever is playing can close its server session under the
+     * identity it started with. An offer that fails or is denied leaves the
+     * current identity and playback alone.
+     */
     suspend fun prepare(
         offer: SiloCastHandoffOffer,
         controllerDeviceId: String,
         controllerDeviceName: String?,
         receiverRun: Long,
+        beforeActivation: suspend () -> Unit = {},
         onChallenge: suspend (SiloCastHandoffChallenge) -> Unit,
     ): SiloCastHandoffReady = mutex.withLock {
         validateOffer(offer)
@@ -68,8 +77,6 @@ class RemotePlaybackIdentityManager(
             activeIdentity = reclaimed
             return@withLock reclaimed.toReady(offer.requestId, reused = true)
         }
-
-        endLocked()
 
         val capability = deviceLoginApi.remotePlaybackCapabilityAt(offer.serverURL).successOrThrow()
         require(capability.remotePlaybackHandoff && SiloCastProtocol.version in capability.protocolVersions) {
@@ -111,6 +118,8 @@ class RemotePlaybackIdentityManager(
                             }
                             val expiresAtMs = poll.sessionExpiresAt?.let(::parseInstantMillis)
                                 ?: (System.currentTimeMillis() + DEFAULT_SESSION_MS)
+                            beforeActivation()
+                            endLocked()
                             val generationId = UUID.randomUUID().toString()
                             tokenManager.beginTemporaryScope(
                                 TemporaryAuthScope(
