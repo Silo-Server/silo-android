@@ -433,6 +433,7 @@ def run(command, workers, interval=1.0):
         print("SILO_CI_RESOURCE_SUMMARY " + json.dumps({
             **sampler.summary(),
             "worker_limit": workers,
+            "gradle_profile_requested": "--profile" in command,
             "observation_error_count": observation_errors,
             "sample_interval_seconds": interval,
             "elapsed_seconds": round(time.monotonic() - started, 3),
@@ -466,7 +467,7 @@ def main():
             parser.error("Worker metadata differs from the command worker limit")
     except ValueError as error:
         parser.error(str(error))
-    return run([*command, "--init-script", str(Path(__file__).with_name("ci-jvm-settings.gradle"))], args.max_workers)
+    return run([*command, "--init-script", str(Path(__file__).with_name("ci-jvm-settings.gradle")), "--profile"], args.max_workers)
 
 
 if __name__ == "__main__":

@@ -224,6 +224,7 @@ class WrapperFixtures(unittest.TestCase):
         self.assertEqual(summary["child_returncode"], 17)
         self.assertEqual(summary["exit_status"], 17)
         self.assertEqual(summary["worker_limit"], 4)
+        self.assertTrue(summary["gradle_profile_requested"])
         self.assertNotIn("command", summary)
         self.assertNotIn("args", summary)
         self.assertNotIn("pid", summary)
