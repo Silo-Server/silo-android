@@ -38,9 +38,43 @@ env:
   SILO_CI_CACHE_READ_ONLY: ${{ inputs.build_cache && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && 'false' || 'true' }}
 
 jobs:
+  changes:
+    name: Select CI work
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      schema: ${{ steps.route.outputs.schema }}
+      mode: ${{ steps.route.outputs.mode }}
+      unit_tests: ${{ steps.route.outputs.unit_tests }}
+      lint: ${{ steps.route.outputs.lint }}
+      release_readiness: ${{ steps.route.outputs.release_readiness }}
+      ffmpeg_aar: ${{ steps.route.outputs.ffmpeg_aar }}
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check build supply chain and CI scripts
+        run: |
+          ./scripts/test-check-build-supply-chain.sh
+          ./scripts/check-build-supply-chain.sh
+          ./scripts/test-release-workflow.sh
+          python3 scripts/test-ci-routing.py -v
+          python3 scripts/test-ci-result.py -v
+
+      - name: Select validation jobs
+        id: route
+        run: python3 scripts/ci-routing.py
+        env:
+          SILO_CI_FFMPEG_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.build_ffmpeg_aar && 'true' || 'false' }}
+
   ffmpeg-aar:
     name: Media3 FFmpeg AAR
-    if: github.event_name == 'workflow_dispatch' && inputs.build_ffmpeg_aar
+    needs: changes
+    if: needs.changes.outputs.ffmpeg_aar == 'true'
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-ffmpeg-aar"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
     timeout-minutes: 45
 
@@ -108,7 +142,8 @@ jobs:
 
   release-readiness:
     name: Release readiness
-    if: github.event_name != 'workflow_dispatch' || !inputs.build_ffmpeg_aar
+    needs: changes
+    if: needs.changes.outputs.release_readiness == 'true'
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-release-readiness"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
     timeout-minutes: 45
 
@@ -164,7 +199,8 @@ jobs:
 
   unit-tests:
     name: Unit tests
-    if: github.event_name != 'workflow_dispatch' || !inputs.build_ffmpeg_aar
+    needs: changes
+    if: needs.changes.outputs.unit_tests == 'true'
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-unit-tests"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
 
     steps:
@@ -172,11 +208,6 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      - name: Check build supply chain
-        run: |
-          ./scripts/test-check-build-supply-chain.sh
-          ./scripts/check-build-supply-chain.sh
 
       - name: Set up JDK 21
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
@@ -273,7 +304,8 @@ jobs:
 
   lint:
     name: Lint
-    if: github.event_name != 'workflow_dispatch' || !inputs.build_ffmpeg_aar
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-lint"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
 
     steps:
@@ -311,15 +343,11 @@ jobs:
           # NEW violations fail. If this job fails, fix the call — do not
           # regenerate the baseline to make it pass.
           #
-          # lintVitalRelease runs here too. checkReleaseBuilds makes it part of
-          # assembleRelease, which only ever runs from release.yml on a v* tag —
-          # so without this the release variant is gated by a check that no pull
-          # request exercises, and the first run would be mid-release. It also
-          # covers the release-only source sets that lintDebug never sees.
+          # Release readiness builds both release bundles, which run fatal
+          # release lint. The final Android CI gate requires that job too.
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
-            :androidApp:lintVitalRelease :androidTvApp:lintVitalRelease \
             "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
             --max-workers=2
 
@@ -332,3 +360,21 @@ jobs:
             **/build/reports/lint-results-*.html
             **/build/reports/lint-results-*.xml
           if-no-files-found: ignore
+
+  android-ci:
+    name: Android CI
+    if: always()
+    needs: [changes, unit-tests, lint, release-readiness, ffmpeg-aar]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Require every selected validation job to succeed
+        run: python3 scripts/ci-result.py
+        env:
+          SILO_CI_NEEDS_JSON: ${{ toJSON(needs) }}
