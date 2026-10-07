@@ -177,6 +177,30 @@ def emit_toolchain_observation(current, seed=None):
     print(json.dumps({'toolchain_observation': observation}, sort_keys=True), flush=True)
 
 
+def check_toolchain_cohort(toolchains):
+    """Keep seven fields exact and bound raw memory on the accepted runner."""
+    fields = {'java', 'gradle', 'agp', 'runner_image', 'cpu_count',
+              'memory_total_kib', 'sdk_platforms', 'build_tools'}
+    if not isinstance(toolchains, list) or not 1 <= len(toolchains) <= 4:
+        raise ValueError('Complete toolchain cohort required')
+    for value in toolchains:
+        if (not isinstance(value, dict) or set(value) != fields
+                or type(value['cpu_count']) is not int or value['cpu_count'] != 4
+                or type(value['memory_total_kib']) is not int
+                or not 0 < value['memory_total_kib'] <= 2**40):
+            raise ValueError('Invalid four-CPU toolchain capacity inventory')
+        # Exact retained MemTotal anchors the existing qualified 16-GiB image.
+        if abs(value['memory_total_kib'] - 16373452) > 16 * 1024:
+            raise ValueError('Toolchain is outside the accepted sixteen-GiB envelope')
+    first = toolchains[0]
+    nonmemory = fields - {'memory_total_kib'}
+    if any(any(value[key] != first[key] for key in nonmemory) for value in toolchains[1:]):
+        raise ValueError('Nonmemory toolchain fields differ')
+    memory = [value['memory_total_kib'] for value in toolchains]
+    if max(memory) - min(memory) > 16 * 1024:
+        raise ValueError('Toolchain memory spread exceeds sixteen MiB')
+
+
 class MemorySampler:
     def __init__(self):
         self.stop = threading.Event()
@@ -310,6 +334,7 @@ def run_build(arguments):
         for key in ('java', 'gradle', 'agp', 'runner_image'):
             if receipt.get('toolchain', {}).get(key) != observations[key]:
                 raise ValueError('Seed and runner toolchain mismatch')
+        check_toolchain_cohort([receipt['toolchain'], observations])
     else:
         emit_toolchain_observation(observations)
     temporary = Path(os.environ['RUNNER_TEMP'])/'silo-apk-benchmark-fixture'
@@ -401,9 +426,7 @@ def summarize(arguments):
                 or report.get('seed_manifest_sha256') != (arguments.seed_manifest_sha256 or None)):
             raise ValueError('Selected layout report provenance or qualification mismatch')
     observations = reports[0]['toolchain']
-    for report in reports[1:]:
-        if report['toolchain'] != observations:
-            raise ValueError('Matrix runners do not have identical observed toolchains')
+    check_toolchain_cohort([report['toolchain'] for report in reports])
     if arguments.profile != 'SEED':
         from apk_benchmark_artifacts import compare_profiles
         # Validate this layout's complete inventory. External M/C0 comparison is

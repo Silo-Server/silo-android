@@ -232,7 +232,7 @@ class ControllerTests(unittest.TestCase):
                     bench.run_build(args)
             output.assert_not_called()
 
-    def test_retained_capacity_difference_does_not_change_the_four_guard_fields(self):
+    def test_capacity_difference_rejects_before_fixtures_after_the_four_guards(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / 'source'
@@ -255,12 +255,12 @@ class ControllerTests(unittest.TestCase):
                         patch.object(bench, 'fixtures', side_effect=ValueError('fixture boundary')) as fixtures, \
                         patch.object(bench, 'MemorySampler', return_value=sampler), \
                         patch.object(bench.subprocess, 'Popen') as gradle, patch('builtins.print') as output:
-                    with self.assertRaisesRegex(ValueError, '^fixture boundary$'):
+                    with self.assertRaisesRegex(ValueError, 'four-CPU toolchain capacity'):
                         bench.run_build(args)
             observation = json.loads(output.call_args.args[0])['toolchain_observation']
             self.assertEqual(observation['differing_fields'], ['cpu_count'])
             self.assertEqual(observation['differing_guard_fields'], [])
-            fixtures.assert_called_once()
+            fixtures.assert_not_called()
             gradle.assert_not_called()
 
     def test_seed_bundle_requires_actual_verification_and_local_certificate(self):
@@ -454,6 +454,56 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Production'):
                     bench.fixtures(source, Path(directory)/'temporary')
             self.assertFalse(config.exists())
+
+
+class BoundedMemoryCohortTests(unittest.TestCase):
+    tools = ControllerTests.observed_toolchain
+
+    def test_actual_small_variation_and_inclusive_sixteen_mib_boundary_pass(self):
+        base = self.tools['memory_total_kib']
+        bench.check_toolchain_cohort([self.tools, self.tools | {'memory_total_kib': 16372440}, self.tools | {'memory_total_kib': 16373448}])
+        for delta in (-16384, 16384):
+            with self.subTest(delta=delta):bench.check_toolchain_cohort([self.tools, self.tools | {'memory_total_kib': base + delta}])
+
+    def test_whole_seed_m_c0_spread_rejects_pairwise_compatible_arms(self):
+        low = self.tools | {'memory_total_kib': self.tools['memory_total_kib'] - 10000}
+        high = self.tools | {'memory_total_kib': self.tools['memory_total_kib'] + 10000}
+        bench.check_toolchain_cohort([self.tools, low])
+        bench.check_toolchain_cohort([self.tools, high])
+        with self.assertRaisesRegex(ValueError, 'spread'):bench.check_toolchain_cohort([self.tools, low, self.tools, high])
+
+    def test_capacity_bools_missing_nonpositive_float_and_material_drift_reject(self):
+        invalid = [None, {}, self.tools | {'extra': 'unexpected'}]
+        invalid += [self.tools | {key:value} for key,value in [('cpu_count',True),('cpu_count',8),('cpu_count',0),
+            ('memory_total_kib',True),('memory_total_kib',None),('memory_total_kib','16373452'),('memory_total_kib',16373452.0),
+            ('memory_total_kib',0),('memory_total_kib',-1),('memory_total_kib',2**41),('memory_total_kib',8*1024*1024),
+            ('memory_total_kib',self.tools['memory_total_kib']+16385),('memory_total_kib',self.tools['memory_total_kib']-16385)]]
+        invalid += [{key:value for key,value in self.tools.items() if key!=missing} for missing in self.tools]
+        for value in invalid:
+            with self.subTest(value=value),self.assertRaises(ValueError):bench.check_toolchain_cohort([self.tools,value])
+        for values in (None, [], [self.tools]*5, (self.tools,self.tools)):
+            with self.subTest(cohort=values),self.assertRaises(ValueError):bench.check_toolchain_cohort(values)
+
+    def test_each_nonmemory_difference_is_rejected(self):
+        changes = {'java':'openjdk version "21.0.11" 2026-04-21 LTS','gradle':'8.13','agp':'8.10.2',
+            'runner_image':'20261004.327.1','cpu_count':8,'sdk_platforms':['android-99'],'build_tools':['99.0.0']}
+        for key,value in changes.items():
+            with self.subTest(key=key),self.assertRaises(ValueError):bench.check_toolchain_cohort([self.tools,self.tools | {key:value}])
+
+    def test_sdk_mismatch_rejects_before_fixtures_and_gradle_with_raw_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory);source = root/'source';source.mkdir();receipt = root/'receipt.json'
+            args = bench.argparse.Namespace(source=str(source),output=str(root/'output'),profile='M',cache='task-cache-off',target='phone',
+                seed_receipt=str(receipt),seed_manifest_sha256=bench.APPROVED_PARENT_SEED[2],seed_run=bench.APPROVED_PARENT_SEED[0],seed_artifact=bench.APPROVED_PARENT_SEED[1])
+            with patch.dict(bench.os.environ,{'GRADLE_USER_HOME':str(root/'gradle'),'GITHUB_WORKFLOW_SHA':'a'*40}):
+                receipt.write_text(json.dumps({'manifest_sha256':args.seed_manifest_sha256,'provenance':bench.seed_provenance(args),
+                    'toolchain':self.tools | {'sdk_platforms':['android-99']},'restore_seconds':1}))
+                with patch.object(bench.subprocess,'check_output',side_effect=[bench.SEALED_SOURCE_SHA,'']),patch.object(bench,'toolchain',return_value=self.tools), \
+                        patch.object(bench,'fixtures') as fixtures,patch.object(bench.subprocess,'Popen') as gradle,patch('builtins.print') as output:
+                    with self.assertRaisesRegex(ValueError,'Nonmemory'):bench.run_build(args)
+            self.assertEqual(output.call_count,1)
+            self.assertEqual(json.loads(output.call_args.args[0])['toolchain_observation']['differing_fields'],['sdk_platforms'])
+            fixtures.assert_not_called();gradle.assert_not_called()
 
 
 if __name__ == '__main__':
