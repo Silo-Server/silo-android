@@ -683,6 +683,9 @@ class TvSettingsViewModel(
         } else if (previous == ProfileLaunchBehavior.EveryTime) {
             viewModelScope.launch {
                 if (tokenManager.getProfileId().isNullOrBlank()) return@launch
+                // A later choice may have gone back to Every Time (which
+                // cleared the row) while this read was in flight.
+                if (preferences.state.value.behavior == ProfileLaunchBehavior.EveryTime) return@launch
                 seeder.seedNow()
                 seeder.enqueuePeriodic()
             }

@@ -472,25 +472,36 @@ fun TvAppNavigation(
             navController.currentBackStackEntryFlow,
         ) { required, entry -> required to entry.destination.route }.collect { (required, route) ->
             if (!required) return@collect
-            // Signed out, or already choosing a profile: nothing to replace.
-            if (route == null || route in preMainAuthRoutes) {
+            // Nothing to replace without an active profile (signed out, or
+            // already choosing one). Judge by the profile, not the route:
+            // Manage Servers and the add-server screens sit on top of Main,
+            // so Back from them would reopen the previous profile.
+            val hasActiveProfile = !tokenManager.getAccessToken().isNullOrBlank() &&
+                !tokenManager.getProfileId().isNullOrBlank()
+            if (route == null || !hasActiveProfile) {
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
             // A phone-launched title's temporary identity is not this TV's
             // profile to clear. End it first, as tvOS does, but in
-            // TvSiloCastReceiver.stop()'s order: the player's queued final
-            // report and stopSession ride on that identity, so let them land
-            // (bounded) before revoking it. Ending always drops it locally;
-            // one still installed means a phone started a new title on this
-            // TV just now, and that phone's viewer is the one watching.
+            // TvSiloCastReceiver.stop()'s order and with its guard: the
+            // player's queued final report and stopSession ride on that
+            // identity, so let them land (bounded) first, and leave it alone
+            // if a newer receiver run installed or reused it meanwhile. That
+            // is a phone's live title, and its viewer is the one watching.
             if (tokenManager.hasTemporaryScope()) {
+                val claimedByRun = remotePlaybackIdentityManager.activeIdentity?.receiverRun
                 withTimeoutOrNull(CAST_PLAYBACK_TEARDOWN_TIMEOUT_MS) { playbackLifecycle.awaitPendingStop() }
-                remotePlaybackIdentityManager.end()
+                if (claimedByRun != null) remotePlaybackIdentityManager.endIfNotClaimedSince(claimedByRun)
                 if (tokenManager.hasTemporaryScope()) {
                     profileAwayTracker.onSelectionHandled()
                     return@collect
                 }
+            }
+            // Re-check after the wait, as silo-apple's return policy does.
+            if (!profileLaunchPreferences.requiresSelectionAfterBackground()) {
+                profileAwayTracker.onSelectionHandled()
+                return@collect
             }
             // Leave the profile's screens before clearing its state (see
             // onSwitchProfile). MainTvActivity.onStop already flushed pending
