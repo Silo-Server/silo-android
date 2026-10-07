@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.HeartBroken
 import androidx.compose.material.icons.rounded.RemoveDone
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.Tv
 import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
@@ -1843,6 +1844,7 @@ private fun HeroActionRow(
                     TvDialogOption(
                         key = "shuffle-series",
                         title = "Shuffle Series",
+                        icon = Icons.Rounded.Shuffle,
                         onClick = {
                             moreOpen = false
                             onShuffleSeries()
@@ -1855,6 +1857,7 @@ private fun HeroActionRow(
                     TvDialogOption(
                         key = "shuffle-season",
                         title = "Shuffle ${tvSeasonPickerLabel(season)}",
+                        icon = Icons.Rounded.Shuffle,
                         onClick = {
                             moreOpen = false
                             onShuffleSeason(season)

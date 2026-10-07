@@ -302,7 +302,7 @@ fun SeriesDetailContent(
                     ) {
                         { dismiss ->
                             if (onShuffleSeries != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text("Shuffle Series") },
                                     leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
                                     onClick = {
@@ -312,7 +312,7 @@ fun SeriesDetailContent(
                                 )
                             }
                             if (shuffleableSelectedSeason != null && onShuffleSeason != null) {
-                                DropdownMenuItem(
+                                SiloDropdownMenuItem(
                                     text = { Text("Shuffle ${phoneSeasonLabel(shuffleableSelectedSeason)}") },
                                     leadingIcon = { Icon(Icons.Filled.Shuffle, contentDescription = null) },
                                     onClick = {

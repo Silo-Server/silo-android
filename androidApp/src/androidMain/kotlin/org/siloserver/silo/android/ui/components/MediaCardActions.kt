@@ -8,7 +8,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,7 +34,7 @@ data class MediaCardActions(
 
 /**
  * Long-press context menu for [MediaCard] and [BackdropCard]. Renders as a
- * Material 3 [DropdownMenu] anchored to the card. Each item invokes the
+ * [SiloDropdownMenu] anchored to the card. Each item invokes the
  * matching callback in [actions] then closes the menu.
  */
 @Composable
