@@ -314,7 +314,10 @@ class LibrariesViewModelTest {
 
     @Test
     fun libraryListRecheckRecoversShortOrClearedListsAndKeepsThemOnlyOnTransientFailure() = runTest {
-        val fixture = DeferredLibrariesFixture(deferredKeys = emptySet())
+        val fixture = DeferredLibrariesFixture(
+            deferredKeys = emptySet(),
+            engineDispatcher = StandardTestDispatcher(testScheduler),
+        )
         fixture.librariesBody = """
             {"items":[{"id":"1","name":"First","type":"movies","sort_order":0}],"page":{"has_more":false}}
         """.trimIndent()
