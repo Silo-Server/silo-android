@@ -1859,6 +1859,27 @@ fun TvPlayerScreen(
         subtitleManager.applyAppearance(pv, subtitleAppearance)
     }
 
+    // While the controls are up the cue rises above them (they reach ~207dp
+    // up the screen) instead of landing on the title and scrubber; while the
+    // options panel is open the cue is hidden, so nothing reads through it.
+    val subtitleDensity = androidx.compose.ui.platform.LocalDensity.current
+    val controlsCoverCues = state.showControls && !state.hudOpen && !state.showNextUp
+    LaunchedEffect(playerViewRef, controlsCoverCues, state.hudOpen) {
+        val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
+        subtitleView.visibility = if (state.hudOpen) android.view.View.INVISIBLE else android.view.View.VISIBLE
+        val liftPx = if (controlsCoverCues) {
+            val location = IntArray(2)
+            subtitleView.getLocationInWindow(location)
+            val belowView = subtitleView.rootView.height - (location[1] + subtitleView.height)
+            (with(subtitleDensity) { 216.dp.roundToPx() } - belowView).coerceIn(0, subtitleView.height / 2)
+        } else {
+            0
+        }
+        if (subtitleView.paddingBottom != liftPx) {
+            subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, subtitleView.paddingRight, liftPx)
+        }
+    }
+
     // The video branch of the player's `when` below — the only state in which
     // the PlayerView is mounted and video-scoped overlays should draw.
     val videoActive = state.streamUrl != null && state.error == null
@@ -2057,9 +2078,12 @@ fun TvPlayerScreen(
                     TvPlayerClockScope(viewModel) { clock ->
                     TvPlayerIdleOverlay(
                         title = state.title,
-                        episodeTag = state.seasonNumber?.let { season ->
-                            state.episodeNumber?.let { ep -> "S$season·E$ep" }
-                        },
+                        eyebrow = tvPlayerEyebrow(state),
+                        subtitlesValue = subtitlePresentation.rows
+                            .firstOrNull { row -> row.checked }
+                            ?.label
+                            ?.substringBefore(" — ")
+                            ?: "Off",
                         positionSec = clock.position,
                         durationSec = clock.duration,
                         isPaused = state.isPaused,
@@ -2154,14 +2178,10 @@ fun TvPlayerScreen(
                 }
 
                 if (!isInPictureInPictureMode && state.hudOpen) {
-                    // Floating top-center card — no full-screen scrim so video
-                    // stays visible behind it. Mirrors tvOS TVPlayerInfoHUD.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = 56.dp),
-                        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
-                    ) {
+                    // Floating top-center rail and card over a light scrim, so
+                    // the picture stays watchable behind it. The HUD fills the
+                    // screen and places itself; mirrors tvOS TVPlayerInfoHUD.
+                    Box(modifier = Modifier.fillMaxSize()) {
                         TvPlayerClockScope(viewModel) { clock ->
                         TvPlayerHud(
                             title = state.title,
@@ -2292,26 +2312,24 @@ fun TvPlayerScreen(
                     !state.hudOpen && !state.showNextUp
                 ) {
                     // Controls hidden: align the transient line with the REAL
-                    // scrubber track's position inside the idle overlay, which
-                    // stacks (bottom-up): 40dp overlay padding + 33dp transport
-                    // cluster + 16dp gap + 8dp spacer + 16dp gap = 113dp to the
-                    // scrubber COLUMN's bottom — plus ~6dp because the 3.5dp
-                    // track is centered in the column's lower box (41dp minus
-                    // label row), not flush with its bottom.
+                    // scrubber track inside the idle overlay, which stacks
+                    // (bottom-up): 26dp inset + 44dp transport + 16dp gap +
+                    // 18dp clock row + 8dp gap = 112dp to the 28dp bar box, whose
+                    // track is centred in it — ~126dp — less half the chip's own
+                    // 4dp track.
                     //
                     // Controls visible: the live scrubber already reports
-                    // position, so the chip drops its own track and rises into
-                    // the 42dp gap between that column's top (113 + 41) and the
-                    // title block at 196dp. Centred, so it clears the
+                    // position, so the chip drops its own track and rises above
+                    // the title block (~207dp). Centred, so it clears the
                     // left-aligned title at any title width.
-                    // Horizontal 80dp matches the track width in both cases.
+                    // Horizontal 48dp matches the track width in both cases.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(
-                                start = 80.dp,
-                                end = 80.dp,
-                                bottom = if (state.showControls) 154.dp else 119.dp,
+                                start = TvPlayerChrome.SideInset,
+                                end = TvPlayerChrome.SideInset,
+                                bottom = if (state.showControls) 226.dp else 124.dp,
                             ),
                         contentAlignment = Alignment.BottomCenter,
                     ) {
@@ -2687,7 +2705,10 @@ private fun TvSiloCastPlayerRegistration(
 @Composable
 private fun TvPlayerIdleOverlay(
     title: String,
-    episodeTag: String?,
+    // "MOVIE · 2026" or "SEVERANCE · S2:E4" above the title.
+    eyebrow: String?,
+    // What the Subtitles button says when focused ("English", "Off").
+    subtitlesValue: String?,
     positionSec: Double,
     durationSec: Double,
     isPaused: Boolean,
@@ -2807,29 +2828,52 @@ private fun TvPlayerIdleOverlay(
                 }
             },
     ) {
-        // Bottom gradient scrim — 240dp tall, ~0.55 black at the bottom edge,
-        // fading to transparent so video content above stays visible.
+        // Bottom gradient scrim — 270dp tall, darkest at the bottom edge where
+        // the controls sit, clear above so the paused picture stays visible.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(240.dp)
+                .height(270.dp)
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
                         0.00f to Color.Transparent,
-                        0.40f to Color.Black.copy(alpha = 0.30f),
-                        1.00f to Color.Black.copy(alpha = 0.55f),
+                        0.56f to Color.Black.copy(alpha = 0.55f),
+                        1.00f to Color.Black.copy(alpha = 0.86f),
                     ),
                 ),
         )
 
+        // Bottom-up: 26dp inset, 44dp transport, 16dp, scrubber (28dp bar
+        // + 8dp + clock row), 16dp, then the eyebrow and title. The skip
+        // indicator and the subtitle lift below are placed from these numbers.
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 80.dp, vertical = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(
+                    start = TvPlayerChrome.SideInset,
+                    end = TvPlayerChrome.SideInset,
+                    bottom = TvPlayerChrome.BottomInset,
+                ),
         ) {
+            if (title.isNotBlank()) {
+                if (!eyebrow.isNullOrBlank()) {
+                    androidx.tv.material3.Text(
+                        text = eyebrow.uppercase(),
+                        style = TvPlayerType.Eyebrow,
+                        maxLines = 1,
+                    )
+                }
+                androidx.tv.material3.Text(
+                    text = title,
+                    style = TvPlayerType.Title,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+                )
+            }
+
             // Interactive scrubber — capsule track with chapter ticks, interval
             // skip, hold-to-auto-seek, and Select to commit. tvOS spec §4.1.
             TvPlayerScrubber(
@@ -2878,10 +2922,11 @@ private fun TvPlayerIdleOverlay(
                 onExitWhenIdle = onClose,
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             TvPlayerTransportCluster(
                 modifier = Modifier.onFocusChanged { transportHasFocus = it.hasFocus },
+                subtitlesValue = subtitlesValue,
                 isPlaying = !isPaused,
                 skipBackSeconds = skipBackSeconds,
                 skipForwardSeconds = skipForwardSeconds,
@@ -2902,43 +2947,21 @@ private fun TvPlayerIdleOverlay(
             )
         }
 
-        // Quiet bottom-left title footer above the scrubber column (tvOS
-        // titleFooter idiom) — series / title / episode tag, shadowed, no box,
-        // no "Playing" literal. Sits above the transport stack's top padding.
-        if (title.isNotBlank()) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 80.dp, bottom = 196.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    androidx.tv.material3.Text(
-                        text = title,
-                        color = Color.White,
-                        style = androidx.tv.material3.MaterialTheme.typography.titleMedium.copy(
-                            shadow = androidx.compose.ui.graphics.Shadow(
-                                color = Color.Black.copy(alpha = 0.55f),
-                                offset = androidx.compose.ui.geometry.Offset(0f, 1f),
-                                blurRadius = 6f,
-                            ),
-                        ),
-                    )
-                    if (episodeTag != null) {
-                        androidx.tv.material3.Text(
-                            text = episodeTag,
-                            color = Color.White.copy(alpha = 0.62f),
-                            style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                }
-            }
-        }
-
     }
+}
+
+/**
+ * The small line above the player title: "SEVERANCE · S2:E4" for an episode
+ * (whose title is the episode's own), "MOVIE · 2026" for a film.
+ */
+internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
+    val series = state.seriesTitle?.takeIf { it.isNotBlank() }
+    if (series != null) {
+        val code = state.seasonNumber?.let { season -> state.episodeNumber?.let { "S$season:E$it" } }
+        return listOfNotNull(series, code).joinToString(" · ")
+    }
+    val kind = "Movie".takeIf { state.contentId.startsWith("movie") }
+    return listOfNotNull(kind, state.year?.toString()).joinToString(" · ").ifBlank { null }
 }
 
 private fun formatSleepCountdown(seconds: Int): String {

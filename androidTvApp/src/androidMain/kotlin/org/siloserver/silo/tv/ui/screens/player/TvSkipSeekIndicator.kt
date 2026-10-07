@@ -95,22 +95,22 @@ fun TvSkipSeekIndicator(
 
             if (showTrack && snapshot.durationSec > 0.0) {
                 val progress = (snapshot.targetSec / snapshot.durationSec).toFloat().coerceIn(0f, 1f)
-                // Mirrors TvPlayerScrubber's resting track exactly: 3.5dp
-                // capsule, White@0.24 rail, solid White fill — so the line is
+                // Mirrors TvPlayerScrubber's resting track exactly: 4dp
+                // capsule, White@0.22 rail, solid Paper fill — so the line is
                 // visually the same bar the transport shows in this spot.
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(3.5.dp)
+                        .height(4.dp)
                         .clip(RoundedCornerShape(percent = 50))
-                        .background(Color.White.copy(alpha = 0.24f)),
+                        .background(Color.White.copy(alpha = 0.22f)),
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(progress)
-                            .height(3.5.dp)
+                            .height(4.dp)
                             .clip(RoundedCornerShape(percent = 50))
-                            .background(Color.White),
+                            .background(TvPlayerChrome.Paper),
                     )
                 }
             }

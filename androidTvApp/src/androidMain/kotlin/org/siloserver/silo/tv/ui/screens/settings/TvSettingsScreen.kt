@@ -63,6 +63,10 @@ import org.siloserver.silo.model.settings.SeekDirection
 import org.siloserver.silo.model.settings.SeekIntervalSupport
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
+import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -315,9 +319,9 @@ fun TvSettingsScreen(
 
     if (showSignOutConfirm) {
         TvSettingsConfirmDialog(
-            title = "Sign Out",
-            message = "You will be returned to the login screen.",
-            confirmLabel = "Sign Out",
+            title = "Sign out?",
+            message = "This TV goes back to the sign-in screen. Your profiles and watch history stay on the server.",
+            confirmLabel = "Sign out",
             onConfirm = {
                 showSignOutConfirm = false
                 viewModel.onSignOut(context)
@@ -1864,7 +1868,7 @@ private fun TvSubtitleSettingsPane(
 
     if (showResetConfirmation) {
         TvSettingsConfirmDialog(
-            title = "Reset Custom Appearance?",
+            title = "Reset custom appearance?",
             message = "This restores all custom subtitle appearance options to their defaults.",
             confirmLabel = "Reset",
             onConfirm = {
@@ -2113,9 +2117,7 @@ fun TvSettingsPickerSheet(
                 modifier = Modifier
                     .width(380.dp)
                     .heightIn(max = 460.dp)
-                    .clip(PickerCardShape)
-                    .background(PickerCardFill)
-                    .border(1.dp, Color.White.copy(alpha = 0.09f), PickerCardShape),
+                    .tvDialogSurface(),
             ) {
                 Row(
                     modifier = Modifier
@@ -2251,7 +2253,6 @@ private fun TvSettingsPickerOptionRow(
 // Confirm dialog
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvSettingsConfirmDialog(
     title: String,
@@ -2259,105 +2260,23 @@ internal fun TvSettingsConfirmDialog(
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    destructive: Boolean = true,
 ) {
-    BackHandler(onBack = onDismiss)
-    // Default focus lands on Cancel so a stray OK press never triggers the
-    // destructive action.
-    val cancelFocus = remember { FocusRequester() }
-    var confirmHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = cancelFocus::requestFocus,
-            isFocused = { confirmHasFocus },
-        )
-    }
-
-    Dialog(
+    // Cancel comes first and takes focus, so a stray OK press never runs the
+    // action. A destructive action reads red at rest and fills red on focus.
+    TvDialog(
+        title = title,
+        message = message,
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        // tvOS confirmation overlay: a #15171C card over a 62% black scrim.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.62f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(320.dp)
-                    .clip(PickerCardShape)
-                    .background(PickerCardFill)
-                    .border(1.dp, Color.White.copy(alpha = 0.09f), PickerCardShape)
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp, lineHeight = 22.sp),
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DialogButton(
-                        label = "Cancel",
-                        onClick = onDismiss,
-                        focusRequester = cancelFocus,
-                    )
-                    DialogButton(
-                        label = confirmLabel,
-                        onClick = onConfirm,
-                        destructive = true,
-                    )
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalTvMaterial3Api::class)
-@Composable
-private fun DialogButton(
-    label: String,
-    onClick: () -> Unit,
-    destructive: Boolean = false,
-    focusRequester: FocusRequester? = null,
-) {
-    val shape = RoundedCornerShape(6.dp)
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = ClickableSurfaceDefaults.shape(shape = shape),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.08f),
-            contentColor = if (destructive) MaterialTheme.colorScheme.error else Color.White,
-            focusedContainerColor = FocusedContainer,
-            focusedContentColor = FocusedContent,
-            pressedContainerColor = FocusedContainer,
-            pressedContentColor = FocusedContent,
+        actions = listOf(
+            TvDialogAction(label = "Cancel", onClick = onDismiss),
+            TvDialogAction(
+                label = confirmLabel,
+                onClick = onConfirm,
+                style = if (destructive) TvDialogActionStyle.Destructive else TvDialogActionStyle.Primary,
+            ),
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-            color = if (isFocused) FocusedContent else if (destructive) MaterialTheme.colorScheme.error else Color.White,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
-    }
+    )
 }
 
 /** The Experimental group: features that are not finished yet. */
@@ -2468,8 +2387,6 @@ internal val SettingsBackground = Color(0xFF000000)
 private val PaneHeaderTile = Color(0xFF3A3A3C)
 
 /** Picker and confirmation cards (Apple `siloSurfaceElevated`), 30pt corners. */
-private val PickerCardFill = Color(0xFF15171C)
-private val PickerCardShape = RoundedCornerShape(15.dp)
 
 // tvOS destructive row colors: bright red at rest on black, deeper red on the
 // focused white platter (TVSettingsRailRowStyle).

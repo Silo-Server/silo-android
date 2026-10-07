@@ -16,13 +16,14 @@ import androidx.compose.ui.unit.dp
  * selector + flyout (§5.3) and the Stage-5 profile dropdown (§5.8) — so they
  * read as one family. Port of tvOS `TVSkylinePanelChrome` (`TVTopMenuBar.swift`).
  *
- * A near-opaque vertical tint (lighter at the top, as if lit from above)
+ * An opaque vertical tint (lighter at the top, as if lit from above)
  * finished with a gradient hairline that brightens along the top lip and a
  * drop shadow, so the panel floats over the page on its own depth rather than
  * needing a page scrim to darken everything behind it.
  *
- * Compose has no `.regularMaterial` blur; the dark fill is opaque enough that
- * the absence of a frost blur is not noticeable over the dimmed page.
+ * Opaque, not near-opaque: Compose has no `.regularMaterial` blur, and
+ * without one a 92% fill let the synopsis and Continue Watching cards read
+ * through the menu as a second layer of text.
  */
 fun Modifier.tvSkylinePanelChrome(corner: Dp = 11.dp): Modifier {
     val shape = RoundedCornerShape(corner)
@@ -45,8 +46,8 @@ fun Modifier.tvSkylinePanelChrome(corner: Dp = 11.dp): Modifier {
         .background(
             Brush.verticalGradient(
                 colors = listOf(
-                    Color(0xFF23252C).copy(alpha = 0.92f),
-                    Color(0xFF141519).copy(alpha = 0.95f),
+                    Color(0xFF1D1F24),
+                    Color(0xFF17181B),
                 ),
             ),
         )
