@@ -2,8 +2,8 @@ name: Release
 
 # One release pipeline, playing the role of silo-apple's TestFlight
 # (release.yml) and sideload (sideload-ipa.yml) workflows combined: a version
-# tag or a manual dispatch publishes both App Bundles to Google Play, then
-# builds the signed sideload APKs and attaches them to a GitHub release for
+# tag or a manual dispatch prepares both App Bundles for Google Play and
+# signed sideload APKs in parallel, then attaches the APKs to a GitHub release for
 # the same version. Dispatch runs mint the v<version> tag when creating the
 # GitHub release — no manual tagging is necessary (apple's sideload pattern).
 #
@@ -207,6 +207,16 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
 
+      # Robolectric downloads its Android runtimes outside Gradle's cache.
+      # Share the normal CI key so releases reuse those runtime downloads.
+      - name: Cache Robolectric Android runtimes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+
       - name: Run unit tests
         shell: bash
         run: |
@@ -270,17 +280,11 @@ jobs:
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
           SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
 
-  # Signed sideload APKs (moved here from android-build.yml). Runs when the
-  # Play publish succeeded or was skipped (prerelease tags) — never when it
-  # failed, so the GitHub release can't outrun the Play track.
+  # Prepare signed sideload APKs alongside Play after setup and tests succeed.
+  # publish-release waits for both paths before exposing the APKs.
   apks:
     name: ${{ matrix.name }}
-    needs: [setup, unit-tests, play]
-    if: >-
-      ${{ !cancelled() &&
-          needs.setup.result == 'success' &&
-          needs.unit-tests.result == 'success' &&
-          (needs.play.result == 'success' || needs.play.result == 'skipped') }}
+    needs: [setup, unit-tests]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -385,14 +389,6 @@ jobs:
             apk_name="$(basename "${apk}")"
             variant="${apk_name#${{ matrix.module }}-}"
             cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-${version_label}-${variant}"
-
-            if [[ "${variant}" == "universal-release.apk" ]]; then
-              cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-latest-${variant}"
-              # The Downloader by AFTVnews short codes redirect to the old
-              # debug-named asset URL. Keep publishing the release build under
-              # that filename until the aftv.news codes are re-registered.
-              cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-latest-universal-debug.apk"
-            fi
           done
 
       - name: Upload release APKs
@@ -409,11 +405,14 @@ jobs:
   # re-trigger workflows, so this cannot recurse.
   publish-release:
     name: Publish GitHub Release
-    needs: [setup, apks]
+    needs: [setup, unit-tests, play, apks]
     if: >-
       ${{ !cancelled() &&
           needs.setup.result == 'success' &&
-          needs.apks.result == 'success' }}
+          needs.unit-tests.result == 'success' &&
+          needs.apks.result == 'success' &&
+          ((needs.setup.outputs.play_publish == 'true' && needs.play.result == 'success') ||
+           (needs.setup.outputs.play_publish == 'false' && needs.play.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -431,9 +430,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
+
+          # Transfer each APK once, then recreate the universal aliases here.
+          # Downloader by AFTVnews still redirects to the debug-named aliases.
+          for prefix in silo-android silo-android-tv; do
+            universal_apks=(release-artifacts/**/"${prefix}-${RELEASE_VERSION}-universal-release.apk")
+            if (( ${#universal_apks[@]} != 1 )) || [[ ! -s "${universal_apks[0]}" ]]; then
+              echo "::error::Expected one nonempty universal APK for ${prefix}."
+              exit 1
+            fi
+            universal_apk="${universal_apks[0]}"
+            artifact_dir="$(dirname "${universal_apk}")"
+            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-release.apk"
+            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-debug.apk"
+          done
 
           release_title="Silo Android ${RELEASE_TAG}"
           android_latest_url="https://github.com/${GH_REPO}/releases/latest/download/silo-android-latest-universal-release.apk"
