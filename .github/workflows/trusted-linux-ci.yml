@@ -21,6 +21,10 @@ on:
         type: boolean
         required: false
         default: false
+      worker_limit:
+        type: number
+        required: false
+        default: 2
       configuration_cache:
         type: boolean
         required: false
@@ -33,6 +37,8 @@ env:
   SILO_CI_CACHE_FLAG: ${{ inputs.build_cache && '--build-cache' || '--no-build-cache' }}
   SILO_CI_PARALLEL_FLAG: ${{ inputs.parallel && '--parallel' || '--no-parallel' }}
   SILO_CI_CONFIGURATION_FLAG: ${{ inputs.configuration_cache && '--configuration-cache' || '--no-configuration-cache' }}
+  SILO_CI_REQUESTED_WORKERS: ${{ inputs.worker_limit }}
+  SILO_CI_WORKER_LIMIT: ${{ inputs.worker_limit }}
   # Pass a literal string to action inputs and record the same policy decision.
   # Internal PR writes stay scoped to their merge ref; forks remain read-only.
   SILO_CI_CACHE_READ_ONLY: ${{ inputs.build_cache && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && 'false' || 'true' }}
@@ -144,6 +150,10 @@ jobs:
     name: Release readiness
     needs: changes
     if: needs.changes.outputs.release_readiness == 'true'
+    # R8 memory tuning is a separate experiment; this profile varies unit/lint only.
+    env:
+      SILO_CI_WORKER_LIMIT: "2"
+      SILO_CI_PARALLEL_FLAG: --no-parallel
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-release-readiness"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
     timeout-minutes: 45
 
@@ -189,11 +199,10 @@ jobs:
       # Signing and publishing remain in release.yml.
       - name: Build phone and TV release bundles
         run: |
-          ./gradlew \
+          ./scripts/ci-gradle.py --max-workers "${SILO_CI_WORKER_LIMIT}" -- ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :androidApp:bundleRelease :androidTvApp:bundleRelease \
-            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
-            --max-workers=2
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
           test -s androidApp/build/outputs/bundle/release/androidApp-release.aab
           test -s androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
 
@@ -260,11 +269,10 @@ jobs:
 
           # CI exercises debug variants; release.yml retains the host tests for
           # distinct release behavior and BuildConfig values.
-          ./gradlew \
+          ./scripts/ci-gradle.py --max-workers "${SILO_CI_WORKER_LIMIT}" -- ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             testDebugUnitTest \
-            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
-            --max-workers=2
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
 
           python3 - <<'PY'
           import json
@@ -345,11 +353,10 @@ jobs:
           #
           # Release readiness builds both release bundles, which run fatal
           # release lint. The final Android CI gate requires that job too.
-          ./gradlew \
+          ./scripts/ci-gradle.py --max-workers "${SILO_CI_WORKER_LIMIT}" -- ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
-            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
-            --max-workers=2
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}"
 
       - name: Upload lint reports
         if: failure()

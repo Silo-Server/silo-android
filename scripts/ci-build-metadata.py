@@ -7,6 +7,14 @@ import re
 import subprocess
 from pathlib import Path
 
+from importlib.util import module_from_spec, spec_from_file_location
+
+spec = spec_from_file_location("ci_gradle", Path(__file__).with_name("ci-gradle.py"))
+ci_gradle = module_from_spec(spec)
+spec.loader.exec_module(ci_gradle)
+requested_workers = ci_gradle.worker_limit(os.environ.get("SILO_CI_REQUESTED_WORKERS", "2"))
+workers = ci_gradle.worker_limit(os.environ.get("SILO_CI_WORKER_LIMIT", "2"))
+
 source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text()
 catalog = Path("gradle/libs.versions.toml").read_text()
@@ -23,6 +31,11 @@ metadata = {
     "variant": "baseline" if cache == "--no-build-cache" else "optimized",
     "cache_regime": "unverified",
     "cache_namespace": os.environ.get("GITHUB_REF", "local"),
+    "job": os.environ.get("GITHUB_JOB", "local"),
+    "requested_worker_limit": requested_workers,
+    "worker_limit": workers,
+    "runner_cpu_count": os.cpu_count(),
+    "runner_memory_total_kib": ci_gradle.memory_value(Path("/proc"), "MemTotal") if ci_gradle.is_linux() else None,
     "profile": " ".join(
         os.environ.get(key, "")
         for key in ("SILO_CI_CACHE_FLAG", "SILO_CI_PARALLEL_FLAG", "SILO_CI_CONFIGURATION_FLAG")

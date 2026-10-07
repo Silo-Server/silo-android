@@ -22,10 +22,18 @@ on:
         default: true
         type: boolean
       parallel:
-        description: Benchmark parallel project execution at the existing worker limit
+        description: Benchmark parallel project execution for unit tests and lint
         required: false
         default: false
         type: boolean
+      worker_limit:
+        description: Maximum Gradle workers for unit tests and lint
+        required: false
+        default: "2"
+        type: choice
+        options:
+          - "2"
+          - "4"
       configuration_cache:
         description: Check configuration-cache compatibility without publishing artifacts
         required: false
@@ -49,4 +57,5 @@ jobs:
       build_ffmpeg_aar: ${{ inputs.build_ffmpeg_aar || false }}
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
       parallel: ${{ inputs.parallel || false }}
+      worker_limit: ${{ fromJSON(inputs.worker_limit || '2') }}
       configuration_cache: ${{ inputs.configuration_cache || false }}
