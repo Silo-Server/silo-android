@@ -76,6 +76,7 @@ jobs:
           ./scripts/test-release-workflow.sh
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
+          python3 scripts/test-ci-gradle.py
 
       - name: Select validation jobs
         id: route

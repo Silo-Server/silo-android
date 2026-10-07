@@ -483,7 +483,7 @@ class WorkflowFixtures(unittest.TestCase):
     def test_exact_task_graphs_heap_and_job_worker_policy(self):
         expected = {
             "unit-tests": ["testDebugUnitTest"],
-            "lint": [":android-shared:lintDebug", ":androidApp:lintDebug", ":androidTvApp:lintDebug", ":androidApp:lintVitalRelease", ":androidTvApp:lintVitalRelease"],
+            "lint": [":android-shared:lintDebug", ":androidApp:lintDebug", ":androidTvApp:lintDebug"],
             "release-readiness": [":androidApp:bundleRelease", ":androidTvApp:bundleRelease"],
         }
         for name, tasks in expected.items():
@@ -511,6 +511,32 @@ class WorkflowFixtures(unittest.TestCase):
         self.assertIn('outputs.cacheIf("Tests inspect files outside their runtime classpath") { false }', build)
         self.assertIn('outputs.upToDateWhen { false }', build)
         self.assertIn("glob('*/build/test-results/testDebugUnitTest/TEST-*.xml')", self.job("unit-tests"))
+
+    def test_routing_and_aggregate_require_every_selected_job(self):
+        changes = self.job("changes")
+        for output in ("schema", "mode", "unit_tests", "lint", "release_readiness", "ffmpeg_aar"):
+            self.assertIn(output + ": ${{ steps.route.outputs." + output + " }}", changes)
+        for job, output in (("unit-tests", "unit_tests"), ("lint", "lint"), ("release-readiness", "release_readiness"), ("ffmpeg-aar", "ffmpeg_aar")):
+            selected = self.job(job)
+            self.assertIn("needs: changes", selected)
+            self.assertIn("if: needs.changes.outputs." + output + " == 'true'", selected)
+        aggregate = self.job("android-ci")
+        self.assertIn("if: always()", aggregate)
+        needs = re.search(r"^    needs: \[(.*)\]$", aggregate, re.MULTILINE).group(1)
+        self.assertEqual({job.strip() for job in needs.split(",")}, {"changes", "unit-tests", "lint", "release-readiness", "ffmpeg-aar"})
+        self.assertIn("run: python3 scripts/ci-result.py", aggregate)
+        self.assertIn("SILO_CI_NEEDS_JSON: ${{ toJSON(needs) }}", aggregate)
+        for check in ("test-check-build-supply-chain.sh", "check-build-supply-chain.sh", "test-release-workflow.sh", "test-ci-routing.py", "test-ci-result.py", "test-ci-gradle.py"):
+            self.assertIn("scripts/" + check, changes)
+        self.assertNotIn("Check build supply chain", self.job("unit-tests"))
+
+    def test_manual_profile_defaults_keep_serial_two_workers_and_one_fork(self):
+        for prefix in ("unit", "lint"):
+            self.assertRegex(self.controller, prefix + r"_parallel:\n        description: [^\n]+\n        required: false\n        default: false\n        type: boolean")
+        self.assertIn("workflow_dispatch:", self.controller)
+        self.assertIn("uses: ./.github/workflows/trusted-linux-ci.yml", self.controller)
+        self.assertNotIn("lintVitalRelease", self.job("lint"))
+        self.assertIn("Release readiness builds both release bundles, which run fatal", self.job("lint"))
 
     def test_metadata_reports_effective_job_workers_and_flags(self):
         with tempfile.TemporaryDirectory() as temporary:
