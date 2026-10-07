@@ -34,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -85,6 +86,11 @@ fun TvPlayerTransportCluster(
     // What the Subtitles button reveals when focused ("English", "Off").
     subtitlesValue: String? = null,
 ) {
+    // The groups sit at opposite ends of the row. Left/Right cross the gap
+    // between them explicitly; a plain search from skip-forward can land on
+    // the scrubber above instead.
+    val skipForwardFocus = remember { FocusRequester() }
+    val firstSecondaryFocus = remember { FocusRequester() }
     Row(
         modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -114,6 +120,8 @@ fun TvPlayerTransportCluster(
                 seekGlyph = SeekGlyph(forward = true, seconds = skipForwardSeconds),
                 description = "Skip forward $skipForwardSeconds seconds",
                 onClick = onSkipForward,
+                focusRequester = skipForwardFocus,
+                rightNeighbor = firstSecondaryFocus,
                 onMoveUp = onMoveUpToScrubber,
             )
         }
@@ -126,6 +134,8 @@ fun TvPlayerTransportCluster(
                     description = "Up Next",
                     label = "Up next",
                     onClick = showUpNext,
+                    focusRequester = firstSecondaryFocus,
+                    leftNeighbor = skipForwardFocus,
                     onMoveUp = onMoveUpToScrubber,
                 )
                 DockGap()
@@ -136,6 +146,8 @@ fun TvPlayerTransportCluster(
                 label = "Subtitles",
                 value = subtitlesValue,
                 onClick = onOpenQuickSubtitles,
+                focusRequester = firstSecondaryFocus.takeIf { onUpNext == null },
+                leftNeighbor = skipForwardFocus.takeIf { onUpNext == null },
                 onMoveUp = onMoveUpToScrubber,
             )
             DockGap()
@@ -169,6 +181,9 @@ private fun TransportIconButton(
     description: String,
     onClick: () -> Unit,
     focusRequester: FocusRequester? = null,
+    // Explicit Left/Right targets where the default search would go astray.
+    leftNeighbor: FocusRequester? = null,
+    rightNeighbor: FocusRequester? = null,
     isPrimary: Boolean = false,
     onMoveUp: () -> Unit = {},
     seekGlyph: SeekGlyph? = null,
@@ -205,6 +220,10 @@ private fun TransportIconButton(
             .then(if (isFocused) Modifier else Modifier.border(1.dp, TvPlayerChrome.ButtonRing, shape))
             .animateContentSize(animationSpec = tween(160))
             .let { mod -> if (focusRequester != null) mod.focusRequester(focusRequester) else mod }
+            .focusProperties {
+                leftNeighbor?.let { left = it }
+                rightNeighbor?.let { right = it }
+            }
             .focusable(interactionSource = interactionSource)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false

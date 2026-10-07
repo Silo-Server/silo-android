@@ -44,6 +44,8 @@ fun ChaptersSheet(
     onSelect: (chapterIndex: Int) -> Unit,
     onDismiss: () -> Unit,
     position: Double = 0.0,
+    /** The title's length: the last chapter's end when the server gives none. */
+    duration: Double = 0.0,
     tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
@@ -57,12 +59,13 @@ fun ChaptersSheet(
     PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
         PlayerPanelHeader(title = "Chapters", onClose = { controller.dismiss() })
         val current = chapters.getOrNull(currentChapterIndex)
+        val countLabel = if (chapters.size == 1) "1 chapter" else "${chapters.size} chapters"
         Text(
             text = if (current != null) {
-                val left = (chapterEnd(chapters, currentChapterIndex) - position).coerceAtLeast(0.0)
-                "${chapters.size} chapters · ${formatClockTime(left)} left in this chapter"
+                val left = (chapterEnd(chapters, currentChapterIndex, duration) - position).coerceAtLeast(0.0)
+                "$countLabel · ${formatClockTime(left)} left in this chapter"
             } else {
-                if (chapters.size == 1) "1 chapter" else "${chapters.size} chapters"
+                countLabel
             },
             style = PlayerType.RowDetail.copy(fontFeatureSettings = "tnum"),
             modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 6.dp),
@@ -80,13 +83,13 @@ fun ChaptersSheet(
                 .padding(horizontal = 8.dp),
         ) {
             itemsIndexed(chapters, key = { _, chapter -> chapter.index }) { index, chapter ->
+                val length = chapterEnd(chapters, index, duration) - chapter.startSeconds
                 ChapterRow(
                     number = index + 1,
                     title = chapter.title.ifBlank { "Chapter ${chapter.index + 1}" },
                     start = chapter.startSeconds,
-                    length = chapterEnd(chapters, index) - chapter.startSeconds,
+                    length = length,
                     progress = if (index == currentChapterIndex) {
-                        val length = chapterEnd(chapters, index) - chapter.startSeconds
                         if (length > 0) ((position - chapter.startSeconds) / length).toFloat() else 0f
                     } else {
                         null
@@ -101,11 +104,12 @@ fun ChaptersSheet(
     }
 }
 
-private fun chapterEnd(chapters: List<VersionChapter>, index: Int): Double {
+private fun chapterEnd(chapters: List<VersionChapter>, index: Int, duration: Double): Double {
     val chapter = chapters[index]
     return when {
         chapter.endSeconds > chapter.startSeconds -> chapter.endSeconds
         index + 1 < chapters.size -> chapters[index + 1].startSeconds
+        duration > chapter.startSeconds -> duration
         else -> chapter.startSeconds
     }
 }

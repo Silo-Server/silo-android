@@ -1700,17 +1700,19 @@ fun PlayerScreen(
             // open. The subtitle canvas pads its right side by the overlap so
             // cues re-center in the picture that is still visible.
             var dockedMenuEdgePx by remember { mutableStateOf<Float?>(null) }
+            val latestDockedMenuEdgePx by rememberUpdatedState(dockedMenuEdgePx)
             LaunchedEffect(playerViewRef, dockedMenuEdgePx) {
-                val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
-                val location = IntArray(2)
-                subtitleView.getLocationInWindow(location)
-                val viewRight = location[0] + subtitleView.width
-                val overlap = dockedMenuEdgePx
-                    ?.let { edge -> (viewRight - edge).toInt().coerceIn(0, subtitleView.width / 2) }
-                    ?: 0
-                if (subtitleView.paddingRight != overlap) {
-                    subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, overlap, subtitleView.paddingBottom)
+                playerViewRef?.subtitleView?.let { padSubtitlesClearOfDock(it, dockedMenuEdgePx) }
+            }
+            // The subtitle manager resizes and moves the canvas on its own
+            // (video size, aspect, letterbox), so re-pad after each layout too.
+            DisposableEffect(playerViewRef) {
+                val subtitleView = playerViewRef?.subtitleView ?: return@DisposableEffect onDispose { }
+                val listener = android.view.View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+                    view.post { padSubtitlesClearOfDock(view, latestDockedMenuEdgePx) }
                 }
+                subtitleView.addOnLayoutChangeListener(listener)
+                onDispose { subtitleView.removeOnLayoutChangeListener(listener) }
             }
             val letterboxExpansion by viewModel.letterboxExpansion.collectAsState()
             // The camera only reaches the picture once expansion pushes it out
@@ -2154,4 +2156,21 @@ private fun PlaybackExecutionPlan?.validatedPassthroughCodecs(): List<String> {
         ?.takeIf { plan.claims.audio.passthrough }
         ?.let { listOf(it) }
         .orEmpty()
+}
+
+/**
+ * Pads the subtitle canvas's right side by its overlap with a docked player
+ * menu whose left edge is [dockedMenuEdgePx] (root px), so cues re-center in
+ * the picture that is still visible. Null clears the padding.
+ */
+private fun padSubtitlesClearOfDock(subtitleView: android.view.View, dockedMenuEdgePx: Float?) {
+    val location = IntArray(2)
+    subtitleView.getLocationInWindow(location)
+    val viewRight = location[0] + subtitleView.width
+    val overlap = dockedMenuEdgePx
+        ?.let { edge -> (viewRight - edge).toInt().coerceIn(0, subtitleView.width / 2) }
+        ?: 0
+    if (subtitleView.paddingRight != overlap) {
+        subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, overlap, subtitleView.paddingBottom)
+    }
 }

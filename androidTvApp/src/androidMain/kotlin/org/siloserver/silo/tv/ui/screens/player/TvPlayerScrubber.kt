@@ -136,6 +136,8 @@ fun TvPlayerScrubber(
     onPlayPause: () -> Unit,
     /** See TvPlayerIdleOverlay.canToggleAfterCommit. */
     canToggleAfterCommit: Boolean = true,
+    /** The current rate, so the wall-clock finish time matches what the viewer will see. */
+    playbackSpeed: Double = 1.0,
     onMoveDownToTransport: () -> Unit,
     onExitWhenIdle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -264,6 +266,7 @@ fun TvPlayerScrubber(
     // The bar sits above its clock row, as on tvOS: elapsed on the left, time
     // left and the wall-clock finish on the right.
     val context = LocalContext.current
+    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
     Column(modifier = modifier) {
         Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
@@ -473,10 +476,11 @@ fun TvPlayerScrubber(
                 modifier = Modifier.weight(1f),
             )
             val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
+            val wallClockRemainingSec = if (playbackSpeed > 0.0) remainingSec / playbackSpeed else remainingSec
             Text(
                 text = listOfNotNull(
                     formatRemainingTime(remainingSec),
-                    finishTimeLabel(context, remainingSec)?.let { "Ends $it" },
+                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let { "Ends $it" },
                 ).joinToString(" · "),
                 style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
             )
@@ -523,11 +527,11 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTvSegmentedTrac
     }
 }
 
-/** "11:42 PM" in the device's 12/24-hour style, [remainingSec] from now. */
-private fun finishTimeLabel(context: android.content.Context, remainingSec: Double): String? {
+/** "11:42 PM" in the device's 12/24-hour [timeFormat], [remainingSec] of wall-clock time from now. */
+private fun finishTimeLabel(timeFormat: java.text.DateFormat, remainingSec: Double): String? {
     if (remainingSec <= 0.0 || !remainingSec.isFinite()) return null
     val finish = java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong())
-    return android.text.format.DateFormat.getTimeFormat(context).format(finish)
+    return timeFormat.format(finish)
 }
 
 @Composable

@@ -1864,20 +1864,22 @@ fun TvPlayerScreen(
     // options panel is open the cue is hidden, so nothing reads through it.
     val subtitleDensity = androidx.compose.ui.platform.LocalDensity.current
     val controlsCoverCues = state.showControls && !state.hudOpen && !state.showNextUp
-    LaunchedEffect(playerViewRef, controlsCoverCues, state.hudOpen) {
+    val cueReachPx = if (controlsCoverCues) with(subtitleDensity) { 216.dp.roundToPx() } else 0
+    val latestCueReachPx by rememberUpdatedState(cueReachPx)
+    LaunchedEffect(playerViewRef, cueReachPx, state.hudOpen) {
         val subtitleView = playerViewRef?.subtitleView ?: return@LaunchedEffect
         subtitleView.visibility = if (state.hudOpen) android.view.View.INVISIBLE else android.view.View.VISIBLE
-        val liftPx = if (controlsCoverCues) {
-            val location = IntArray(2)
-            subtitleView.getLocationInWindow(location)
-            val belowView = subtitleView.rootView.height - (location[1] + subtitleView.height)
-            (with(subtitleDensity) { 216.dp.roundToPx() } - belowView).coerceIn(0, subtitleView.height / 2)
-        } else {
-            0
+        liftSubtitlesClearOfControls(subtitleView, cueReachPx)
+    }
+    // The subtitle manager resizes and moves the canvas on its own (video
+    // size, aspect, letterbox), so re-lift after each layout too.
+    DisposableEffect(playerViewRef) {
+        val subtitleView = playerViewRef?.subtitleView ?: return@DisposableEffect onDispose { }
+        val listener = android.view.View.OnLayoutChangeListener { view, _, _, _, _, _, _, _, _ ->
+            view.post { liftSubtitlesClearOfControls(view, latestCueReachPx) }
         }
-        if (subtitleView.paddingBottom != liftPx) {
-            subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, subtitleView.paddingRight, liftPx)
-        }
+        subtitleView.addOnLayoutChangeListener(listener)
+        onDispose { subtitleView.removeOnLayoutChangeListener(listener) }
     }
 
     // The video branch of the player's `when` below — the only state in which
@@ -2081,8 +2083,7 @@ fun TvPlayerScreen(
                         eyebrow = tvPlayerEyebrow(state),
                         subtitlesValue = subtitlePresentation.rows
                             .firstOrNull { row -> row.checked }
-                            ?.label
-                            ?.substringBefore(" — ")
+                            ?.let { row -> tvSubtitleRowParts(row.label).title }
                             ?: "Off",
                         positionSec = clock.position,
                         durationSec = clock.duration,
@@ -2106,6 +2107,7 @@ fun TvPlayerScreen(
                         skipBackSeconds = seekIntervals.backSeconds,
                         skipForwardSeconds = seekIntervals.forwardSeconds,
                         canToggleAfterCommit = watchParty == null,
+                        playbackSpeed = if (watchParty != null) 1.0 else playbackSpeed,
                         onSkipBack = {
                             if (canSeekInRoom) {
                                 performRelativeSeek(
@@ -2751,6 +2753,7 @@ private fun TvPlayerIdleOverlay(
      * playback applies both locally and in order, so it keeps the behaviour.
      */
     canToggleAfterCommit: Boolean = true,
+    playbackSpeed: Double = 1.0,
 ) {
     val scrubberFocus = remember { FocusRequester() }
     val playPauseFocus = remember { FocusRequester() }
@@ -2913,6 +2916,7 @@ private fun TvPlayerIdleOverlay(
                 onRequestFocus = scrubberFocus,
                 onPlayPause = onPlayPause,
                 canToggleAfterCommit = canToggleAfterCommit,
+                playbackSpeed = playbackSpeed,
                 onMoveDownToTransport = {
                     playPauseFocus.claimFocusOrReport(
                         target = "player_transport",
@@ -2960,7 +2964,7 @@ internal fun tvPlayerEyebrow(state: TvPlayerViewModel.UiState): String? {
         val code = state.seasonNumber?.let { season -> state.episodeNumber?.let { "S$season:E$it" } }
         return listOfNotNull(series, code).joinToString(" · ")
     }
-    val kind = "Movie".takeIf { state.contentId.startsWith("movie") }
+    val kind = "Movie".takeIf { state.contentType == "movie" }
     return listOfNotNull(kind, state.year?.toString()).joinToString(" · ").ifBlank { null }
 }
 
@@ -3956,4 +3960,22 @@ private fun TvPlayerOverlays(
                 )
             }
         }
+}
+
+/**
+ * Pads the cue canvas's bottom so cues sit at least [reachPx] above the
+ * bottom of the screen, clear of the controls; 0 clears the lift.
+ */
+private fun liftSubtitlesClearOfControls(subtitleView: android.view.View, reachPx: Int) {
+    val liftPx = if (reachPx > 0) {
+        val location = IntArray(2)
+        subtitleView.getLocationInWindow(location)
+        val belowView = subtitleView.rootView.height - (location[1] + subtitleView.height)
+        (reachPx - belowView).coerceIn(0, subtitleView.height / 2)
+    } else {
+        0
+    }
+    if (subtitleView.paddingBottom != liftPx) {
+        subtitleView.setPadding(subtitleView.paddingLeft, subtitleView.paddingTop, subtitleView.paddingRight, liftPx)
+    }
 }

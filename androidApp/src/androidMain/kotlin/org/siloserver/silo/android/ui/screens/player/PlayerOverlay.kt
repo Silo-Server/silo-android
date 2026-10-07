@@ -218,7 +218,8 @@ fun PlayerOverlay(
     val subtitleToolsAvailable = state.sessionId != null && state.mediaFileId != null
 
     val menuHandoff = remember { PlayerMenuHandoff() }
-    val anyMenuOpen = tracksSheetVisible || showQualitySelector || settingsSheetVisible ||
+    // Quality is not drawn in a watch party (see below), so it must not hide the controls there.
+    val anyMenuOpen = tracksSheetVisible || (showQualitySelector && !inRoom) || settingsSheetVisible ||
         subtitleStyleVisible || sleepTimerVisible || chaptersSheetVisible || statsSheetVisible ||
         subtitleSearchVisible || aiTranslateVisible
 
@@ -713,6 +714,7 @@ fun PlayerOverlay(
             isVisible = chaptersSheetVisible,
             chapters = state.chapters,
             position = state.position,
+            duration = state.duration,
             // A room seek in a party (a guest is told only the host can seek).
             onSelect = { idx ->
                 viewModel.onSeekToChapter(idx)?.let(onSeek)
@@ -803,7 +805,7 @@ internal fun playerEyebrow(state: PlayerViewModel.PlayerUiState): String {
         return listOfNotNull(series, code).joinToString(" · ")
     }
     val kind = when {
-        state.contentId.startsWith("movie") -> "Movie"
+        state.contentType == "movie" -> "Movie"
         else -> null
     }
     return listOfNotNull(kind, state.subtitle.takeIf { it.isNotBlank() }).joinToString(" · ")

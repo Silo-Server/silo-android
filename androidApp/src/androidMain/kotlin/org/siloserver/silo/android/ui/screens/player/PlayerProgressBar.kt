@@ -99,6 +99,10 @@ fun PlayerProgressBar(
     val density = LocalDensity.current
     val latestOnSeek by rememberUpdatedState(onSeek)
     val latestOnScrubbing by rememberUpdatedState(onScrubbingChange)
+    // The gesture coroutine outlives recompositions, so it reads these
+    // through state rather than the values it started with.
+    val latestPosition by rememberUpdatedState(position)
+    val latestChapters by rememberUpdatedState(chapters)
 
     val hasKnownDuration = duration.isFinite() && duration > 0.0
     val seekable = enabled && hasKnownDuration
@@ -121,7 +125,7 @@ fun PlayerProgressBar(
     fun positionAt(x: Float): Double =
         if (barWidthPx <= 0f) 0.0 else (x / barWidthPx).coerceIn(0f, 1f).toDouble() * duration
 
-    fun chapterIndexAt(seconds: Double): Int = chapters.indexOfLast { it.startSeconds <= seconds }
+    fun chapterIndexAt(seconds: Double): Int = latestChapters.indexOfLast { it.startSeconds <= seconds }
 
     Column(modifier = modifier.fillMaxWidth()) {
         if (showTimes) {
@@ -179,33 +183,39 @@ fun PlayerProgressBar(
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()
-                        scrubStart = position
+                        scrubStart = latestPosition
                         seekPosition = positionAt(down.position.x)
                         lastChapter = chapterIndexAt(seekPosition)
                         isSeeking = true
                         latestOnScrubbing(true)
                         var pointerId = down.id
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == pointerId }
-                                ?: event.changes.firstOrNull()?.also { pointerId = it.id }
-                                ?: break
-                            if (!change.pressed) {
-                                change.consume()
-                                break
-                            }
-                            if (change.positionChange() != Offset.Zero) {
-                                change.consume()
-                                seekPosition = positionAt(change.position.x)
-                                val chapter = chapterIndexAt(seekPosition)
-                                if (chapter != lastChapter) {
-                                    lastChapter = chapter
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        // A restart of this block (seekability or duration
+                        // changed mid-scrub) cancels the gesture: end the
+                        // scrub without seeking so the chrome comes back.
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == pointerId }
+                                    ?: event.changes.firstOrNull()?.also { pointerId = it.id }
+                                    ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                if (change.positionChange() != Offset.Zero) {
+                                    change.consume()
+                                    seekPosition = positionAt(change.position.x)
+                                    val chapter = chapterIndexAt(seekPosition)
+                                    if (chapter != lastChapter) {
+                                        lastChapter = chapter
+                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
                                 }
                             }
+                        } finally {
+                            isSeeking = false
+                            latestOnScrubbing(false)
                         }
-                        isSeeking = false
-                        latestOnScrubbing(false)
                         latestOnSeek(seekPosition)
                     }
                 },

@@ -426,6 +426,8 @@ class PlayerViewModel(
         val title: String = "",
         val subtitle: String = "",
         val seriesTitle: String? = null,
+        /** Catalog item type ("movie", "episode", …), for the controls' "MOVIE · 2026" line. */
+        val contentType: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -1593,6 +1595,7 @@ class PlayerViewModel(
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
                 seriesTitle = watchDetail?.seriesTitle,
+                contentType = watchDetail?.type,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -5483,6 +5486,7 @@ class PlayerViewModel(
                 error = null,
                 title = title,
                 subtitle = subtitle,
+                contentType = watchDetail?.type,
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no
                 // server session needed.
