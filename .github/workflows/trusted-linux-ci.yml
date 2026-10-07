@@ -13,9 +13,26 @@ on:
         type: boolean
         required: false
         default: false
+      build_cache:
+        type: boolean
+        required: false
+        default: true
+      parallel:
+        type: boolean
+        required: false
+        default: false
+      configuration_cache:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
+
+env:
+  SILO_CI_CACHE_FLAG: ${{ inputs.build_cache && '--build-cache' || '--no-build-cache' }}
+  SILO_CI_PARALLEL_FLAG: ${{ inputs.parallel && '--parallel' || '--no-parallel' }}
+  SILO_CI_CONFIGURATION_FLAG: ${{ inputs.configuration_cache && '--configuration-cache' || '--no-configuration-cache' }}
 
 jobs:
   ffmpeg-aar:
@@ -121,6 +138,14 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        with:
+          # Writes are scoped to the default branch, manual runs requiring write
+          # access, or internal PRs from an explicit trusted association.
+          # Forks retain read-only access and cannot seed another ref's cache.
+          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+
+      - name: Record build inputs
+        run: ./scripts/ci-build-metadata.py
 
       # Exercise both Play artifacts, including R8 and bundle packaging.
       # Signing and publishing remain in release.yml.
@@ -129,6 +154,7 @@ jobs:
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :androidApp:bundleRelease :androidTvApp:bundleRelease \
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
             --max-workers=2
           test -s androidApp/build/outputs/bundle/release/androidApp-release.aab
           test -s androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
@@ -157,6 +183,14 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        with:
+          # Writes are scoped to the default branch, manual runs requiring write
+          # access, or internal PRs from an explicit trusted association.
+          # Forks retain read-only access and cannot seed another ref's cache.
+          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+
+      - name: Record build inputs
+        run: ./scripts/ci-build-metadata.py
 
       # Robolectric does NOT resolve its Android runtimes through Gradle. At test
       # execution time it fetches android-all-instrumented straight from Maven
@@ -195,6 +229,7 @@ jobs:
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             testDebugUnitTest \
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
             --max-workers=2
 
       - name: Upload test reports
@@ -225,6 +260,14 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+        with:
+          # Writes are scoped to the default branch, manual runs requiring write
+          # access, or internal PRs from an explicit trusted association.
+          # Forks retain read-only access and cannot seed another ref's cache.
+          cache-read-only: ${{ !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+
+      - name: Record build inputs
+        run: ./scripts/ci-build-metadata.py
 
       - name: Run lint
         shell: bash
@@ -247,6 +290,7 @@ jobs:
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
             :androidApp:lintVitalRelease :androidTvApp:lintVitalRelease \
+            "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
             --max-workers=2
 
       - name: Upload lint reports
