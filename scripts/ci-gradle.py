@@ -339,9 +339,10 @@ class MemorySampler:
             self.unreadable += unreadable
         if available is not None:
             self.min_available = available if self.min_available is None else min(self.min_available, available)
+        if count is not None:
+            self.max_java_count = count if self.max_java_count is None else max(self.max_java_count, count)
         if rss is not None:
             self.max_rss = rss if self.max_rss is None else max(self.max_rss, rss)
-            self.max_java_count = count if self.max_java_count is None else max(self.max_java_count, count)
 
     def summary(self):
         return {

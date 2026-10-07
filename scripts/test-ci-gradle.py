@@ -58,6 +58,12 @@ class SamplingFixtures(unittest.TestCase):
         result = sampler.summary()
         self.assertEqual(result["min_mem_available_kib"], 2048)
         self.assertEqual(result["max_summed_java_rss_kib"], 350)
+        self.process(920004, "java", 1)
+        (self.proc / "920001/status").write_text("VmRSS:\t1 kB\n")
+        (self.proc / "920002/status").write_text("VmRSS:\t1 kB\n")
+        sampler.sample()
+        self.assertEqual(sampler.summary()["max_java_process_count"], 3)
+        self.assertEqual(sampler.summary()["max_summed_java_rss_kib"], 350)
         encoded = json.dumps(result)
         for private in ("920001", "920002", "920003", "PRIVATE_ARGUMENT_MARKER"):
             self.assertNotIn(private, encoded)
