@@ -77,8 +77,9 @@ class ArtifactTests(unittest.TestCase):
                 if profiles:
                     entries["assets/dexopt/baseline.prof"] = f"baseline profile {module}".encode()
                     entries["assets/dexopt/baseline.profm"] = f"profile metadata {module}".encode()
-                for native_abi in artifacts.ABIS if abi == "universal" else [abi]:
-                    entries[f"lib/{native_abi}/libexample.so"] = f"native {module} {native_abi}".encode()
+                for native_abi in artifacts.UNIVERSAL_ABIS if abi == "universal" else [abi]:
+                    for library in artifacts.NATIVE_LIBRARIES[native_abi]:
+                        entries[f"lib/{native_abi}/{library}"] = f"native {module} {native_abi} {library}".encode()
                 self.write_zip(apk_root / filename, entries, timestamp)
                 elements.append({
                     "type": "SINGLE" if abi == "universal" else "ONE_OF_MANY",
@@ -165,7 +166,8 @@ class ArtifactTests(unittest.TestCase):
         for module, data in report["modules"].items():
             self.assertEqual(set(data["apks"]), set(artifacts.OUTPUTS))
             for abi, apk in data["apks"].items():
-                self.assertEqual(apk["native_abis"], sorted(artifacts.ABIS if abi == "universal" else [abi]))
+                self.assertEqual(apk["native_abis"], sorted(artifacts.UNIVERSAL_ABIS if abi == "universal" else [abi]))
+                self.assertEqual(len([name for name in apk["entries"] if name.startswith("lib/")]), 26 if abi == "universal" else 7)
                 self.assertEqual(apk["package"]["required_features"], [artifacts.MODULES[module]["required_feature"]])
                 self.assertTrue(apk["signature_schemes"]["v1"])
                 self.assertEqual(apk["excluded_v1_entries"], ["META-INF/CERT.RSA", "META-INF/CERT.SF", "META-INF/MANIFEST.MF"])
@@ -191,7 +193,7 @@ class ArtifactTests(unittest.TestCase):
                          "sha256": artifacts._digest(archive.read(info))}
                         for info in archive.infolist() if info.filename.startswith("lib/")]
         self.assertEqual(error.details["native_entries"], sorted(expected, key=lambda value: value["path"]))
-        self.assertEqual(len(error.details["native_entries"]), 4)
+        self.assertEqual(len(error.details["native_entries"]), 27)
 
     def test_native_diagnostic_rejects_count_and_path_budget_excess(self):
         for entries in [{f"lib/x86/lib{index}.so": b"native" for index in range(129)},
@@ -377,17 +379,64 @@ class ArtifactTests(unittest.TestCase):
     def test_missing_wrong_or_extra_native_abi_is_rejected(self):
         path = self.apk()
         original = path.read_bytes()
-        for native in ({}, {"lib/x86_64/libexample.so": b"wrong"}, {"lib/arm64-v8a/libexample.so": b"right", "lib/x86_64/libexample.so": b"extra"}):
+        for native in ({}, {"lib/x86_64/libass.so": b"wrong"}, {"lib/arm64-v8a/libass.so": b"right", "lib/x86_64/libass.so": b"extra"}):
             with self.subTest(native=native):
-                self.change_zip(path, native, ["lib/arm64-v8a/libexample.so"])
+                self.change_zip(path, native, [f"lib/arm64-v8a/{library}" for library in artifacts.NATIVE_LIBRARIES["arm64-v8a"]])
                 with self.assertRaisesRegex(ValueError, "native ABI payload"):
                     self.inventory()
                 path.write_bytes(original)
 
-    def test_universal_requires_all_three_abis(self):
-        self.change_zip(self.apk(abi="universal"), removals=["lib/x86_64/libexample.so"])
-        with self.assertRaisesRegex(ValueError, "native ABI payload"):
-            self.inventory()
+    def test_universal_requires_exact_four_abis(self):
+        self.assertEqual(artifacts.ABIS, ("arm64-v8a", "armeabi-v7a", "x86_64"))
+        self.assertEqual(artifacts.OUTPUTS, (*artifacts.ABIS, "universal"))
+        for module in artifacts.MODULES:
+            path = self.apk(module, "universal")
+            original = path.read_bytes()
+            for native_abi in artifacts.UNIVERSAL_ABIS:
+                with self.subTest(module=module, missing_abi=native_abi):
+                    self.change_zip(path, removals=[f"lib/{native_abi}/{library}" for library in artifacts.NATIVE_LIBRARIES[native_abi]])
+                    with self.assertRaisesRegex(ValueError, "native ABI payload"):
+                        self.inventory()
+                    path.write_bytes(original)
+
+    def test_x86_payload_remains_rejected_in_every_filtered_split(self):
+        for module in artifacts.MODULES:
+            for abi in artifacts.ABIS:
+                with self.subTest(module=module, split=abi):
+                    path = self.apk(module, abi)
+                    original = path.read_bytes()
+                    self.change_zip(path, {"lib/x86/libass.so": b"extra x86 bytes"})
+                    with self.assertRaisesRegex(ValueError, "native ABI payload"):
+                        self.inventory()
+                    path.write_bytes(original)
+
+    def test_unknown_native_members_and_abis_are_rejected_in_all_outputs(self):
+        for module in artifacts.MODULES:
+            for abi in artifacts.OUTPUTS:
+                path = self.apk(module, abi)
+                original = path.read_bytes()
+                native_abi = "x86" if abi == "universal" else abi
+                for entry in (f"lib/{native_abi}/libunknown.so", "lib/mips/libass.so", "lib/x86/libsilo_dovi.so"):
+                    with self.subTest(module=module, output=abi, entry=entry):
+                        self.change_zip(path, {entry: b"unreviewed dependency"})
+                        with self.assertRaises(artifacts.NativePayloadContractError):
+                            self.inventory()
+                        path.write_bytes(original)
+
+    def test_every_missing_or_empty_native_member_is_rejected(self):
+        for module in artifacts.MODULES:
+            for abi in artifacts.OUTPUTS:
+                path = self.apk(module, abi)
+                original = path.read_bytes()
+                native_abi = "x86" if abi == "universal" else abi
+                for library in artifacts.NATIVE_LIBRARIES[native_abi]:
+                    entry = f"lib/{native_abi}/{library}"
+                    for empty in (False, True):
+                        with self.subTest(module=module, output=abi, entry=entry, empty=empty):
+                            self.change_zip(path, {entry: b""} if empty else {}, removals=[] if empty else [entry])
+                            with self.assertRaisesRegex(ValueError, "native library"):
+                                self.inventory()
+                            path.write_bytes(original)
 
     def test_duplicate_zip_entries_are_rejected_even_for_signing_files(self):
         path = self.apk()
@@ -466,13 +515,46 @@ class ArtifactTests(unittest.TestCase):
         left = self.inventory()
         path = self.apk()
         original = path.read_bytes()
-        for name in ("classes.dex", "classes10.dex", "resources.arsc", "lib/arm64-v8a/libexample.so", "assets/dexopt/baseline.prof", "META-INF/kotlinx_coroutines_android.version", "META-INF/com/example/MANIFEST.MF", "META-INF/services/example.Service"):
+        for name in ("classes.dex", "classes10.dex", "resources.arsc", "lib/arm64-v8a/libass.so", "assets/dexopt/baseline.prof", "META-INF/kotlinx_coroutines_android.version", "META-INF/com/example/MANIFEST.MF", "META-INF/services/example.Service"):
             with self.subTest(name=name):
                 self.change_zip(path, {name: b"changed payload"})
                 right = self.inventory()
                 with self.assertRaisesRegex(ValueError, "differs between profiles"):
                     artifacts.compare_profiles([left], [right])
                 path.write_bytes(original)
+
+    def test_every_x86_payload_mutation_fails_matrix_combined_comparison(self):
+        matrix = [self.inventory(modules=[module]) for module in artifacts.MODULES]
+        for module in artifacts.MODULES:
+            path = self.apk(module, "universal")
+            original = path.read_bytes()
+            for library in artifacts.NATIVE_LIBRARIES["x86"]:
+                with self.subTest(module=module, library=library):
+                    self.change_zip(path, {f"lib/x86/{library}": b"different native bytes"})
+                    with self.assertRaisesRegex(ValueError, "differs between profiles"):
+                        artifacts.compare_profiles(matrix, [self.inventory()])
+                    path.write_bytes(original)
+
+    def test_matching_invalid_native_reports_are_rejected_before_comparison(self):
+        valid = self.inventory()
+        for mutation in ("missing", "unknown-member", "unknown-abi", "split-x86", "native-digest"):
+            with self.subTest(mutation=mutation):
+                report = copy.deepcopy(valid)
+                apk = report["modules"]["androidApp"]["apks"]["arm64-v8a" if mutation == "split-x86" else "universal"]
+                entries = apk["entries"]
+                if mutation == "missing":
+                    del entries["lib/x86/libass.so"]
+                elif mutation == "unknown-member":
+                    entries["lib/x86/libunknown.so"] = {"size": 1, "sha256": "ab" * 32}
+                elif mutation == "unknown-abi":
+                    entries["lib/mips/libass.so"] = {"size": 1, "sha256": "ab" * 32}
+                elif mutation == "split-x86":
+                    entries["lib/x86/libass.so"] = {"size": 1, "sha256": "ab" * 32}
+                apk["payload_sha256"] = artifacts._canonical_digest(entries)
+                native = {name: entry for name, entry in entries.items() if name.startswith("lib/")}
+                apk["native_sha256"] = "ab" * 32 if mutation == "native-digest" else artifacts._canonical_digest(native)
+                with self.assertRaises(ValueError):
+                    artifacts.compare_profiles([report], [copy.deepcopy(report)])
 
     def test_profile_presence_and_r8_mapping_mutations_fail_comparison(self):
         left = self.inventory()

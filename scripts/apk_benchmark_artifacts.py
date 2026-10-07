@@ -19,6 +19,18 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 ABIS = ("arm64-v8a", "armeabi-v7a", "x86_64")
 OUTPUTS = (*ABIS, "universal")
+# The sealed source's universal output has no ABI filter. Pinned dependency
+# AARs include x86; the three explicitly filtered split outputs do not.
+UNIVERSAL_ABIS = (*ABIS, "x86")
+DEPENDENCY_NATIVE_LIBRARIES = (
+    "libandroidx.graphics.path.so", "libass.so", "libasskt.so",
+    "libc++_shared.so", "libdatastore_shared_counter.so",
+)
+NATIVE_LIBRARIES = {
+    abi: DEPENDENCY_NATIVE_LIBRARIES + ("libffmpegJNI.so", "libsilo_dovi.so")
+    for abi in ABIS
+}
+NATIVE_LIBRARIES["x86"] = DEPENDENCY_NATIVE_LIBRARIES
 PACKAGE = "org.siloserver.silo"
 VERSION_NAME = "0.0.1"
 MODULES = {
@@ -181,6 +193,27 @@ def _v1_entries(names: set[str], schemes: dict, label: str) -> set[str]:
     return {"META-INF/MANIFEST.MF", sf, block}
 
 
+def _native_payload(entries: dict, abi: str, label: str) -> tuple[dict, set[str]]:
+    """Require the sealed native member inventory, including universal x86."""
+    native = {name: value for name, value in entries.items()
+              if name.startswith("lib/") and not name.endswith("/")}
+    native_abis = set()
+    for name, value in native.items():
+        parts = name.split("/")
+        if (len(parts) != 3 or parts[1] not in NATIVE_LIBRARIES
+                or parts[2] not in NATIVE_LIBRARIES[parts[1]] or not value["size"]):
+            raise NativePayloadContractError(label, name, native)
+        native_abis.add(parts[1])
+    expected_abis = set(UNIVERSAL_ABIS) if abi == "universal" else {abi}
+    if native_abis != expected_abis:
+        raise ValueError(f"{label}: native ABI payload does not match output filter")
+    expected_members = {f"lib/{native_abi}/{library}" for native_abi in expected_abis
+                        for library in NATIVE_LIBRARIES[native_abi]}
+    if set(native) != expected_members:
+        raise ValueError(f"{label}: native library payload does not match sealed dependencies")
+    return native, native_abis
+
+
 def _zip_payload(apk: Path, abi: str, schemes: dict, label: str) -> dict:
     entries = {}
     metadata = {}
@@ -210,16 +243,7 @@ def _zip_payload(apk: Path, abi: str, schemes: dict, label: str) -> dict:
                     entries[info.filename] = {"sha256": hasher.hexdigest(), "size": size}
     except (OSError, zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
         raise ValueError(f"{label}: invalid APK ZIP payload") from exc
-    native = {name: value for name, value in entries.items() if name.startswith("lib/") and not name.endswith("/")}
-    native_abis = set()
-    for name, value in native.items():
-        parts = name.split("/")
-        if len(parts) != 3 or parts[1] not in ABIS or not parts[2].endswith(".so") or not value["size"]:
-            raise NativePayloadContractError(label, name, native)
-        native_abis.add(parts[1])
-    expected = set(ABIS) if abi == "universal" else {abi}
-    if native_abis != expected:
-        raise ValueError(f"{label}: native ABI payload does not match output filter")
+    native, native_abis = _native_payload(entries, abi, label)
     profiles = {
         name: value["sha256"] for name, value in entries.items()
         if name.startswith("assets/dexopt/") and name.endswith((".prof", ".profm"))
@@ -371,7 +395,7 @@ def _report_module(data: dict, module: str, certificate: str, side: str) -> None
                 or package.get("version_code") != MODULES[module]["version_code"]
                 or not isinstance(package.get("required_features"), list)
                 or not isinstance(package.get("optional_features"), list)
-                or apk.get("native_abis") != sorted(ABIS if abi == "universal" else [abi])):
+                or apk.get("native_abis") != sorted(UNIVERSAL_ABIS if abi == "universal" else [abi])):
             raise ValueError(f"{label}: invalid APK identity inventory")
         entries = apk.get("entries")
         profiles = apk.get("profiles")
@@ -384,6 +408,9 @@ def _report_module(data: dict, module: str, certificate: str, side: str) -> None
                 raise ValueError(f"{label}: invalid APK entry inventory")
         if not entries.get("AndroidManifest.xml", {}).get("size") or not entries.get("classes.dex", {}).get("size"):
             raise ValueError(f"{label}: missing APK manifest or DEX inventory")
+        native, native_abis = _native_payload(entries, abi, label)
+        if apk["native_abis"] != sorted(native_abis) or apk["native_sha256"] != _canonical_digest(native):
+            raise ValueError(f"{label}: inconsistent native payload inventory")
         expected_profiles = {name: entry["sha256"] for name, entry in entries.items()
                              if name.startswith("assets/dexopt/") and name.endswith((".prof", ".profm"))}
         if profiles != expected_profiles or apk["payload_sha256"] != _canonical_digest(entries):
