@@ -90,6 +90,9 @@ import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.selectedCandidate
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackAvailableQualityV3
+import org.siloserver.silo.model.playback.PlaybackEffectiveRecipeV3
+import org.siloserver.silo.model.playback.activePlaybackQualityId
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.ClientPlaybackContext
@@ -194,17 +197,26 @@ internal fun PlayerTrackEntry.toMountedAudioTrack(): MountedAudioTrack = Mounted
     label = displayLabel.ifBlank { label },
 )
 
-/** Projects the protocol-v3 quality menu verbatim, preserving server order. */
+/**
+ * The protocol-v3 Quality menu: Auto, then the server's entries in server
+ * order, with the row [selectedLabel] resolves to marked selected.
+ */
 internal fun authoritativePlaybackQualityOptions(
     available: List<PlaybackAvailableQualityV3>,
     selectedLabel: String?,
-): List<VideoQualityOption> = available.map { quality ->
-    VideoQualityOption(
-        id = quality.label,
-        label = quality.displayName?.takeIf { it.isNotBlank() } ?: quality.label,
-        isSelected = quality.label == selectedLabel,
-        resolution = quality.height.takeIf { it > 0 }?.let { "${it}p" },
-    )
+    delivered: PlaybackEffectiveRecipeV3? = null,
+): List<VideoQualityOption> {
+    val menu = playbackQualityMenu(available)
+    val activeId = activePlaybackQualityId(menu, selectedLabel, delivered)
+    return menu.map { option ->
+        VideoQualityOption(
+            id = option.id,
+            label = option.name,
+            isSelected = option.id == activeId,
+            resolution = option.height.takeIf { it > 0 }?.let { "${it}p" },
+            bitrateLabel = option.bitrateLabel,
+        )
+    }
 }
 
 internal fun clampTvScrubPreview(seconds: Double, duration: Double): Double =
@@ -1851,6 +1863,7 @@ class TvPlayerViewModel(
                 videoQualities = authoritativePlaybackQualityOptions(
                     available = ready.plan.availableQualities,
                     selectedLabel = adoption.committed.qualityPreference,
+                    delivered = ready.plan.effectiveRecipe,
                 ),
                 container = ready.plan.stream.container ?: version?.container ?: state.container,
                 duration = duration,
@@ -2313,6 +2326,7 @@ class TvPlayerViewModel(
                                     selectedLabel = qualityOverride
                                         ?: preferredQuality
                                         ?: PlaybackQuality.Auto.wireValue,
+                                    delivered = result.playbackPlanV3?.effectiveRecipe,
                                 ),
                                 mediaFileId = result.mediaFileId,
                                 startPosition = result.startPositionSeconds,
@@ -2811,6 +2825,7 @@ class TvPlayerViewModel(
                                         ?: qualityOverride
                                         ?: preferredQuality
                                         ?: PlaybackQuality.Auto.wireValue,
+                                    delivered = decision.plan.effectiveRecipe,
                                 ),
                                 container = effectiveContainer,
                                 duration = effectiveDuration,

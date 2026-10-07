@@ -54,8 +54,8 @@ import org.siloserver.silo.common.player.SleepTimerState
 
 /**
  * Where the sheet currently is. The gear opens [Root] — a flat list of the
- * four things worth reading at a glance (quality, subtitles, audio) plus one
- * door to everything else, the shape Plex uses. Sub-screens replace the sheet
+ * things worth reading at a glance (quality, version, subtitles, audio) plus
+ * one door to everything else, the shape Plex uses. Sub-screens replace the sheet
  * content in place rather than stacking new sheets, so there is only ever one
  * surface over the video.
  *
@@ -111,15 +111,20 @@ fun PlayerSettingsSheet(
     onSetHdrEnabled: (Boolean) -> Unit,
     dolbyVisionEnabled: Boolean,
     onSetDolbyVisionEnabled: (Boolean) -> Unit,
-    // False in a Watch Party: speed is a session-only 1x and the version
-    // picker is off, since the room plays exactly its own file.
+    // False in a Watch Party: speed is a session-only 1x.
     showPlaybackSpeed: Boolean = true,
+    // Shown whenever there is a playback plan, in a Watch Party too.
     showQuality: Boolean = true,
-    // Root-list values. The gear now reports the same three things the
-    // toolbar buttons open, so the menu answers "what am I watching with?"
-    // without opening anything.
+    // Shown for a title with several files, except in a Watch Party, which
+    // plays exactly the room's file.
+    showVersion: Boolean = false,
+    // Root-list values. The gear reports the same things the toolbar
+    // buttons open, so the menu answers "what am I watching with?" without
+    // opening anything.
     qualityLabel: String = "",
     onOpenQuality: () -> Unit = {},
+    versionLabel: String = "",
+    onOpenVersion: () -> Unit = {},
     audioLabel: String = "",
     subtitleLabel: String = "",
     onOpenTracks: () -> Unit = {},
@@ -181,6 +186,13 @@ fun PlayerSettingsSheet(
                                 label = "Quality",
                                 value = qualityLabel,
                                 onClick = { leaveFor(onOpenQuality) },
+                            )
+                        }
+                        if (showVersion) {
+                            ValueRow(
+                                label = "Version",
+                                value = versionLabel,
+                                onClick = { leaveFor(onOpenVersion) },
                             )
                         }
                         ValueRow(

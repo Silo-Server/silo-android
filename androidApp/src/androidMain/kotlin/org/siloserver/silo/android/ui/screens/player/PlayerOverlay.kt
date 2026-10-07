@@ -46,6 +46,9 @@ import androidx.compose.ui.zIndex
 import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.common.player.SessionState
 import org.siloserver.silo.common.player.SleepTimerState
+import org.siloserver.silo.model.playback.PlaybackQualityOption
+import org.siloserver.silo.model.playback.activePlaybackQualityId
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.watchtogether.RoomTransportIntent
@@ -57,7 +60,7 @@ import org.siloserver.silo.playback.timingActionsFor
  * Full-screen overlay composable that layers gesture handling, transport controls,
  * and contextual buttons (skip intro, next episode) on top of the video surface.
  *
- * Also manages bottom sheet display for subtitle, audio, and quality selection.
+ * Also manages bottom sheet display for subtitle, audio, quality, and version selection.
  */
 @Composable
 fun PlayerOverlay(
@@ -99,7 +102,8 @@ fun PlayerOverlay(
     // `rememberModalBottomSheetState`, so per-sheet bools are the natural
     // fit (and the sheets can't be nested anyway).
     var tracksSheetVisible by remember { mutableStateOf(false) }
-    var showQualitySelector by remember { mutableStateOf(false) }
+    var qualitySheetVisible by remember { mutableStateOf(false) }
+    var versionSheetVisible by remember { mutableStateOf(false) }
     var settingsSheetVisible by remember { mutableStateOf(false) }
     var subtitleStyleVisible by remember { mutableStateOf(false) }
     var sleepTimerVisible by remember { mutableStateOf(false) }
@@ -120,6 +124,16 @@ fun PlayerOverlay(
     // In a party an intro never skips on its own; members who may seek get
     // the Skip pill as a room seek, and nobody else sees it (D8).
     val introPillAllowed = !inRoom || seekEnabled
+
+    // The plan's Quality menu, shown whenever there is a plan (a single entry
+    // still lists Auto + Original). A download playing offline has none.
+    val qualityOptions = remember(state.playbackPlan) {
+        playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+    }
+    val activeQualityId = activePlaybackQualityId(qualityOptions, state.committedQualityPreference)
+    val hasQualityMenu = qualityOptions.isNotEmpty()
+    // A party plays exactly the room's file: no version picker.
+    val hasVersionMenu = state.versions.size > 1 && !inRoom
 
     // In a party, Back opens the party panel (PlayerScreen); solo backs out.
     val handleBack: () -> Unit = onBack
@@ -386,8 +400,8 @@ fun PlayerOverlay(
                 preview = state.preview,
                 hasChapters = state.chapters.isNotEmpty(),
                 hasTracks = state.subtitleTracks.isNotEmpty() || state.audioTracks.isNotEmpty(),
-                // A party plays exactly the room's file: no version picker.
-                hasMultipleVersions = state.versions.size > 1 && !inRoom,
+                hasQualityMenu = hasQualityMenu,
+                hasMultipleVersions = hasVersionMenu,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
                 tabletopMode = tabletopMode,
@@ -413,7 +427,8 @@ fun PlayerOverlay(
                 },
                 onOpenChapters = { chaptersSheetVisible = true },
                 onOpenTracks = { tracksSheetVisible = true },
-                onOpenQuality = { showQualitySelector = true },
+                onOpenQuality = { qualitySheetVisible = true },
+                onOpenVersion = { versionSheetVisible = true },
                 onOpenSettings = { settingsSheetVisible = true },
                 onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
                 onPlayNextEpisode = viewModel::playUpNextNow,
@@ -610,12 +625,23 @@ fun PlayerOverlay(
         )
     }
 
-    if (showQualitySelector && !inRoom) {
-        QualitySelector(
+    if (qualitySheetVisible && hasQualityMenu) {
+        PlaybackQualitySheet(
+            options = qualityOptions,
+            activeId = activeQualityId,
+            inRoom = inRoom,
+            onSelect = viewModel::onSelectQuality,
+            onDismiss = { qualitySheetVisible = false },
+            tabletopPaneHeight = tabletopPaneHeight,
+        )
+    }
+
+    if (versionSheetVisible && hasVersionMenu) {
+        VersionSelector(
             versions = state.versions,
             selectedIndex = state.selectedVersionIndex,
             onSelect = onSelectVersion,
-            onDismiss = { showQualitySelector = false },
+            onDismiss = { versionSheetVisible = false },
             tabletopPaneHeight = tabletopPaneHeight,
         )
     }
@@ -640,11 +666,17 @@ fun PlayerOverlay(
         onSetDolbyVisionEnabled = viewModel::onSetDolbyVisionEnabled,
         // A party hides speed (session-only 1x) and the version picker.
         showPlaybackSpeed = !inRoom,
-        showQuality = !inRoom,
-        qualityLabel = playerQualityLabel(state.versions, state.selectedVersionIndex),
+        showQuality = hasQualityMenu,
+        qualityLabel = playerQualityLabel(qualityOptions, activeQualityId),
         onOpenQuality = {
             settingsSheetVisible = false
-            showQualitySelector = true
+            qualitySheetVisible = true
+        },
+        showVersion = hasVersionMenu,
+        versionLabel = playerVersionLabel(state.versions, state.selectedVersionIndex),
+        onOpenVersion = {
+            settingsSheetVisible = false
+            versionSheetVisible = true
         },
         audioLabel = playerAudioLabel(state.audioTracks, state.selectedAudioIndex),
         subtitleLabel = playerSubtitleLabel(state.subtitleTracks, state.selectedSubtitleIndex),
@@ -787,11 +819,14 @@ internal fun mobileVideoGravityLabel(value: String): String = when (value) {
 }
 
 /**
- * Root-list values for the gear menu. These mirror what the quality and
- * tracks sheets show when opened, so the menu can state the current pick
+ * Root-list values for the gear menu. These mirror what the quality, version,
+ * and tracks sheets show when opened, so the menu can state the current pick
  * without the user having to open anything.
  */
-internal fun playerQualityLabel(
+internal fun playerQualityLabel(options: List<PlaybackQualityOption>, activeId: String?): String =
+    options.firstOrNull { it.id == activeId }?.name ?: "Auto"
+
+internal fun playerVersionLabel(
     versions: List<org.siloserver.silo.model.catalog.FileVersion>,
     selectedIndex: Int,
 ): String {

@@ -467,7 +467,7 @@ dropped silently nor queued ([Apple #410](https://github.com/Silo-Server/silo-ap
 | SiloCast launch request | Replaces the party player with solo playback | D5 prompt |
 | Playback-control socket commands | Admin Stop is classified as transport and rejected | Transport follows the room; admin Stop and terminate end the local engagement (for a host, the 2-minute grace starts) |
 | `PlaybackDebugReceiver` play, pause, seek | Call Media3 directly | Fault injection only; never evidence of room behavior |
-| Version and edition picker (phone Quality selector, TV HUD) | Enabled; picks another file | Disabled in rooms. Quality means the ladder of the same file |
+| Version and edition picker (phone Version sheet, TV HUD) | Enabled; picks another file | Disabled in rooms. Quality means the ladder of the same file |
 | Speed menu and hold-to-2x | Saved speed applied in rooms | Hidden in rooms; session-only 1x; restore the preference on exit |
 | Autoplay, next-up, postroll | Autoplay already suppressed | Suppress; optional host Next Episode (Scope) |
 

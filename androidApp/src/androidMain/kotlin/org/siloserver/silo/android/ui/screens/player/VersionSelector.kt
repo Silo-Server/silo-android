@@ -29,12 +29,13 @@ import androidx.compose.ui.unit.dp
 import org.siloserver.silo.model.catalog.FileVersion
 
 /**
- * Bottom sheet for selecting a file version (quality/resolution).
+ * Bottom sheet for selecting which file version of the title plays.
  * Shows resolution, codec, HDR badge, and file size for each version.
+ * The server's streaming qualities are a separate menu, [PlaybackQualitySheet].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun QualitySelector(
+fun VersionSelector(
     versions: List<FileVersion>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
@@ -58,8 +59,8 @@ fun QualitySelector(
                 .padding(bottom = 32.dp),
         ) {
             PlayerSheetHeader(
-                title = "Quality",
-                subtitle = "Choose a source version",
+                title = "Version",
+                subtitle = "Choose which file to play",
                 onDismiss = onDismiss,
             )
 
@@ -68,7 +69,7 @@ fun QualitySelector(
             LazyColumn {
                 itemsIndexed(
                     versions,
-                    contentType = { _, _ -> "quality-version" },
+                    contentType = { _, _ -> "file-version" },
                 ) { index, version ->
                     val label = buildString {
                         version.editionLabel?.let { append(it).append(" · ") }
@@ -88,7 +89,7 @@ fun QualitySelector(
                         }
                     }.ifEmpty { null }
 
-                    QualityOptionRow(
+                    VersionOptionRow(
                         label = label,
                         detail = detail,
                         isSelected = selectedIndex == index,
@@ -104,7 +105,7 @@ fun QualitySelector(
 }
 
 @Composable
-private fun QualityOptionRow(
+private fun VersionOptionRow(
     label: String,
     detail: String?,
     isSelected: Boolean,

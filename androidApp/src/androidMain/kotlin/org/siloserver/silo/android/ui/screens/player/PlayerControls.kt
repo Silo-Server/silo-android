@@ -79,8 +79,9 @@ import org.siloserver.silo.android.ui.layout.useCompactPlayerToolbar
  *
  * Core rows:
  * - Top: Back (chevron) · title · orientation lock toggle · chapters (when
- *   present) · tracks (audio + subs) · quality (when multiple versions) ·
- *   settings (gear)
+ *   present) · tracks (audio + subs) · quality (whenever there is a
+ *   playback plan) · settings (gear). Version (when the title has several files)
+ *   lives in the gear sheet and the compact overflow.
  * - Center: Skip back · play/pause · skip forward
  * - Bottom: Seek bar with timestamps
  */
@@ -96,7 +97,9 @@ fun PlayerControls(
     hasChapters: Boolean,
     hasTracks: Boolean,
     // Quality lives on the HUD (chapters + tracks + quality product decision);
-    // hidden when the item has a single file version.
+    // hidden only when there is no playback plan (offline downloads).
+    hasQualityMenu: Boolean,
+    // The file-version picker; hidden for a single version and in a Watch Party.
     hasMultipleVersions: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
@@ -131,6 +134,7 @@ fun PlayerControls(
     onOpenChapters: () -> Unit,
     onOpenTracks: () -> Unit,
     onOpenQuality: () -> Unit,
+    onOpenVersion: () -> Unit,
     onOpenSettings: () -> Unit,
     onSetPlaybackSpeed: (Double) -> Unit = {},
     onPlayNextEpisode: () -> Unit = {},
@@ -195,12 +199,14 @@ fun PlayerControls(
                 orientationLockSupported = orientationLockSupported,
                 hasChapters = hasChapters,
                 hasTracks = hasTracks,
+                hasQualityMenu = hasQualityMenu,
                 hasMultipleVersions = hasMultipleVersions,
                 onBack = onBack,
                 onToggleOrientationLock = onToggleOrientationLock,
                 onOpenChapters = onOpenChapters,
                 onOpenTracks = onOpenTracks,
                 onOpenQuality = onOpenQuality,
+                onOpenVersion = onOpenVersion,
                 onOpenSettings = onOpenSettings,
                 castSlot = castSlot,
             )
@@ -287,12 +293,14 @@ private fun PlayerToolbar(
     orientationLockSupported: Boolean,
     hasChapters: Boolean,
     hasTracks: Boolean,
+    hasQualityMenu: Boolean,
     hasMultipleVersions: Boolean,
     onBack: () -> Unit,
     onToggleOrientationLock: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenTracks: () -> Unit,
     onOpenQuality: () -> Unit,
+    onOpenVersion: () -> Unit,
     onOpenSettings: () -> Unit,
     castSlot: @Composable () -> Unit,
 ) {
@@ -300,7 +308,7 @@ private fun PlayerToolbar(
         val trailingActionCount = 3 +
             (if (orientationLockSupported) 1 else 0) +
             (if (hasChapters) 1 else 0) +
-            (if (hasMultipleVersions) 1 else 0)
+            (if (hasQualityMenu) 1 else 0)
         val compact = useCompactPlayerToolbar(
             availableWidthDp = maxWidth.value,
             trailingActionCount = trailingActionCount,
@@ -328,11 +336,13 @@ private fun PlayerToolbar(
                     orientationLockSupported = orientationLockSupported,
                     hasChapters = hasChapters,
                     hasTracks = hasTracks,
+                    hasQualityMenu = hasQualityMenu,
                     hasMultipleVersions = hasMultipleVersions,
                     onToggleOrientationLock = onToggleOrientationLock,
                     onOpenChapters = onOpenChapters,
                     onOpenTracks = onOpenTracks,
                     onOpenQuality = onOpenQuality,
+                    onOpenVersion = onOpenVersion,
                     onOpenSettings = onOpenSettings,
                 )
             } else {
@@ -341,7 +351,7 @@ private fun PlayerToolbar(
                     orientationLockSupported = orientationLockSupported,
                     hasChapters = hasChapters,
                     hasTracks = hasTracks,
-                    hasMultipleVersions = hasMultipleVersions,
+                    hasQualityMenu = hasQualityMenu,
                     onToggleOrientationLock = onToggleOrientationLock,
                     onOpenChapters = onOpenChapters,
                     onOpenTracks = onOpenTracks,
@@ -612,7 +622,7 @@ private fun PlayerToolbarActions(
     orientationLockSupported: Boolean,
     hasChapters: Boolean,
     hasTracks: Boolean,
-    hasMultipleVersions: Boolean,
+    hasQualityMenu: Boolean,
     onToggleOrientationLock: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenTracks: () -> Unit,
@@ -644,7 +654,7 @@ private fun PlayerToolbarActions(
         onClick = onOpenTracks,
         enabled = hasTracks,
     )
-    if (hasMultipleVersions) {
+    if (hasQualityMenu) {
         ControlButton(
             icon = Icons.Default.HighQuality,
             contentDescription = "Quality",
@@ -665,11 +675,13 @@ private fun PlayerToolbarOverflow(
     orientationLockSupported: Boolean,
     hasChapters: Boolean,
     hasTracks: Boolean,
+    hasQualityMenu: Boolean,
     hasMultipleVersions: Boolean,
     onToggleOrientationLock: () -> Unit,
     onOpenChapters: () -> Unit,
     onOpenTracks: () -> Unit,
     onOpenQuality: () -> Unit,
+    onOpenVersion: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -712,12 +724,21 @@ private fun PlayerToolbarOverflow(
                     onOpenTracks()
                 },
             )
-            if (hasMultipleVersions) {
+            if (hasQualityMenu) {
                 DropdownMenuItem(
                     text = { Text("Quality") },
                     onClick = {
                         expanded = false
                         onOpenQuality()
+                    },
+                )
+            }
+            if (hasMultipleVersions) {
+                DropdownMenuItem(
+                    text = { Text("Version") },
+                    onClick = {
+                        expanded = false
+                        onOpenVersion()
                     },
                 )
             }

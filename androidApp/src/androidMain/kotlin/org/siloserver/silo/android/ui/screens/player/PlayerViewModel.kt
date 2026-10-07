@@ -65,6 +65,8 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.activePlaybackQualityId
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
@@ -437,6 +439,8 @@ class PlayerViewModel(
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        /** The quality preference the playing plan was built for; null is Auto. */
+        val committedQualityPreference: String? = null,
         val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
@@ -1200,6 +1204,8 @@ class PlayerViewModel(
             preferredFileId = preferredFileId,
             preferredQuality = effectivePreferredQuality,
         )
+        // A quality picked during solo playback lasts for that title only.
+        if (room == null && contentId != lastLoadArgs?.contentId) sessionQualityOverride = null
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
         lastLoadArgs = LoadArgs(
@@ -3317,7 +3323,8 @@ class PlayerViewModel(
     private var roomObservedSessionId: String? = null
     private var roomLastUiSessionId: String? = null
 
-    // Quality chosen during this room epoch (the lower-quality offer).
+    // Quality chosen during this title's playback, or this room epoch's (the
+    // Quality menu or the lower-quality offer).
     private var sessionQualityOverride: String? = null
 
     /**
@@ -3510,10 +3517,27 @@ class PlayerViewModel(
         return true
     }
 
-    private fun noteRoomQualityCommitted(committed: String?) {
+    /**
+     * Quality menu pick: replans at [id], a plan entry's label sent verbatim,
+     * or auto to hand the choice back to the server. The active row is a no-op.
+     */
+    fun onSelectQuality(id: String) {
+        val state = _uiState.value
+        val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+        if (menu.none { it.id == id }) return
+        if (id == activePlaybackQualityId(menu, state.committedQualityPreference)) return
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        mobileSubtitleTransactions.selectQuality(id)
+    }
+
+    /**
+     * Keeps a committed quality for later replans, seek recoveries and
+     * restarts of this title, which otherwise fall back to the route's.
+     */
+    private fun noteQualityCommitted(committed: String?) {
         if (committed == null || committed == currentMobileQualityPreference()) return
         sessionQualityOverride = committed
-        _roomQualityChanges.tryEmit(Unit)
+        if (inRoom) _roomQualityChanges.tryEmit(Unit)
     }
 
     private fun roomMediaTransitioning(state: PlayerUiState): Boolean =
@@ -3681,6 +3705,7 @@ class PlayerViewModel(
                 pendingSubtitleIdentity = snapshot.pendingIdentity,
                 localSubtitleMountIdentity = snapshot.localMountIdentity,
                 subtitleApplying = snapshot.subtitleApplying,
+                committedQualityPreference = snapshot.transition.committed.qualityPreference,
             )
         }
         val state = _uiState.value
@@ -3692,9 +3717,15 @@ class PlayerViewModel(
             transactionActive = mobileSubtitleTransactions.hasActiveTransaction,
         )
         snapshot.failureMessage?.let {
-            showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
+            showVersionSwitchMessage(
+                if (snapshot.qualityChangeFailed) {
+                    "Couldn't change quality. Try again."
+                } else {
+                    "Couldn't apply subtitles — playback continues unchanged."
+                },
+            )
         }
-        if (inRoom) noteRoomQualityCommitted(snapshot.transition.committed.qualityPreference)
+        noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -5170,6 +5201,9 @@ class PlayerViewModel(
             routeIntentState.recoverVersionSelection(state.contentId)
         } else {
             routeIntentState.beginVersionSelection(state.contentId, version.fileId)
+            // Choosing a file drops a picked quality: a quality served by
+            // another version would move playback straight off this one.
+            sessionQualityOverride = null
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
