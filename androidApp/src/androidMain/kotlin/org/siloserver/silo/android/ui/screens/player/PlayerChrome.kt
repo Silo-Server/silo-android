@@ -3,6 +3,8 @@ package org.siloserver.silo.android.ui.screens.player
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -55,6 +57,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -183,6 +186,8 @@ internal fun PlayerDisc(
             .clip(CircleShape)
             .background(fill)
             .border(1.dp, stroke, CircleShape)
+            // The disc is the control a screen reader names; its glyph says nothing.
+            .semantics { this.contentDescription = contentDescription }
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -192,8 +197,10 @@ internal fun PlayerDisc(
             .alpha(if (enabled) 1f else 0.32f),
         contentAlignment = Alignment.Center,
     ) {
-        CompositionLocalProvider(LocalContentColor provides contentColor) {
-            content()
+        Box(modifier = Modifier.clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+            CompositionLocalProvider(LocalContentColor provides contentColor) {
+                content()
+            }
         }
     }
 }
@@ -217,7 +224,7 @@ internal fun PlayerIconDisc(
     ) {
         Icon(
             imageVector = icon,
-            contentDescription = contentDescription,
+            contentDescription = null,
             tint = PlayerChrome.Paper,
             modifier = Modifier.size(iconSize),
         )
@@ -260,14 +267,17 @@ internal fun PlayerActionPill(
             modifier = Modifier.size(19.dp),
         )
         if (!compact) {
-            Text(text = label, style = PlayerType.PillLabel, maxLines = 1)
+            Text(text = label, style = PlayerType.PillLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (!value.isNullOrBlank()) {
+                // The value gives way first when the pill is squeezed.
                 Text(
                     text = value,
                     style = PlayerType.PillValue,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 160.dp),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .widthIn(max = 160.dp),
                 )
             }
         }
@@ -755,8 +765,10 @@ internal fun PlayerSwatchRow(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Nine swatches need about 330dp; a narrow docked panel has less, so the
+    // row scrolls rather than clip the last colors.
     Row(
-        modifier = modifier,
+        modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         colors.forEachIndexed { index, (color, name) ->

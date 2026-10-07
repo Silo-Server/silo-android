@@ -913,6 +913,8 @@ class PlayerViewModel(
     private var aiJobHandle: Job? = null
 
     private var controlsHideJob: Job? = null
+    // True while the seek bar is dragged; see onScrubbingChanged.
+    private var scrubbing = false
     private var introObserverJob: Job? = null
     private var lifecycleObserverJob: Job? = null
     private var resolveNextEpisodeJob: Job? = null
@@ -1610,7 +1612,7 @@ class PlayerViewModel(
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
                 seriesTitle = watchDetail?.seriesTitle,
-                contentType = watchDetail?.type,
+                contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -5319,6 +5321,16 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Holds the controls on screen while the seek bar is dragged: an auto-hide
+     * mid-drag would remove the bar and drop the seek. The timer restarts when
+     * the drag ends.
+     */
+    fun onScrubbingChanged(active: Boolean) {
+        scrubbing = active
+        scheduleControlsHide()
+    }
+
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
@@ -5391,6 +5403,7 @@ class PlayerViewModel(
 
     private fun scheduleControlsHide() {
         controlsHideJob?.cancel()
+        if (scrubbing) return
         controlsHideJob = viewModelScope.launch {
             delay(CONTROLS_AUTO_HIDE_MS)
             val state = _uiState.value

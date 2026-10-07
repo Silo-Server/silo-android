@@ -450,6 +450,7 @@ fun PlayerOverlay(
                 onSetPlaybackSpeed = viewModel::onSetPlaybackSpeed,
                 onPlayNextEpisode = viewModel::playUpNextNow,
                 onSetBrightness = onSetBrightness,
+                onScrubbingChange = viewModel::onScrubbingChanged,
                 castSlot = castSlot,
             )
         }

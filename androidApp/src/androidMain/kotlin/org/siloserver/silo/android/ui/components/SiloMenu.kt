@@ -100,7 +100,9 @@ fun SiloDropdownMenuItem(
 ) {
     val labelColor = if (destructive) SiloDestructive else SiloForeground
     DropdownMenuItem(
-        text = { ProvideTextStyle(SettingsTextStyles.menuLabel.copy(color = labelColor)) { text() } },
+        // No color in the style: the label takes the row's content color, so a
+        // disabled row dims with disabledTextColor.
+        text = { ProvideTextStyle(SettingsTextStyles.menuLabel) { text() } },
         onClick = onClick,
         modifier = modifier.heightIn(min = MenuDimens.rowMinHeight),
         leadingIcon = leadingIcon,

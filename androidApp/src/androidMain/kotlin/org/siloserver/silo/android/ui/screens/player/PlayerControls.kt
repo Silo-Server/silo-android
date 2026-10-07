@@ -151,6 +151,8 @@ fun PlayerControls(
     onSetPlaybackSpeed: (Double) -> Unit = {},
     onPlayNextEpisode: () -> Unit = {},
     onSetBrightness: (Float) -> Unit = {},
+    // True while the seek bar is being dragged, so the auto-hide can hold off.
+    onScrubbingChange: (Boolean) -> Unit = {},
     // Google Cast (Chromecast) button — sits in the top bar alongside the other
     // controls. Provided by PlayerScreen; empty by default so this stateless
     // composable stays test-friendly and decoupled from the Cast SDK. The
@@ -254,7 +256,10 @@ fun PlayerControls(
                     credits = credits,
                     recap = recap,
                     preview = preview,
-                    onScrubbingChange = { isScrubbing = it },
+                    onScrubbingChange = {
+                        isScrubbing = it
+                        onScrubbingChange(it)
+                    },
                 )
                 PlayerActionPillRow(
                     hasTracks = hasTracks,
@@ -507,24 +512,33 @@ private fun PlayerActionPillRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            PlayerActionPill(
-                icon = Icons.Rounded.Subtitles,
-                label = "Audio & Subtitles",
-                value = tracksValue.takeIf { density == ActionPillDensity.Full },
-                compact = density == ActionPillDensity.Icons,
-                enabled = hasTracks,
-                onClick = onOpenTracks,
-            )
-            if (hasChapters) {
+            // The left pills share what Quality and ⋯ leave, so a long track or
+            // chapter name ellipsizes instead of pushing them off the row.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 PlayerActionPill(
-                    icon = Icons.AutoMirrored.Rounded.FormatListBulleted,
-                    label = "Chapters",
-                    value = chapterValue.takeIf { density == ActionPillDensity.Full },
+                    icon = Icons.Rounded.Subtitles,
+                    label = "Audio & Subtitles",
+                    value = tracksValue.takeIf { density == ActionPillDensity.Full },
                     compact = density == ActionPillDensity.Icons,
-                    onClick = onOpenChapters,
+                    enabled = hasTracks,
+                    onClick = onOpenTracks,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
+                if (hasChapters) {
+                    PlayerActionPill(
+                        icon = Icons.AutoMirrored.Rounded.FormatListBulleted,
+                        label = "Chapters",
+                        value = chapterValue.takeIf { density == ActionPillDensity.Full },
+                        compact = density == ActionPillDensity.Icons,
+                        onClick = onOpenChapters,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
-            Spacer(modifier = Modifier.weight(1f))
             if (hasQualityMenu) {
                 PlayerActionPill(
                     icon = Icons.Rounded.Tune,

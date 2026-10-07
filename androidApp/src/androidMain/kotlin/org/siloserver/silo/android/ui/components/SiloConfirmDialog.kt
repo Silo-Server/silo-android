@@ -161,10 +161,11 @@ private fun SiloDialogButton(action: SiloDialogAction) {
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
+            // Before the fill, so a disabled button dims as a whole, not just its label.
+            .alpha(if (action.enabled) 1f else 0.4f)
             .clip(RoundedCornerShape(24.dp))
             .background(fill)
             .clickable(enabled = action.enabled, role = Role.Button, onClick = action.onClick)
-            .alpha(if (action.enabled) 1f else 0.4f)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
