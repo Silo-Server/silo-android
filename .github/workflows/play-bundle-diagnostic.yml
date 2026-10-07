@@ -1,0 +1,229 @@
+name: Play bundle diagnostic
+
+on:
+  workflow_call:
+    inputs:
+      reject_first_download:
+        description: Reject the first consumer attempt to exercise failed-job recovery
+        type: boolean
+        default: true
+      failure_gate:
+        description: Deliberately fail one completed gate to check inert upload stays skipped
+        type: string
+        default: none
+
+permissions:
+  contents: read
+
+concurrency:
+  group: play-bundle-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Full release unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check build supply chain
+        run: |
+          ./scripts/test-release-workflow.sh
+          ./scripts/test-check-build-supply-chain.sh
+          ./scripts/check-build-supply-chain.sh
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
+      - name: Run full unit tests
+        run: ./gradlew -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" test --max-workers=2
+      - name: Exercise failed unit test gate
+        if: inputs.failure_gate == 'unit-tests'
+        run: exit 1
+      - name: Retain full test results
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: play-bundle-diagnostic-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: '**/build/test-results/**/TEST-*.xml'
+          if-no-files-found: ignore
+
+  lint:
+    name: Fatal release lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check build supply chain
+        run: ./scripts/check-build-supply-chain.sh
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+      - name: Run fatal lint
+        run: |
+          ./gradlew -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            :android-shared:lintDebug :androidApp:lintDebug :androidTvApp:lintDebug \
+            :androidApp:lintVitalRelease :androidTvApp:lintVitalRelease \
+            --build-cache --no-parallel --no-configuration-cache --max-workers=2
+      - name: Exercise failed lint gate
+        if: inputs.failure_gate == 'lint'
+        run: exit 1
+      - name: Retain fatal lint results
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: play-bundle-diagnostic-lint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: '**/build/reports/lint-results-*.xml'
+          if-no-files-found: ignore
+
+  prepare:
+    name: Prepare synthetic signed bundles
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      producer_attempt: ${{ steps.identity.outputs.producer_attempt }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Check build supply chain
+        run: ./scripts/check-build-supply-chain.sh
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          bundler-cache: true
+      - name: Verify frozen preparation source
+        run: ruby scripts/ci-play-bundle-inert-upload.rb --check-source
+      - name: Create disposable signing and FCM inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::${password}"
+          key_path="${RUNNER_TEMP}/silo-play-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.jks"
+          export BENCH_STORE_PASSWORD="${password}"
+          keytool -genkeypair -keystore "${key_path}" -storetype JKS \
+            -alias ci-bundle-fixture -keyalg RSA -keysize 2048 -validity 2 \
+            -dname 'CN=Silo CI Bundle Fixture' -storepass:env BENCH_STORE_PASSWORD \
+            -keypass:env BENCH_STORE_PASSWORD -noprompt
+          {
+            echo "SILO_RELEASE_KEYSTORE=${key_path}"
+            echo "SILO_RELEASE_KEYSTORE_PASSWORD=${password}"
+            echo "SILO_RELEASE_KEY_PASSWORD=${password}"
+            echo "SILO_RELEASE_KEY_ALIAS=ci-bundle-fixture"
+          } >> "${GITHUB_ENV}"
+          python3 - <<'PY'
+          import base64, json, os
+          value = {"project_info":{"project_number":"100000000001","project_id":"silo-ci-benchmark","storage_bucket":"silo-ci-benchmark.invalid"},"client":[{"client_info":{"mobilesdk_app_id":"1:100000000001:android:1111111111111111111111","android_client_info":{"package_name":"org.siloserver.silo"}},"api_key":[{"current_key":"AIzaSy000000000000000000000000000000000"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],"configuration_version":"1"}
+          with open(os.environ["GITHUB_ENV"], "a") as output:
+              output.write("SILO_GOOGLE_SERVICES_JSON_B64=" + base64.b64encode(json.dumps(value).encode()).decode() + "\n")
+          PY
+      - name: Prepare signed bundles
+        run: bundle exec fastlane android prepare_bundles
+        env:
+          SILO_VERSION_NAME: "0.0.2"
+          SILO_BUILD_NUMBER: "1"
+          PLAY_TRACK: beta
+      - name: Identify immutable artifact
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_sha256="$(sha256sum build/play-bundles-manifest.json | cut -d ' ' -f1)"
+          {
+            echo "artifact_name=android-play-bundles-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "producer_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "manifest_sha256=${manifest_sha256}"
+          } >> "${GITHUB_OUTPUT}"
+      - name: Upload prepared diagnostic bundles
+        id: bundles
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            androidApp/build/outputs/bundle/release/androidApp-release.aab
+            androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
+            build/play-bundles-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+      - name: Exercise failed preparation gate
+        if: inputs.failure_gate == 'prepare'
+        run: exit 1
+      - name: Remove owned synthetic inputs
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "${RUNNER_TEMP}/silo-play-diagnostic-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.jks" androidApp/google-services.json
+          ./gradlew --stop
+
+  inert-upload:
+    name: Inert upload after all gates
+    needs: [unit-tests, lint, prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+      - name: Verify exact artifact provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAY_BUNDLE_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          PLAY_BUNDLE_ARTIFACT_NAME: ${{ needs.prepare.outputs.artifact_name }}
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.prepare.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == 'Silo-Server/silo-android' ]]
+          [[ "${PLAY_BUNDLE_ARTIFACT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${SILO_PLAY_BUNDLE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PLAY_BUNDLE_ARTIFACT_ID}" |
+            ruby fastlane/play_bundle_manifest.rb verify-artifact
+      - name: Download exact producer artifact
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
+          path: .
+      - name: Exercise upload lane without Play
+        run: ruby scripts/ci-play-bundle-inert-upload.rb
+        env:
+          SILO_VERSION_NAME: "0.0.2"
+          SILO_BUILD_NUMBER: "1"
+          PLAY_TRACK: beta
+          PLAY_RELEASE_NOTES: Synthetic CI diagnostic
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.prepare.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.prepare.outputs.manifest_sha256 }}
+          SILO_DIAGNOSTIC_REJECT_FIRST_DOWNLOAD: ${{ inputs.reject_first_download && 'true' || 'false' }}
+          SILO_DIAGNOSTIC_RECEIPT: ${{ runner.temp }}/play-bundle-inert-receipt.json
+      - name: Upload inert diagnostic receipt
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: play-bundle-inert-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/play-bundle-inert-receipt.json
+          if-no-files-found: ignore

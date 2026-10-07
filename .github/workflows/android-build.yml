@@ -11,6 +11,19 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      play_bundle_diagnostic:
+        description: Run the private synthetic bundle and inert upload qualification
+        type: boolean
+        default: false
+      reject_first_download:
+        description: Interrupt the first inert consumer to check partial rerun recovery
+        type: boolean
+        default: true
+      failure_gate:
+        description: Deliberately fail a completed diagnostic gate
+        type: choice
+        options: [none, unit-tests, lint, prepare]
+        default: none
       build_ffmpeg_aar:
         description: Build the pinned Media3 FFmpeg decoder AAR instead of app jobs
         required: false
@@ -41,6 +54,7 @@ concurrency:
 
 jobs:
   ci:
+    if: github.event_name != 'workflow_dispatch' || !inputs.play_bundle_diagnostic
     # Hosted PR validation must exercise the proposed workflow revision. The
     # runner group's main-only restriction still applies to self-hosted calls.
     uses: ./.github/workflows/trusted-linux-ci.yml
@@ -50,3 +64,13 @@ jobs:
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
       parallel: ${{ inputs.parallel || false }}
       configuration_cache: ${{ inputs.configuration_cache || false }}
+
+  play-bundle-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.play_bundle_diagnostic
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/play-bundle-diagnostic.yml
+    with:
+      reject_first_download: ${{ inputs.reject_first_download }}
+      failure_gate: ${{ inputs.failure_gate }}

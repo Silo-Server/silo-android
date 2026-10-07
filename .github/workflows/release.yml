@@ -236,14 +236,18 @@ jobs:
             **/build/reports/tests/**
           if-no-files-found: ignore
 
-  # Publish both App Bundles to Google Play via the fastlane android beta
-  # lane. No status function in the if -> implicit success() gate on needs,
-  # so failed setup/tests skip this job.
-  play:
-    name: Publish to Google Play
-    needs: [setup, unit-tests]
+  # Prepare final signed bundles while tests run. Publication consumes these
+  # exact bytes only after both preparation and tests succeed.
+  play-bundles:
+    name: Prepare Google Play bundles
+    needs: [setup]
     if: ${{ needs.setup.outputs.play_publish == 'true' }}
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      producer_attempt: ${{ steps.identity.outputs.producer_attempt }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
 
     steps:
       - name: Check out sources
@@ -264,21 +268,92 @@ jobs:
         with:
           bundler-cache: true
 
-      # The Fastfile re-validates the version and derives the versionCode
-      # base from it before building.
-      - name: Build & upload to Google Play
-        run: bundle exec fastlane android beta
+      - name: Prepare signed Google Play bundles
+        run: bundle exec fastlane android prepare_bundles
         env:
           SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
           SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
           PLAY_TRACK: ${{ inputs.track || 'beta' }}
-          PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           SILO_RELEASE_KEYSTORE_B64: ${{ secrets.SILO_RELEASE_KEYSTORE_B64 }}
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
           SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
+
+      - name: Identify bundle artifact
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_sha256="$(sha256sum build/play-bundles-manifest.json | cut -d ' ' -f1)"
+          {
+            echo "artifact_name=android-play-bundles-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "producer_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "manifest_sha256=${manifest_sha256}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload prepared Play bundles
+        id: bundles
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            androidApp/build/outputs/bundle/release/androidApp-release.aab
+            androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
+            build/play-bundles-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+
+  play:
+    name: Publish to Google Play
+    needs: [setup, unit-tests, play-bundles]
+    if: ${{ needs.setup.outputs.play_publish == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          bundler-cache: true
+
+      - name: Verify bundle artifact provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAY_BUNDLE_ARTIFACT_ID: ${{ needs.play-bundles.outputs.artifact_id }}
+          PLAY_BUNDLE_ARTIFACT_NAME: ${{ needs.play-bundles.outputs.artifact_name }}
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == 'Silo-Server/silo-android' ]]
+          [[ "${PLAY_BUNDLE_ARTIFACT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${SILO_PLAY_BUNDLE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PLAY_BUNDLE_ARTIFACT_ID}" |
+            ruby fastlane/play_bundle_manifest.rb verify-artifact
+
+      - name: Download prepared Play bundles
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          artifact-ids: ${{ needs.play-bundles.outputs.artifact_id }}
+          path: .
+
+      - name: Upload verified bundles to Google Play
+        run: bundle exec fastlane android upload_bundles
+        env:
+          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
+          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
+          PLAY_TRACK: ${{ inputs.track || 'beta' }}
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
+          PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
 
   # Prepare signed sideload APKs alongside Play after setup and tests succeed.
   # publish-release waits for both paths before exposing the APKs.
@@ -405,14 +480,14 @@ jobs:
   # re-trigger workflows, so this cannot recurse.
   publish-release:
     name: Publish GitHub Release
-    needs: [setup, unit-tests, play, apks]
+    needs: [setup, unit-tests, play-bundles, play, apks]
     if: >-
       ${{ !cancelled() &&
           needs.setup.result == 'success' &&
           needs.unit-tests.result == 'success' &&
           needs.apks.result == 'success' &&
-          ((needs.setup.outputs.play_publish == 'true' && needs.play.result == 'success') ||
-           (needs.setup.outputs.play_publish == 'false' && needs.play.result == 'skipped')) }}
+          ((needs.setup.outputs.play_publish == 'true' && needs.play-bundles.result == 'success' && needs.play.result == 'success') ||
+           (needs.setup.outputs.play_publish == 'false' && needs.play-bundles.result == 'skipped' && needs.play.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

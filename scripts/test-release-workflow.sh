@@ -62,43 +62,50 @@ end
 
 check.call(jobs.fetch("apks").fetch("needs").sort == %w[setup unit-tests].sort,
            "APK preparation must wait for setup/tests and overlap Play")
-check.call(jobs.fetch("play").fetch("needs").sort == %w[setup unit-tests].sort,
-           "Play must remain gated on setup/tests")
-check.call(jobs.fetch("publish-release").fetch("needs").sort == %w[setup unit-tests play apks].sort,
+check.call(jobs.fetch("play-bundles").fetch("needs") == ["setup"],
+           "Bundle preparation must overlap tests after setup")
+check.call(jobs.fetch("play").fetch("needs").sort == %w[setup unit-tests play-bundles].sort,
+           "Play must remain gated on setup/tests/bundles")
+check.call(jobs.fetch("publish-release").fetch("needs").sort == %w[setup unit-tests play-bundles play apks].sort,
            "Publication must directly wait for setup/tests/Play/APKs")
 
 statuses = %w[success failure cancelled skipped]
 flags = ["true", "false", "", "unexpected"]
 condition_cases = 0
-statuses.repeated_permutation(4) do |setup, tests, play, apks|
+statuses.repeated_permutation(5) do |setup, tests, bundles, play, apks|
   flags.product([false, true]).each do |flag, cancelled|
     needs = {
       "setup" => {"result" => setup, "outputs" => {"play_publish" => flag}},
       "unit-tests" => {"result" => tests},
+      "play-bundles" => {"result" => bundles},
       "play" => {"result" => play},
       "apks" => {"result" => apks}
     }
     expected = !cancelled && [setup, tests, apks].all? { |result| result == "success" } &&
-               ((flag == "true" && play == "success") || (flag == "false" && play == "skipped"))
+               ((flag == "true" && bundles == "success" && play == "success") ||
+                (flag == "false" && bundles == "skipped" && play == "skipped"))
     actual = job_runs.call(jobs.fetch("publish-release"), needs, cancelled)
     check.call(actual == expected,
-               "Publication gate mismatch: #{[setup, tests, play, apks, flag, cancelled].inspect}")
+               "Publication gate mismatch: #{[setup, tests, bundles, play, apks, flag, cancelled].inspect}")
     condition_cases += 1
   end
 end
 
-statuses.repeated_permutation(2) do |setup, tests|
+statuses.repeated_permutation(3) do |setup, tests, bundles|
   flags.product([false, true]).each do |flag, cancelled|
     needs = {
       "setup" => {"result" => setup, "outputs" => {"play_publish" => flag}},
-      "unit-tests" => {"result" => tests}
+      "unit-tests" => {"result" => tests},
+      "play-bundles" => {"result" => bundles}
     }
     prerequisites_pass = !cancelled && setup == "success" && tests == "success"
     check.call(job_runs.call(jobs.fetch("apks"), needs, cancelled) == prerequisites_pass,
                "APK preparation gate mismatch: #{[setup, tests, flag, cancelled].inspect}")
-    check.call(job_runs.call(jobs.fetch("play"), needs, cancelled) == (prerequisites_pass && flag == "true"),
+    check.call(job_runs.call(jobs.fetch("play-bundles"), needs, cancelled) == (!cancelled && setup == "success" && flag == "true"),
+               "Bundle preparation gate mismatch: #{[setup, tests, bundles, flag, cancelled].inspect}")
+    check.call(job_runs.call(jobs.fetch("play"), needs, cancelled) == (prerequisites_pass && bundles == "success" && flag == "true"),
                "Play gate mismatch: #{[setup, tests, flag, cancelled].inspect}")
-    condition_cases += 2
+    condition_cases += 3
   end
 end
 
@@ -231,5 +238,8 @@ unless failures.empty?
   warn "#{failures.length} release workflow self-test(s) failed"
   exit 1
 end
+out, err, status = Open3.capture3("ruby", File.join(repo_root, "scripts/test-play-bundle-lanes.rb"))
+raise "Play bundle lane fixtures failed: #{out}#{err}" unless status.success?
+puts out
 puts "All release workflow self-tests passed (#{condition_cases} gate cases; APK filenames and bytes verified)"
 RUBY
