@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
@@ -233,6 +234,17 @@ class WrapperFixtures(unittest.TestCase):
         result = self.command("print('ok')")
         self.assertEqual(result.returncode, 0)
         self.assertEqual(self.summary(result)["exit_status"], 0)
+        self.assertEqual(self.summary(result)["requested_android_shared_debug_test_forks"], 1)
+
+    def test_requested_shared_forks_are_validated_before_launch(self):
+        result = self.command("print('ok')", env={"SILO_CI_ANDROID_SHARED_TEST_FORKS": "2"})
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(self.summary(result)["requested_android_shared_debug_test_forks"], 2)
+        for forks in ("0", "3", "2.0", "2; echo private"):
+            with self.subTest(forks=forks):
+                result = self.command("print('CHILD_STARTED')", env={"SILO_CI_ANDROID_SHARED_TEST_FORKS": forks})
+                self.assertEqual(result.returncode, 2)
+                self.assertNotIn("CHILD_STARTED", result.stdout)
 
     def test_observation_errors_preserve_child_status(self):
         output = io.StringIO()
@@ -301,6 +313,10 @@ class WrapperFixtures(unittest.TestCase):
 
 @unittest.skipUnless(os.environ.get("SILO_CI_FIXTURE_GRADLE"), "Set SILO_CI_FIXTURE_GRADLE to run isolated real Gradle fixtures")
 class GradleFixtures(unittest.TestCase):
+    def metadata(self, result):
+        line = next(line for line in result.stdout.splitlines() if line.startswith("SILO_CI_JVM_SETTINGS "))
+        return json.loads(line.split(" ", 1)[1])
+
     def fixture(self, settings):
         with tempfile.TemporaryDirectory() as temporary:
             project = Path(temporary)
@@ -310,13 +326,12 @@ class GradleFixtures(unittest.TestCase):
                 sys.executable, str(WRAPPER), "--max-workers", "2", "--",
                 os.environ["SILO_CI_FIXTURE_GRADLE"], "test", "--offline", "--no-daemon", "--no-configuration-cache", "--console=plain",
                 "-Dorg.gradle.jvmargs=-Xmx512m -Dfile.encoding=UTF-8", "-Pandroid.r8.maxWorkers=1",
-            ], cwd=project, env=os.environ.copy(), capture_output=True, text=True, timeout=90)
+            ], cwd=project, env={**os.environ, "GRADLE_USER_HOME": str(project / "gradle-home"), "SILO_CI_ANDROID_SHARED_TEST_FORKS": "1"}, capture_output=True, text=True, timeout=90)
 
     def test_actual_daemon_heap_and_selected_test_settings(self):
         result = self.fixture("maxHeapSize = '768m'")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        line = next(line for line in result.stdout.splitlines() if line.startswith("SILO_CI_JVM_SETTINGS "))
-        metadata = json.loads(line.split(" ", 1)[1])
+        metadata = self.metadata(result)
         self.assertEqual(metadata["gradle"]["max_heap_bytes"], 512 * 1024**2)
         self.assertEqual(metadata["gradle"]["worker_limit"], 2)
         self.assertEqual(metadata["test"]["selected_task_count"], 1)
@@ -327,9 +342,99 @@ class GradleFixtures(unittest.TestCase):
     def test_multiple_test_forks_are_rejected(self):
         result = self.fixture("maxParallelForks = 2")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Worker tuning requires every selected Test task to use one fork", result.stdout + result.stderr)
+        self.assertIn("Worker tuning requires selected Test tasks to start with one fork", result.stdout + result.stderr)
         line = next(line for line in result.stdout.splitlines() if line.startswith("SILO_CI_RESOURCE_SUMMARY "))
         self.assertNotEqual(json.loads(line.split(" ", 1)[1])["exit_status"], 0)
+
+    def multi_project_fixture(self, requested=None, unexpected=None, include_shared=True):
+        with tempfile.TemporaryDirectory() as temporary:
+            project = Path(temporary)
+            (project / "settings.gradle").write_text("rootProject.name = 'ci-scoped-fork-fixture'\ninclude 'android-shared', 'androidApp', 'shared'\n")
+            # Use Gradle's own local JUnit jars so test execution needs no
+            # dependency download or shared Gradle daemon registry.
+            (project / "build.gradle").write_text('''
+subprojects {
+    apply plugin: 'java'
+    dependencies {
+        testImplementation files("${gradle.gradleHomeDir}/lib/junit-4.13.2.jar", "${gradle.gradleHomeDir}/lib/hamcrest-core-1.3.jar")
+    }
+    tasks.register('testDebugUnitTest', Test) {
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+        dependsOn tasks.testClasses
+        useJUnit()
+        maxHeapSize = '128m'
+    }
+    tasks.withType(Test).configureEach { maxHeapSize = '128m' }
+}
+''')
+            if unexpected:
+                with (project / "build.gradle").open("a") as build:
+                    build.write(f"project('{unexpected}').tasks.named('testDebugUnitTest') {{ maxParallelForks = 2 }}\n")
+            for module in ("android-shared", "androidApp", "shared"):
+                sources = project / module / "src/test/java"
+                sources.mkdir(parents=True)
+                for name in ("First", "Second"):
+                    (sources / (name + "Test.java")).write_text(
+                        "import org.junit.Test;\npublic class " + name + "Test {\n"
+                        "@Test public void worker() throws Exception {\n"
+                        'System.out.println("FIXTURE_WORKER " + System.getProperty("org.gradle.test.worker"));\n'
+                        "Thread.sleep(200);\n}\n}\n"
+                    )
+            environment = {**os.environ, "GRADLE_USER_HOME": str(project / "gradle-home")}
+            environment.pop("SILO_CI_ANDROID_SHARED_TEST_FORKS", None)
+            if requested is not None:
+                environment["SILO_CI_ANDROID_SHARED_TEST_FORKS"] = requested
+            tasks = [":androidApp:testDebugUnitTest", ":shared:testDebugUnitTest"]
+            if include_shared:
+                tasks += [":android-shared:testDebugUnitTest", ":android-shared:test"]
+            result = subprocess.run([
+                sys.executable, str(WRAPPER), "--max-workers", "2", "--", os.environ["SILO_CI_FIXTURE_GRADLE"],
+                *tasks, "--offline", "--no-daemon", "--no-configuration-cache", "--console=plain",
+                "-Dorg.gradle.jvmargs=-Xmx512m -Dfile.encoding=UTF-8",
+            ], cwd=project, env=environment, capture_output=True, text=True, timeout=90)
+            reports = {}
+            for report in project.glob("*/build/test-results/*/TEST-*.xml"):
+                key = f":{report.parts[-5]}:{report.parts[-2]}"
+                reports.setdefault(key, []).append(ET.parse(report).getroot())
+            profiles = list(project.glob("build/reports/profile/profile-*.html"))
+            return result, reports, bool(profiles)
+
+    def assert_scoped_execution(self, requested, expected):
+        result, reports, profile = self.multi_project_fixture(requested)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        metadata = self.metadata(result)["test"]
+        self.assertEqual(metadata["requested_android_shared_debug_max_parallel_forks"], expected)
+        self.assertEqual(metadata["override_task_path"], ":android-shared:testDebugUnitTest")
+        actual = {task["path"]: task["max_parallel_forks"] for task in metadata["selected_task_settings"]}
+        self.assertEqual(actual, {":android-shared:testDebugUnitTest": expected, ":android-shared:test": 1, ":androidApp:testDebugUnitTest": 1, ":shared:testDebugUnitTest": 1})
+        self.assertEqual(set(reports), set(actual))
+        self.assertTrue(profile, "Gradle profile was not produced")
+        for path, suites in reports.items():
+            with self.subTest(path=path):
+                self.assertEqual(sum(int(suite.attrib["tests"]) for suite in suites), 2)
+                self.assertEqual(sum(int(suite.attrib["failures"]) + int(suite.attrib["errors"]) for suite in suites), 0)
+                workers = {line.removeprefix("FIXTURE_WORKER ") for suite in suites for line in (suite.findtext("system-out") or "").splitlines() if line.startswith("FIXTURE_WORKER ")}
+                self.assertEqual(len(workers), expected if path == ":android-shared:testDebugUnitTest" else 1)
+        self.assertTrue(all(task["fork_every"] == 0 for task in metadata["selected_task_settings"]))
+
+    def test_scoped_default_executes_every_test_with_one_fork(self):
+        self.assert_scoped_execution(None, 1)
+
+    def test_scoped_override_executes_only_shared_debug_with_two_forks(self):
+        self.assert_scoped_execution("2", 2)
+
+    def test_unexpected_forks_fail_before_test_execution(self):
+        result, reports, _ = self.multi_project_fixture("2", unexpected=":androidApp")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Worker tuning requires selected Test tasks to start with one fork", result.stdout + result.stderr)
+        self.assertFalse(reports)
+
+    def test_two_fork_request_requires_the_exact_selected_task(self):
+        result, reports, _ = self.multi_project_fixture("2", include_shared=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("The two-fork pilot requires :android-shared:testDebugUnitTest in the selected graph", result.stdout + result.stderr)
+        self.assertFalse(reports)
 
 
 class WorkflowFixtures(unittest.TestCase):
@@ -362,6 +467,18 @@ class WorkflowFixtures(unittest.TestCase):
             self.assertEqual(re.findall(r'^          - "(\d+)"$', choices, re.MULTILINE), ["2", "4"])
             self.assertIn(job + "_worker_limit: ${{ fromJSON(inputs." + job + "_worker_limit || '2') }}", self.controller)
             self.assertRegex(self.child, job + r"_worker_limit:\n        type: number\n        required: false\n        default: 2")
+        forks = re.search(r"^      unit_shared_test_forks:\n(.*?)(?=^      \w+:|\Z)", self.controller, re.DOTALL | re.MULTILINE).group(1)
+        self.assertIn('default: "1"', forks)
+        self.assertIn('type: choice', forks)
+        self.assertEqual(re.findall(r'^          - "(\d+)"$', forks, re.MULTILINE), ["1", "2"])
+        self.assertIn("unit_shared_test_forks: ${{ fromJSON(inputs.unit_shared_test_forks || '1') }}", self.controller)
+        self.assertRegex(self.child, r"unit_shared_test_forks:\n        type: number\n        required: false\n        default: 1")
+
+    def test_fork_override_is_exported_only_by_the_unit_job(self):
+        self.assertIn("SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}", self.job("unit-tests"))
+        self.assertEqual(self.child.count("SILO_CI_ANDROID_SHARED_TEST_FORKS:"), 1)
+        for name in ("lint", "release-readiness", "ffmpeg-aar"):
+            self.assertNotIn("SILO_CI_ANDROID_SHARED_TEST_FORKS:", self.job(name))
 
     def test_exact_task_graphs_heap_and_job_worker_policy(self):
         expected = {
@@ -416,15 +533,26 @@ class WorkflowFixtures(unittest.TestCase):
                 "GITHUB_JOB": "release-readiness",
                 "PATH": str(root / "bin") + os.pathsep + os.environ.get("PATH", ""),
             }
+            environment.pop("SILO_CI_ANDROID_SHARED_TEST_FORKS", None)
             environment.pop("GITHUB_EVENT_PATH", None)
             result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True, check=True)
             metadata = json.loads(result.stdout.removeprefix("SILO_CI_BENCHMARK "))
             self.assertEqual(metadata["requested_worker_limit"], 2)
             self.assertEqual(metadata["worker_limit"], 2)
+            self.assertEqual(metadata["requested_android_shared_debug_test_forks"], 1)
+            self.assertEqual(metadata["test_fork_override_task_path"], ":android-shared:testDebugUnitTest")
             self.assertEqual(metadata["job"], "release-readiness")
             self.assertIn("--no-parallel", metadata["profile"])
             self.assertEqual(metadata["java_version"], "21.0.11")
             self.assertNotIn("SECRET_JVM_OPTIONS", result.stdout)
+            environment["SILO_CI_ANDROID_SHARED_TEST_FORKS"] = "2"
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True, check=True)
+            self.assertEqual(json.loads(result.stdout.removeprefix("SILO_CI_BENCHMARK "))["requested_android_shared_debug_test_forks"], 2)
+            environment["SILO_CI_ANDROID_SHARED_TEST_FORKS"] = "3"
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("SILO_CI_BENCHMARK", result.stdout)
+            environment["SILO_CI_ANDROID_SHARED_TEST_FORKS"] = "1"
             environment["SILO_CI_WORKER_LIMIT"] = "3"
             result = subprocess.run([sys.executable, str(ROOT / "scripts/ci-build-metadata.py")], cwd=root, env=environment, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)

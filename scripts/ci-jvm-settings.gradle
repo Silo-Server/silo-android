@@ -1,8 +1,15 @@
-// Read settings inside the actual Gradle daemon. This tuning controller keeps
+// Apply the scoped fork profile and read settings inside the Gradle daemon.
+// This tuning controller keeps
 // configuration cache off; avoid changing task actions and cache fingerprints.
 import groovy.json.JsonOutput
 import java.lang.management.ManagementFactory
 import org.gradle.api.tasks.testing.Test
+
+def sharedTestPath = ':android-shared:testDebugUnitTest'
+def requestedSharedForks = System.getenv('SILO_CI_ANDROID_SHARED_TEST_FORKS') ?: '1'
+if (!(requestedSharedForks in ['1', '2'])) {
+    throw new GradleException('Android-shared debug Test forks must be 1 or 2')
+}
 
 def memoryBytes = { value ->
     if (value == null) return null
@@ -30,7 +37,17 @@ def memoryFlags = { arguments ->
 gradle.taskGraph.whenReady { graph ->
     def tests = graph.allTasks.findAll { it instanceof Test }
     if (tests.any { it.maxParallelForks != 1 }) {
-        throw new GradleException('Worker tuning requires every selected Test task to use one fork')
+        throw new GradleException('Worker tuning requires selected Test tasks to start with one fork')
+    }
+    if (requestedSharedForks == '2') {
+        def sharedTest = tests.find { it.path == sharedTestPath }
+        if (sharedTest == null) {
+            throw new GradleException('The two-fork pilot requires :android-shared:testDebugUnitTest in the selected graph')
+        }
+        sharedTest.maxParallelForks = 2
+    }
+    if (tests.any { it.maxParallelForks != (it.path == sharedTestPath ? requestedSharedForks.toInteger() : 1) }) {
+        throw new GradleException('A selected Test task differs from the scoped fork policy')
     }
     def kotlin = graph.allTasks.findAll { it.hasProperty('kotlinDaemonJvmArguments') }
     def metadata = [
@@ -39,6 +56,14 @@ gradle.taskGraph.whenReady { graph ->
                  worker_limit: gradle.startParameter.maxWorkerCount,
                  launch_memory_flags_bytes: memoryFlags(ManagementFactory.runtimeMXBean.inputArguments)],
         test: [selected_task_count: tests.size(),
+               requested_android_shared_debug_max_parallel_forks: requestedSharedForks.toInteger(),
+               override_task_path: sharedTestPath,
+               selected_task_settings: tests.collect {
+                   [path: it.path, max_parallel_forks: it.maxParallelForks,
+                    configured_max_heap_bytes: memoryBytes(it.maxHeapSize),
+                    configured_min_heap_bytes: memoryBytes(it.minHeapSize),
+                    fork_every: it.forkEvery]
+               }.sort { it.path },
                max_parallel_forks: tests.collect { it.maxParallelForks }.unique().sort(),
                configured_max_heap_bytes: tests.collect { memoryBytes(it.maxHeapSize) }.unique(),
                configured_min_heap_bytes: tests.collect { memoryBytes(it.minHeapSize) }.unique(),

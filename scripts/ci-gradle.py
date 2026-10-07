@@ -25,6 +25,12 @@ def worker_limit(value):
     return int(value)
 
 
+def shared_test_forks(value):
+    if str(value) not in ("1", "2"):
+        raise ValueError("Android-shared debug Test forks must be 1 or 2")
+    return int(value)
+
+
 def is_linux():
     return sys.platform.startswith("linux")
 
@@ -365,6 +371,12 @@ class MemorySampler:
 def run(command, workers, interval=1.0):
     sampler = MemorySampler()
     observation_errors = 0
+    try:
+        requested_shared_forks = shared_test_forks(os.environ.get("SILO_CI_ANDROID_SHARED_TEST_FORKS", "1"))
+    except ValueError:
+        # main validates before launch; direct callers must still retain the
+        # child's status if request metadata cannot be observed.
+        requested_shared_forks = None
 
     def observe_cgroup():
         nonlocal observation_errors
@@ -433,6 +445,7 @@ def run(command, workers, interval=1.0):
         print("SILO_CI_RESOURCE_SUMMARY " + json.dumps({
             **sampler.summary(),
             "worker_limit": workers,
+            "requested_android_shared_debug_test_forks": requested_shared_forks,
             "gradle_profile_requested": "--profile" in command,
             "observation_error_count": observation_errors,
             "sample_interval_seconds": interval,
@@ -465,6 +478,7 @@ def main():
         metadata_workers = worker_limit(os.environ.get("SILO_CI_WORKER_LIMIT", str(args.max_workers)))
         if metadata_workers != args.max_workers:
             parser.error("Worker metadata differs from the command worker limit")
+        shared_test_forks(os.environ.get("SILO_CI_ANDROID_SHARED_TEST_FORKS", "1"))
     except ValueError as error:
         parser.error(str(error))
     return run([*command, "--init-script", str(Path(__file__).with_name("ci-jvm-settings.gradle")), "--profile"], args.max_workers)

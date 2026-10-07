@@ -13,6 +13,7 @@ spec = spec_from_file_location("ci_gradle", Path(__file__).with_name("ci-gradle.
 ci_gradle = module_from_spec(spec)
 spec.loader.exec_module(ci_gradle)
 workers = ci_gradle.worker_limit(os.environ.get("SILO_CI_WORKER_LIMIT", "2"))
+shared_forks = ci_gradle.shared_test_forks(os.environ.get("SILO_CI_ANDROID_SHARED_TEST_FORKS", "1"))
 
 source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text()
@@ -39,6 +40,8 @@ metadata = {
     "cache_namespace": os.environ.get("GITHUB_REF", "local"),
     "job": os.environ.get("GITHUB_JOB", "local"),
     "requested_worker_limit": workers,
+    "requested_android_shared_debug_test_forks": shared_forks,
+    "test_fork_override_task_path": ":android-shared:testDebugUnitTest",
     "worker_limit": workers,
     "runner_cpu_count": os.cpu_count(),
     "runner_memory_total_kib": ci_gradle.memory_value(Path("/proc"), "MemTotal") if ci_gradle.is_linux() else None,

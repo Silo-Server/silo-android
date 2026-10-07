@@ -25,6 +25,10 @@ on:
         type: number
         required: false
         default: 2
+      unit_shared_test_forks:
+        type: number
+        required: false
+        default: 1
       lint_parallel:
         type: boolean
         required: false
@@ -215,6 +219,7 @@ jobs:
     env:
       SILO_CI_WORKER_LIMIT: ${{ inputs.unit_worker_limit }}
       SILO_CI_PARALLEL_FLAG: ${{ inputs.unit_parallel && '--parallel' || '--no-parallel' }}
+      SILO_CI_ANDROID_SHARED_TEST_FORKS: ${{ inputs.unit_shared_test_forks }}
     runs-on: ${{ inputs.self_hosted && (github.repository == 'Silo-Server/silo-android' && ((github.event_name == 'pull_request' && contains(fromJSON(vars.SILO_CI_MEMBERS || '[]'), github.event.pull_request.user.login)) || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main'))) && fromJSON(format('["self-hosted","linux","x64","silo-linux","silo-run-{0}-{1}","silo-job-unit-tests"]', github.run_id, github.run_attempt)) || 'ubuntu-latest' }}
 
     steps:

@@ -34,6 +34,14 @@ on:
         options:
           - "2"
           - "4"
+      unit_shared_test_forks:
+        description: Test forks for android-shared debug unit tests only
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
       lint_parallel:
         description: Benchmark parallel project execution for lint
         required: false
@@ -66,5 +74,6 @@ jobs:
       build_cache: ${{ github.event_name != 'workflow_dispatch' || inputs.build_cache }}
       unit_parallel: ${{ inputs.unit_parallel || false }}
       unit_worker_limit: ${{ fromJSON(inputs.unit_worker_limit || '2') }}
+      unit_shared_test_forks: ${{ fromJSON(inputs.unit_shared_test_forks || '1') }}
       lint_parallel: ${{ inputs.lint_parallel || false }}
       lint_worker_limit: ${{ fromJSON(inputs.lint_worker_limit || '2') }}
