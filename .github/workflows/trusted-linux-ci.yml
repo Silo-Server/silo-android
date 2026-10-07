@@ -33,6 +33,9 @@ env:
   SILO_CI_CACHE_FLAG: ${{ inputs.build_cache && '--build-cache' || '--no-build-cache' }}
   SILO_CI_PARALLEL_FLAG: ${{ inputs.parallel && '--parallel' || '--no-parallel' }}
   SILO_CI_CONFIGURATION_FLAG: ${{ inputs.configuration_cache && '--configuration-cache' || '--no-configuration-cache' }}
+  # Pass a literal string to action inputs and record the same policy decision.
+  # Internal PR writes stay scoped to their merge ref; forks remain read-only.
+  SILO_CI_CACHE_READ_ONLY: ${{ inputs.build_cache && (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) && 'false' || 'true' }}
 
 jobs:
   ffmpeg-aar:
@@ -142,7 +145,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ env.SILO_CI_CACHE_READ_ONLY }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
@@ -187,7 +190,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ env.SILO_CI_CACHE_READ_ONLY }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
@@ -224,13 +227,40 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Debug-variant unit tests only. The release variant compiles and runs
-          # the exact same sources for no extra signal, and doubles CI time.
+          # CI exercises debug variants; release.yml retains the host tests for
+          # distinct release behavior and BuildConfig values.
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             testDebugUnitTest \
             "${SILO_CI_CACHE_FLAG}" "${SILO_CI_PARALLEL_FLAG}" "${SILO_CI_CONFIGURATION_FLAG}" \
             --max-workers=2
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = sorted(Path('.').glob('*/build/test-results/*/TEST-*.xml'))
+          totals = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'), 0)
+          if not reports:
+              raise SystemExit('No JUnit reports were produced')
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              if suite.tag != 'testsuite':
+                  raise SystemExit(f'Invalid JUnit suite: {report}')
+              cases = suite.findall('testcase')
+              actual = {'tests': len(cases), **{
+                  key: sum(case.find(tag) is not None for case in cases)
+                  for key, tag in (('failures', 'failure'), ('errors', 'error'), ('skipped', 'skipped'))
+              }}
+              for key in totals:
+                  count = int(suite.attrib[key])
+                  if count != actual[key]:
+                      raise SystemExit(f'Inconsistent JUnit {key}: {report}')
+                  totals[key] += count
+          if totals['tests'] == 0 or totals['failures'] or totals['errors']:
+              raise SystemExit(f'JUnit validation failed: {totals}')
+          print('SILO_CI_TEST_TOTALS ' + json.dumps({**totals, 'reports': len(reports)}, sort_keys=True))
+          PY
 
       - name: Upload test reports
         if: failure()
@@ -264,7 +294,7 @@ jobs:
           # Writes are scoped to the default branch, manual runs requiring write
           # access, or internal PRs from an explicit trusted association.
           # Forks retain read-only access and cannot seed another ref's cache.
-          cache-read-only: ${{ !inputs.build_cache || !(github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association))) }}
+          cache-read-only: ${{ env.SILO_CI_CACHE_READ_ONLY }}
 
       - name: Record build inputs
         run: ./scripts/ci-build-metadata.py
