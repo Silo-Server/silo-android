@@ -15,7 +15,7 @@ agp = re.search(r'^agp = "([^"]+)"', catalog, re.MULTILINE).group(1)
 cache = os.environ.get("SILO_CI_CACHE_FLAG", "--build-cache")
 metadata = {
     "source_sha": source_sha,
-    "workflow_sha": os.environ.get("GITHUB_SHA", "local"),
+    "workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA", os.environ.get("GITHUB_SHA", "local")),
     "variant": "baseline" if cache == "--no-build-cache" else "optimized",
     "cache_regime": "unverified",
     "cache_namespace": os.environ.get("GITHUB_REF", "local"),
@@ -24,5 +24,7 @@ metadata = {
         for key in ("SILO_CI_CACHE_FLAG", "SILO_CI_PARALLEL_FLAG", "SILO_CI_CONFIGURATION_FLAG")
     ).strip(),
     "toolchain": f"JDK 21 / Gradle {gradle} / AGP {agp}",
+    "java_version": subprocess.check_output(["java", "-version"], stderr=subprocess.STDOUT, text=True).splitlines()[0],
+    "runner_image": os.environ.get("ImageVersion", "unavailable"),
 }
 print("SILO_CI_BENCHMARK " + json.dumps(metadata, sort_keys=True))
