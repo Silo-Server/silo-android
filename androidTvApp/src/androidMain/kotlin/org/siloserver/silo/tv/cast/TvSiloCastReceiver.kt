@@ -669,14 +669,15 @@ class TvSiloCastReceiver(
         withContext(Dispatchers.Main.immediate) {
             player.adapter.handle(SiloCastControlCommand(name = SiloCastControlCommand.Stop))
         }
-        withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) {
+        val tornDown = withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) {
             // The exit queues the session stop before the route unregisters.
             player.unregistered.await()
             awaitPlaybackTeardown()
-        }
-        // The player outlived the teardown limit, or something started playing
-        // meanwhile; swapping the identity now would strand its session.
-        check(activePlayer == null) { "The TV is still playing. Try again." }
+        } != null
+        // The player or its session stop outlived the teardown limit, or
+        // something started playing meanwhile; swapping the identity now would
+        // strand that session.
+        check(tornDown && activePlayer == null) { "The TV is still playing. Try again." }
     }
 
     private suspend fun requireAuthorized(session: ControllerSession): Boolean {
