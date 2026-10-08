@@ -103,7 +103,7 @@ open class PersonalDataRepository(
         if (requestIdentityGeneration != identityTransitions.generation.value) identityChanged() else result
     }
 
-    /** Drops hidden libraries and caches what is shown. */
+    /** Drops hidden libraries and caches what is shown, unless the profile changed meanwhile. */
     private suspend fun publishLibraries(
         libraries: List<UserLibrary>,
         requestIdentityGeneration: Long,
@@ -112,6 +112,7 @@ open class PersonalDataRepository(
         writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
             catalogCache.cacheLibraries(visible, cacheWriteLease)
         }
+        if (requestIdentityGeneration != identityTransitions.generation.value) return identityChanged()
         return ApiResult.Success(visible)
     }
 
