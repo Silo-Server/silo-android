@@ -247,12 +247,12 @@ fun TvMainShell(
     // The list leaves out libraries the profile hid; hiding or showing one
     // on another device re-loads it.
     val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
-    // A failed load is retried once the server is reachable again: the
-    // revision that asked for it won't come again, and a library shown again
-    // on another device can only come back from the server.
+    // A failed load is retried on the next reachable probe: the revision that
+    // asked for it won't come again, and a library shown again on another
+    // device can only come back from the server.
     var librariesReloadPending by remember { mutableStateOf(false) }
     var librariesRetry by remember { mutableIntStateOf(0) }
-    LaunchedEffect(reachabilityState.status) {
+    LaunchedEffect(reachabilityState.status, reachabilityState.lastCheckedAtMs) {
         if (librariesReloadPending && reachabilityState.status == ServerReachabilityStatus.Reachable) librariesRetry++
     }
     val libraries by produceState(
