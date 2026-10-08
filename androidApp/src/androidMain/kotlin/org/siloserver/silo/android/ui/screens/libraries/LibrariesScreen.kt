@@ -247,6 +247,16 @@ class LibrariesViewModel(
         refresh()
     }
 
+    /** Bumps when the profile hides or shows a library on another device. */
+    val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
+    private var seenHiddenLibrariesRevision = hiddenLibrariesRevision.value
+
+    fun onHiddenLibrariesRevision(revision: Int) {
+        if (revision == seenHiddenLibrariesRevision) return
+        seenHiddenLibrariesRevision = revision
+        refreshLibraryList()
+    }
+
     private fun isHiddenAudiobookLibrary(library: UserLibrary): Boolean =
         !showAudiobooks && library.type.trim().lowercase() in setOf("audiobook", "audiobooks")
 
@@ -881,6 +891,12 @@ fun LibrariesScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    // A library hidden or shown on another device lands on foreground, which
+    // can be after this resume's re-check; re-check again when it does.
+    val hiddenLibrariesRevision by viewModel.hiddenLibrariesRevision.collectAsState()
+    LaunchedEffect(viewModel, hiddenLibrariesRevision) {
+        viewModel.onHiddenLibrariesRevision(hiddenLibrariesRevision)
     }
 
     // Recommended tab scroll state — drives the chrome scrim opacity so the

@@ -244,9 +244,13 @@ fun TvMainShell(
     // `visibleRoots` is only Home + Calendar, so a restored/deep-linked
     // `main/movies` route must NOT be treated as "type has no libraries" yet.
     var librariesLoaded by remember { mutableStateOf(false) }
+    // The list leaves out libraries the profile hid; hiding or showing one
+    // on another device re-loads it.
+    val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
     val libraries by produceState(
         initialValue = emptyList<UserLibrary>(),
         personalDataRepository,
+        hiddenLibrariesRevision,
     ) {
         when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success ->

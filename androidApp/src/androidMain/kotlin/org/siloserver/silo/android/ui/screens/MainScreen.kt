@@ -173,6 +173,8 @@ fun MainScreen(
     LaunchedEffect(activeEntry?.id, activeEntry?.profileId) {
         headerViewModel.refresh()
     }
+    // Re-derived when the profile hides or shows a library on another device.
+    val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
     val mediaCapabilities by produceState(
         initialValue = MediaModeCapabilities(
             listOf(
@@ -182,6 +184,7 @@ fun MainScreen(
             ),
         ),
         personalDataRepository,
+        hiddenLibrariesRevision,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success -> result.data.mobileMediaModeCapabilities()

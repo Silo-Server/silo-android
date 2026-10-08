@@ -227,6 +227,7 @@ val playerInfraModule = module {
             playerSettingsStore = get(),
             seekIntervalStore = get(),
             titleArtStore = get(),
+            hiddenLibrariesStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },
