@@ -1292,6 +1292,20 @@ fun TvAppNavigation(
                 },
             ),
         ) { backStack ->
+            val castLaunchId = backStack.arguments?.getString(TvRoute.Player.ARG_CAST_LAUNCH)
+            // Leaves only this entry: a newer launch's player may be on top.
+            val leaveStaleCastLaunch: () -> Unit = {
+                if (navController.currentBackStackEntry?.id == backStack.id) navController.popBackStack()
+            }
+            // A phone's launch that went stale after navigation took it never
+            // creates its player, so nothing starts loading under another identity.
+            val castLaunchCurrent = remember(backStack.id) {
+                castLaunchId == null || siloCastReceiver.confirmLaunch(castLaunchId)
+            }
+            if (!castLaunchCurrent) {
+                LaunchedEffect(backStack.id) { leaveStaleCastLaunch() }
+                return@composable
+            }
             val contentId = backStack.arguments
                 ?.getString(TvRoute.Player.ARG_CONTENT_ID)
                 .orEmpty()
@@ -1374,7 +1388,8 @@ fun TvAppNavigation(
                 episodeSelectionHandoff = episodeSelectionHandoff,
                 navigationSettled = !transition.isRunning,
                 shuffleId = backStack.arguments?.getString(TvRoute.Player.ARG_SHUFFLE_ID),
-                castLaunchId = backStack.arguments?.getString(TvRoute.Player.ARG_CAST_LAUNCH),
+                castLaunchId = castLaunchId,
+                onStaleCastLaunch = leaveStaleCastLaunch,
                 onExit = { navController.popBackStack() },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.

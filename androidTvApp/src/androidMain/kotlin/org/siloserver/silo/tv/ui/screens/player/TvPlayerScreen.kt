@@ -281,6 +281,8 @@ fun TvPlayerScreen(
     shuffleId: String? = null,
     // The phone launch that opened this player, checked when it registers.
     castLaunchId: String? = null,
+    // Leaves this player when that launch went stale before it registered.
+    onStaleCastLaunch: () -> Unit = onExit,
     // Scope the ViewModel key by fileId too so switching 4K <-> 1080p on
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
@@ -510,11 +512,13 @@ fun TvPlayerScreen(
             )
         }
     }
+    var staleCastLaunch by remember { mutableStateOf(false) }
     TvSiloCastPlayerRegistration(
         siloCastReceiver = siloCastReceiver,
         viewModel = viewModel,
         contentId = contentId,
         castLaunchId = castLaunchId,
+        onStaleCastLaunch = { staleCastLaunch = true },
         watchParty = watchParty,
         mediaController = mediaController,
         playbackSpeed = playbackSpeed,
@@ -549,6 +553,12 @@ fun TvPlayerScreen(
         }
     }
     val stopPlaybackAndExit = { exitPlayer(true, null) }
+    val latestOnStaleCastLaunch by rememberUpdatedState(onStaleCastLaunch)
+    // The phone's launch went stale just before this player registered: stop
+    // what this player started and leave its own entry, not whatever is on top.
+    LaunchedEffect(staleCastLaunch) {
+        if (staleCastLaunch) exitPlayer(false, latestOnStaleCastLaunch)
+    }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { stopPlaybackAndExit() }
@@ -2597,6 +2607,7 @@ private fun TvSiloCastPlayerRegistration(
     viewModel: TvPlayerViewModel,
     contentId: String,
     castLaunchId: String?,
+    onStaleCastLaunch: () -> Unit,
     watchParty: TvWatchPartyScreenController?,
     mediaController: MediaController?,
     playbackSpeed: Double,
@@ -2609,17 +2620,6 @@ private fun TvSiloCastPlayerRegistration(
     val latestSiloCastHdrEnabled by rememberUpdatedState(hdrEnabled)
     val latestSiloCastSubtitleAppearance by rememberUpdatedState(subtitleAppearance)
     val latestSiloCastMediaController by rememberUpdatedState(mediaController)
-    // The phone's launch expired, or its identity changed, before this player
-    // registered: leave the way a phone's Stop does instead of playing it.
-    var staleCastLaunch by remember { mutableStateOf(false) }
-    LaunchedEffect(staleCastLaunch) {
-        if (staleCastLaunch) {
-            // A frame later, once the screen's stop collector is listening:
-            // remoteStopRequests drops a request nobody is collecting yet.
-            withFrameNanos { }
-            viewModel.remoteStop()
-        }
-    }
     DisposableEffect(siloCastReceiver, viewModel, contentId) {
         // In a Watch Party a phone's transport is one more input: the TV
         // membership's permissions decide, so a host's phone controls the
@@ -2699,7 +2699,7 @@ private fun TvSiloCastPlayerRegistration(
         val registration = siloCastReceiver.registerPlayer(
             adapter = adapter,
             launchId = castLaunchId,
-            onStaleLaunch = { staleCastLaunch = true },
+            onStaleLaunch = onStaleCastLaunch,
         ) {
             val volumeState = siloCastReceiver.resolvePlayerVolume(
                 currentVolume = latestSiloCastMediaController?.volume?.toDouble(),

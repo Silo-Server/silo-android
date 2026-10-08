@@ -375,6 +375,7 @@ val androidTvModule = module {
             advertiser = get(),
             serverRegistry = get(),
             tokenManager = get(),
+            identityTransitions = get(),
             identityManager = get(),
             deviceNameProvider = ::tvDeviceName,
             deviceIdProvider = {

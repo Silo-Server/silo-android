@@ -50,6 +50,7 @@ import org.siloserver.silo.common.lan.SiloCastTls
 import org.siloserver.silo.common.lan.SiloCastTlsSession
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.network.IdentityTransitionBarrier
 import org.siloserver.silo.network.TokenManager
 
 /**
@@ -81,6 +82,8 @@ class TvSiloCastReceiver(
     private val advertiser: SiloCastNsdAdvertiser,
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
+    /** Its generation changes on every sign-in, profile, server or borrowed-identity change. */
+    private val identityTransitions: IdentityTransitionBarrier,
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
@@ -120,15 +123,14 @@ class TvSiloCastReceiver(
     private val volumeTracker = SiloCastVolumeTracker()
     private val launchRequestChannel = Channel<Launch>(capacity = 1)
     val launchRequests: Flow<Launch> = launchRequestChannel.receiveAsFlow()
-    private var pendingPlayerIdentityGeneration: String? = null
-    // The id of the admitted launch that set [pendingPlayerIdentityGeneration],
-    // until its player registers or the launch expires. Non-null means a launch
-    // is on its way to the player; cleanup clears the marker only for its own
-    // launch.
-    private var pendingPlayerLaunchOwner: String? = null
+    // The admitted launch on its way to the player, until its player registers
+    // or the launch expires. Non-null holds off other launches and handoffs;
+    // cleanup clears it only for its own launch.
+    private var pendingLaunch: AdmittedLaunch? = null
     // The launch whose player registered last. Its player registers again when
-    // its screen is recreated (an activity restart), and that is not stale.
-    private var registeredLaunchId: String? = null
+    // its screen is recreated (an activity restart), which is allowed only
+    // while the identity it was admitted on is unchanged.
+    private var registeredLaunch: AdmittedLaunch? = null
     private var identityEndJob: Job? = null
     // A scheduled end that has committed to ending this generation. It and
     // launch admission decide under the receiver lock, so a launch is never
@@ -196,8 +198,7 @@ class TvSiloCastReceiver(
         DiagnosticsCastLogger.event("TV cast receiver stopped")
         advertiser.stop()
         val stoppedRun = receiverRun
-        pendingPlayerIdentityGeneration = null
-        pendingPlayerLaunchOwner = null
+        pendingLaunch = null
         // A launch navigation has not taken yet belongs to the session being
         // torn down; it must not open when the TV app comes back.
         launchRequestChannel.tryReceive()
@@ -248,7 +249,7 @@ class TvSiloCastReceiver(
         onStaleLaunch: () -> Unit = {},
         stateProvider: () -> SiloCastPlaybackState,
     ): Closeable {
-        if (launchId != null && launchId != registeredLaunchId && !confirmLaunchLocked(launchId)) {
+        if (launchId != null && !confirmLaunchLocked(launchId)) {
             DiagnosticsCastLogger.warning("TV cast launch expired before its player opened")
             onStaleLaunch()
             return Closeable {}
@@ -258,13 +259,11 @@ class TvSiloCastReceiver(
         identityEndJob = null
         // Only the launched player takes the launch's generation; another
         // player leaves the pending launch to its own player.
-        val forPendingLaunch = launchId != null && launchId == pendingPlayerLaunchOwner
-        val identityGeneration = pendingPlayerIdentityGeneration.takeIf { forPendingLaunch }
-            ?: identityManager.activeIdentity?.generationId
-        if (forPendingLaunch) {
-            pendingPlayerIdentityGeneration = null
-            pendingPlayerLaunchOwner = null
-            registeredLaunchId = launchId
+        val launched = pendingLaunch?.takeIf { launchId != null && it.id == launchId }
+        val identityGeneration = launched?.generation ?: identityManager.activeIdentity?.generationId
+        if (launched != null) {
+            pendingLaunch = null
+            registeredLaunch = launched
         }
         val player = ActivePlayer(
             adapter = adapter,
@@ -524,7 +523,7 @@ class TvSiloCastReceiver(
                 // A launch on its way to the player would land on whatever
                 // identity this handoff installs. The phone tries again once the
                 // player opens, or the pending launch expires.
-                if (synchronized(this) { pendingPlayerLaunchOwner != null }) {
+                if (synchronized(this) { pendingLaunch != null }) {
                     session.send(
                         SiloCastMessage.HandoffCancel(
                             SiloCastHandoffCancel(
@@ -673,6 +672,9 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
+                // Read before the identity checks below, so a sign-in, profile
+                // or borrowed-identity change after them makes the launch stale.
+                val identityEpoch = identityTransitions.generation.value
                 val ownProfileId = session.ownIdentityProfileId
                 // Launch-ready on the TV's own identity: still signed in as
                 // that profile with no phone's identity installed since.
@@ -708,6 +710,7 @@ class TvSiloCastReceiver(
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
                 val launchOwner = UUID.randomUUID().toString()
+                val admitted = AdmittedLaunch(launchOwner, generation, identityEpoch)
                 val refusal = synchronized(this) {
                     when {
                         // A phone that lost the slot while this was in flight.
@@ -715,20 +718,18 @@ class TvSiloCastReceiver(
                             code = "unauthorized",
                             message = "Another phone is controlling this TV.",
                         )
-                        pendingPlayerLaunchOwner != null -> SiloCastError(
+                        pendingLaunch != null -> SiloCastError(
                             code = "launch_pending",
                             message = LAUNCH_PENDING_MESSAGE,
                         )
-                        generation != null && (
-                            identityManager.activeIdentity?.generationId != generation ||
-                                endingGenerationId == generation
-                            ) -> SiloCastError(
+                        // The identity changed since the checks above, or its
+                        // hand-back has committed.
+                        !isAdmittedIdentityCurrentLocked(admitted) -> SiloCastError(
                             code = "handoff_required",
                             message = "Prepare the phone profile before playing.",
                         )
                         else -> {
-                            pendingPlayerIdentityGeneration = generation
-                            pendingPlayerLaunchOwner = launchOwner
+                            pendingLaunch = admitted
                             null
                         }
                     }
@@ -875,10 +876,7 @@ class TvSiloCastReceiver(
                             // Only this generation's stale launch: a newer one
                             // admitted meanwhile keeps its protection.
                             synchronized(this@TvSiloCastReceiver) {
-                                if (pendingPlayerIdentityGeneration == generationId) {
-                                    pendingPlayerIdentityGeneration = null
-                                    pendingPlayerLaunchOwner = null
-                                }
+                                if (pendingLaunch?.generation == generationId) pendingLaunch = null
                             }
                             refreshAdvertisement()
                         }
@@ -912,30 +910,42 @@ class TvSiloCastReceiver(
     }
 
     /** No title is playing on, or on its way to, a phone's identity. */
-    private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerLaunchOwner == null
+    private fun isIdentityIdle(): Boolean = activePlayer == null && pendingLaunch == null
 
     /**
      * Whether launch [id] may still open its player: it is the pending launch,
-     * and the identity it was admitted on is still active and not being ended.
-     * Navigation checks this right before it opens the player. A stale launch
-     * that still holds the pending marker gives it up, so the next launch is
-     * not refused while it waits out its expiry.
+     * or the launch whose player registered last, and the identity it was
+     * admitted on is unchanged. Navigation checks this before it opens the
+     * player and before it creates the player screen; registration checks it
+     * again. A stale launch gives up its place, so the next launch is not
+     * refused while it waits out its expiry.
      */
     @Synchronized
     fun confirmLaunch(id: String): Boolean = confirmLaunchLocked(id)
 
     /** Caller holds the receiver lock. */
     private fun confirmLaunchLocked(id: String): Boolean {
-        if (pendingPlayerLaunchOwner != id) return false
-        val generation = pendingPlayerIdentityGeneration
-        if (generation == null ||
-            (identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation)
-        ) {
-            return true
+        pendingLaunch?.takeIf { it.id == id }?.let { pending ->
+            if (isAdmittedIdentityCurrentLocked(pending)) return true
+            pendingLaunch = null
+            return false
         }
-        pendingPlayerLaunchOwner = null
-        pendingPlayerIdentityGeneration = null
+        registeredLaunch?.takeIf { it.id == id }?.let { registered ->
+            if (isAdmittedIdentityCurrentLocked(registered)) return true
+            registeredLaunch = null
+        }
         return false
+    }
+
+    /**
+     * Caller holds the receiver lock. No sign-in, profile, server or borrowed
+     * identity change since [launch] was admitted, and a borrowed identity is
+     * not being ended.
+     */
+    private fun isAdmittedIdentityCurrentLocked(launch: AdmittedLaunch): Boolean {
+        if (identityTransitions.generation.value != launch.identityEpoch) return false
+        val generation = launch.generation ?: return true
+        return identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation
     }
 
     /**
@@ -947,9 +957,8 @@ class TvSiloCastReceiver(
      */
     private fun clearPendingLaunch(owner: String, dropQueued: Boolean = false) {
         synchronized(this) {
-            if (pendingPlayerLaunchOwner == owner) {
-                pendingPlayerLaunchOwner = null
-                pendingPlayerIdentityGeneration = null
+            if (pendingLaunch?.id == owner) {
+                pendingLaunch = null
                 if (dropQueued) launchRequestChannel.tryReceive()
             }
         }
@@ -1191,6 +1200,12 @@ class TvSiloCastReceiver(
 
     /** A phone's launch on its way to the player, with the [id] it was admitted under. */
     data class Launch(val request: SiloCastLaunchRequest, val id: String)
+
+    /**
+     * A launch as admitted: the phone's borrowed identity [generation] (null on
+     * the TV's own identity) and the [IdentityTransitionBarrier] generation then.
+     */
+    private data class AdmittedLaunch(val id: String, val generation: String?, val identityEpoch: Long)
 
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,
