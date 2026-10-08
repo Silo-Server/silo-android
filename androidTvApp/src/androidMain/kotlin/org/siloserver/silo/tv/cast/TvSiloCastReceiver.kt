@@ -84,7 +84,7 @@ class TvSiloCastReceiver(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     /** Reports sign-in, profile, server and borrowed-identity changes. */
-    identityTransitions: IdentityTransitionBarrier,
+    private val identityTransitions: IdentityTransitionBarrier,
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
@@ -685,20 +685,10 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                // Read before the identity checks below, so a sign-in, profile
-                // or borrowed-identity change after them makes the launch stale.
-                val admittedRevision = synchronized(this) { identityRevision }
-                val ownProfileId = session.ownIdentityProfileId
-                // Launch-ready on the TV's own identity: still signed in as
-                // that profile with no phone's identity installed since.
-                val onOwnIdentity = ownProfileId != null &&
-                    identityManager.activeIdentity == null &&
-                    !tokenManager.hasTemporaryScope() &&
-                    tokenManager.getProfileId() == ownProfileId
-                // activeIdentity is unpublished as soon as an end starts, so a
-                // launch never lands on an identity being handed back.
-                val borrowed = identityManager.activeIdentity?.takeIf { session.remoteLaunchReady }
-                if (!onOwnIdentity && borrowed == null) {
+                // A sign-in, profile or borrowed-identity change after this
+                // makes the launch stale (see confirmLaunch).
+                val identity = settledLaunchIdentity(session)?.takeIf { it.onOwnIdentity || it.borrowed != null }
+                if (identity == null) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -709,8 +699,9 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
-                val launchServerId = if (onOwnIdentity) serverRegistry.activeServerId.value else borrowed?.serverId
-                if (!AndroidServerRegistry.serverIdsMatch(message.launch.serverId, launchServerId)) {
+                val onOwnIdentity = identity.onOwnIdentity
+                val borrowed = identity.borrowed
+                if (!AndroidServerRegistry.serverIdsMatch(message.launch.serverId, identity.serverId)) {
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -723,7 +714,7 @@ class TvSiloCastReceiver(
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
                 val launchOwner = UUID.randomUUID().toString()
-                val admitted = AdmittedLaunch(launchOwner, generation, admittedRevision)
+                val admitted = AdmittedLaunch(launchOwner, generation, identity.revision)
                 val refusal = synchronized(this) {
                     when {
                         // A phone that lost the slot while this was in flight.
@@ -948,6 +939,37 @@ class TvSiloCastReceiver(
             registeredLaunch = null
         }
         return false
+    }
+
+    /**
+     * Reads the identity [session]'s launch would play on. The barrier holds
+     * identity changes off while this runs, so the checks agree with the
+     * revision read alongside them: a change already under way is waited out,
+     * never half-observed. Null if changes kept landing meanwhile.
+     */
+    private suspend fun settledLaunchIdentity(session: ControllerSession): LaunchIdentity? {
+        repeat(SETTLE_ATTEMPTS) {
+            val observed = identityTransitions.generation.value
+            identityTransitions.withCurrentGeneration(observed) {
+                val ownProfileId = session.ownIdentityProfileId
+                // Launch-ready on the TV's own identity: still signed in as
+                // that profile with no phone's identity installed since.
+                val onOwnIdentity = ownProfileId != null &&
+                    identityManager.activeIdentity == null &&
+                    !tokenManager.hasTemporaryScope() &&
+                    tokenManager.getProfileId() == ownProfileId
+                // activeIdentity is unpublished as soon as an end starts, so a
+                // launch never lands on an identity being handed back.
+                val borrowed = identityManager.activeIdentity?.takeIf { session.remoteLaunchReady }
+                LaunchIdentity(
+                    revision = synchronized(this@TvSiloCastReceiver) { identityRevision },
+                    onOwnIdentity = onOwnIdentity,
+                    borrowed = borrowed,
+                    serverId = if (onOwnIdentity) serverRegistry.activeServerId.value else borrowed?.serverId,
+                )
+            }?.let { return it }
+        }
+        return null
     }
 
     /**
@@ -1220,6 +1242,14 @@ class TvSiloCastReceiver(
      */
     private data class AdmittedLaunch(val id: String, val generation: String?, val identityRevision: Long)
 
+    /** What a launch would play on: the TV's own profile or a [borrowed] one, as of [revision]. */
+    private data class LaunchIdentity(
+        val revision: Long,
+        val onOwnIdentity: Boolean,
+        val borrowed: RemotePlaybackIdentityManager.ActiveIdentity?,
+        val serverId: String?,
+    )
+
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,
         val stateProvider: () -> SiloCastPlaybackState,
@@ -1239,6 +1269,8 @@ class TvSiloCastReceiver(
         const val IDENTITY_END_GRACE_MS = 2_000L
         const val PLAYBACK_TEARDOWN_TIMEOUT_MS = 15_000L
         const val PENDING_LAUNCH_TIMEOUT_MS = 30_000L
+        // Identity changes rarely land back to back; past this, refuse the launch.
+        const val SETTLE_ATTEMPTS = 3
         const val LAUNCH_PENDING_MESSAGE = "The TV is still starting the last title. Try again in a moment."
         const val IDENTITY_IDLE_MS = 10 * 60_000L
         const val PREPARING_AFTER_READY_MS = 20_000L
