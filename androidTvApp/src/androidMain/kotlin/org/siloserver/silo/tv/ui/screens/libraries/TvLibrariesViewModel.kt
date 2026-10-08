@@ -36,13 +36,17 @@ class TvLibrariesViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
-    init {
-        load()
-    }
-
     /** Bumps when the profile hides or shows a library on another device. */
     val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
     private var seenHiddenLibrariesRevision = hiddenLibrariesRevision.value
+
+    // The latest load replaces any still running, so an older answer can't
+    // land last. Declared before init, which starts the first load.
+    private var loadJob: Job? = null
+
+    init {
+        load()
+    }
 
     fun onHiddenLibrariesRevision(revision: Int) {
         if (revision == seenHiddenLibrariesRevision) return
@@ -59,9 +63,6 @@ class TvLibrariesViewModel(
         }
         load()
     }
-
-    // The latest load replaces any still running, so an older answer can't land last.
-    private var loadJob: Job? = null
 
     fun onLibrarySelected(libraryId: Int) {
         if (_uiState.value.selectedLibraryId == libraryId) return

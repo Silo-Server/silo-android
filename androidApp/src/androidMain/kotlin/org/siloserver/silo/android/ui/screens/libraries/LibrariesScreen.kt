@@ -235,6 +235,10 @@ class LibrariesViewModel(
     private var pendingContentReload = false
     private val pageSize = 42
 
+    /** Bumps when the profile hides or shows a library on another device. */
+    val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
+    private var seenHiddenLibrariesRevision = hiddenLibrariesRevision.value
+
     init {
         playerSettingsStore?.showAudiobooksFlow
             ?.onEach { show ->
@@ -246,10 +250,6 @@ class LibrariesViewModel(
             ?.launchIn(viewModelScope)
         refresh()
     }
-
-    /** Bumps when the profile hides or shows a library on another device. */
-    val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
-    private var seenHiddenLibrariesRevision = hiddenLibrariesRevision.value
 
     fun onHiddenLibrariesRevision(revision: Int) {
         if (revision == seenHiddenLibrariesRevision) return
