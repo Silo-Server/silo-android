@@ -51,6 +51,7 @@ import org.siloserver.silo.common.lan.SiloCastTlsSession
 import org.siloserver.silo.network.AndroidServerRegistry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.IdentityTransitionBarrier
+import org.siloserver.silo.network.IdentityTransitionPhase
 import org.siloserver.silo.network.TokenManager
 
 /**
@@ -82,8 +83,8 @@ class TvSiloCastReceiver(
     private val advertiser: SiloCastNsdAdvertiser,
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
-    /** Its generation changes on every sign-in, profile, server or borrowed-identity change. */
-    private val identityTransitions: IdentityTransitionBarrier,
+    /** Reports sign-in, profile, server and borrowed-identity changes. */
+    identityTransitions: IdentityTransitionBarrier,
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
@@ -131,6 +132,18 @@ class TvSiloCastReceiver(
     // its screen is recreated (an activity restart), which is allowed only
     // while the identity it was admitted on is unchanged.
     private var registeredLaunch: AdmittedLaunch? = null
+    // Counts sign-in, profile, server and borrowed-identity changes that affect
+    // the identity in use. A launch stays current only while it is unchanged;
+    // removing some other saved server does not count.
+    private var identityRevision: Long = 0
+
+    init {
+        identityTransitions.installGate { transition ->
+            if (transition.phase == IdentityTransitionPhase.WILL_CHANGE && transition.affectsCurrentIdentity) {
+                synchronized(this@TvSiloCastReceiver) { identityRevision += 1 }
+            }
+        }
+    }
     private var identityEndJob: Job? = null
     // A scheduled end that has committed to ending this generation. It and
     // launch admission decide under the receiver lock, so a launch is never
@@ -674,7 +687,7 @@ class TvSiloCastReceiver(
                 }
                 // Read before the identity checks below, so a sign-in, profile
                 // or borrowed-identity change after them makes the launch stale.
-                val identityEpoch = identityTransitions.generation.value
+                val admittedRevision = synchronized(this) { identityRevision }
                 val ownProfileId = session.ownIdentityProfileId
                 // Launch-ready on the TV's own identity: still signed in as
                 // that profile with no phone's identity installed since.
@@ -710,7 +723,7 @@ class TvSiloCastReceiver(
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
                 val launchOwner = UUID.randomUUID().toString()
-                val admitted = AdmittedLaunch(launchOwner, generation, identityEpoch)
+                val admitted = AdmittedLaunch(launchOwner, generation, admittedRevision)
                 val refusal = synchronized(this) {
                     when {
                         // A phone that lost the slot while this was in flight.
@@ -943,7 +956,7 @@ class TvSiloCastReceiver(
      * not being ended.
      */
     private fun isAdmittedIdentityCurrentLocked(launch: AdmittedLaunch): Boolean {
-        if (identityTransitions.generation.value != launch.identityEpoch) return false
+        if (identityRevision != launch.identityRevision) return false
         val generation = launch.generation ?: return true
         return identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation
     }
@@ -1203,9 +1216,9 @@ class TvSiloCastReceiver(
 
     /**
      * A launch as admitted: the phone's borrowed identity [generation] (null on
-     * the TV's own identity) and the [IdentityTransitionBarrier] generation then.
+     * the TV's own identity) and the receiver's [identityRevision] then.
      */
-    private data class AdmittedLaunch(val id: String, val generation: String?, val identityEpoch: Long)
+    private data class AdmittedLaunch(val id: String, val generation: String?, val identityRevision: Long)
 
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,

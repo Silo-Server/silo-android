@@ -281,8 +281,12 @@ fun TvPlayerScreen(
     shuffleId: String? = null,
     // The phone launch that opened this player, checked when it registers.
     castLaunchId: String? = null,
-    // Leaves this player when that launch went stale before it registered.
-    onStaleCastLaunch: () -> Unit = onExit,
+    // Called when that launch went stale before this player registered. It
+    // runs stopPlayback and leaves only while this player is still on top.
+    onStaleCastLaunch: (stopPlayback: () -> Unit) -> Unit = { stopPlayback ->
+        stopPlayback()
+        onExit()
+    },
     // Scope the ViewModel key by fileId too so switching 4K <-> 1080p on
     // the detail screen and replaying actually spins up a fresh player
     // session instead of reusing the cached one bound to the first fileId.
@@ -512,7 +516,7 @@ fun TvPlayerScreen(
             )
         }
     }
-    var staleCastLaunch by remember { mutableStateOf(false) }
+    var staleCastLaunch by remember(castLaunchId) { mutableStateOf(false) }
     TvSiloCastPlayerRegistration(
         siloCastReceiver = siloCastReceiver,
         viewModel = viewModel,
@@ -554,10 +558,11 @@ fun TvPlayerScreen(
     }
     val stopPlaybackAndExit = { exitPlayer(true, null) }
     val latestOnStaleCastLaunch by rememberUpdatedState(onStaleCastLaunch)
-    // The phone's launch went stale just before this player registered: stop
-    // what this player started and leave its own entry, not whatever is on top.
+    // The phone's launch went stale just before this player registered. The
+    // callback checks this player is still on top right before stopping what
+    // it started, so a newer launch's player is never stopped or popped.
     LaunchedEffect(staleCastLaunch) {
-        if (staleCastLaunch) exitPlayer(false, latestOnStaleCastLaunch)
+        if (staleCastLaunch) latestOnStaleCastLaunch { exitPlayer(false) {} }
     }
     // A remote "stop"/"terminate" command tears the screen down like a Back press.
     LaunchedEffect(Unit) {

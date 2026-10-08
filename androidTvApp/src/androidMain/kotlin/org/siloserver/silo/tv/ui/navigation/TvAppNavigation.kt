@@ -1293,9 +1293,13 @@ fun TvAppNavigation(
             ),
         ) { backStack ->
             val castLaunchId = backStack.arguments?.getString(TvRoute.Player.ARG_CAST_LAUNCH)
-            // Leaves only this entry: a newer launch's player may be on top.
-            val leaveStaleCastLaunch: () -> Unit = {
-                if (navController.currentBackStackEntry?.id == backStack.id) navController.popBackStack()
+            // Acts only while this entry is on top: once a newer launch has
+            // replaced it, that navigation already tears this player down.
+            val leaveStaleCastLaunch: (stopPlayback: () -> Unit) -> Unit = { stopPlayback ->
+                if (navController.currentBackStackEntry?.id == backStack.id) {
+                    stopPlayback()
+                    navController.popBackStack()
+                }
             }
             // A phone's launch that went stale after navigation took it never
             // creates its player, so nothing starts loading under another identity.
@@ -1303,7 +1307,7 @@ fun TvAppNavigation(
                 castLaunchId == null || siloCastReceiver.confirmLaunch(castLaunchId)
             }
             if (!castLaunchCurrent) {
-                LaunchedEffect(backStack.id) { leaveStaleCastLaunch() }
+                LaunchedEffect(backStack.id) { leaveStaleCastLaunch {} }
                 return@composable
             }
             val contentId = backStack.arguments
