@@ -39,6 +39,16 @@ class TvLibrariesViewModel(
         load()
     }
 
+    /** Bumps when the profile hides or shows a library on another device. */
+    val hiddenLibrariesRevision: StateFlow<Int> = personalDataRepository.hiddenLibrariesRevision
+    private var seenHiddenLibrariesRevision = hiddenLibrariesRevision.value
+
+    fun onHiddenLibrariesRevision(revision: Int) {
+        if (revision == seenHiddenLibrariesRevision) return
+        seenHiddenLibrariesRevision = revision
+        load()
+    }
+
     fun onLibrarySelected(libraryId: Int) {
         if (_uiState.value.selectedLibraryId == libraryId) return
         _uiState.update { it.copy(selectedLibraryId = libraryId) }

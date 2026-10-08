@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.libraries
 
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -33,6 +34,11 @@ fun TvLibrariesScreen(
     val state by viewModel.uiState.collectAsState()
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
         ?: state.libraries.firstOrNull()
+    // A library hidden or shown on another device, picked up on foreground.
+    val hiddenLibrariesRevision by viewModel.hiddenLibrariesRevision.collectAsState()
+    LaunchedEffect(viewModel, hiddenLibrariesRevision) {
+        viewModel.onHiddenLibrariesRevision(hiddenLibrariesRevision)
+    }
 
     when {
         state.isLoading && state.libraries.isEmpty() -> TvLoadingScreen(
