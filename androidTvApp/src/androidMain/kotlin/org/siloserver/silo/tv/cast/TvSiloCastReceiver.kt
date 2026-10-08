@@ -5,6 +5,7 @@ import java.io.Closeable
 import java.net.ServerSocket
 import java.net.Socket
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -117,13 +118,17 @@ class TvSiloCastReceiver(
     private var sessionEpoch: Long = 0
     private var activePlayer: ActivePlayer? = null
     private val volumeTracker = SiloCastVolumeTracker()
-    private val launchRequestChannel = Channel<SiloCastLaunchRequest>(capacity = 1)
-    val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
+    private val launchRequestChannel = Channel<Launch>(capacity = 1)
+    val launchRequests: Flow<Launch> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
-    // The admitted launch that set [pendingPlayerIdentityGeneration], until its
-    // player registers or the launch expires. Non-null means a launch is on its
-    // way to the player; cleanup clears the marker only for its own launch.
-    private var pendingPlayerLaunchOwner: Any? = null
+    // The id of the admitted launch that set [pendingPlayerIdentityGeneration],
+    // until its player registers or the launch expires. Non-null means a launch
+    // is on its way to the player; cleanup clears the marker only for its own
+    // launch.
+    private var pendingPlayerLaunchOwner: String? = null
+    // The launch whose player registered last. Its player registers again when
+    // its screen is recreated (an activity restart), and that is not stale.
+    private var registeredLaunchId: String? = null
     private var identityEndJob: Job? = null
     // A scheduled end that has committed to ending this generation. It and
     // launch admission decide under the receiver lock, so a launch is never
@@ -229,18 +234,38 @@ class TvSiloCastReceiver(
         }
     }
 
+    /**
+     * Registers the player on screen. [launchId] is the [Launch.id] the player
+     * was opened for, if a phone launched it. Navigation already refuses a stale
+     * launch; if one goes stale in the moment before its player registers
+     * (expired, or its identity changed), nothing is registered and
+     * [onStaleLaunch] runs so the screen closes instead of playing on.
+     */
     @Synchronized
     fun registerPlayer(
         adapter: TvSiloCastPlayerAdapter,
+        launchId: String? = null,
+        onStaleLaunch: () -> Unit = {},
         stateProvider: () -> SiloCastPlaybackState,
     ): Closeable {
+        if (launchId != null && launchId != registeredLaunchId && !confirmLaunchLocked(launchId)) {
+            DiagnosticsCastLogger.warning("TV cast launch expired before its player opened")
+            onStaleLaunch()
+            return Closeable {}
+        }
         DiagnosticsCastLogger.event("TV cast player registered")
         identityEndJob?.cancel()
         identityEndJob = null
-        val identityGeneration = pendingPlayerIdentityGeneration
+        // Only the launched player takes the launch's generation; another
+        // player leaves the pending launch to its own player.
+        val forPendingLaunch = launchId != null && launchId == pendingPlayerLaunchOwner
+        val identityGeneration = pendingPlayerIdentityGeneration.takeIf { forPendingLaunch }
             ?: identityManager.activeIdentity?.generationId
-        pendingPlayerIdentityGeneration = null
-        pendingPlayerLaunchOwner = null
+        if (forPendingLaunch) {
+            pendingPlayerIdentityGeneration = null
+            pendingPlayerLaunchOwner = null
+            registeredLaunchId = launchId
+        }
         val player = ActivePlayer(
             adapter = adapter,
             stateProvider = stateProvider,
@@ -682,7 +707,7 @@ class TvSiloCastReceiver(
                     return true
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
-                val launchOwner = Any()
+                val launchOwner = UUID.randomUUID().toString()
                 val refusal = synchronized(this) {
                     when {
                         // A phone that lost the slot while this was in flight.
@@ -713,7 +738,7 @@ class TvSiloCastReceiver(
                     session.send(SiloCastMessage.Error(refusal))
                     return true
                 }
-                if (!launchRequestChannel.trySend(message.launch).isSuccess) {
+                if (!launchRequestChannel.trySend(Launch(message.launch, launchOwner)).isSuccess) {
                     clearPendingLaunch(launchOwner)
                     session.send(
                         SiloCastMessage.Error(
@@ -890,15 +915,39 @@ class TvSiloCastReceiver(
     private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerLaunchOwner == null
 
     /**
+     * Whether launch [id] may still open its player: it is the pending launch,
+     * and the identity it was admitted on is still active and not being ended.
+     * Navigation checks this right before it opens the player. A stale launch
+     * that still holds the pending marker gives it up, so the next launch is
+     * not refused while it waits out its expiry.
+     */
+    @Synchronized
+    fun confirmLaunch(id: String): Boolean = confirmLaunchLocked(id)
+
+    /** Caller holds the receiver lock. */
+    private fun confirmLaunchLocked(id: String): Boolean {
+        if (pendingPlayerLaunchOwner != id) return false
+        val generation = pendingPlayerIdentityGeneration
+        if (generation == null ||
+            (identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation)
+        ) {
+            return true
+        }
+        pendingPlayerLaunchOwner = null
+        pendingPlayerIdentityGeneration = null
+        return false
+    }
+
+    /**
      * Clears the pending launch only if [owner] still holds it. With
      * [dropQueued], also drops its request if navigation has not taken it yet,
      * so an expired launch never opens later under another identity. Admission
      * holds every other launch off while one is pending, so a request still
      * queued is this one.
      */
-    private fun clearPendingLaunch(owner: Any, dropQueued: Boolean = false) {
+    private fun clearPendingLaunch(owner: String, dropQueued: Boolean = false) {
         synchronized(this) {
-            if (pendingPlayerLaunchOwner === owner) {
+            if (pendingPlayerLaunchOwner == owner) {
                 pendingPlayerLaunchOwner = null
                 pendingPlayerIdentityGeneration = null
                 if (dropQueued) launchRequestChannel.tryReceive()
@@ -1139,6 +1188,9 @@ class TvSiloCastReceiver(
             job?.cancel()
         }
     }
+
+    /** A phone's launch on its way to the player, with the [id] it was admitted under. */
+    data class Launch(val request: SiloCastLaunchRequest, val id: String)
 
     private data class ActivePlayer(
         val adapter: TvSiloCastPlayerAdapter,

@@ -442,8 +442,10 @@ fun TvAppNavigation(
     val siloCastStandby by siloCastReceiver.standbyState.collectAsState()
 
     LaunchedEffect(siloCastReceiver) {
-        siloCastReceiver.launchRequests.collect { request ->
-            val playback = request.playback
+        siloCastReceiver.launchRequests.collect { launch ->
+            // An expired launch, or one whose identity changed, never opens.
+            if (!siloCastReceiver.confirmLaunch(launch.id)) return@collect
+            val playback = launch.request.playback
             val destination = TvRoute.Player(
                 contentId = playback.contentId,
                 libraryId = playback.libraryId,
@@ -451,6 +453,7 @@ fun TvAppNavigation(
                 resumePositionSeconds = if (playback.startFromBeginning) 0.0 else playback.resumePosition,
                 audioTrackIndex = playback.audioTrackIndex,
                 subtitleTrackIndex = playback.subtitleTrackIndex,
+                castLaunchId = launch.id,
             ).route
             // Replace whichever player is on top, not just the video one. This
             // only knew about TvRoute.Player, so a cast launch during an
@@ -1282,6 +1285,11 @@ fun TvAppNavigation(
                     nullable = true
                     defaultValue = null
                 },
+                navArgument(TvRoute.Player.ARG_CAST_LAUNCH) {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { backStack ->
             val contentId = backStack.arguments
@@ -1366,6 +1374,7 @@ fun TvAppNavigation(
                 episodeSelectionHandoff = episodeSelectionHandoff,
                 navigationSettled = !transition.isRunning,
                 shuffleId = backStack.arguments?.getString(TvRoute.Player.ARG_SHUFFLE_ID),
+                castLaunchId = backStack.arguments?.getString(TvRoute.Player.ARG_CAST_LAUNCH),
                 onExit = { navController.popBackStack() },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.
