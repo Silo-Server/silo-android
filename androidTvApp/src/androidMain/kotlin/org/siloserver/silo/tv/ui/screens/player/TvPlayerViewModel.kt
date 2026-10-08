@@ -520,6 +520,10 @@ internal fun resolveTvAutoSubtitleIdentity(
  *
  * Hearing-impaired travels as an explicit signal (role flags and both labels),
  * which the catalog cannot supply and the shared predicate ORs with the title.
+ * Nothing here needs a burn-in: every track is already in the player, Media3
+ * decodes the bitmap families itself, and with no server inventory there is
+ * no burn-in route anyway. Media3 does not say where a track came from, so
+ * source stays unknown and ties keep the mounted order.
  */
 internal fun playerTrackAutoSubtitleCandidates(
     subtitleTracks: List<PlayerTrackEntry>,
@@ -530,6 +534,7 @@ internal fun playerTrackAutoSubtitleCandidates(
         codec = track.codecOrMime,
         forced = track.isForced,
         hearingImpaired = track.isEffectivelyHearingImpaired(),
+        needsBurnIn = false,
     )
 }
 

@@ -52,7 +52,9 @@ class TvAutoSubtitleFallbackTest {
     )
 
     @Test
-    fun theFallbackPrefersAnUnmountedExternalTextTrackOverTheMountedBitmapOne() {
+    fun theFallbackPrefersAnUnmountedPlainExternalTrackOverTheMountedSdhOne() {
+        // The SRT wins because the mounted PGS track is SDH. Being a bitmap
+        // alone no longer demotes it: see the plain-PGS case below.
         val identity = resolveTvAutoSubtitleIdentity(
             audioTracks = emptyList(),
             subtitleTracks = mountedPgsOnly,
@@ -60,6 +62,63 @@ class TvAutoSubtitleFallbackTest {
             preferredLanguage = "en",
             subtitleMode = "always",
             showForced = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(sidecarRow), identity)
+    }
+
+    @Test
+    fun theFallbackPrefersAPlainEmbeddedPgsTrackOverAnExternalSrt() {
+        // Android renders embedded PGS itself, so with nothing else to tell
+        // them apart the file's own track beats the sidecar.
+        val plainPgs = pgsRow.copy(label = "English", catalogLabel = "English")
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = mountedPgsOnly,
+            subtitleRows = listOf(sidecarRow, plainPgs),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = true,
+        )
+
+        assertEquals(tvSubtitleIdentity(plainPgs), identity)
+    }
+
+    @Test
+    fun theFallbackPrefersAnEmbeddedTextTrackOverAnExternalOne() {
+        // The inventory lists externals first; source, not that order, decides.
+        val embeddedText = PlayerSubtitleInfo(
+            index = 1,
+            language = "eng",
+            codec = "subrip",
+            label = "English",
+            source = "embedded",
+            url = "https://silo.example/stream/s1/subtitles/1.vtt",
+            catalogLabel = "English",
+            catalogSource = "embedded",
+        )
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = emptyList(),
+            subtitleRows = listOf(sidecarRow, embeddedText),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = false,
+        )
+
+        assertEquals(tvSubtitleIdentity(embeddedText), identity)
+    }
+
+    @Test
+    fun theFallbackPrefersAnExternalSrtOverAnEmbeddedTrackThatNeedsABurnIn() {
+        val vobSub = pgsRow.copy(codec = "dvd_subtitle", label = "English", catalogLabel = "English")
+        val identity = resolveTvAutoSubtitleIdentity(
+            audioTracks = emptyList(),
+            subtitleTracks = emptyList(),
+            subtitleRows = listOf(sidecarRow, vobSub),
+            preferredLanguage = "en",
+            subtitleMode = "always",
+            showForced = false,
         )
 
         assertEquals(tvSubtitleIdentity(sidecarRow), identity)

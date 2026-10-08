@@ -519,6 +519,71 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun autoSubtitlePreferenceTakesTheEmbeddedTrackOverAnExternalOneInTheSameLanguage() {
+        // The session lists externals first; the file's own track still wins
+        // the tie, because external sidecars are the ones that drift.
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en").copy(source = "external", catalogSource = "external"),
+            subtitle(index = 3, label = "English", language = "en", codec = "subrip")
+                .copy(source = "embedded", catalogSource = "embedded"),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "auto",
+                showForcedSubtitles = false,
+            ),
+        )
+    }
+
+    @Test
+    fun autoSubtitlePreferenceTakesARenderableEmbeddedPgsTrackOverAnExternalSrt() {
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en").copy(source = "external", catalogSource = "external"),
+            subtitle(index = 3, label = "English", language = "en", codec = "hdmv_pgs_subtitle")
+                .copy(source = "embedded", catalogSource = "embedded", url = ""),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+            ),
+        )
+    }
+
+    @Test
+    fun autoSubtitlePreferenceAvoidsAnEmbeddedTrackThatNeedsABurnIn() {
+        val subtitles = listOf(
+            subtitle(index = 0, label = "English", language = "en").copy(source = "external", catalogSource = "external"),
+            subtitle(index = 3, label = "English", language = "en", codec = "dvd_subtitle")
+                .copy(source = "embedded", catalogSource = "embedded", url = ""),
+        )
+
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(0),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = subtitles,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+            ),
+        )
+    }
+
+    @Test
     fun autoSubtitleResolverDisablesWhenAudioAlreadyMatchesPreferredLanguage() {
         assertEquals(
             MobileSubtitleAutoSelection.Disable,

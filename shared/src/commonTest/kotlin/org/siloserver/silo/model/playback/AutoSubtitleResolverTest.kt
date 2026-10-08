@@ -16,12 +16,13 @@ class AutoSubtitleResolverTest {
     // --- the regression -------------------------------------------------
 
     @Test
-    fun preferredLanguageAlwaysPicksTheExternalTextTrackOverAnEmbeddedBitmapOne() {
+    fun aPlainExternalTextTrackBeatsAnSdhEmbeddedBitmapOne() {
         // Shield, direct-play MKV: embedded PGS "English (SDH)" + an external
         // English SRT, preference English/Always. The detail row previewed the
         // SRT; the player, ranking only Media3's mounted tracks, started the
         // PGS. Over the full catalog the SRT wins — and its combined index is
-        // what the start request can carry.
+        // what the start request can carry. It wins because the PGS track is
+        // SDH, not because it is a bitmap: Android renders embedded PGS itself.
         val tracks = listOf(
             SubtitleTrack(index = 2, codec = "hdmv_pgs_subtitle", language = "eng", title = "English (SDH)"),
             SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
@@ -100,6 +101,158 @@ class AutoSubtitleResolverTest {
         val selected = resolveAutoSubtitle(
             candidates = inventoryAutoSubtitleCandidates(rows),
             context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(1, selected?.selectionIndex)
+    }
+
+    // --- embedded over external (silo-server #1849 parity) -------------
+
+    @Test
+    fun anEmbeddedTextTrackBeatsAnExternalOneInTheSameLanguage() {
+        // External sidecars are the ones that drift out of sync. The catalog
+        // lists the sidecar first here, so caller order alone would pick it.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "English", external = true),
+            SubtitleTrack(index = 3, codec = "subrip", language = "eng", title = "English"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        // Embedded tracks follow every external in combined space.
+        assertEquals(1, selected?.selectionIndex)
+    }
+
+    @Test
+    fun theDetailPreviewAndThePlayerInventoryPickTheSameEmbeddedTrack() {
+        // The detail page ranks the catalog (embedded first); the player
+        // fallback ranks the session inventory (externals first). Source now
+        // decides the tie, so the two agree.
+        val catalog = listOf(
+            SubtitleTrack(index = 3, codec = "subrip", language = "eng", title = "English"),
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "English", external = true),
+        )
+        val inventory = listOf(
+            PlayerSubtitleInfo(index = 0, language = "eng", codec = "srt", url = "/s/0.vtt", catalogLabel = "English", catalogSource = "external", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            PlayerSubtitleInfo(index = 1, language = "eng", codec = "subrip", url = "/s/1.vtt", catalogLabel = "English", catalogSource = "embedded", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+        )
+        val context = AutoSubtitleContext(preferredLanguage = "en", mode = "always")
+
+        val fromCatalog = resolveAutoSubtitle(catalogAutoSubtitleCandidates(catalog), context).selectedCandidate()
+        val fromInventory = resolveAutoSubtitle(inventoryAutoSubtitleCandidates(inventory), context).selectedCandidate()
+
+        assertEquals(1, fromCatalog?.selectionIndex)
+        assertEquals(1, fromInventory?.selectionIndex)
+    }
+
+    @Test
+    fun anEmbeddedPgsTrackTheDeviceRendersBeatsAnExternalTextTrack() {
+        // Android plays embedded PGS without a transcode (in-stream on direct
+        // play, a raw .sup sidecar over HLS), so being a bitmap is no reason to
+        // fall back to the sidecar.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 2, codec = "hdmv_pgs_subtitle", language = "eng", title = "English"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(1, selected?.selectionIndex)
+    }
+
+    @Test
+    fun anEmbeddedBitmapTrackThatNeedsABurnInLosesToAnExternalTextTrack() {
+        // VobSub has no client route, so the server would transcode to show it.
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 2, codec = "dvd_subtitle", language = "eng", title = "English"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(0, selected?.selectionIndex)
+    }
+
+    @Test
+    fun aServerBurnInOnlyEmbeddedPgsRowLosesToAnExternalTextRow() {
+        // The inventory's own delivery wins over the codec rule.
+        val rows = listOf(
+            PlayerSubtitleInfo(index = 0, language = "eng", codec = "srt", url = "/s/0.vtt", catalogSource = "external", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            PlayerSubtitleInfo(index = 1, language = "eng", codec = "pgs", url = "", catalogSource = "embedded", serverDelivery = SUBTITLE_DELIVERY_BURN_IN_ONLY),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = inventoryAutoSubtitleCandidates(rows),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(0, selected?.selectionIndex)
+    }
+
+    @Test
+    fun aFullExternalTrackBeatsAForcedEmbeddedOne() {
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", external = true),
+            SubtitleTrack(index = 2, codec = "subrip", language = "eng", title = "Forced", forced = true),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always", showForced = true),
+        ).selectedCandidate()
+
+        assertEquals(0, selected?.selectionIndex)
+    }
+
+    @Test
+    fun anExternalTrackBeatsADownloadedOne() {
+        val rows = listOf(
+            PlayerSubtitleInfo(index = 1, language = "eng", codec = "srt", url = "/s/1.vtt", catalogSource = "downloaded", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+            PlayerSubtitleInfo(index = 0, language = "eng", codec = "srt", url = "/s/0.vtt", catalogSource = "external", serverDelivery = SUBTITLE_DELIVERY_SIDECAR),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = inventoryAutoSubtitleCandidates(rows),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(0, selected?.selectionIndex)
+    }
+
+    @Test
+    fun aBurnInTrackStillWinsWhenItIsTheOnlyMatch() {
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "fre", external = true),
+            SubtitleTrack(index = 2, codec = "dvd_subtitle", language = "eng"),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "always"),
+        ).selectedCandidate()
+
+        assertEquals(1, selected?.selectionIndex)
+    }
+
+    @Test
+    fun theForcedTrackForMatchingAudioPrefersTheEmbeddedOne() {
+        val tracks = listOf(
+            SubtitleTrack(index = 0, codec = "srt", language = "eng", title = "Forced", forced = true, external = true),
+            SubtitleTrack(index = 2, codec = "subrip", language = "eng", title = "Forced", forced = true),
+        )
+
+        val selected = resolveAutoSubtitle(
+            candidates = catalogAutoSubtitleCandidates(tracks),
+            context = AutoSubtitleContext(preferredLanguage = "en", mode = "auto", showForced = true, audioLanguage = "eng"),
         ).selectedCandidate()
 
         assertEquals(1, selected?.selectionIndex)

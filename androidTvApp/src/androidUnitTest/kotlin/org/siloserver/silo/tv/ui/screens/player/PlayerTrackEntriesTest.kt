@@ -88,7 +88,11 @@ class PlayerTrackEntriesTest {
     }
 
     @Test
-    fun autoSubtitlePreferenceMovesSelectedPgsToMatchingTextSidecar() {
+    fun autoSubtitlePreferenceKeepsTheMountedPgsTrackOverAnEquallySdhTextSidecar() {
+        // Both tracks are SDH (the sidecar's file name says so). This used to
+        // move to the sidecar only because PGS was demoted as a bitmap, but
+        // Media3 renders the mounted PGS track itself and no burn-in is
+        // involved, so the tie stays on the file's own track.
         val tracks = listOf(
             PlayerTrackEntry(
                 index = 2,
@@ -106,7 +110,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(6, autoPick(tracks))
+        assertEquals(2, autoPick(tracks))
     }
 
     @Test
