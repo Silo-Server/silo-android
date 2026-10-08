@@ -264,7 +264,15 @@ fun TvMainShell(
         // Pending means the last load failed and none is running, so a probe
         // never cancels a load still in flight.
         librariesReloadPending = false
-        when (val result = personalDataRepository.listUserLibraries()) {
+        // Only the first load may fall back to the offline cache. A later one
+        // re-checks, so a failure stays a failure and stays pending, rather
+        // than a cached list that misses a library shown again since.
+        val result = if (librariesLoaded) {
+            personalDataRepository.recheckUserLibraries(value.mapTo(mutableSetOf()) { it.id })
+        } else {
+            personalDataRepository.listUserLibraries()
+        }
+        when (result) {
             is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
             }

@@ -54,6 +54,9 @@ class TvLibrariesViewModel(
     // The last load failed and none is running. A revision that asked for a
     // re-load won't come again, so the next reachable probe retries it.
     private var reloadPending = false
+    // Only the first load may fall back to the offline cache; later ones
+    // re-check, so a failure stays pending instead of showing a stale list.
+    private var firstLoadAttempted = false
 
     init {
         load()
@@ -97,7 +100,13 @@ class TvLibrariesViewModel(
             // Sentinel-gated no-op after the first run.
             legacyTvPrefsMigration.migrateIfNeeded()
             val storedLibraryId = librarySelectionStore.getSelectedLibraryId()
-            when (val result = personalDataRepository.listUserLibraries()) {
+            val result = if (firstLoadAttempted) {
+                personalDataRepository.recheckUserLibraries(_uiState.value.libraries.mapTo(mutableSetOf()) { it.id })
+            } else {
+                personalDataRepository.listUserLibraries()
+            }
+            firstLoadAttempted = true
+            when (result) {
                 is ApiResult.Success -> {
                     val libraries = result.data
                         .visibleOnTv()
