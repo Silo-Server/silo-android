@@ -247,18 +247,31 @@ fun TvMainShell(
     // The list leaves out libraries the profile hid; hiding or showing one
     // on another device re-loads it.
     val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
+    // A failed load is retried once the server is reachable again: the
+    // revision that asked for it won't come again, and a library shown again
+    // on another device can only come back from the server.
+    var librariesReloadPending by remember { mutableStateOf(false) }
+    var librariesRetry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(reachabilityState.status) {
+        if (librariesReloadPending && reachabilityState.status == ServerReachabilityStatus.Reachable) librariesRetry++
+    }
     val libraries by produceState(
         initialValue = emptyList<UserLibrary>(),
         personalDataRepository,
         hiddenLibrariesRevision,
+        librariesRetry,
     ) {
         when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success ->
+            is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
-            // Keep what's shown, minus a library hidden since: the revision
-            // that asked for this load won't come again.
+                librariesReloadPending = false
+            }
+            // Keep what's shown, minus a library hidden since.
             is ApiResult.Error,
-            is ApiResult.NetworkError -> value = personalDataRepository.withoutHidden(value)
+            is ApiResult.NetworkError -> {
+                value = personalDataRepository.withoutHidden(value)
+                librariesReloadPending = true
+            }
         }
         // Mark loaded even on error (we've attempted) so the redirect can run;
         // an empty list then legitimately means "no libraries for this profile".
