@@ -132,6 +132,25 @@ class HiddenLibrariesStoreTest {
     }
 
     @Test
+    fun aSwitchWhileTheHiddenSetLoadsAnswersIdentityChanged() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val settings = FakeSettings(ids(2))
+        settings.beforeAnswer = { barrier.changing(IdentityTransitionKind.PROFILE_SWITCH) { } }
+        val cache = FakeCache()
+        val repository = PersonalDataRepository(
+            personalDataApi = PersonalDataApi(librariesClient()),
+            catalogCache = cache,
+            identityTransitions = barrier,
+            hiddenLibraries = HiddenLibrariesStore(SettingsRepository(settings), barrier),
+        )
+
+        val result = repository.listUserLibraries()
+
+        assertEquals("identity_changed", (result as ApiResult.Error).error)
+        assertEquals(null, cache.cachedLibraries)
+    }
+
+    @Test
     fun onlyAChangeFoundByARefreshBumpsTheRevision() = runTest {
         val barrier = DefaultIdentityTransitionBarrier()
         val settings = FakeSettings(ids(2))

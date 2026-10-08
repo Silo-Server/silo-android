@@ -8,6 +8,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,8 +47,21 @@ class TvLibrariesViewModel(
     fun onHiddenLibrariesRevision(revision: Int) {
         if (revision == seenHiddenLibrariesRevision) return
         seenHiddenLibrariesRevision = revision
+        // Drop newly hidden libraries now, so a failed re-load can't keep them.
+        _uiState.update { state ->
+            val libraries = personalDataRepository.withoutHidden(state.libraries)
+            state.copy(
+                libraries = libraries,
+                selectedLibraryId = state.selectedLibraryId
+                    ?.takeIf { id -> libraries.any { it.id == id } }
+                    ?: libraries.firstOrNull()?.id,
+            )
+        }
         load()
     }
+
+    // The latest load replaces any still running, so an older answer can't land last.
+    private var loadJob: Job? = null
 
     fun onLibrarySelected(libraryId: Int) {
         if (_uiState.value.selectedLibraryId == libraryId) return
@@ -58,7 +72,8 @@ class TvLibrariesViewModel(
     }
 
     fun load() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Seed the per-profile selection from the legacy global
             // `tv_prefs` key BEFORE the first read — the resolve below

@@ -55,7 +55,7 @@ open class PersonalDataRepository(
      */
     suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val result = fetchUserLibraries { personalDataApi.listUserLibraries() }
+        val result = fetchUserLibraries(requestIdentityGeneration) { personalDataApi.listUserLibraries() }
         if (result is ApiResult.Success) return publishLibraries(result.data, requestIdentityGeneration)
         if (result.canServeCache()) {
             catalogCache.getCachedLibraries()?.let { return ApiResult.Success(withoutHidden(it)) }
@@ -76,7 +76,7 @@ open class PersonalDataRepository(
         val requestIdentityGeneration = identityTransitions.generation.value
         // Known ids are checked against the full list: a library the profile
         // just hid is a deliberate removal, not a short response.
-        val result = fetchUserLibraries {
+        val result = fetchUserLibraries(requestIdentityGeneration) {
             val first = personalDataApi.listUserLibraries()
             if (first is ApiResult.Success && !first.data.map { it.id }.containsAll(knownIds)) {
                 personalDataApi.listUserLibraries()
@@ -88,14 +88,19 @@ open class PersonalDataRepository(
         return result
     }
 
-    /** Runs [fetch] while the profile's hidden libraries load beside it, the first time only. */
+    /**
+     * Runs [fetch] while the profile's hidden libraries load beside it, the
+     * first time only. A switch while either is in flight answers
+     * `identity_changed`, so the old profile's list never comes back.
+     */
     private suspend fun fetchUserLibraries(
+        requestIdentityGeneration: Long,
         fetch: suspend () -> ApiResult<List<UserLibrary>>,
     ): ApiResult<List<UserLibrary>> = coroutineScope {
         val hiddenRead = launch { hiddenLibraries?.ensureLoaded() }
         val result = fetch()
         hiddenRead.join()
-        result
+        if (requestIdentityGeneration != identityTransitions.generation.value) identityChanged() else result
     }
 
     /** Drops hidden libraries and caches what is shown. */
