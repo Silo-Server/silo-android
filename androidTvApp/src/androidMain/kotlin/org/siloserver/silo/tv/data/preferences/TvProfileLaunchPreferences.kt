@@ -85,6 +85,14 @@ data class ProfileLaunchState(
     fun allowsWatchNext(nowMs: Long): Boolean =
         behavior != ProfileLaunchBehavior.EveryTime && !requiresSelectionAfterBackground(nowMs)
 
+    /** When the current away interval runs out; null when nothing is timing out. */
+    val awayExpiresAtMs: Long?
+        get() {
+            val since = backgroundedAtMs ?: return null
+            val timeout = behavior.awayTimeoutMs ?: return null
+            return since + timeout
+        }
+
     /** Automatic never keeps an away interval. */
     fun withBehavior(behavior: ProfileLaunchBehavior): ProfileLaunchState = copy(
         behavior = behavior,

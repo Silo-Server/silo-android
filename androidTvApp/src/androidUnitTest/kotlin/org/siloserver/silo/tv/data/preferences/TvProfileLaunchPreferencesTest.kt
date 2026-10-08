@@ -48,6 +48,16 @@ class TvProfileLaunchPreferencesTest {
     }
 
     @Test
+    fun `the Watch Next expiry check is due when the away interval runs out`() {
+        assertEquals(start + hour, state(ProfileLaunchBehavior.AfterOneHour, backgroundedAt = start).awayExpiresAtMs)
+        assertEquals(start + 12 * hour, state(ProfileLaunchBehavior.AfterTwelveHours, backgroundedAt = start).awayExpiresAtMs)
+        // Nothing times out while Silo is in use, or for the untimed choices.
+        assertNull(state(ProfileLaunchBehavior.AfterOneHour).awayExpiresAtMs)
+        assertNull(state(ProfileLaunchBehavior.EveryTime, backgroundedAt = start).awayExpiresAtMs)
+        assertNull(state(ProfileLaunchBehavior.Automatic).markedBackgrounded(start).awayExpiresAtMs)
+    }
+
+    @Test
     fun `After 1 Hour asks exactly when the hour has passed`() {
         val away = state(ProfileLaunchBehavior.AfterOneHour, backgroundedAt = start)
         assertFalse(away.requiresSelectionAfterBackground(start + hour - 1))

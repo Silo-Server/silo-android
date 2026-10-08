@@ -71,6 +71,18 @@
             </intent-filter>
         </receiver>
 
+        <!-- Profile Selection: removes the Watch Next row when a timed
+             choice runs out while Silo is away (our own wake-up alarm), and
+             re-applies the setting after a reboot or a clock change. -->
+        <receiver
+            android:name=".watchnext.WatchNextProfileExpiryReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+            </intent-filter>
+        </receiver>
+
         <!-- Media3 documents this as an exported service so system media
              controllers can discover and bind to the app session. -->
         <service

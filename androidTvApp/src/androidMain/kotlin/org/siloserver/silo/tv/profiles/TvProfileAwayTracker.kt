@@ -98,9 +98,6 @@ class TvProfileAwayTracker(
         preferences.markBackgrounded()
         // The timed choices keep the Watch Next row until the interval runs
         // out, then a check removes it. Automatic records no interval.
-        val timeout = preferences.state.value.behavior.awayTimeoutMs ?: return
-        if (preferences.state.value.backgroundedAtMs != null) {
-            watchNextSeeder.scheduleProfileExpiryCheck(delayMs = timeout)
-        }
+        preferences.state.value.awayExpiresAtMs?.let(watchNextSeeder::scheduleProfileExpiryCheck)
     }
 }
