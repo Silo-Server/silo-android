@@ -120,6 +120,10 @@ class TvSiloCastReceiver(
     private val launchRequestChannel = Channel<SiloCastLaunchRequest>(capacity = 1)
     val launchRequests: Flow<SiloCastLaunchRequest> = launchRequestChannel.receiveAsFlow()
     private var pendingPlayerIdentityGeneration: String? = null
+    // The admitted launch that set [pendingPlayerIdentityGeneration], until its
+    // player registers or the launch expires. Non-null means a launch is on its
+    // way to the player; cleanup clears the marker only for its own launch.
+    private var pendingPlayerLaunchOwner: Any? = null
     private var identityEndJob: Job? = null
     // A scheduled end that has committed to ending this generation. It and
     // launch admission decide under the receiver lock, so a launch is never
@@ -188,6 +192,7 @@ class TvSiloCastReceiver(
         advertiser.stop()
         val stoppedRun = receiverRun
         pendingPlayerIdentityGeneration = null
+        pendingPlayerLaunchOwner = null
         identityEndJob = null
         // Close the session directly (not via closePreviousController, which
         // launches the goodbye on `scope` — the scope we cancel a line later,
@@ -232,6 +237,7 @@ class TvSiloCastReceiver(
         val identityGeneration = pendingPlayerIdentityGeneration
             ?: identityManager.activeIdentity?.generationId
         pendingPlayerIdentityGeneration = null
+        pendingPlayerLaunchOwner = null
         val player = ActivePlayer(
             adapter = adapter,
             stateProvider = stateProvider,
@@ -487,6 +493,21 @@ class TvSiloCastReceiver(
                     )
                     return true
                 }
+                // A launch on its way to the player would land on whatever
+                // identity this handoff installs. The phone tries again once the
+                // player opens, or the pending launch expires.
+                if (synchronized(this) { pendingPlayerLaunchOwner != null }) {
+                    session.send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = offer.requestId,
+                                reason = "launch_pending",
+                                message = LAUNCH_PENDING_MESSAGE,
+                            ),
+                        ),
+                    )
+                    return true
+                }
                 session.handoffJob?.cancel()
                 // A reused identity must survive a pending cleanup. One this
                 // offer would replace stays until approval, so its cleanup still
@@ -658,26 +679,39 @@ class TvSiloCastReceiver(
                     return true
                 }
                 val generation = if (onOwnIdentity) null else borrowed?.generationId
-                val admitted = synchronized(this) {
-                    val stillBorrowable = generation == null ||
-                        (identityManager.activeIdentity?.generationId == generation && endingGenerationId != generation)
-                    if (stillBorrowable) pendingPlayerIdentityGeneration = generation
-                    stillBorrowable
+                val launchOwner = Any()
+                val refusal = synchronized(this) {
+                    when {
+                        // A phone that lost the slot while this was in flight.
+                        activeSession !== session -> SiloCastError(
+                            code = "unauthorized",
+                            message = "Another phone is controlling this TV.",
+                        )
+                        pendingPlayerLaunchOwner != null -> SiloCastError(
+                            code = "launch_pending",
+                            message = LAUNCH_PENDING_MESSAGE,
+                        )
+                        generation != null && (
+                            identityManager.activeIdentity?.generationId != generation ||
+                                endingGenerationId == generation
+                            ) -> SiloCastError(
+                            code = "handoff_required",
+                            message = "Prepare the phone profile before playing.",
+                        )
+                        else -> {
+                            pendingPlayerIdentityGeneration = generation
+                            pendingPlayerLaunchOwner = launchOwner
+                            null
+                        }
+                    }
                 }
-                if (!admitted) {
-                    session.remoteLaunchReady = false
-                    session.send(
-                        SiloCastMessage.Error(
-                            SiloCastError(
-                                code = "handoff_required",
-                                message = "Prepare the phone profile before playing.",
-                            ),
-                        ),
-                    )
+                if (refusal != null) {
+                    if (refusal.code == "handoff_required") session.remoteLaunchReady = false
+                    session.send(SiloCastMessage.Error(refusal))
                     return true
                 }
                 if (!launchRequestChannel.trySend(message.launch).isSuccess) {
-                    pendingPlayerIdentityGeneration = null
+                    clearPendingLaunch(launchOwner)
                     session.send(
                         SiloCastMessage.Error(
                             SiloCastError(
@@ -687,6 +721,12 @@ class TvSiloCastReceiver(
                         ),
                     )
                     return true
+                }
+                // A launch whose player never opens must not hold off every
+                // later handoff.
+                scope?.launch {
+                    delay(PENDING_LAUNCH_TIMEOUT_MS)
+                    clearPendingLaunch(launchOwner)
                 }
                 session.remoteLaunchReady = false
                 session.ownIdentityProfileId = null
@@ -809,6 +849,7 @@ class TvSiloCastReceiver(
                             synchronized(this@TvSiloCastReceiver) {
                                 if (pendingPlayerIdentityGeneration == generationId) {
                                     pendingPlayerIdentityGeneration = null
+                                    pendingPlayerLaunchOwner = null
                                 }
                             }
                             refreshAdvertisement()
@@ -843,7 +884,17 @@ class TvSiloCastReceiver(
     }
 
     /** No title is playing on, or on its way to, a phone's identity. */
-    private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerIdentityGeneration == null
+    private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerLaunchOwner == null
+
+    /** Clears the pending launch only if [owner] still holds it. */
+    private fun clearPendingLaunch(owner: Any) {
+        synchronized(this) {
+            if (pendingPlayerLaunchOwner === owner) {
+                pendingPlayerLaunchOwner = null
+                pendingPlayerIdentityGeneration = null
+            }
+        }
+    }
 
     /** Whether the phone that lent [generationId] holds the controller slot. */
     private fun isLenderConnected(generationId: String): Boolean {
@@ -1097,6 +1148,8 @@ class TvSiloCastReceiver(
         const val GOODBYE_TIMEOUT_MS = 1_000L
         const val IDENTITY_END_GRACE_MS = 2_000L
         const val PLAYBACK_TEARDOWN_TIMEOUT_MS = 15_000L
+        const val PENDING_LAUNCH_TIMEOUT_MS = 30_000L
+        const val LAUNCH_PENDING_MESSAGE = "The TV is still starting the last title. Try again in a moment."
         const val IDENTITY_IDLE_MS = 10 * 60_000L
         const val PREPARING_AFTER_READY_MS = 20_000L
         const val OWN_IDENTITY_SESSION_MS = 24 * 60 * 60 * 1_000L
