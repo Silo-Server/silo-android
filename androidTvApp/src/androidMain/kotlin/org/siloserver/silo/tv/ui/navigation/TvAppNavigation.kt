@@ -463,6 +463,25 @@ fun TvAppNavigation(
     val remotePlaybackIdentityManager: RemotePlaybackIdentityManager = koinInject()
     val playbackLifecycle: PlaybackSessionLifecycle = koinInject()
 
+    // Android can restore Silo's previous back stack over the start route
+    // MainTvActivity chose: after a configuration change while Silo was away,
+    // or after its process was killed in the background. When Profile
+    // Selection has already cleared the profile, that brings back Home with
+    // no profile behind it, so go to Who's Watching instead.
+    LaunchedEffect(navController) {
+        navController.currentBackStackEntryFlow.first()
+        val restoredMain = runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
+        if (restoredMain &&
+            !tokenManager.getAccessToken().isNullOrBlank() &&
+            tokenManager.getProfileId().isNullOrBlank()
+        ) {
+            navController.navigate(TvRoute.ProfileSelection.route) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
     // Profile Selection's return rule (silo-apple `applyProfileReturnPolicy`):
     // when Silo comes back from the background and the setting asks, Who's
     // Watching replaces whatever was on screen, as Switch Profile does.
@@ -472,13 +491,17 @@ fun TvAppNavigation(
             navController.currentBackStackEntryFlow,
         ) { required, entry -> required to entry.destination.route }.collect { (required, route) ->
             if (!required) return@collect
-            // Nothing to replace without an active profile (signed out, or
-            // already choosing one). Judge by the profile, not the route:
-            // Manage Servers and the add-server screens sit on top of Main,
-            // so Back from them would reopen the previous profile.
-            val hasActiveProfile = !tokenManager.getAccessToken().isNullOrBlank() &&
-                !tokenManager.getProfileId().isNullOrBlank()
-            if (route == null || !hasActiveProfile) {
+            // Nothing to replace when signed out, or when neither a profile
+            // nor its screens are left (already choosing a profile, or adding
+            // a server). Judge by the profile and the back stack, not the
+            // route: Manage Servers and the add-server screens can sit on top
+            // of Main, and an Activity recreated during the return (a
+            // configuration change while Silo was away) restores Main after
+            // MainTvActivity has already cleared the profile.
+            val mainOnBackStack = runCatching { navController.getBackStackEntry(TvRoute.Main.route) }.isSuccess
+            val showsProfileScreens = !tokenManager.getAccessToken().isNullOrBlank() &&
+                (!tokenManager.getProfileId().isNullOrBlank() || mainOnBackStack)
+            if (route == null || !showsProfileScreens) {
                 profileAwayTracker.onSelectionHandled()
                 return@collect
             }
