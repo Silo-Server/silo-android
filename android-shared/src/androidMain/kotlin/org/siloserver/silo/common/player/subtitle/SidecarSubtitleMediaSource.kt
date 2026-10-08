@@ -56,11 +56,19 @@ class SidecarPlaybackFloor {
  * Captions that arrive after the playhead has passed them are the extractor's
  * problem, not this class's: it publishes the live position through
  * [SidecarPlaybackFloor] so a REPLACE-behaviour extractor can drop them.
+ *
+ * [maxLookaheadUs] bounds how far past the playhead the sidecar may read.
+ * Without it the whole file is read up front, and everything read stays in the
+ * sample queue until playback reaches it. That is nothing for a text sidecar,
+ * but a feature-length `.sup` holds tens of MB of caption images, enough to
+ * run a phone with a 192 MB heap out of memory. [C.TIME_UNSET] keeps the
+ * unbounded read.
  */
 @UnstableApi
 class SidecarSubtitleMediaSource(
     child: MediaSource,
     private val floor: SidecarPlaybackFloor,
+    private val maxLookaheadUs: Long = C.TIME_UNSET,
 ) : WrappingMediaSource(child) {
 
     override fun createPeriod(
@@ -70,6 +78,7 @@ class SidecarSubtitleMediaSource(
     ): MediaPeriod = NonGatingSidecarPeriod(
         mediaSource.createPeriod(id, allocator, startPositionUs),
         floor,
+        maxLookaheadUs,
     )
 
     override fun releasePeriod(mediaPeriod: MediaPeriod) {
@@ -81,9 +90,16 @@ class SidecarSubtitleMediaSource(
 internal class NonGatingSidecarPeriod(
     val delegate: MediaPeriod,
     private val floor: SidecarPlaybackFloor,
+    private val maxLookaheadUs: Long = C.TIME_UNSET,
 ) : MediaPeriod, MediaPeriod.Callback {
 
     private var callback: MediaPeriod.Callback? = null
+
+    /** The delegate parked far enough ahead that it was left parked; see [continueUnlessAhead]. */
+    private var heldAhead = false
+
+    /** A delegate's buffered position is only defined once it has prepared. */
+    private var prepared = false
 
     override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
         this.callback = callback
@@ -92,6 +108,7 @@ internal class NonGatingSidecarPeriod(
     }
 
     override fun onPrepared(mediaPeriod: MediaPeriod) {
+        prepared = true
         callback?.onPrepared(this)
     }
 
@@ -99,8 +116,40 @@ internal class NonGatingSidecarPeriod(
         // The delegate parked its loader (interval reached, or a cancelled load
         // finished unwinding). Nobody upstream will continue a child that
         // reports nothing to load, so do it here.
-        kickDelegate("requested")
+        continueUnlessAhead("requested")
         callback?.onContinueLoadingRequested(this)
+    }
+
+    /**
+     * Continues the delegate unless its queued cues already reach more than
+     * [maxLookaheadUs] past the playhead. A held delegate stays parked, and
+     * [resumeIfCaughtUp] continues it from the playback ticks once the
+     * playhead closes the gap.
+     */
+    private fun continueUnlessAhead(reason: String) {
+        if (isAheadOfPlayhead()) {
+            if (!heldAhead) {
+                org.siloserver.silo.common.player.SubDiag.log(
+                    "sidecar held($reason) buffered=${delegate.bufferedPositionUs / 1000}ms " +
+                        "floor=${floor.get() / 1000}ms",
+                )
+            }
+            heldAhead = true
+            return
+        }
+        heldAhead = false
+        kickDelegate(reason)
+    }
+
+    private fun resumeIfCaughtUp() {
+        if (heldAhead && !isAheadOfPlayhead()) continueUnlessAhead("caught-up")
+    }
+
+    private fun isAheadOfPlayhead(): Boolean {
+        if (maxLookaheadUs == C.TIME_UNSET || !prepared) return false
+        val bufferedUs = delegate.bufferedPositionUs
+        if (bufferedUs == C.TIME_END_OF_SOURCE || bufferedUs == C.TIME_UNSET) return false
+        return bufferedUs - floor.get() > maxLookaheadUs
     }
 
     /**
@@ -153,17 +202,26 @@ internal class NonGatingSidecarPeriod(
         val result = delegate.selectTracks(selections, mayRetainStreamFlags, streams, streamResetFlags, positionUs)
         // Enabling the text track (a subtitle pick after start, or the first
         // selection once prepared) is what makes the delegate willing to load.
-        if (selections.any { it != null }) kickDelegate("select")
+        if (selections.any { it != null }) continueUnlessAhead("select")
         return result
     }
 
-    override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) =
+    /**
+     * Called on the playing period every playback tick, unlike
+     * [reevaluateBuffer], which stops once the next item starts loading. So
+     * this is what keeps a held sidecar reading through the end of an item.
+     */
+    override fun discardBuffer(positionUs: Long, toKeyframe: Boolean) {
         delegate.discardBuffer(positionUs, toKeyframe)
+        floor.set(maxOf(floor.get(), positionUs))
+        resumeIfCaughtUp()
+    }
 
     override fun readDiscontinuity(): Long = delegate.readDiscontinuity()
 
     override fun seekToUs(positionUs: Long): Long {
         floor.set(positionUs)
+        heldAhead = false
         val result = delegate.seekToUs(positionUs)
         // An idle delegate is left reset-but-parked by a seek; a loading one is
         // cancelled and comes back through onContinueLoadingRequested.
@@ -192,5 +250,6 @@ internal class NonGatingSidecarPeriod(
         // period position — the live floor for "this cue is already history".
         floor.set(positionUs)
         delegate.reevaluateBuffer(positionUs)
+        resumeIfCaughtUp()
     }
 }

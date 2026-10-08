@@ -725,11 +725,29 @@ class SiloPlayerFactory(
             // A sidecar must not decide when playback starts or what loads
             // next — left as a plain merged child it starves the video until
             // its own download reaches the resume point. See the wrapper.
-            return SidecarSubtitleMediaSource(progressive, playbackFloor)
+            // A PGS sidecar also reads only a bounded stretch ahead: each of
+            // its cues carries a caption image, and a whole film of them does
+            // not fit in a phone's heap.
+            return SidecarSubtitleMediaSource(
+                progressive,
+                playbackFloor,
+                maxLookaheadUs = if (configuration.mimeType == MimeTypes.APPLICATION_PGS) {
+                    PGS_SIDECAR_LOOKAHEAD_US
+                } else {
+                    C.TIME_UNSET
+                },
+            )
         }
     }
 
     private companion object {
+        /**
+         * Two minutes of captions ahead of the playhead. The loader can read
+         * one check interval (1 MiB of the file) past that before it parks,
+         * so a PGS sidecar holds a few MB instead of the whole film.
+         */
+        const val PGS_SIDECAR_LOOKAHEAD_US = 120_000_000L
+
         val replayableTextSubtitleMimeTypes = setOf(
             MimeTypes.TEXT_SSA,
             MimeTypes.APPLICATION_SUBRIP,
