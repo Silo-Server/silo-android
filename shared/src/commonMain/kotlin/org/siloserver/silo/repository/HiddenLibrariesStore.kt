@@ -39,12 +39,14 @@ class HiddenLibrariesStore(
     @Volatile
     private var snapshot = Snapshot(generation = -1, ids = emptySet())
     private val readMutex = Mutex()
+    private var failedReadGeneration = -1L
     private val _revision = MutableStateFlow(0)
 
     /**
-     * Bumps when [refresh] changes the set, so screens that loaded the
-     * library list re-load it. The first read made by a list load
-     * ([ensureLoaded]) doesn't bump it: that load already applies the result.
+     * Bumps when the set changes, so screens that loaded the library list
+     * re-load it. A first read made by a list load ([ensureLoaded]) doesn't
+     * bump it, since that load applies the result, unless an earlier read for
+     * this profile failed and lists went out unfiltered.
      */
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
@@ -62,12 +64,20 @@ class HiddenLibrariesStore(
         val generation = identityTransitions.generation.value
         // A read that finished while this one waited already answered it.
         if (!announce && snapshot.generation == generation) return@withLock
+        // A switch advances the generation before it installs the new
+        // identity; wait it out so this read can't answer for the old one.
+        identityTransitions.withCurrentGeneration(generation) { } ?: return@withLock
         val result = settingsRepository.getEffectiveValues(listOf(KEY))
-        if (result !is ApiResult.Success || generation != identityTransitions.generation.value) return@withLock
+        if (generation != identityTransitions.generation.value) return@withLock
+        if (result !is ApiResult.Success) {
+            failedReadGeneration = generation
+            return@withLock
+        }
         val previous = snapshot.idsFor(generation)
         val ids = parseLibraryIds(result.data[KEY]?.value)
         snapshot = Snapshot(generation, ids)
-        if (announce && ids != previous) _revision.update { it + 1 }
+        val listsWentOutUnfiltered = failedReadGeneration == generation
+        if ((announce || listsWentOutUnfiltered) && ids != previous) _revision.update { it + 1 }
     }
 
     private fun Snapshot.idsFor(generation: Long): Set<Int> =

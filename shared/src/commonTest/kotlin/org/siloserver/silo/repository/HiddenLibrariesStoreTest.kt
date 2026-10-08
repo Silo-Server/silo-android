@@ -40,6 +40,7 @@ class HiddenLibrariesStoreTest {
         ),
     ) {
         var beforeAnswer: suspend () -> Unit = {}
+        var fails = false
 
         override suspend fun getEffectiveValues(
             keys: List<String>,
@@ -48,6 +49,7 @@ class HiddenLibrariesStoreTest {
             authority: AuthScopeSnapshot?,
         ): ApiResult<EffectiveSettingValuesResponse> {
             beforeAnswer()
+            if (fails) return ApiResult.Error(503, "unavailable", "Unavailable")
             return ApiResult.Success(
                 EffectiveSettingValuesResponse(
                     settings = listOf(EffectiveSettingValue(key = HiddenLibrariesStore.KEY, value = hidden)),
@@ -145,6 +147,39 @@ class HiddenLibrariesStoreTest {
         store.refresh()
         assertEquals(emptySet(), store.current())
         assertEquals(1, store.revision.value)
+    }
+
+    @Test
+    fun aSuccessfulReadAfterAFailedOneBumpsTheRevision() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val settings = FakeSettings(ids(2)).apply { fails = true }
+        val store = HiddenLibrariesStore(SettingsRepository(settings), barrier)
+
+        store.ensureLoaded()
+        assertEquals(emptySet(), store.current())
+
+        settings.fails = false
+        store.ensureLoaded()
+        assertEquals(setOf(2), store.current())
+        assertEquals(1, store.revision.value)
+    }
+
+    @Test
+    fun aReadStartedMidSwitchAnswersForTheNewIdentity() = runTest {
+        val barrier = DefaultIdentityTransitionBarrier()
+        val settings = FakeSettings(ids(2))
+        val store = HiddenLibrariesStore(SettingsRepository(settings), barrier)
+
+        lateinit var read: kotlinx.coroutines.Deferred<Unit>
+        barrier.changing(IdentityTransitionKind.PROFILE_SWITCH) {
+            // The generation has advanced; the new identity isn't installed yet.
+            read = async { store.ensureLoaded() }
+            testScheduler.runCurrent()
+            settings.hidden = ids(1)
+        }
+        read.await()
+
+        assertEquals(setOf(1), store.current())
     }
 
     @Test

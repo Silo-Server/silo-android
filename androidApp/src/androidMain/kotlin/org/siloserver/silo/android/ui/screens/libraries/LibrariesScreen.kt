@@ -309,8 +309,13 @@ class LibrariesViewModel(
             personalDataRepository.recheckUserLibraries(known.mapTo(mutableSetOf()) { it.id })
         }
         // A transient failure re-shows the known list, re-filtered so a Show
-        // Audiobooks change still applies. Auth failures fall through and clear it.
-        val result = if (fetched.canServeCache() && known.isNotEmpty()) ApiResult.Success(known) else fetched
+        // Audiobooks change or a newly hidden library still applies. Auth
+        // failures fall through and clear it.
+        val result = if (fetched.canServeCache() && known.isNotEmpty()) {
+            ApiResult.Success(personalDataRepository.withoutHidden(known))
+        } else {
+            fetched
+        }
         when (result) {
             is ApiResult.Success -> {
                 serverLibraries = result.data

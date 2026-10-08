@@ -110,7 +110,8 @@ open class PersonalDataRepository(
         return ApiResult.Success(visible)
     }
 
-    private fun withoutHidden(libraries: List<UserLibrary>): List<UserLibrary> =
+    /** [libraries] minus the ones the profile hid, for a list a screen already holds. */
+    fun withoutHidden(libraries: List<UserLibrary>): List<UserLibrary> =
         libraries.withoutHidden(hiddenLibraries?.current().orEmpty())
 
     // -- Favorites --
