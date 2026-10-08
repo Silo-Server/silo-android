@@ -464,7 +464,12 @@ val androidTvModule = module {
             },
         )
     }
-    viewModel { TvLibrariesViewModel(get(), get(), get()) }
+    viewModel {
+        TvLibrariesViewModel(
+            get(), get(), get(),
+            reachability = get<org.siloserver.silo.common.network.ServerReachabilityMonitor>().state,
+        )
+    }
     viewModel { params ->
         TvLibraryDetailViewModel(
             sectionRepository = get(),

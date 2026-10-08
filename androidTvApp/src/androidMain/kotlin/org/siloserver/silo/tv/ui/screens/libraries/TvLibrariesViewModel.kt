@@ -3,15 +3,21 @@ package org.siloserver.silo.tv.ui.screens.libraries
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.common.network.ServerReachabilityState
+import org.siloserver.silo.common.network.ServerReachabilityStatus
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
 import org.siloserver.silo.tv.data.preferences.TvLibrarySelectionStore
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -24,6 +30,8 @@ class TvLibrariesViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val librarySelectionStore: TvLibrarySelectionStore,
     private val legacyTvPrefsMigration: LegacyTvPrefsMigration,
+    /** Server reachability; each reachable probe retries a failed load. */
+    reachability: Flow<ServerReachabilityState> = emptyFlow(),
 ) : ViewModel() {
 
     data class UiState(
@@ -43,9 +51,15 @@ class TvLibrariesViewModel(
     // The latest load replaces any still running, so an older answer can't
     // land last. Declared before init, which starts the first load.
     private var loadJob: Job? = null
+    // The last load failed and none is running. A revision that asked for a
+    // re-load won't come again, so the next reachable probe retries it.
+    private var reloadPending = false
 
     init {
         load()
+        reachability
+            .onEach { if (reloadPending && it.status == ServerReachabilityStatus.Reachable) load() }
+            .launchIn(viewModelScope)
     }
 
     fun onHiddenLibrariesRevision(revision: Int) {
@@ -74,6 +88,7 @@ class TvLibrariesViewModel(
 
     fun load() {
         loadJob?.cancel()
+        reloadPending = false
         loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             // Seed the per-profile selection from the legacy global
@@ -103,17 +118,23 @@ class TvLibrariesViewModel(
                         )
                     }
                 }
-                is ApiResult.Error -> _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = result.message.ifBlank { "Failed to load libraries" },
-                    )
+                is ApiResult.Error -> {
+                    reloadPending = true
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = result.message.ifBlank { "Failed to load libraries" },
+                        )
+                    }
                 }
-                is ApiResult.NetworkError -> _uiState.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Network error: ${result.exception.message ?: "unknown"}",
-                    )
+                is ApiResult.NetworkError -> {
+                    reloadPending = true
+                    _uiState.update {
+                        it.copy(
+                            isLoading = false,
+                            error = "Network error: ${result.exception.message ?: "unknown"}",
+                        )
+                    }
                 }
             }
         }
