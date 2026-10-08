@@ -193,6 +193,9 @@ class TvSiloCastReceiver(
         val stoppedRun = receiverRun
         pendingPlayerIdentityGeneration = null
         pendingPlayerLaunchOwner = null
+        // A launch navigation has not taken yet belongs to the session being
+        // torn down; it must not open when the TV app comes back.
+        launchRequestChannel.tryReceive()
         identityEndJob = null
         // Close the session directly (not via closePreviousController, which
         // launches the goodbye on `scope` — the scope we cancel a line later,
@@ -726,7 +729,7 @@ class TvSiloCastReceiver(
                 // later handoff.
                 scope?.launch {
                     delay(PENDING_LAUNCH_TIMEOUT_MS)
-                    clearPendingLaunch(launchOwner)
+                    clearPendingLaunch(launchOwner, dropQueued = true)
                 }
                 session.remoteLaunchReady = false
                 session.ownIdentityProfileId = null
@@ -886,12 +889,19 @@ class TvSiloCastReceiver(
     /** No title is playing on, or on its way to, a phone's identity. */
     private fun isIdentityIdle(): Boolean = activePlayer == null && pendingPlayerLaunchOwner == null
 
-    /** Clears the pending launch only if [owner] still holds it. */
-    private fun clearPendingLaunch(owner: Any) {
+    /**
+     * Clears the pending launch only if [owner] still holds it. With
+     * [dropQueued], also drops its request if navigation has not taken it yet,
+     * so an expired launch never opens later under another identity. Admission
+     * holds every other launch off while one is pending, so a request still
+     * queued is this one.
+     */
+    private fun clearPendingLaunch(owner: Any, dropQueued: Boolean = false) {
         synchronized(this) {
             if (pendingPlayerLaunchOwner === owner) {
                 pendingPlayerLaunchOwner = null
                 pendingPlayerIdentityGeneration = null
+                if (dropQueued) launchRequestChannel.tryReceive()
             }
         }
     }
