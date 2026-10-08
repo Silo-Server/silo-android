@@ -261,10 +261,12 @@ fun TvMainShell(
         hiddenLibrariesRevision,
         librariesRetry,
     ) {
+        // Pending means the last load failed and none is running, so a probe
+        // never cancels a load still in flight.
+        librariesReloadPending = false
         when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
-                librariesReloadPending = false
             }
             // Keep what's shown, minus a library hidden since.
             is ApiResult.Error,
