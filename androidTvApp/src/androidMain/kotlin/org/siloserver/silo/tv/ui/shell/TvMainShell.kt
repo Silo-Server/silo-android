@@ -255,8 +255,10 @@ fun TvMainShell(
         when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success ->
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
+            // Keep what's shown, minus a library hidden since: the revision
+            // that asked for this load won't come again.
             is ApiResult.Error,
-            is ApiResult.NetworkError -> Unit
+            is ApiResult.NetworkError -> value = personalDataRepository.withoutHidden(value)
         }
         // Mark loaded even on error (we've attempted) so the redirect can run;
         // an empty list then legitimately means "no libraries for this profile".
