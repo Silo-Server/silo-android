@@ -83,6 +83,7 @@ import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
 import org.siloserver.silo.model.calendar.CalendarFilter
@@ -707,7 +708,7 @@ private fun CalendarEventCard(
                 thumbhash = item.posterThumbhash,
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
-                defaultArtwork = true,
+                defaultArtwork = DefaultArtworkKind.forItemType(item.type),
             )
 
             // Badge pills, top-leading. overlayPadding (phone) = 6.

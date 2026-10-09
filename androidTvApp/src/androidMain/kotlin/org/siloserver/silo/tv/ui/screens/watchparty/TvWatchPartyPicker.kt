@@ -54,6 +54,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.model.watchtogether.ItemMemberState
@@ -432,6 +433,7 @@ private fun TvPickerConfirmation(
                         imageUrl = choice.posterUrl,
                         contentDescription = null,
                         modifier = Modifier.size(width = 110.dp, height = 165.dp),
+                        defaultArtwork = DefaultArtworkKind.forItemType(choice.item.contentType),
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         TvPartyEyebrow(if (stages) "Watch together" else "Suggest to the party")

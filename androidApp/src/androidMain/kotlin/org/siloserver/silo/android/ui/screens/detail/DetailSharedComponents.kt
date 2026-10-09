@@ -86,6 +86,7 @@ import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.ExternalRatings
@@ -263,7 +264,7 @@ private fun ExpandedDetailHero(
                                 contentDescription = detail.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
-                                defaultArtwork = true,
+                                defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
                             )
                         }
                     }

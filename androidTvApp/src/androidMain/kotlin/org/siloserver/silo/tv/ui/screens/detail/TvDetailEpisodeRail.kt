@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -434,7 +435,7 @@ private fun TvDetailEpisodeCard(
                 contentDescription = episode.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                defaultArtwork = true,
+                defaultArtwork = DefaultArtworkKind.Tv,
             )
 
             if (episode.userData?.played == true) {

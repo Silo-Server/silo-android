@@ -114,7 +114,8 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *   can retire the URL and fall back rather than leave an empty box.
  * @param defaultArtwork For posters, covers and stills: when the image is
  *   missing or fails to load and there is no ThumbHash, show [DefaultArtwork]
- *   instead of the flat placeholder.
+ *   with this kind's mark instead of the flat placeholder. Null keeps the
+ *   flat placeholder.
  */
 @Composable
 fun ThumbhashImage(
@@ -133,7 +134,7 @@ fun ThumbhashImage(
     onError: (() -> Unit)? = null,
     /** Applied to the loaded image only — used by the blurred page backdrop. */
     colorFilter: ColorFilter? = null,
-    defaultArtwork: Boolean = false,
+    defaultArtwork: DefaultArtworkKind? = null,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
@@ -166,8 +167,8 @@ fun ThumbhashImage(
             )
             // Checks the hash, not the decode, so a ThumbHash still decoding
             // doesn't flash the default artwork first.
-            defaultArtwork && thumbhash.isNullOrBlank() ->
-                DefaultArtwork(modifier = modifier, contentDescription = contentDescription)
+            defaultArtwork != null && thumbhash.isNullOrBlank() ->
+                DefaultArtwork(defaultArtwork, modifier = modifier, contentDescription = contentDescription)
             !transparent -> Box(modifier = modifier.background(DefaultPlaceholderColor))
         }
         return
@@ -176,7 +177,7 @@ fun ThumbhashImage(
     // A failed load keeps the ThumbHash; only without one does a poster fall
     // back to the default artwork.
     var failed by remember(url) { mutableStateOf(false) }
-    val showDefaultArtwork = defaultArtwork && failed && thumbhash.isNullOrBlank()
+    val failedArtwork = defaultArtwork?.takeIf { failed && thumbhash.isNullOrBlank() }
 
     val model = remember(url, decodeSizePx, crossfadeMillis, cacheKey) {
         ImageRequest.Builder(context)
@@ -195,8 +196,8 @@ fun ThumbhashImage(
     }
 
     if (deferPresentationWhile == null) {
-        if (showDefaultArtwork) {
-            DefaultArtwork(modifier = modifier, contentDescription = contentDescription)
+        if (failedArtwork != null) {
+            DefaultArtwork(failedArtwork, modifier = modifier, contentDescription = contentDescription)
             return
         }
         AsyncImage(
@@ -263,7 +264,7 @@ fun ThumbhashImage(
                     contentScale = contentScale,
                     modifier = Modifier.fillMaxSize(),
                 )
-                showDefaultArtwork -> DefaultArtwork(modifier = Modifier.fillMaxSize())
+                failedArtwork != null -> DefaultArtwork(failedArtwork, modifier = Modifier.fillMaxSize())
                 !transparent -> Box(
                     modifier = Modifier
                         .fillMaxSize()

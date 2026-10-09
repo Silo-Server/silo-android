@@ -63,6 +63,7 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.model.watchtogether.GuestControlPolicy
 import org.siloserver.silo.model.watchtogether.MemberRole
 import org.siloserver.silo.model.watchtogether.RoomPhase
@@ -714,6 +715,7 @@ private fun TvPartySuggestionCard(
                     contentDescription = suggestion.title,
                     cornerRadius = 6.dp,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = DefaultArtworkKind.forItemType(suggestion.contentType),
                 )
                 if (badge != null) {
                     Box(modifier = Modifier.align(Alignment.TopStart).padding(6.dp)) { badge() }

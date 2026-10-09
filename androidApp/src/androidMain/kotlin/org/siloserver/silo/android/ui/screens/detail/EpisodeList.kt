@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import kotlin.math.abs
@@ -202,7 +203,8 @@ private fun EpisodeRailCard(
                 thumbhash = episode.stillThumbhash,
                 contentDescription = episode.title,
                 modifier = Modifier.fillMaxSize(),
-                defaultArtwork = true,
+                // The play button covers the centre, so no mark under it.
+                defaultArtwork = if (onPlayClick != null) DefaultArtworkKind.GlowOnly else DefaultArtworkKind.Tv,
             )
 
             if (episode.userData?.played == true) {

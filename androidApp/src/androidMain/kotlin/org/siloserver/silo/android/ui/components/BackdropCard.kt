@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.components
 
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -121,7 +122,8 @@ fun BackdropCard(
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
-                defaultArtwork = true,
+                // The centre glyph below always covers where the mark would sit.
+                defaultArtwork = DefaultArtworkKind.GlowOnly,
             )
 
             // Bottom scrim gradient

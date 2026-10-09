@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -147,7 +148,7 @@ fun TvMediaCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
-                    defaultArtwork = true,
+                    defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
                 )
 
                 // Card-overlay badge layer. Over the poster, under the

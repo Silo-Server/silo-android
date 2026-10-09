@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 
 /**
@@ -27,6 +28,7 @@ fun TvPoster(
     contentDescription: String?,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp,
+    defaultArtwork: DefaultArtworkKind = DefaultArtworkKind.Video,
 ) {
     Box(
         modifier = modifier
@@ -39,7 +41,7 @@ fun TvPoster(
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
-            defaultArtwork = true,
+            defaultArtwork = defaultArtwork,
         )
     }
 }
