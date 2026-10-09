@@ -147,6 +147,7 @@ fun TvMediaCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = true,
                 )
 
                 // Card-overlay badge layer. Over the poster, under the

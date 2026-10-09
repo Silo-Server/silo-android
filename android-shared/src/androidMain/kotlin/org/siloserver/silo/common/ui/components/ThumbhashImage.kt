@@ -112,6 +112,9 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *   by the URL would miss the cache every time. Must still be unique per image.
  * @param onError Optional signal that the fetch or decode failed, so the caller
  *   can retire the URL and fall back rather than leave an empty box.
+ * @param defaultArtwork For posters, covers and stills: when the image is
+ *   missing or fails to load and there is no ThumbHash, show [DefaultArtwork]
+ *   instead of the flat placeholder.
  */
 @Composable
 fun ThumbhashImage(
@@ -130,6 +133,7 @@ fun ThumbhashImage(
     onError: (() -> Unit)? = null,
     /** Applied to the loaded image only — used by the blurred page backdrop. */
     colorFilter: ColorFilter? = null,
+    defaultArtwork: Boolean = false,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
@@ -160,10 +164,19 @@ fun ThumbhashImage(
                 contentScale = contentScale,
                 modifier = modifier,
             )
+            // Checks the hash, not the decode, so a ThumbHash still decoding
+            // doesn't flash the default artwork first.
+            defaultArtwork && thumbhash.isNullOrBlank() ->
+                DefaultArtwork(modifier = modifier, contentDescription = contentDescription)
             !transparent -> Box(modifier = modifier.background(DefaultPlaceholderColor))
         }
         return
     }
+
+    // A failed load keeps the ThumbHash; only without one does a poster fall
+    // back to the default artwork.
+    var failed by remember(url) { mutableStateOf(false) }
+    val showDefaultArtwork = defaultArtwork && failed && thumbhash.isNullOrBlank()
 
     val model = remember(url, decodeSizePx, crossfadeMillis, cacheKey) {
         ImageRequest.Builder(context)
@@ -182,6 +195,10 @@ fun ThumbhashImage(
     }
 
     if (deferPresentationWhile == null) {
+        if (showDefaultArtwork) {
+            DefaultArtwork(modifier = modifier, contentDescription = contentDescription)
+            return
+        }
         AsyncImage(
             model = model,
             contentDescription = contentDescription,
@@ -193,7 +210,10 @@ fun ThumbhashImage(
             error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { onSuccess?.invoke() },
-            onError = { onError?.invoke() },
+            onError = {
+                failed = true
+                onError?.invoke()
+            },
             modifier = when {
                 transparent || placeholder != null -> modifier
                 else -> modifier.background(DefaultPlaceholderColor)
@@ -243,6 +263,7 @@ fun ThumbhashImage(
                     contentScale = contentScale,
                     modifier = Modifier.fillMaxSize(),
                 )
+                showDefaultArtwork -> DefaultArtwork(modifier = Modifier.fillMaxSize())
                 !transparent -> Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -270,7 +291,10 @@ fun ThumbhashImage(
                     presentFullImage()
                 }
             },
-            onError = { onError?.invoke() },
+            onError = {
+                failed = true
+                onError?.invoke()
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .drawWithContent {

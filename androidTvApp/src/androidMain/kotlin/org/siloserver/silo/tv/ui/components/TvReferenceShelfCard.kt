@@ -83,6 +83,7 @@ fun TvReferenceShelfCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = true,
                 )
 
             Box(

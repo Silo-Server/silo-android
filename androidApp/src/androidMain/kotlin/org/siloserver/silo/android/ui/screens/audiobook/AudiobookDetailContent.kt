@@ -190,6 +190,7 @@ fun AudiobookDetailContent(
                     modifier = Modifier
                         .size(AudiobookCoverSizeDp.dp)
                         .clip(RoundedCornerShape(12.dp)),
+                    defaultArtwork = true,
                 )
                 Text(
                     text = detail.title,

@@ -187,6 +187,7 @@ fun BookDetailContent(
                         .width(BookCoverWidthDp.dp)
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(12.dp)),
+                    defaultArtwork = true,
                 )
                 Text(
                     text = detail.title,

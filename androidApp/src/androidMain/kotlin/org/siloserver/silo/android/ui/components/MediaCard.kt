@@ -141,6 +141,7 @@ fun MediaCard(
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+                defaultArtwork = true,
             )
 
             // Card-overlay badge layer (resolution / audio / ratings, etc.).

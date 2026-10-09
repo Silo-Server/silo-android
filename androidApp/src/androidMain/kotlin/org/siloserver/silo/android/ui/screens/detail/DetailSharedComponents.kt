@@ -254,6 +254,8 @@ private fun ExpandedDetailHero(
                                 shape = RoundedCornerShape(12.dp),
                             ),
                     ) {
+                        // A blank URL here can mean the series poster is still
+                        // loading, so only a failed poster shows the default artwork.
                         if (!portraitArtwork.url.isNullOrBlank()) {
                             ThumbhashImage(
                                 url = portraitArtwork.url,
@@ -261,6 +263,7 @@ private fun ExpandedDetailHero(
                                 contentDescription = detail.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
+                                defaultArtwork = true,
                             )
                         }
                     }

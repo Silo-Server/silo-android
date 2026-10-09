@@ -121,6 +121,7 @@ fun BackdropCard(
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+                defaultArtwork = true,
             )
 
             // Bottom scrim gradient

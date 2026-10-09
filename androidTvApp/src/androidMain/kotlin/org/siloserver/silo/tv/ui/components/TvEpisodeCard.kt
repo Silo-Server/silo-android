@@ -119,6 +119,7 @@ fun TvEpisodeCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = true,
                 )
 
                 Box(

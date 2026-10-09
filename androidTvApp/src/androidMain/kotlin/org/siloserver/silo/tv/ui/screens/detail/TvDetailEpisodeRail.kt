@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -429,24 +428,14 @@ private fun TvDetailEpisodeCard(
                     },
                 ),
         ) {
-            if (!episode.stillUrl.isNullOrBlank()) {
-                ThumbhashImage(
-                    url = episode.stillUrl,
-                    thumbhash = episode.stillThumbhash,
-                    contentDescription = episode.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.Movie,
-                    contentDescription = null,
-                    tint = SiloSecondaryText,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .align(Alignment.Center),
-                )
-            }
+            ThumbhashImage(
+                url = episode.stillUrl,
+                thumbhash = episode.stillThumbhash,
+                contentDescription = episode.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                defaultArtwork = true,
+            )
 
             if (episode.userData?.played == true) {
                 Box(

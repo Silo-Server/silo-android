@@ -707,6 +707,7 @@ private fun CalendarEventCard(
                 thumbhash = item.posterThumbhash,
                 contentDescription = item.title,
                 modifier = Modifier.fillMaxSize(),
+                defaultArtwork = true,
             )
 
             // Badge pills, top-leading. overlayPadding (phone) = 6.

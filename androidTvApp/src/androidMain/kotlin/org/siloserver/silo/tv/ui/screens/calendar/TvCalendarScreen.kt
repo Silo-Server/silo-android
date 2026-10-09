@@ -1453,6 +1453,7 @@ private fun CalendarEventCard(
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = true,
                 )
 
                 // Badge pills (top-leading) — tvOS CalendarBadgePill.

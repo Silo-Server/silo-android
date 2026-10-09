@@ -202,6 +202,7 @@ private fun EpisodeRailCard(
                 thumbhash = episode.stillThumbhash,
                 contentDescription = episode.title,
                 modifier = Modifier.fillMaxSize(),
+                defaultArtwork = true,
             )
 
             if (episode.userData?.played == true) {
