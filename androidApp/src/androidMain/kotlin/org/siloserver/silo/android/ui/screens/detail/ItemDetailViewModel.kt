@@ -427,6 +427,9 @@ class ItemDetailViewModel(
                         val seasonNumber = detail.seasonNumber
                         if (seriesId != null && seasonNumber != null) {
                             loadEpisodeSiblings(seriesId, seasonNumber)
+                        } else {
+                            // No parent to look up, so no series poster is coming.
+                            _uiState.update { it.copy(episodeSeriesPosterResolved = true) }
                         }
                     }
                     // For books, learn whether the server converts Kindle formats to
