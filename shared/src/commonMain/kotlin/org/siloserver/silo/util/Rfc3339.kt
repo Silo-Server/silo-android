@@ -93,3 +93,34 @@ private fun daysFromCivil(year: Int, month: Int, day: Int): Long {
     val doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
     return era * 146097L + doe - 719468L
 }
+
+/**
+ * Formats epoch milliseconds as a UTC RFC3339 timestamp with millisecond
+ * precision (`2026-06-12T09:30:00.123Z`), the inverse of
+ * [parseRfc3339ToEpochMillis] for the Watch Party clock-sync pings.
+ */
+fun formatEpochMillisRfc3339(epochMillis: Long): String {
+    val epochSecond = epochMillis.floorDiv(1_000L)
+    val millis = epochMillis.mod(1_000L).toInt()
+    val epochDay = epochSecond.floorDiv(86_400L)
+    val secondOfDay = epochSecond.mod(86_400L).toInt()
+    val (year, month, day) = civilFromDays(epochDay)
+    fun pad(value: Int, width: Int) = value.toString().padStart(width, '0')
+    return "${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}T" +
+        "${pad(secondOfDay / 3_600, 2)}:${pad(secondOfDay / 60 % 60, 2)}:${pad(secondOfDay % 60, 2)}." +
+        "${pad(millis, 3)}Z"
+}
+
+/** Proleptic-Gregorian civil date for days since 1970-01-01 (Hinnant). */
+private fun civilFromDays(epochDay: Long): Triple<Int, Int, Int> {
+    val z = epochDay + 719468L
+    val era = z.floorDiv(146097L)
+    val doe = z - era * 146097L
+    val yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    val doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    val mp = (5 * doy + 2) / 153
+    val day = (doy - (153 * mp + 2) / 5 + 1).toInt()
+    val month = (if (mp < 10) mp + 3 else mp - 9).toInt()
+    val year = (yoe + era * 400 + if (month <= 2) 1 else 0).toInt()
+    return Triple(year, month, day)
+}

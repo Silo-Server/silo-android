@@ -15,6 +15,14 @@ plugins {
 }
 
 allprojects {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        // Source-policy tests read workflows, manifests and sibling source trees
+        // directly. Until all those inputs are declared, always execute tests;
+        // compilation, resource, lint and R8 outputs can still use the cache.
+        outputs.cacheIf("Tests inspect files outside their runtime classpath") { false }
+        outputs.upToDateWhen { false }
+    }
+
     dependencyLocking {
         lockAllConfigurations()
     }

@@ -216,6 +216,8 @@ sealed class Route(val route: String) {
         val resumePositionSeconds: Double? = null,
         val roomId: String? = null,
         val libraryId: Int? = null,
+        /** The running shuffle this item is a pick of; picks play from the beginning. */
+        val shuffleId: String? = null,
     ) : Route(
         buildString {
             append("player/${contentId.routeEncode()}")
@@ -230,6 +232,7 @@ sealed class Route(val route: String) {
                 VideoPlayerRouteArgs.encodeResumePosition(resumePositionSeconds)
                     ?.let { "${VideoPlayerRouteArgs.RESUME_POSITION}=$it" },
                 roomId?.takeIf { it.isNotBlank() }?.let { "roomId=${Uri.encode(it)}" },
+                shuffleId?.takeIf { it.isNotBlank() }?.let { "shuffleId=${Uri.encode(it)}" },
             )
             if (queryParams.isNotEmpty()) {
                 append("?")
@@ -239,14 +242,40 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
+                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
         }
     }
 
-    // --- Watch Together (synchronized playback rooms) ---
-    data class WatchTogetherLobby(val roomId: String) : Route("watch_together/${Uri.encode(roomId)}") {
+    // --- Watch Party (synchronized playback rooms) ---
+
+    /**
+     * The Watch Party hub. [invite] and [host] are opaque handoff ids for a
+     * pending invitation or item held in memory by `WatchPartyHandoff`; the
+     * join token itself never appears in a route.
+     */
+    data class WatchPartyHub(val invite: String? = null, val host: String? = null) : Route(
+        buildString {
+            append("watch_party")
+            val params = listOfNotNull(
+                invite?.takeIf { it.isNotBlank() }?.let { "$ARG_INVITE=${Uri.encode(it)}" },
+                host?.takeIf { it.isNotBlank() }?.let { "$ARG_HOST=${Uri.encode(it)}" },
+            )
+            if (params.isNotEmpty()) {
+                append("?")
+                append(params.joinToString("&"))
+            }
+        },
+    ) {
         companion object {
-            const val ROUTE = "watch_together/{roomId}"
+            const val ARG_INVITE = "invite"
+            const val ARG_HOST = "host"
+            const val ROUTE = "watch_party?$ARG_INVITE={$ARG_INVITE}&$ARG_HOST={$ARG_HOST}"
+        }
+    }
+
+    data class WatchPartyLobby(val roomId: String) : Route("watch_party/lobby/${Uri.encode(roomId)}") {
+        companion object {
+            const val ROUTE = "watch_party/lobby/{roomId}"
             const val ARG_ROOM_ID = "roomId"
         }
     }

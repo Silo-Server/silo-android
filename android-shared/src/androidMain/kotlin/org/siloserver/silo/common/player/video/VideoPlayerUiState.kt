@@ -21,6 +21,10 @@ sealed interface VideoPlayerUiState {
     data class Error(
         override val contentId: String,
         val message: String,
+        /** Why the start failed, when known; a server refusal carries its terminal reason. */
+        val diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        /** The server's terminal refusal reason, when there was one. */
+        val terminalReason: String? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = false
     }
@@ -82,6 +86,10 @@ sealed interface VideoPlayerUiState {
         /** Target-catalog decision for the one-shot episode-selection handoff. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
         val seriesTitle: String? = null,
+        /** Release year, for the player's "MOVIE · 2026" line. */
+        val year: Int? = null,
+        /** Catalog item type ("movie", "episode", …); the same line names a film. */
+        val contentType: String? = null,
     ) : VideoPlayerUiState {
         override val hasPlayableMedia: Boolean = true
 

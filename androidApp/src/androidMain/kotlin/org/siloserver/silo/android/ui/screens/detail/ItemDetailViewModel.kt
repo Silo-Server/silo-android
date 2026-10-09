@@ -67,6 +67,8 @@ data class ItemDetailUiState(
     /** Parent series title on a standalone episode page, for download grouping. */
     val episodeSeriesTitle: String? = null,
     val episodeSeriesPosterThumbhash: String? = null,
+    /** The parent-series poster lookup has finished, with or without a poster. */
+    val episodeSeriesPosterResolved: Boolean = false,
     /**
      * Route-scoped episode lists keyed by season. Unlike the repository's
      * durable network-fallback cache, this map is UI-first: once a season has
@@ -425,6 +427,9 @@ class ItemDetailViewModel(
                         val seasonNumber = detail.seasonNumber
                         if (seriesId != null && seasonNumber != null) {
                             loadEpisodeSiblings(seriesId, seasonNumber)
+                        } else {
+                            // No parent to look up, so no series poster is coming.
+                            _uiState.update { it.copy(episodeSeriesPosterResolved = true) }
                         }
                     }
                     // For books, learn whether the server converts Kindle formats to
@@ -702,10 +707,12 @@ class ItemDetailViewModel(
                             episodeSeriesPosterUrl = result.data.posterUrl,
                             episodeSeriesPosterThumbhash = result.data.posterThumbhash,
                             episodeSeriesTitle = result.data.title,
+                            episodeSeriesPosterResolved = true,
                         )
                     }
                 }
-                else -> { /* Series poster fallback is optional. */ }
+                // Series poster fallback is optional.
+                else -> _uiState.update { it.copy(episodeSeriesPosterResolved = true) }
             }
         }
     }

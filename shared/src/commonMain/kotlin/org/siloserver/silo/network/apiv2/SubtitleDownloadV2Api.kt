@@ -27,10 +27,15 @@ internal data class StoredSubtitleV2(
     val score: Double,
     @SerialName("hearing_impaired") val hearingImpaired: Boolean,
     @SerialName("created_at") val createdAt: String,
+    val timing: SubtitleTiming = SubtitleTiming(),
+    val sync: SubtitleSyncJob? = null,
 ) {
     fun project(expectedFile: Int): DownloadedSubtitle {
         require(mediaFileId == expectedFile.toString())
-        return DownloadedSubtitle(checkedPositiveId(id), expectedFile, provider, language, format, releaseName, score, hearingImpaired, createdAt)
+        return DownloadedSubtitle(
+            checkedPositiveId(id), expectedFile, provider, language, format, releaseName, score, hearingImpaired, createdAt,
+            timing, sync,
+        )
     }
 }
 @Serializable private data class DownloadEnvelopeV2(val subtitle: StoredSubtitleV2)

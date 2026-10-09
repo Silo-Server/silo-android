@@ -1,49 +1,42 @@
 package org.siloserver.silo.android.ui.screens.player
 
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import org.siloserver.silo.android.ui.util.formatClockTime
 import org.siloserver.silo.model.catalog.VersionChapter
 
-/** Adaptive chapter picker shared by regular phones and foldable tabletop mode. */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Chapter picker. Number, title, start and length line up in columns; the
+ * chapter that is playing is marked and the list opens scrolled to it.
+ */
 @Composable
 fun ChaptersSheet(
     isVisible: Boolean,
@@ -51,175 +44,148 @@ fun ChaptersSheet(
     onSelect: (chapterIndex: Int) -> Unit,
     onDismiss: () -> Unit,
     position: Double = 0.0,
+    /** The title's length: the last chapter's end when the server gives none. */
+    duration: Double = 0.0,
     tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
 
     val currentChapterIndex = chapters.indexOfLast { it.startSeconds <= position }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-    val dismissSheet = {
-        scope.launch { sheetState.hide() }
-        onDismiss()
-    }
+    val controller = rememberPlayerMenuController(onDismiss)
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = (currentChapterIndex - 2).coerceAtLeast(0),
+    )
 
-    LaunchedEffect(isVisible) {
-        if (isVisible) sheetState.show()
-    }
-
-    PlayerModalBottomSheet(
-        onDismissRequest = dismissSheet,
-        sheetState = sheetState,
-        tabletopPaneHeight = tabletopPaneHeight,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .playerSheetContent(tabletopPaneHeight)
-                .nestedScroll(PlayerSheetFlingGuard),
-        ) {
-            PlayerSheetHeader(
-                title = "Chapters",
-                subtitle = when (chapters.size) {
-                    1 -> "1 chapter"
-                    else -> "${chapters.size} chapters"
-                },
-                onDismiss = dismissSheet,
-            )
-
-            if (chapters.isEmpty()) {
-                PlayerSheetCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(
-                            horizontal = playerSheetHorizontalPadding(tabletopPaneHeight),
-                            vertical = 8.dp,
-                        ),
-                ) {
-                    Text(
-                        text = "No chapters are available for this title.",
-                        color = Color.White.copy(alpha = 0.62f),
-                        fontSize = 14.sp,
-                        modifier = Modifier.padding(20.dp),
-                    )
-                }
+    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
+        PlayerPanelHeader(title = "Chapters", onClose = { controller.dismiss() })
+        val current = chapters.getOrNull(currentChapterIndex)
+        val countLabel = if (chapters.size == 1) "1 chapter" else "${chapters.size} chapters"
+        Text(
+            text = if (current != null) {
+                val left = (chapterEnd(chapters, currentChapterIndex, duration) - position).coerceAtLeast(0.0)
+                "$countLabel · ${formatClockTime(left)} left in this chapter"
             } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(if (tabletopPaneHeight == null) 1 else 2),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .then(
-                            if (tabletopPaneHeight == null) Modifier else Modifier.weight(1f),
-                        ),
-                    contentPadding = PaddingValues(
-                        start = playerSheetHorizontalPadding(tabletopPaneHeight),
-                        end = playerSheetHorizontalPadding(tabletopPaneHeight),
-                        top = 8.dp,
-                        bottom = 24.dp,
-                    ),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    itemsIndexed(
-                        chapters,
-                        key = { _, chapter -> chapter.index },
-                        contentType = { _, _ -> "chapter-card" },
-                    ) { index, chapter ->
-                        ChapterCard(
-                            chapter = chapter,
-                            isCurrent = index == currentChapterIndex,
-                            onClick = {
-                                onSelect(index)
-                                dismissSheet()
-                            },
-                        )
-                    }
-                }
+                countLabel
+            },
+            style = PlayerType.RowDetail.copy(fontFeatureSettings = "tnum"),
+            modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 6.dp),
+        )
+        if (chapters.isEmpty()) {
+            PlayerFootnote("No chapters are available for this title.")
+            return@PlayerMenu
+        }
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .fillMaxWidth()
+                .playerFadingEdges(listState)
+                .padding(horizontal = 8.dp),
+        ) {
+            itemsIndexed(chapters, key = { _, chapter -> chapter.index }) { index, chapter ->
+                val length = chapterEnd(chapters, index, duration) - chapter.startSeconds
+                ChapterRow(
+                    number = index + 1,
+                    title = chapter.title.ifBlank { "Chapter ${chapter.index + 1}" },
+                    start = chapter.startSeconds,
+                    length = length,
+                    progress = if (index == currentChapterIndex) {
+                        if (length > 0) ((position - chapter.startSeconds) / length).toFloat() else 0f
+                    } else {
+                        null
+                    },
+                    onClick = {
+                        onSelect(index)
+                        controller.dismiss()
+                    },
+                )
             }
         }
     }
 }
 
+private fun chapterEnd(chapters: List<VersionChapter>, index: Int, duration: Double): Double {
+    val chapter = chapters[index]
+    return when {
+        chapter.endSeconds > chapter.startSeconds -> chapter.endSeconds
+        index + 1 < chapters.size -> chapters[index + 1].startSeconds
+        duration > chapter.startSeconds -> duration
+        else -> chapter.startSeconds
+    }
+}
+
 @Composable
-private fun ChapterCard(
-    chapter: VersionChapter,
-    isCurrent: Boolean,
+private fun ChapterRow(
+    number: Int,
+    title: String,
+    start: Double,
+    length: Double,
+    progress: Float?,
     onClick: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(16.dp)
-    Surface(
-        color = if (isCurrent) PlayerSheetSelectedColor else PlayerSheetCardColor,
-        shape = shape,
+    val isCurrent = progress != null
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 72.dp)
-            .then(
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isCurrent) PlayerChrome.Raised else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(role = Role.Button, onClickLabel = "Play from $title", onClick = onClick)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 10.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 10.dp)) {
+            Box(modifier = Modifier.width(34.dp)) {
                 if (isCurrent) {
-                    Modifier.border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f),
-                        shape = shape,
+                    Icon(
+                        imageVector = Icons.Rounded.PlayArrow,
+                        contentDescription = "Now playing",
+                        tint = PlayerChrome.Paper,
+                        modifier = Modifier.size(18.dp),
                     )
                 } else {
-                    Modifier
-                },
-            )
-            .clickable(onClick = onClick),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = if (isCurrent) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                } else {
-                    Color.White.copy(alpha = 0.07f)
-                },
-                modifier = Modifier.size(38.dp),
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isCurrent) {
-                        Icon(
-                            imageVector = Icons.Filled.PlayArrow,
-                            contentDescription = "Now playing",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    } else {
-                        Text(
-                            text = (chapter.index + 1).toString(),
-                            color = Color.White.copy(alpha = 0.72f),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
+                    Text(
+                        text = number.toString().padStart(2, '0'),
+                        style = PlayerType.Value.copy(fontWeight = FontWeight.SemiBold),
+                    )
                 }
             }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    text = chapter.title.ifBlank { "Chapter ${chapter.index + 1}" },
-                    color = Color.White,
-                    fontSize = 15.sp,
+            Text(
+                text = title,
+                style = PlayerType.RowTitle.copy(
                     fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = formatClockTime(chapter.startSeconds),
-                    color = Color.White.copy(alpha = 0.52f),
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = formatClockTime(start),
+                style = PlayerType.Value,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(64.dp),
+            )
+            Text(
+                text = formatClockTime(length.coerceAtLeast(0.0)),
+                style = PlayerType.Value,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(56.dp),
+            )
+        }
+        if (progress != null) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 34.dp, end = 120.dp, bottom = 6.dp)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(androidx.compose.ui.graphics.Color.White.copy(alpha = 0.14f)),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .height(2.dp)
+                        .background(PlayerChrome.Paper),
                 )
             }
         }

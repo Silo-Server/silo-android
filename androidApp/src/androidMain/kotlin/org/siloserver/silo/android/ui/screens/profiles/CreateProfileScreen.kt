@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.profiles
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -310,7 +310,7 @@ internal fun DropdownField(
             onDismissRequest = { expanded = false },
         ) {
             options.forEach { option ->
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text(option) },
                     onClick = {
                         onSelected(option)

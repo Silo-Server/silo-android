@@ -75,6 +75,13 @@ interface PlayerSettingsStore {
     val letterboxExpansionFlow: Flow<String>
         get() = flowOf(LetterboxExpansion.Default)
 
+    /**
+     * See [org.siloserver.silo.model.settings.PlaybackSettingsKeys.TrueBlackBars].
+     * Defaulted for the same reason as [letterboxExpansionFlow].
+     */
+    val trueBlackBarsFlow: Flow<Boolean>
+        get() = flowOf(false)
+
     /** Per-profile preference for restricting downloads to unmetered (Wi-Fi)
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
      *  time to set the WorkManager NetworkType constraint. */
@@ -157,6 +164,7 @@ interface PlayerSettingsStore {
     suspend fun setPictureInPictureEnabled(value: Boolean)
     suspend fun setForceHdrPassthrough(value: Boolean)
     suspend fun setLetterboxExpansion(value: String) = Unit
+    suspend fun setTrueBlackBars(value: Boolean) = Unit
     suspend fun setDownloadsWifiOnly(value: Boolean)
     suspend fun setKeepWatchedDownloads(value: Boolean)
     suspend fun setDefaultDownloadQuality(value: String)

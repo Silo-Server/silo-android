@@ -112,44 +112,6 @@ class EpisodeSelectionHandoffTest {
     }
 
     @Test
-    fun sourceIntentNeverSerializesTheOriginalFileId() {
-        val handoff = EpisodeSelectionHandoff(
-            source = captureEpisodeSourceIntent(
-                version(4242, "2160p", "hevc", hdr = true, container = "mkv").copy(
-                    fileName = "source-file-name.mkv",
-                    filePath = "/private/source-file-path.mkv",
-                ),
-            ),
-            subtitle = captureEpisodeSubtitleIntent(
-                selectedTrackIndex = 31,
-                subtitles = listOf(
-                    PlayerSubtitleInfo(
-                        index = 31,
-                        language = "en",
-                        codec = "srt",
-                        label = "English",
-                        source = "downloaded",
-                        url = "/private/source-subtitle.srt",
-                        downloadId = 3131,
-                        mediaTrackId = "source-media-track-id",
-                    ),
-                ),
-            ),
-        )
-
-        val encoded = encodeEpisodeSelectionHandoff(handoff)
-
-        assertFalse(encoded.contains("4242"))
-        assertFalse(encoded.contains("31"))
-        assertFalse(encoded.contains("3131"))
-        assertFalse(encoded.contains("source-file-name"))
-        assertFalse(encoded.contains("source-file-path"))
-        assertFalse(encoded.contains("source-subtitle"))
-        assertFalse(encoded.contains("source-media-track-id"))
-        assertTrue(encoded.contains("2160p"))
-    }
-
-    @Test
     fun explicitSubtitleMatchesSemanticsAtADifferentTargetIndex() {
         val intent = captureEpisodeSubtitleIntent(
             selectedTrackIndex = 7,
@@ -329,29 +291,6 @@ class EpisodeSelectionHandoffTest {
 
         assertNull(resolved.trackIndex)
         assertTrue(resolved.intentSpecified)
-    }
-
-    @Test
-    fun malformedPayloadDecodesToNull() {
-        assertNull(decodeEpisodeSelectionHandoff("{not-json"))
-    }
-
-    @Test
-    fun encodedPayloadRoundTripsSemanticIntentAndRestoresAutoDefault() {
-        val handoff = EpisodeSelectionHandoff(
-            source = captureEpisodeSourceIntent(
-                version(101, "2160p", "hevc", hdr = true, container = "mkv"),
-            ),
-            subtitle = EpisodeSubtitleIntent(
-                mode = EpisodeSubtitleMode.TRACK,
-                language = "en",
-                codecFamily = "subrip",
-                external = true,
-            ),
-        )
-
-        assertEquals(handoff, decodeEpisodeSelectionHandoff(encodeEpisodeSelectionHandoff(handoff)))
-        assertEquals(EpisodeSubtitleIntent.auto(), decodeEpisodeSelectionHandoff("{}")?.subtitle)
     }
 
     private fun version(

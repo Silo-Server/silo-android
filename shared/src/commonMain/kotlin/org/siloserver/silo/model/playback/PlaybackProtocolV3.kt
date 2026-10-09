@@ -378,6 +378,11 @@ data class PlaybackSubtitleInventoryItemV3(
     val delivery: String = "",
     val url: String? = null,
     @SerialName("font_bundle_url") val fontBundleUrl: String? = null,
+    /**
+     * Opaque name of this track for the subtitle sync operations, present on
+     * external and downloaded tracks whose timing the server can correct.
+     */
+    @SerialName("sync_key") val syncKey: String? = null,
 )
 
 /** Resolves the optional ordinal from the stable server track identity. */
@@ -429,6 +434,13 @@ data class PlaybackStartRequestV3(
     @SerialName("bandwidth_cap_kbps") val bandwidthCapKbps: Int? = null,
     @SerialName("client_capabilities") val capabilities: ClientCodecCapabilities,
     @SerialName("client_playback_context") val clientPlaybackContext: ClientPlaybackContext,
+    /**
+     * False keeps this attempt on [fileId] through every replan: the server
+     * refuses rather than substitutes another version. Watch Party starts send
+     * false so every viewer stays on the room's file. Null omits the field and
+     * keeps the server default for solo playback.
+     */
+    @SerialName("allow_alternate_versions") val allowAlternateVersions: Boolean? = null,
 )
 
 @Serializable

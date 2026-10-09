@@ -6,6 +6,8 @@ import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.profiles.TvActiveProfileReset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +39,8 @@ class TvServerListViewModel(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
+    private val profileLaunchPreferences: TvProfileLaunchPreferences,
+    private val activeProfileReset: TvActiveProfileReset,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerListUiState())
@@ -69,14 +73,7 @@ class TvServerListViewModel(
 
             // Land on the deepest screen the new server's stored credentials
             // can reach — preserves the signed-in user when tokens are present.
-            val accessToken = tokenManager.getAccessToken()
-            val activeEntry = serverRegistry.activeEntry.value
-            val profileId = activeEntry?.profileId ?: tokenManager.getProfileId()
-            val destination = when {
-                accessToken.isNullOrBlank() -> TvServerSwitchDestination.Login
-                profileId.isNullOrBlank() -> TvServerSwitchDestination.ProfileSelection
-                else -> TvServerSwitchDestination.Home
-            }
+            val destination = switchDestination()
 
             _uiState.update {
                 it.copy(pendingSwitchToId = null, switchedTo = destination)
@@ -123,17 +120,34 @@ class TvServerListViewModel(
             // Land on the deepest screen the promoted server's stored
             // credentials can reach — preserves that server's session if tokens
             // are present, otherwise falls back to Login.
-            val accessToken = tokenManager.getAccessToken()
-            val activeEntry = serverRegistry.activeEntry.value
-            val profileId = activeEntry?.profileId ?: tokenManager.getProfileId()
-            val destination = when {
-                accessToken.isNullOrBlank() -> TvServerSwitchDestination.Login
-                profileId.isNullOrBlank() -> TvServerSwitchDestination.ProfileSelection
-                else -> TvServerSwitchDestination.Home
-            }
+            val destination = switchDestination()
 
             _uiState.update { it.copy(switchedTo = destination) }
         }
     }
 
+    /**
+     * The deepest screen the now-active server's stored credentials reach.
+     *
+     * Profile Selection covers a server switch too (silo-apple design §7.5):
+     * when it would ask at launch (Every Time, or a timed choice that has run
+     * out), the server's saved profile is cleared and Who's Watching shows
+     * instead. Otherwise switching servers would reopen a protected profile
+     * there without its PIN. Clearing before navigating keeps the picker from
+     * loading under an identity that is about to change.
+     */
+    private suspend fun switchDestination(): TvServerSwitchDestination {
+        val accessToken = tokenManager.getAccessToken()
+        val activeEntry = serverRegistry.activeEntry.value
+        val profileId = activeEntry?.profileId ?: tokenManager.getProfileId()
+        return when {
+            accessToken.isNullOrBlank() -> TvServerSwitchDestination.Login
+            profileId.isNullOrBlank() -> TvServerSwitchDestination.ProfileSelection
+            profileLaunchPreferences.requiresSelectionAtLaunch() -> {
+                activeProfileReset.clearActiveProfile()
+                TvServerSwitchDestination.ProfileSelection
+            }
+            else -> TvServerSwitchDestination.Home
+        }
+    }
 }

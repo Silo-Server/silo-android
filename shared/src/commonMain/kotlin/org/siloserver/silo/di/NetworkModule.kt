@@ -40,6 +40,7 @@ val networkModule = module {
     single { SimilarCardsV2Api(get(), get(), get()) }
     single { TasteProfileV2Api(get(), get(), get()) }
     single { DiscoverV2Api(get(), get(), get()) }
+    single { ShufflesV2Api(get(), get(), get()) }
     single { RecommendationApi(get(), get(), get(), get()) }
     single<RequestsApi> { DefaultRequestsApi(get(), get(), get()) }
     single<MetadataAiApi> { DefaultMetadataAiApi(get(), get(), get()) }
@@ -60,9 +61,18 @@ val networkModule = module {
     single { SubtitleDownloadV2Api(get(), get(), get()) }
     single { SubtitleReadsV2Api(get(), get(), get()) }
     single { SubtitleAiCreateV2Api(get(), get(), get()) }
+    single { SubtitleSyncV2Api(get(), get(), get()) }
     single<SubtitlesApi> { DefaultSubtitlesApi(get(), get(), get(), get()) }
     single<NotificationsApi> { NotificationsV2Api(get(), get(), get()) }
     single<PushRegistrationApi> { DefaultPushRegistrationApi(get(), get(), get()) }
-    single<WatchTogetherApi> { DefaultWatchTogetherApi(get(), get()) }
+    single<WatchTogetherApi> {
+        DefaultWatchTogetherApi(
+            client = get(),
+            gate = get(),
+            tokens = get(),
+            // Start, select, and promote must never be resent by the engine.
+            nonReplayingClient = createSiloClient(get(), getOrNull(), getOrNull(), getOrNull(), retryOnConnectionFailure = false),
+        )
+    }
     single<DiagnosticsApi> { DefaultDiagnosticsApi(get(), gate = get()) }
 }

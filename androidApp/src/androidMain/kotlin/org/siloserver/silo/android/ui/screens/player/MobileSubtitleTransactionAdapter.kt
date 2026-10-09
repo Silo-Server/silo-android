@@ -31,6 +31,7 @@ import org.siloserver.silo.model.playback.SubtitleIdentity
 import org.siloserver.silo.model.playback.SubtitleTransitionEvent
 import org.siloserver.silo.model.playback.SubtitleTransitionState
 import org.siloserver.silo.model.playback.UpdateAudioPreference
+import org.siloserver.silo.model.playback.UpdateQualityPreference
 import org.siloserver.silo.model.playback.isLocalDownloadedSubtitle
 import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.reduceSubtitleTransition
@@ -115,6 +116,8 @@ internal data class MobileSubtitleTransactionSnapshot(
     val pendingIdentity: SubtitleIdentity? = transition.pending?.identity,
     val localMountIdentity: SubtitleIdentity? = null,
     val failureMessage: String? = null,
+    /** The failure belongs to a quality change, not a subtitle or audio one. */
+    val qualityChangeFailed: Boolean = false,
 ) {
     val committedIdentity: SubtitleIdentity
         get() = transition.committed.identity
@@ -205,6 +208,7 @@ internal class MobileSubtitleTransactionAdapter(
     private var refreshGeneration = 0L
     private var subtitleIntentGeneration = 0L
     private var failureMessage: String? = null
+    private var qualityChangeFailed = false
     private var pendingLocalSelection: PendingLocalSelection? = null
     private var pendingLocalRestore: PendingLocalRestore? = null
     private var localMountGeneration = 0L
@@ -224,6 +228,7 @@ internal class MobileSubtitleTransactionAdapter(
                 pendingIdentity = queuedIdentity ?: localIdentity ?: transition.pending?.identity,
                 localMountIdentity = if (queuedIdentity == null) localIdentity else null,
                 failureMessage = failureMessage,
+                qualityChangeFailed = qualityChangeFailed && failureMessage != null,
             )
         }
 
@@ -370,6 +375,11 @@ internal class MobileSubtitleTransactionAdapter(
 
     fun selectAudio(audioTrackIndex: Int?) {
         mutate(UpdateAudioPreference(audioTrackIndex), explicit = true)
+    }
+
+    /** Replans the same file at [qualityPreference] (a protocol-v3 quality label). */
+    fun selectQuality(qualityPreference: String?) {
+        mutate(UpdateQualityPreference(qualityPreference), explicit = true)
     }
 
     /**
@@ -980,6 +990,10 @@ internal class MobileSubtitleTransactionAdapter(
     }
 
     private fun fail(generation: Long, message: String) {
+        val failedPending = transition.pending?.takeIf { it.generation == generation }
+        val failedQualityChange = failedPending != null &&
+            failedPending.qualityPreferenceSpecified &&
+            failedPending.qualityPreference != transition.committed.qualityPreference
         val failedLocalOwner = pendingLocalSelection?.takeIf { owner ->
             owner.proposedState.pending?.generation == generation
         }
@@ -996,6 +1010,7 @@ internal class MobileSubtitleTransactionAdapter(
         }
         transition = failed.state
         failureMessage = message
+        qualityChangeFailed = failedQualityChange
         val priorIdentity = transition.committed.identity
         if (
             failedLocalOwner?.mountedBeforeAdoption == true &&
@@ -1025,12 +1040,14 @@ internal class MobileSubtitleTransactionAdapter(
             }
             invalidateLocalMount()
             failureMessage = "Embedded subtitles couldn't load. Retrying with a sidecar."
+            qualityChangeFailed = false
             publish()
             onEmbeddedSubtitleFailure(failedIdentity.serverIndex)
             return
         }
         invalidateLocalMount()
         failureMessage = "The selected subtitle could not be mounted."
+        qualityChangeFailed = false
         publish()
     }
 

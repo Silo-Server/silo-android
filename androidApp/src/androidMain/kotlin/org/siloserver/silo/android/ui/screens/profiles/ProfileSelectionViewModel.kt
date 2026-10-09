@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.authorizedProfileToken
+import org.siloserver.silo.model.profile.householdPrimary
 import org.siloserver.silo.model.server.ServerContract
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
@@ -25,6 +26,8 @@ data class ProfileSelectionUiState(
     val isManageMode: Boolean = false,
     /** Non-null when a PIN-protected profile was tapped and the dialog should show. */
     val pinDialogProfile: Profile? = null,
+    /** The open PIN prompt is the primary profile's, unlocking manage mode rather than selecting it. */
+    val pinForManagement: Boolean = false,
     val pinIsVerifying: Boolean = false,
     val pinError: String? = null,
     /** Bumped on each rejected PIN so the dots shake and the entry clears. */
@@ -40,6 +43,8 @@ data class ProfileSelectionUiState(
     /** The profile this session is signed in as — deleting it needs a
      *  stronger warning and clears the local selection first. */
     val activeProfileId: String? = null,
+    /** Manage mode just started for "Add profile"; the screen opens the add form and consumes this. */
+    val openAddProfile: Boolean = false,
 )
 
 class ProfileSelectionViewModel(
@@ -63,9 +68,24 @@ class ProfileSelectionViewModel(
      */
     private var skipsSingleProfile: Boolean? = null
 
+    /** "Add profile" asked for manage mode; open the add form once it starts. */
+    private var addAfterUnlock = false
+
     init {
         loadProfiles()
         reloadWhenUpdateRequiredLifts()
+        leaveManageModeWhenSessionEnds()
+    }
+
+    /** Cancel on a re-prompt for the primary's PIN ends the session; manage mode goes with it. */
+    private fun leaveManageModeWhenSessionEnds() {
+        viewModelScope.launch {
+            profileRepository.householdManagement.isActive.collect { active ->
+                if (!active && _uiState.value.isManageMode) {
+                    _uiState.update { it.copy(isManageMode = false, deleteDialogProfile = null) }
+                }
+            }
+        }
     }
 
     /**
@@ -125,6 +145,7 @@ class ProfileSelectionViewModel(
                 // Leaving a scope behind for an empty grid is stale metadata
                 // that a later selection could be qualified against.
                 gridScope = null
+                profileRepository.householdManagement.end()
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -150,6 +171,7 @@ class ProfileSelectionViewModel(
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
+                    if (!isAdmin) profileRepository.householdManagement.end()
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -183,9 +205,68 @@ class ProfileSelectionViewModel(
         }
     }
 
+    /**
+     * Entering manage mode acts as the household's primary profile, the only
+     * one the server lets manage the others, whichever profile this device
+     * last used. A PIN-locked primary is verified first; Cancel there leaves
+     * manage mode off. The primary is never selected or remembered.
+     */
     fun toggleManageMode() {
-        if (!_uiState.value.canManageProfiles) return
-        _uiState.update { it.copy(isManageMode = !it.isManageMode) }
+        val state = _uiState.value
+        if (!state.canManageProfiles) return
+        if (state.isManageMode) {
+            profileRepository.householdManagement.end()
+            _uiState.update { it.copy(isManageMode = false) }
+            return
+        }
+        enterManageMode(thenAdd = false)
+    }
+
+    /**
+     * "Add profile" creates a household profile, so it needs the same primary
+     * profile step as Manage; the add form opens once manage mode is on.
+     */
+    fun requestAddProfile() {
+        val state = _uiState.value
+        if (!state.canManageProfiles) return
+        if (state.isManageMode && profileRepository.householdManagement.isActive.value) {
+            _uiState.update { it.copy(openAddProfile = true) }
+        } else {
+            enterManageMode(thenAdd = true)
+        }
+    }
+
+    fun onAddProfileConsumed() {
+        _uiState.update { it.copy(openAddProfile = false) }
+    }
+
+    private fun enterManageMode(thenAdd: Boolean) {
+        val primary = _uiState.value.profiles.householdPrimary()
+        if (primary == null) {
+            _uiState.update { it.copy(error = "Couldn't find the primary profile needed to manage profiles.") }
+            return
+        }
+        pinAttempt++
+        addAfterUnlock = thenAdd
+        if (primary.hasPin) {
+            _uiState.update {
+                it.copy(pinDialogProfile = primary, pinForManagement = true, pinIsVerifying = false, pinError = null)
+            }
+            return
+        }
+        profileRepository.householdManagement.begin(primary, profileToken = null, scope = gridScope)
+        onManageModeStarted()
+    }
+
+    private fun onManageModeStarted() {
+        val add = addAfterUnlock
+        addAfterUnlock = false
+        _uiState.update { it.copy(isManageMode = true, openAddProfile = add) }
+    }
+
+    override fun onCleared() {
+        profileRepository.householdManagement.end()
+        super.onCleared()
     }
 
     /**
@@ -214,6 +295,7 @@ class ProfileSelectionViewModel(
             _uiState.update {
                 it.copy(
                     pinDialogProfile = profile,
+                    pinForManagement = false,
                     pinIsVerifying = false,
                     pinError = null,
                 )
@@ -231,6 +313,7 @@ class ProfileSelectionViewModel(
      */
     fun onPinEntered(pin: String) {
         val profile = _uiState.value.pinDialogProfile ?: return
+        val forManagement = _uiState.value.pinForManagement
         val attempt = ++pinAttempt
 
         viewModelScope.launch {
@@ -249,7 +332,19 @@ class ProfileSelectionViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val token = result.data.authorizedProfileToken()
-                    if (token != null) {
+                    if (token != null && forManagement) {
+                        // An account or server change during the round trip
+                        // voids this answer; the reload shows the new identity.
+                        if (!profileRepository.identityScopeUnchanged(scope)) {
+                            dismissPinDialog()
+                            loadProfiles()
+                            return@launch
+                        }
+                        // Kept for manage mode only; the device's selection is untouched.
+                        profileRepository.householdManagement.begin(profile, token, scope)
+                        _uiState.update { it.copy(pinIsVerifying = false, pinDialogProfile = null, pinForManagement = false) }
+                        onManageModeStarted()
+                    } else if (token != null) {
                         _uiState.update { it.copy(pinIsVerifying = false, pinDialogProfile = null) }
                         selectProfile(profile.id, token, scope)
                     } else {
@@ -279,11 +374,12 @@ class ProfileSelectionViewModel(
     }
 
     fun dismissPinDialog() {
+        addAfterUnlock = false
         // Bump the generation so an in-flight verification for the dismissed
         // profile can no longer commit.
         pinAttempt++
         _uiState.update {
-            it.copy(pinDialogProfile = null, pinIsVerifying = false, pinError = null)
+            it.copy(pinDialogProfile = null, pinForManagement = false, pinIsVerifying = false, pinError = null)
         }
     }
 
@@ -301,10 +397,11 @@ class ProfileSelectionViewModel(
         val profile = _uiState.value.deleteDialogProfile ?: return
         _uiState.update { it.copy(deleteDialogProfile = null) }
         viewModelScope.launch {
-            // Order matters: the DELETE itself is authorized by the signed-in
-            // profile's X-Profile-Id/X-Profile-Token headers, so credentials
-            // must stay intact until the server has answered. Only after a
-            // successful delete of the signed-in profile do we clear the local
+            // Order matters: the DELETE is authorized by the household
+            // manager's (primary profile's) headers, but the signed-in
+            // profile's credentials stay intact until the server has
+            // answered. Only after a successful delete of the signed-in
+            // profile do we clear the local
             // selection — BEFORE reloading, so the list refresh doesn't ride
             // the now-invalidated profile token (previously that errored and
             // rendered an empty list — "all profiles gone").

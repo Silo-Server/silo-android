@@ -21,21 +21,28 @@ interface RoomSessionRepository {
     val roomSnapshot: StateFlow<RoomSnapshot?>
     val roomClosedReason: StateFlow<String?>
 
+    /**
+     * The local generation of the current membership, or null when there is no
+     * live membership. Joining the same room again produces a new generation.
+     */
+    suspend fun membershipGeneration(): Long?
     suspend fun connect(roomId: String)
     suspend fun reset()
     suspend fun closeRoom(): ApiResult<Unit>
 }
 
-/** A Watch Together room, not a device-local episode queue, owns title changes. */
+/** A Watch Party room, not a device-local episode queue, owns title changes. */
 fun shouldNavigateToLocalNext(inWatchTogetherRoom: Boolean): Boolean =
     !inWatchTogetherRoom
 
 /**
- * The single application-scoped owner of a Watch Together connection.
+ * The single application-scoped owner of a Watch Party connection.
  *
  * Screen scopes adopt this session; they never own the socket. Replacement
  * and leave are serialized, and the previous job is joined before repository
- * state can be reused by another room.
+ * state can be reused by another membership. Connections are keyed by
+ * membership generation, not room id, so an explicit rejoin of the same room
+ * replaces the obsolete connection instead of being mistaken for it.
  */
 class RoomSession(
     private val repository: RoomSessionRepository,
@@ -44,7 +51,7 @@ class RoomSession(
 ) {
     private val mutex = Mutex()
     private var connectionJob: Job? = null
-    private var connectedRoomId: String? = null
+    private var connectedGeneration: Long? = null
 
     val room: StateFlow<RoomSnapshot?> = repository.roomSnapshot
     val closedReason: StateFlow<String?> = repository.roomClosedReason
@@ -65,14 +72,14 @@ class RoomSession(
         scope.launch(start = CoroutineStart.UNDISPATCHED) { enter(roomId) }
 
     /**
-     * UI-facing durable departure. If requested, close is attempted while the
-     * current lease is still live; teardown then joins the socket and resets
-     * state even if the initiating screen disappears.
+     * UI-facing durable departure. If requested, End is attempted while the
+     * current membership is still live; teardown then joins the socket and
+     * resets state even if the initiating screen disappears.
      */
     fun depart(closeRoom: Boolean = false): Job =
         scope.launch(start = CoroutineStart.UNDISPATCHED) {
             mutex.withLock {
-                if (closeRoom && connectedRoomId != null) {
+                if (closeRoom && connectedGeneration != null) {
                     try {
                         repository.closeRoom()
                     } finally {
@@ -87,11 +94,14 @@ class RoomSession(
     suspend fun enter(roomId: String) {
         if (roomId.isBlank()) return
         mutex.withLock {
-            if (connectedRoomId == roomId && connectionJob?.isActive == true) return
+            val generation = repository.membershipGeneration() ?: return
+            if (connectedGeneration == generation && connectionJob?.isActive == true) return
+            // Join the obsolete socket's teardown before the new membership
+            // can own shared state.
             connectionJob?.cancelAndJoin()
-            connectedRoomId = roomId
+            connectedGeneration = generation
             // Establish repository ownership before enter() returns. Without
-            // UNDISTPATCHED, a concurrent replacement can cancel a queued job
+            // UNDISPATCHED, a concurrent replacement can cancel a queued job
             // before it ever installs its connection owner.
             connectionJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
                 repository.connect(roomId)
@@ -110,7 +120,7 @@ class RoomSession(
     private suspend fun leaveLocked() {
         connectionJob?.cancelAndJoin()
         connectionJob = null
-        connectedRoomId = null
+        connectedGeneration = null
         repository.reset()
     }
 }

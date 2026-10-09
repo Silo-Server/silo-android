@@ -73,8 +73,10 @@ import org.siloserver.silo.model.catalog.Person
 import org.siloserver.silo.model.catalog.personMetadataBadges
 import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvCatalogGrid
+import org.siloserver.silo.tv.ui.components.TvDialogDefaults
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
@@ -468,16 +470,14 @@ private fun TvPersonBioDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.62f)),
+                .background(TvDialogDefaults.Scrim),
             contentAlignment = Alignment.Center,
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.56f)
                     .fillMaxHeight(0.76f)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
-                    .border(0.6.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+                    .tvDialogSurface()
                     .onPreviewKeyEvent { ev ->
                         when {
                             ev.type == KeyEventType.KeyUp &&

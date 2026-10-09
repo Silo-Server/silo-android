@@ -23,6 +23,7 @@ import org.siloserver.silo.common.player.PlaybackSessionLifecycle
 import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.PlaybackTeardownGate
 import org.siloserver.silo.common.player.VideoSessionStartV3
+import org.siloserver.silo.common.player.subtitlesForVideoMediaMount
 import org.siloserver.silo.common.player.cast.CastMediaSpec
 import org.siloserver.silo.common.player.cast.CastPrepareRequest
 import org.siloserver.silo.common.player.PlayerNotice
@@ -64,6 +65,7 @@ import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.playback.PlayMethod
 import org.siloserver.silo.model.playback.PlaybackDelivery
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
+import org.siloserver.silo.model.playback.playbackQualityMenu
 import org.siloserver.silo.model.playback.executableMedia3ClientTransformations
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.CommittedSubtitle
@@ -75,6 +77,17 @@ import org.siloserver.silo.model.playback.rebaseDownloadedSubtitleUrl
 import org.siloserver.silo.model.playback.resolvedSelectedSubtitleIndex
 import org.siloserver.silo.model.playback.resolvePlaybackStartPosition
 import org.siloserver.silo.playback.PlaybackSubtitleReady
+import org.siloserver.silo.playback.PlaybackSubtitleTimingChanged
+import org.siloserver.silo.playback.PlaybackSubtitleSyncUpdated
+import org.siloserver.silo.playback.SubtitleSyncController
+import org.siloserver.silo.playback.SubtitleSyncFeedbackTracker
+import org.siloserver.silo.playback.SubtitleSyncNotice
+import org.siloserver.silo.playback.SubtitleSyncUiState
+import org.siloserver.silo.playback.feedbackInput
+import org.siloserver.silo.playback.includesSyncKey
+import org.siloserver.silo.playback.activeSyncKey
+import org.siloserver.silo.model.subtitles.SubtitleSyncState
+import org.siloserver.silo.common.player.subtitleSyncName
 import org.siloserver.silo.playback.applyAuthoritativeSubtitleReadyTrack
 import org.siloserver.silo.model.subtitles.SubtitleAiJob
 import org.siloserver.silo.model.subtitles.SubtitleAiQuota
@@ -109,6 +122,9 @@ import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.SubtitlesRepository
 import org.siloserver.silo.repository.port.PlaybackWriteScope
 import org.siloserver.silo.repository.port.TrackSelectionFingerprintUpdate
+import org.siloserver.silo.watchtogether.RoomPlayerObservation
+import org.siloserver.silo.watchtogether.RoomPlayerState
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -128,8 +144,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -253,16 +271,6 @@ internal fun selectedAudioTrackOrdinal(
     audioTracks: List<AudioTrack>,
 ): Int = selectedServerIndex.takeIf { it in audioTracks.indices } ?: 0
 
-private fun SubtitleIdentity.serverTrackIndexForMobile(): Int = when (this) {
-    SubtitleIdentity.Off -> -1
-    is SubtitleIdentity.ServerSidecar -> serverIndex
-    is SubtitleIdentity.ServerBurnIn -> serverIndex
-    is SubtitleIdentity.Embedded -> serverIndex
-    is SubtitleIdentity.Downloaded,
-    is SubtitleIdentity.LocalMedia3,
-    -> -1
-}
-
 class PlayerViewModel(
     private val videoPlaybackCoordinator: VideoPlaybackSessionCoordinator,
     private val catalogRepository: CatalogRepository,
@@ -297,6 +305,8 @@ class PlayerViewModel(
     // Cached active profile; offline playback reads subtitle preferences from
     // it instead of waiting on the server. Optional for the same reason.
     private val activeProfileStore: org.siloserver.silo.model.profile.ActiveProfileStore? = null,
+    // Shuffle: the server picks what plays next. Optional for the same reason.
+    private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -316,6 +326,7 @@ class PlayerViewModel(
         val initialSubtitleTrackIndex: Int?,
         val resumePositionOverride: Double?,
         val suppressResumeRewind: Boolean,
+        val room: WatchPartyPlaybackContext? = null,
     )
 
     internal fun currentExternalRouteTarget(): MobilePlayerRouteTarget? =
@@ -333,6 +344,8 @@ class PlayerViewModel(
         private const val SEEK_SETTLE_DEADLINE_MS = 15_000L
         // Up-next auto-play countdown length (matches TV's NEXT_UP_COUNTDOWN_SECONDS).
         const val UP_NEXT_COUNTDOWN_SECONDS = 10
+        const val SHUFFLE_CONTINUE_FAILED = "Couldn't continue the shuffle."
+        const val SHUFFLE_PICK_FAILED = "Couldn't pick another."
         /** iOS resolveOnDeckItems: section pools feeding the On Deck carousel. */
         // Stored orientation-mode values — raw-value parity with iOS
         // `PlayerOrientationMode` so the device-scoped setting round-trips.
@@ -370,10 +383,29 @@ class PlayerViewModel(
         val runtimeMinutes: Int,
         val seriesTitle: String? = null,
         val overview: String? = null,
+        /** False for a shuffled movie, which has no season or episode line. */
+        val isEpisode: Boolean = true,
     ) {
         val label: String
-            get() = "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
+            get() = if (!isEpisode) {
+                title.orEmpty()
+            } else {
+                "S$seasonNumber·E$episodeNumber" + (title?.let { " — $it" } ?: "")
+            }
     }
+
+    /**
+     * Set while a shuffle plays: the Up Next card announces the server's
+     * random pick from the scope [scopeLabel] names, and the player offers no
+     * sequential next episode.
+     */
+    data class ShuffleUiState(
+        /** Null until the shuffle has been read. */
+        val scopeLabel: String? = null,
+        val pickingAnother: Boolean = false,
+        /** A transient failure to continue or pick another. */
+        val message: String? = null,
+    )
 
     data class PlayerUiState(
         val isLoading: Boolean = true,
@@ -395,6 +427,8 @@ class PlayerViewModel(
         val title: String = "",
         val subtitle: String = "",
         val seriesTitle: String? = null,
+        /** Catalog item type ("movie", "episode", …), for the controls' "MOVIE · 2026" line. */
+        val contentType: String? = null,
         /**
          * Artwork URL used for the Now Playing lock-screen / Bluetooth /
          * notification surface. Sourced from `WatchDetail.backdropUrl` with
@@ -406,6 +440,8 @@ class PlayerViewModel(
         val sessionId: String? = null,
         val playMethod: PlayMethod? = null,
         val playbackPlan: PlaybackExecutionPlan? = null,
+        /** The quality preference the playing plan was built for; null is Auto. */
+        val committedQualityPreference: String? = null,
         val requestHeaders: Map<String, String> = emptyMap(),
         val delivery: PlaybackDelivery? = null,
         val streamUrl: String? = null,
@@ -466,6 +502,7 @@ class PlayerViewModel(
         val upNextVideoEnded: Boolean = false,
         /** Remaining auto-play countdown seconds; null = no countdown (gated / auto-play off). */
         val upNextCountdownSeconds: Int? = null,
+        val shuffle: ShuffleUiState? = null,
         val preferredAudioLanguage: String? = null,
         val preferredTextLanguage: String? = null,
         /**
@@ -475,6 +512,12 @@ class PlayerViewModel(
          * current position.
          */
         val subtitleRefreshNonce: Int = 0,
+        /**
+         * Grows per sync key each time a syncable subtitle's timing changed
+         * and its cues must be fetched again. The mount that carries a
+         * revision reports it back, so sync feedback knows the new cues show.
+         */
+        val subtitleCueRevisions: Map<String, Int> = emptyMap(),
         /**
          * True when [audioTracks] come from a download's offline manifest and
          * list the local file's own audio tracks in file order, so an audio
@@ -563,7 +606,7 @@ class PlayerViewModel(
     /**
      * Unconditional seek channel for room-driven corrective seeks. The normal
      * position mirror in PlayerScreen applies a 2.0s deadband (to avoid feedback
-     * loops between playback-progress updates and user scrubs), but Watch Together
+     * loops between playback-progress updates and user scrubs), but Watch Party
      * corrective seeks can be as small as the engine's 0.35s drift threshold and
      * MUST always reach the player. PlayerScreen collects this and calls
      * `mediaController.seekTo` with no deadband. See [seekImmediate].
@@ -650,7 +693,7 @@ class PlayerViewModel(
 
     /**
      * Video relative-seek intervals every phone surface uses (buttons,
-     * double-tap, Watch Together skips): the profile-wide values on a
+     * double-tap, Watch Party skips): the profile-wide values on a
      * revision-9 server, otherwise the phone's pre-revision-9 10s/10s. Read at
      * press time, so a settings change applies to the next skip mid-playback.
      */
@@ -685,6 +728,15 @@ class PlayerViewModel(
     private var pendingApproachingEndVideoEnded: Boolean? = null
     private var upNextCountdownJob: Job? = null
     private val nextUpTransitionGate = NextUpTransitionGate()
+    // The running shuffle this player plays picks from; null outside a shuffle.
+    private var shufflePlayback: org.siloserver.silo.playback.ShufflePlayback? = null
+    // The later part of a multi-part pick that plays before the shuffle moves on.
+    private var shuffleNextPartFileId: Int? = null
+    // Once per item: the server re-checks the next pick when the card opens.
+    private var shuffleRefreshedForPostRoll = false
+    private var shuffleAdvanceJob: Job? = null
+    private var shufflePickJob: Job? = null
+    private var shuffleMessageJob: Job? = null
     // Auto-dismiss timer for the transient version-switch failure pill. A new
     // failure cancels the prior job so a stale one can't clear the fresh
     // message early (repeated identical failures used to be dismissed within a
@@ -818,11 +870,51 @@ class PlayerViewModel(
     private val _subtitleTools = MutableStateFlow(SubtitleToolsUiState())
     val subtitleTools: StateFlow<SubtitleToolsUiState> = _subtitleTools.asStateFlow()
 
+    // Timing and sync state of the playing file's syncable subtitles, and
+    // the card that follows a sync this viewer started.
+    private val subtitleSync = SubtitleSyncController(
+        subtitlesRepository,
+        viewModelScope,
+        onTimingChanged = ::onSubtitleSyncTimingChanged,
+    )
+    val subtitleSyncState: StateFlow<SubtitleSyncUiState> = subtitleSync.state
+    private val subtitleSyncFeedback = SubtitleSyncFeedbackTracker(viewModelScope)
+    val subtitleSyncNotice: StateFlow<SubtitleSyncNotice?> = subtitleSyncFeedback.notice
+    /** The cue revision of each sync key whose cues the player has in use. */
+    private val loadedSubtitleCueRevisions = MutableStateFlow<Map<String, Int>>(emptyMap())
+    /** Cue revisions of the last subtitle mount, until Media3 selects its subtitle track. */
+    private var mountedSubtitleCueRevisions: Map<String, Int> = emptyMap()
+
+    fun requestSubtitleSync(key: String) = subtitleSync.requestSync(key)
+
+    fun resetSubtitleTiming(key: String) = subtitleSync.resetTiming(key)
+
+    fun dismissSubtitleSyncNotice() = subtitleSyncFeedback.dismiss()
+
+    /**
+     * The player mounted subtitles built from a state carrying [revisions].
+     * Media3 fetches them after the mount returns, so they count as loaded
+     * only once [onMountedSubtitleSelected] reports the track in use.
+     */
+    internal fun onSubtitleCuesMounted(revisions: Map<String, Int>) {
+        mountedSubtitleCueRevisions = revisions
+    }
+
+    /** Media3 selected the mounted subtitle track on the live player: its cues are in use. */
+    internal fun onMountedSubtitleSelected() {
+        val revisions = mountedSubtitleCueRevisions
+        if (revisions.isEmpty()) return
+        mountedSubtitleCueRevisions = emptyMap()
+        loadedSubtitleCueRevisions.update { it + revisions }
+    }
+
     private var aiStatusFetched = false
     private var searchJob: Job? = null
     private var aiJobHandle: Job? = null
 
     private var controlsHideJob: Job? = null
+    // True while the seek bar is dragged; see onScrubbingChanged.
+    private var scrubbing = false
     private var introObserverJob: Job? = null
     private var lifecycleObserverJob: Job? = null
     private var resolveNextEpisodeJob: Job? = null
@@ -868,6 +960,38 @@ class PlayerViewModel(
                 .map { it.mediaFileId }
                 .distinctUntilChanged()
                 .collect { org.siloserver.silo.common.player.ActivePlaybackFile.set(it) }
+        }
+        // Subtitle sync applies to server playback only; offline and local
+        // files have no inventory sync keys.
+        viewModelScope.launch {
+            _uiState
+                .map { state ->
+                    state.mediaFileId?.takeIf { state.sessionId != null } to
+                        state.subtitleTracks.mapNotNullTo(mutableSetOf()) { it.syncKey }
+                }
+                .distinctUntilChanged()
+                .collect { (mediaFileId, syncKeys) -> subtitleSync.bind(mediaFileId, syncKeys) }
+        }
+        viewModelScope.launch {
+            val screen = _uiState
+                .map { state ->
+                    val activeKey = state.sessionId?.let {
+                        val selected = state.localSubtitleMountIdentity ?: state.committedSubtitleIdentity
+                        state.subtitleTracks.activeSyncKey(
+                            selected,
+                            mounted = subtitlesForVideoMediaMount(
+                                subtitles = state.subtitleTracks,
+                                playbackPlan = state.playbackPlan,
+                                subtitleIdentity = selected,
+                            ),
+                        )
+                    }
+                    Triple(activeKey, state.subtitleCueRevisions, state.subtitleTracks)
+                }
+                .distinctUntilChanged()
+            combine(subtitleSync.state, screen, loadedSubtitleCueRevisions) { sync, (activeKey, revisions, tracks), loaded ->
+                sync.feedbackInput(activeKey, revisions, loaded) { subtitleSyncName(tracks, it) }
+            }.collect(subtitleSyncFeedback::update)
         }
         // Mirror the screen error into the adb test hook — screen-level
         // failures (terminal server plans) never reach the Media3 player, so
@@ -930,6 +1054,7 @@ class PlayerViewModel(
                         suppressResumeRewind = true,
                         preserveRouteIntent = true,
                         recoveryStartParams = params,
+                        room = roomRestartContext(renewal.positionSeconds),
                     )
                 }
             }
@@ -953,6 +1078,9 @@ class PlayerViewModel(
         // (which is a *toggle* and would inadvertently resume a paused player).
         sleepTimer.configure {
             _uiState.update { it.copy(isPaused = true) }
+            // In a Watch Party the timer pauses only this device; the room
+            // keeps playing and hears nothing until the viewer resumes.
+            if (inRoom) beginRoomSuspension(RoomSuspensionReason.SleepTimer)
         }
 
         viewModelScope.launch {
@@ -1015,7 +1143,7 @@ class PlayerViewModel(
         // internal auto-advance and recovery positions must not become route
         // intent.
         routeResumePositionSeconds: Double? = null,
-        // True for Watch Together (the synced anchor must land exactly — no
+        // True for Watch Party (the synced anchor must land exactly — no
         // skip-back nudge). The request's roomId is always null on mobile, so WT
         // can't be inferred from it the way the TV starter does.
         suppressResumeRewind: Boolean = false,
@@ -1028,7 +1156,32 @@ class PlayerViewModel(
         libraryId: Int? = browseLibraryId,
         // Exact capability/context snapshot used only for a 404 renewal.
         recoveryStartParams: StartParams? = null,
+        // Watch Party: the room's exact file and position. Defaults to the
+        // current room context so every in-place restart keeps the room's
+        // file, never plays a download, and starts paused.
+        room: WatchPartyPlaybackContext? = currentRoomContext,
     ) {
+        if (room != null &&
+            (contentId != room.contentId || preferredFileId != room.fileId || libraryId != room.libraryId)
+        ) {
+            // A room plays exactly its own content and file; no caller can override that.
+            loadContent(
+                contentId = room.contentId,
+                preferredFileId = room.fileId,
+                preferredQuality = preferredQuality,
+                initialAudioTrackIndex = initialAudioTrackIndex,
+                initialSubtitleTrackIndex = initialSubtitleTrackIndex,
+                resumePositionOverride = resumePositionOverride,
+                routeResumePositionSeconds = routeResumePositionSeconds,
+                suppressResumeRewind = suppressResumeRewind,
+                force = force,
+                preserveRouteIntent = preserveRouteIntent,
+                libraryId = room.libraryId,
+                recoveryStartParams = recoveryStartParams,
+                room = room,
+            )
+            return
+        }
         browseLibraryId = libraryId
         aiPlaybackGeneration++
         val normalizedPreferredQuality = VideoPlayerRouteArgs.normalizeQuality(preferredQuality)
@@ -1048,11 +1201,23 @@ class PlayerViewModel(
             normalizedRequestedQuality = normalizedPreferredQuality,
             preserveCurrent = preserveRouteIntent,
         )
+        // A quality picked during this title's playback, or this room epoch,
+        // outlives reloads of it (recovery, retry, the next shuffle part), so
+        // they start with it rather than the route's quality.
+        val carriesPickedQuality = keepsPickedQuality(
+            contentId = contentId,
+            previousContentId = lastLoadArgs?.contentId,
+            routeNamesQuality = !preserveRouteIntent && normalizedPreferredQuality != null,
+            room = room,
+            currentRoom = currentRoomContext,
+        )
+        if (room == null && !carriesPickedQuality) sessionQualityOverride = null
+        val loadQuality = sessionQualityOverride.takeIf { carriesPickedQuality } ?: effectivePreferredQuality
         loadJob?.cancel()
         val loadOwner = loadOwners.begin(
             contentId = contentId,
             preferredFileId = preferredFileId,
-            preferredQuality = effectivePreferredQuality,
+            preferredQuality = loadQuality,
         )
         // Remember the exact request so a "Can't reach server" Retry / Try Anyway
         // can replay it faithfully (this screen has no other retry entry point).
@@ -1064,13 +1229,17 @@ class PlayerViewModel(
             initialSubtitleTrackIndex = initialSubtitleTrackIndex,
             resumePositionOverride = resumePositionOverride,
             suppressResumeRewind = suppressResumeRewind,
+            room = room,
         )
+        if (room != null) beginRoomLoad(room)
         // A fresh load resets any in-flight intro countdown / cancellation memory.
         introAutoSkipController.reset()
         // New item: re-arm the once-per-episode auto-advance trigger. (The
         // AutoPlayGuard streak intentionally PERSISTS across episodes.)
         autoAdvanceHandled = false
         pendingApproachingEndVideoEnded = null
+        shuffleNextPartFileId = null
+        shuffleRefreshedForPostRoll = false
         resetPlaybackRecoveryState()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
@@ -1098,8 +1267,9 @@ class PlayerViewModel(
                 // this contentId AND its bytes are still on disk, hand the
                 // player a file:// URI without touching the server at all.
                 // Title + duration are best-effort — we attempt the watch
-                // detail fetch but tolerate failure.
-                val localPlaybackStarted = tryLocalPlayback(
+                // detail fetch but tolerate failure. A Watch Party always
+                // streams the room's file, so it never plays a download.
+                val localPlaybackStarted = room == null && tryLocalPlayback(
                     contentId = contentId,
                     preferredFileId = preferredFileId,
                     resumePositionOverride = resumePositionOverride,
@@ -1125,14 +1295,15 @@ class PlayerViewModel(
                         libraryId = libraryId,
                         contentId = contentId,
                         preferredFileId = preferredFileId,
-                        preferredQualityOverride = effectivePreferredQuality,
-                        roomId = null,
+                        preferredQualityOverride = loadQuality,
+                        roomId = room?.roomId,
                         resumePositionOverride = resumePositionOverride,
                         audioTrackIndex = initialAudioTrackIndex,
                         subtitleTrackIndex = initialSubtitleTrackIndex,
                         suppressResumeRewind = suppressResumeRewind,
                         force = force,
                         recoveryStartParams = recoveryStartParams,
+                        room = room,
                     ),
                 )) {
                     is VideoPlayerUiState.Ready -> {
@@ -1158,6 +1329,7 @@ class PlayerViewModel(
                             isSessionRenewal = recoveryStartParams != null,
                             loadOwner = loadOwner,
                             watchOwner = readyWatchOwner,
+                            room = room,
                         )
                         unpublishedReadySessionId = null
                     }
@@ -1171,6 +1343,11 @@ class PlayerViewModel(
                                     showUpNext = false,
                                     isNextUpTransitioning = false,
                                 )
+                            }
+                            // The room decides whether another file is tried;
+                            // this device never picks one itself.
+                            if (room != null) {
+                                publishRoomRefusal(room, room.fileId, playbackState.terminalReason)
                             }
                         }
                     }
@@ -1213,6 +1390,7 @@ class PlayerViewModel(
         loadJob = newLoadJob
         newLoadJob.invokeOnCompletion {
             if (loadJob === newLoadJob) loadJob = null
+            refreshRoomObservation()
         }
     }
 
@@ -1247,7 +1425,20 @@ class PlayerViewModel(
             suppressResumeRewind = args.suppressResumeRewind,
             force = force,
             preserveRouteIntent = true,
+            room = args.room?.let(::roomRetryContext),
         )
+    }
+
+    /**
+     * The room context for a retry of [original]. Within the same epoch it
+     * resumes where this player was, like an in-place restart; before
+     * anything played it keeps the room position. A retry never carries an
+     * older epoch's position.
+     */
+    private fun roomRetryContext(original: WatchPartyPlaybackContext): WatchPartyPlaybackContext {
+        val current = currentRoomContext ?: return original
+        if (current.roomId != original.roomId || current.selectionRevision != original.selectionRevision) return original
+        return roomRestartContext(_uiState.value.position.takeIf { it > 0.0 }) ?: original
     }
 
     private fun ownsLoad(owner: MobilePlayerLoadOwner): Boolean = loadOwners.owns(owner)
@@ -1271,6 +1462,7 @@ class PlayerViewModel(
         isSessionRenewal: Boolean,
         loadOwner: MobilePlayerLoadOwner,
         watchOwner: org.siloserver.silo.network.AuthScopeSnapshot?,
+        room: WatchPartyPlaybackContext? = null,
     ) {
         val watchMetadata = ReadyWatchMetadata(
             catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
@@ -1420,6 +1612,7 @@ class PlayerViewModel(
                 error = null,
                 title = watchDetail?.title ?: playbackState.title,
                 seriesTitle = watchDetail?.seriesTitle,
+                contentType = watchDetail?.type ?: playbackState.contentType,
                 subtitle = watchDetail?.let { detail -> buildSubtitle(detail) } ?: playbackState.subtitle.orEmpty(),
                 artworkUrl = playbackState.artworkUrl,
                 sessionId = playbackState.sessionId
@@ -1439,8 +1632,9 @@ class PlayerViewModel(
                 // not declare one; neither catalog nor Media3 may substitute it.
                 duration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
                 serverDuration = playbackState.durationSeconds?.takeIf { it > 0.0 } ?: 0.0,
-                isPlaying = true,
-                isPaused = false,
+                // A Watch Party prepares paused; only an accepted room command plays.
+                isPlaying = room == null,
+                isPaused = room != null,
                 subtitleTracks = mountedSubtitles,
                 audioTracks = version?.audioTracks ?: emptyList(),
                 selectedAudioIndex = selectedAudioOrdinal,
@@ -1526,6 +1720,10 @@ class PlayerViewModel(
     }
 
     private fun startIntroAutoSkipObserver() {
+        // In a Watch Party an intro never skips on its own: the mode is pinned
+        // to Ask, so the controller only offers the pill and the screen sends
+        // its Skip as a room seek (or hides it from members who cannot seek).
+        val introMode = if (inRoom) flowOf(IntroSkipMode.ASK) else playerSettingsStore.introSkipModeFlow
         introObserverJob?.cancel()
         introObserverJob = introAutoSkipController.observe(
             position = _uiState
@@ -1534,7 +1732,7 @@ class PlayerViewModel(
             introRange = _uiState
                 .map { it.intro }
                 .distinctUntilChanged(),
-            mode = playerSettingsStore.introSkipModeFlow,
+            mode = introMode,
             introKey = _uiState
                 .map { state ->
                     state.intro?.let { intro ->
@@ -1905,6 +2103,21 @@ class PlayerViewModel(
                         val effectiveFileId = decision.session.mediaFileId.takeIf { it > 0 }
                             ?: decision.plan.effectiveMediaFileId
                             ?: fileId
+                        val roomFileId = currentRoomContext?.fileId
+                        if (roomFileId != null && effectiveFileId != roomFileId) {
+                            // The room pins its file through every replan; a plan
+                            // for another file is refused, never played.
+                            playbackSessionManager.abandonActiveVideoSessionAsync(decision.session.sessionId)
+                            nextUpTransitionGate.cancel()
+                            _uiState.update {
+                                it.copy(
+                                    error = "The server offered a different version than the Watch Party's.",
+                                    isLoading = false,
+                                    isBuffering = false,
+                                )
+                            }
+                            return@launch
+                        }
                         val catalogVersionIndex = state.versions
                             .indexOfFirst { it.fileId == effectiveFileId }
                         val effectiveVersions = if (catalogVersionIndex >= 0) {
@@ -2080,6 +2293,7 @@ class PlayerViewModel(
                                 streamUrl = null,
                             )
                         }
+                        currentRoomContext?.let { room -> publishRoomRefusal(room, fileId, decision.reason) }
                     }
                     VideoSessionStartV3.ServerUpgradeRequired -> {
                         nextUpTransitionGate.cancel()
@@ -2103,6 +2317,7 @@ class PlayerViewModel(
             // queue; only a completed flight re-drives a queued user selection.
             job.invokeOnCompletion { cause ->
                 if (cause == null) redriveQueuedInvalidationReplan()
+                refreshRoomObservation()
             }
         }
     }
@@ -2236,6 +2451,7 @@ class PlayerViewModel(
             awaitingMediaMountGeneration = null
             subtitleRefreshGate.reset()
             positionReportsBlockedForPendingLoad = false
+            if (inRoom) resetRoomEngineToMount()
             pendingNativeSeekAfterMount?.let { (targetSeconds, immediate) ->
                 pendingNativeSeekAfterMount = null
                 // The load may have resolved to an online V3 plan after the
@@ -2361,6 +2577,7 @@ class PlayerViewModel(
         // reporter does nothing on the offline-download path (no session). Throttled
         // by content-time delta so it fires ~every 10s of playback, not per tick.
         maybeRecordPosition(positionSec, _uiState.value.duration)
+        refreshRoomObservation()
     }
 
     private var lastRecordedKey: String? = null
@@ -2399,6 +2616,7 @@ class PlayerViewModel(
      * otherwise a buffering glitch flips the pause icon and defeats scheduleControlsHide.
      */
     fun onPlayingChanged(isPlaying: Boolean) {
+        if (inRoom) roomEngineIsPlaying = isPlaying
         _uiState.update { it.copy(isPlaying = isPlaying) }
         if (isPlaying && !_uiState.value.isPaused && _uiState.value.showControls) {
             scheduleControlsHide()
@@ -2516,11 +2734,10 @@ class PlayerViewModel(
     }
 
     /**
-     * Immediate, deadband-free seek for room-driven corrective seeks
-     * (RoomSyncController.applyDecision). Updates `uiState.position` like
-     * [onSeek] AND emits on [immediateSeeks] so PlayerScreen drives the
-     * MediaController unconditionally — bypassing the 2.0s position-mirror
-     * deadband that would otherwise swallow sub-2s sync corrections.
+     * Immediate, deadband-free seek for remote and Watch Party seeks
+     * ([applyRoomSeek]). Updates `uiState.position` like [onSeek] AND emits on
+     * [immediateSeeks] so PlayerScreen drives the MediaController
+     * unconditionally, without counting as the viewer's own interaction.
      */
     fun seekImmediate(position: Double) {
         cancelPendingQuickSkip()
@@ -2851,11 +3068,16 @@ class PlayerViewModel(
                             request = request,
                             recoveryGeneration = recoveryGeneration,
                         )
-                        is VideoSessionStartV3.Terminal -> publishSeekFailure(
-                            request,
-                            recoveryGeneration,
-                            "Unable to seek (${decision.reason}): ${decision.message}",
-                        )
+                        is VideoSessionStartV3.Terminal -> {
+                            publishSeekFailure(
+                                request,
+                                recoveryGeneration,
+                                "Unable to seek (${decision.reason}): ${decision.message}",
+                            )
+                            currentRoomContext?.let { room ->
+                                publishRoomRefusal(room, room.fileId, decision.reason)
+                            }
+                        }
                         VideoSessionStartV3.ServerUpgradeRequired -> publishSeekFailure(
                             request,
                             recoveryGeneration,
@@ -2895,6 +3117,7 @@ class PlayerViewModel(
                 // can run now that the in-flight guard is released.
                 redriveQueuedInvalidationReplan()
             }
+            refreshRoomObservation()
         }
     }
 
@@ -3048,12 +3271,319 @@ class PlayerViewModel(
 
     // ---- Remote-control adapters (PlaybackRealtimeController calls these) ----
     // Thin wrappers over existing transport; no new playback logic.
-    // The VM's start request always carries roomId=null, so WT membership is
-    // set by the screen (which owns roomId) for remote-transport gating.
+    // The screen marks Watch Party membership from its route, so the room
+    // gates hold before the room's playback context has arrived.
     private var inWatchTogetherRoom = false
     fun setInWatchTogetherRoom(value: Boolean) { inWatchTogetherRoom = value }
-    /** True while in a Watch Together room — remote transport is gated (the room is authoritative). */
-    val remoteTransportSuppressed: Boolean get() = inWatchTogetherRoom
+    /** True in a Watch Party: the room, not this device, decides transport. */
+    val remoteTransportSuppressed: Boolean get() = inRoom
+
+    // ---- Watch Party ------------------------------------------------------------
+    //
+    // The room binding (WatchPartyPlayback / RoomPlaybackBinding) decides
+    // attach, reports, readiness, corrections and pacing. This ViewModel only
+    // observes the player truthfully and applies what the binding asks,
+    // through paths that never count as the viewer's own intent.
+
+    /** A server refusal of the room's file, for the room to decide on a fallback. */
+    data class RoomRefusal(
+        val context: WatchPartyPlaybackContext,
+        val fileId: Int,
+        val reason: String,
+    )
+
+    /** A local reason playback is held. Nothing is reported to the room while any lasts. */
+    enum class RoomSuspensionReason { AudioFocus, TransientAudioFocus, SleepTimer, Background }
+
+    private var currentRoomContext: WatchPartyPlaybackContext? = null
+    private val inRoom: Boolean get() = inWatchTogetherRoom || currentRoomContext != null
+    private val roomSuspensions = mutableSetOf<RoomSuspensionReason>()
+    private val _roomSuspended = MutableStateFlow(false)
+
+    /** Playback is held for a local reason; tapping play resumes this device only. */
+    val roomSuspended: StateFlow<Boolean> = _roomSuspended.asStateFlow()
+    private val _roomCorrectionRate = MutableStateFlow<Double?>(null)
+
+    /** The binding's temporary catch-up rate; null is exactly 1x. Never a user speed. */
+    val roomCorrectionRate: StateFlow<Double?> = _roomCorrectionRate.asStateFlow()
+    private val _roomRefusal = MutableStateFlow<RoomRefusal?>(null)
+
+    /** The latest server refusal of the room's file, until the screen takes it to the room. */
+    val roomRefusal: StateFlow<RoomRefusal?> = _roomRefusal.asStateFlow()
+    private val _roomQualityChanges = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Emits when this viewer's quality changed, so the binding restarts its reload pacing. */
+    val roomQualityChanges: SharedFlow<Unit> = _roomQualityChanges.asSharedFlow()
+    private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
+
+    /** What the player is actually doing, for the room binding. */
+    val roomObservation: StateFlow<RoomPlayerObservation> = _roomObservation.asStateFlow()
+    private var roomObservationJob: Job? = null
+
+    // Media3 facts. Player-timeline seconds unless the name says source.
+    private var roomEnginePlayerSec = 0.0
+    private var roomEngineBufferedPlayerSec = 0.0
+    private var roomEngineSourceSec = 0.0
+    private var roomEnginePlayWhenReady = false
+    private var roomEngineIsPlaying = false
+    private var roomEngineState = RoomPlayerState.Idle
+
+    // The session the current room epoch committed. Cleared at every room
+    // load so the binding never attaches the outgoing session under the new
+    // selection revision; set again when a session is published.
+    private var roomObservedSessionId: String? = null
+    private var roomLastUiSessionId: String? = null
+
+    // Quality chosen during this title's playback, or this room epoch's (the
+    // Quality menu or the lower-quality offer).
+    private var sessionQualityOverride: String? = null
+
+    /**
+     * Prepares the room's playback epoch. A context for the epoch already
+     * loading or playing (the screen collecting again after recreation) is a
+     * no-op; a new selection revision or file restarts playback.
+     */
+    fun startRoomPlayback(context: WatchPartyPlaybackContext) {
+        val current = currentRoomContext
+        if (current != null &&
+            current.roomId == context.roomId &&
+            current.selectionRevision == context.selectionRevision &&
+            current.fileId == context.fileId
+        ) {
+            return
+        }
+        loadContent(
+            contentId = context.contentId,
+            preferredFileId = context.fileId,
+            libraryId = context.libraryId,
+            room = context,
+        )
+    }
+
+    private fun beginRoomLoad(room: WatchPartyPlaybackContext) {
+        val previous = currentRoomContext
+        if (previous == null ||
+            previous.roomId != room.roomId ||
+            previous.selectionRevision != room.selectionRevision
+        ) {
+            sessionQualityOverride = null
+        }
+        currentRoomContext = room
+        _roomRefusal.value = null
+        roomObservedSessionId = null
+        roomLastUiSessionId = _uiState.value.sessionId
+        // Room playback always prepares paused, and the outgoing media stops
+        // now rather than playing on while the new file loads.
+        _uiState.update { it.copy(isPaused = true) }
+        if (roomObservationJob == null) {
+            roomObservationJob = viewModelScope.launch {
+                _uiState.collect { refreshRoomObservation() }
+            }
+        }
+        refreshRoomObservation()
+    }
+
+    /** The room context for an in-place restart at [sourcePositionSeconds]: same epoch and file, paused. */
+    private fun roomRestartContext(sourcePositionSeconds: Double?): WatchPartyPlaybackContext? {
+        val room = currentRoomContext ?: return null
+        val position = sourcePositionSeconds?.takeIf { it.isFinite() && it >= 0.0 } ?: return room
+        return room.copy(positionSeconds = position, paused = true)
+    }
+
+    private fun publishRoomRefusal(room: WatchPartyPlaybackContext, fileId: Int, reason: String?) {
+        val normalized = reason?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        _roomRefusal.value = RoomRefusal(room, fileId, normalized)
+    }
+
+    /** The screen has taken [refusal] to the room. */
+    fun consumeRoomRefusal(refusal: RoomRefusal) {
+        _roomRefusal.compareAndSet(refusal, null)
+    }
+
+    /** Applies a room seek. Never user intent: no pass-out reset, no Up Next dismissal. */
+    fun applyRoomSeek(sourceSeconds: Double) {
+        if (!inRoom || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return
+        // A restart in flight starts at the room position and re-attaches,
+        // which brings a fresh command. Seeking the outgoing session now would
+        // only re-anchor media that is being replaced.
+        if (loadJob?.isActive == true) {
+            Log.i(TAG, "room_seek action=ignore_during_load target_source_seconds=$sourceSeconds")
+            return
+        }
+        seekImmediate(sourceSeconds)
+    }
+
+    /** Applies the room's play or pause. A local suspension holds a Play until the viewer resumes. */
+    fun applyRoomPlaying(playing: Boolean) {
+        if (!inRoom) return
+        if (playing && roomSuspensions.any { it != RoomSuspensionReason.TransientAudioFocus }) return
+        _uiState.update { it.copy(isPaused = !playing) }
+        if (playing && _uiState.value.showControls) scheduleControlsHide()
+    }
+
+    fun setRoomCorrectionRate(rate: Double?) {
+        _roomCorrectionRate.value = rate?.takeIf { it.isFinite() && it > 0.0 }
+    }
+
+    /** Whether reaching [sourceSeconds] needs no new media. False whenever that is uncertain. */
+    fun isRoomPositionBuffered(sourceSeconds: Double): Boolean {
+        if (!inRoom) return false
+        val state = _uiState.value
+        if (roomMediaTransitioning(state) || roomEngineState == RoomPlayerState.Idle) return false
+        return roomTargetBufferedLocally(
+            timeline = state.playbackPlan?.timeline,
+            targetSourceSeconds = sourceSeconds,
+            playerPositionSeconds = roomEnginePlayerSec,
+            bufferedPlayerSeconds = roomEngineBufferedPlayerSec,
+        )
+    }
+
+    /** A Media3 sample while in a room: position, buffer, and play state as the engine reports them. */
+    fun onRoomEngineSample(
+        positionMs: Long,
+        bufferedPositionMs: Long,
+        playWhenReady: Boolean,
+        isPlaying: Boolean,
+        playbackState: Int,
+    ) {
+        if (!inRoom) return
+        roomEnginePlayWhenReady = playWhenReady
+        roomEngineIsPlaying = isPlaying
+        roomEngineState = roomPlayerState(playbackState)
+        // Samples from media that is being replaced say nothing about the
+        // stream the room will see.
+        if (positionMs >= 0L && !positionReportsBlockedForPendingLoad && awaitingMediaMountGeneration == null) {
+            val state = _uiState.value
+            val playerSec = positionMs / 1000.0
+            val serverDuration = state.serverDuration.takeIf { it > 0.0 }
+            roomEnginePlayerSec = playerSec
+            roomEngineBufferedPlayerSec = bufferedPositionMs.coerceAtLeast(0L) / 1000.0
+            // onPositionChanged's source mapping, without the presentation
+            // guard that holds the scrubber on a pending seek target.
+            roomEngineSourceSec = (state.playbackPlan?.timeline?.sourcePositionForPlayer(playerSec) ?: playerSec)
+                .let { position -> serverDuration?.let { position.coerceAtMost(it) } ?: position }
+        }
+        refreshRoomObservation()
+    }
+
+    private fun resetRoomEngineToMount() {
+        val state = _uiState.value
+        roomEnginePlayerSec = state.startPosition
+        roomEngineBufferedPlayerSec = state.startPosition
+        roomEngineSourceSec = state.position
+        refreshRoomObservation()
+    }
+
+    /** Source seconds for a position on the mounted player's timeline. */
+    fun sourceSecondsForPlayerMs(positionMs: Long): Double {
+        val playerSec = positionMs.coerceAtLeast(0L) / 1000.0
+        return _uiState.value.playbackPlan?.timeline?.sourcePositionForPlayer(playerSec) ?: playerSec
+    }
+
+    /** True while media is loading or mounting, when Media3 callbacks describe outgoing media. */
+    fun isRoomMediaMounting(): Boolean =
+        loadJob?.isActive == true || awaitingMediaMountGeneration != null || positionReportsBlockedForPendingLoad
+
+    fun beginRoomSuspension(reason: RoomSuspensionReason) {
+        if (!inRoom) return
+        roomSuspensions += reason
+        // Media3 lifts a transient focus loss by itself, so only the other
+        // reasons hold the local play state.
+        if (reason != RoomSuspensionReason.TransientAudioFocus) {
+            _uiState.update { it.copy(isPaused = true) }
+        }
+        refreshRoomObservation()
+    }
+
+    fun endRoomSuspension(reason: RoomSuspensionReason) {
+        if (!roomSuspensions.remove(reason)) return
+        refreshRoomObservation()
+    }
+
+    /**
+     * The viewer asked to play while playback was held locally. The held
+     * reasons clear. With [resumeLocally] this device plays again at once and
+     * the binding re-syncs it to the room; no room request is sent.
+     */
+    fun endRoomSuspensions(resumeLocally: Boolean) {
+        roomSuspensions.removeAll { it != RoomSuspensionReason.TransientAudioFocus }
+        if (resumeLocally) _uiState.update { it.copy(isPaused = false) }
+        refreshRoomObservation()
+    }
+
+    /** One rung down the current file's quality ladder, or null when there is none. */
+    fun lowerRoomQualityLabel(): String? {
+        if (!inRoom) return null
+        return lowerQualityRung(
+            available = _uiState.value.playbackPlan?.availableQualities.orEmpty(),
+            selectedLabel = currentMobileQualityPreference(),
+        )?.label
+    }
+
+    /** Accepts the lower-quality offer: replans the same file one rung down. */
+    fun lowerRoomQuality(): Boolean {
+        val label = lowerRoomQualityLabel() ?: return false
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(_uiState.value))
+        mobileSubtitleTransactions.selectQuality(label)
+        return true
+    }
+
+    /**
+     * Quality menu pick: replans at [id], a plan entry's label sent verbatim,
+     * or auto to hand the choice back to the server. The active row is a no-op.
+     */
+    fun onSelectQuality(id: String) {
+        val state = _uiState.value
+        val menu = playbackQualityMenu(state.playbackPlan?.availableQualities.orEmpty())
+        if (menu.none { it.id == id }) return
+        if (id == state.activeQualityId(menu)) return
+        mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
+        mobileSubtitleTransactions.selectQuality(id)
+    }
+
+    /**
+     * Keeps a committed quality for later replans, seek recoveries and
+     * restarts of this title, which otherwise fall back to the route's.
+     */
+    private fun noteQualityCommitted(committed: String?) {
+        if (committed == null || committed == currentMobileQualityPreference()) return
+        sessionQualityOverride = committed
+        if (inRoom) _roomQualityChanges.tryEmit(Unit)
+    }
+
+    private fun roomMediaTransitioning(state: PlayerUiState): Boolean =
+        state.isLoading ||
+            loadJob?.isActive == true ||
+            recoveryJob?.isActive == true ||
+            serverSeekRecoveryInFlight ||
+            activeSeekTargetSec != null ||
+            awaitingMediaMountGeneration != null ||
+            positionReportsBlockedForPendingLoad
+
+    private fun refreshRoomObservation() {
+        if (!inRoom) return
+        _roomSuspended.value = roomSuspensions.isNotEmpty()
+        val room = currentRoomContext ?: return
+        val state = _uiState.value
+        if (state.sessionId != roomLastUiSessionId) {
+            roomLastUiSessionId = state.sessionId
+            roomObservedSessionId = state.sessionId
+        }
+        _roomObservation.value = RoomPlayerObservation(
+            sessionId = roomObservedSessionId,
+            selectionRevision = room.selectionRevision,
+            sourcePositionSeconds = roomEngineSourceSec,
+            durationSeconds = state.duration,
+            playWhenReady = roomEnginePlayWhenReady,
+            isPlaying = roomEngineIsPlaying,
+            state = roomEngineState,
+            seekPending = roomMediaTransitioning(state),
+            suspended = roomSuspensions.isNotEmpty(),
+        )
+    }
 
     fun remotePause() { _uiState.update { it.copy(isPaused = true) } }
     fun remoteUnpause() { _uiState.update { it.copy(isPaused = false) } }
@@ -3173,7 +3703,7 @@ class PlayerViewModel(
         )
 
     private fun currentMobileQualityPreference(): String? =
-        routeIntentState.current?.quality ?: lastLoadArgs?.preferredQuality
+        sessionQualityOverride ?: routeIntentState.current?.quality ?: lastLoadArgs?.preferredQuality
 
     private fun applyMobileSubtitleSnapshot(snapshot: MobileSubtitleTransactionSnapshot) {
         _uiState.update { state ->
@@ -3189,6 +3719,7 @@ class PlayerViewModel(
                 pendingSubtitleIdentity = snapshot.pendingIdentity,
                 localSubtitleMountIdentity = snapshot.localMountIdentity,
                 subtitleApplying = snapshot.subtitleApplying,
+                committedQualityPreference = snapshot.transition.committed.qualityPreference,
             )
         }
         val state = _uiState.value
@@ -3200,8 +3731,15 @@ class PlayerViewModel(
             transactionActive = mobileSubtitleTransactions.hasActiveTransaction,
         )
         snapshot.failureMessage?.let {
-            showVersionSwitchMessage("Couldn't apply subtitles — playback continues unchanged.")
+            showVersionSwitchMessage(
+                if (snapshot.qualityChangeFailed) {
+                    "Couldn't change quality. Try again."
+                } else {
+                    "Couldn't apply subtitles — playback continues unchanged."
+                },
+            )
         }
+        noteQualityCommitted(snapshot.transition.committed.qualityPreference)
         if (!mobileSubtitleTransactions.hasActiveTransaction) {
             redriveQueuedInvalidationReplan()
         }
@@ -3219,6 +3757,10 @@ class PlayerViewModel(
         val effectiveFileId = ready.session.mediaFileId.takeIf { it > 0 }
             ?: ready.plan.effectiveMediaFileId
             ?: predecessorFileId
+        // A Watch Party pins its file; a replan onto another one is abandoned.
+        if (currentRoomContext?.fileId?.let { it != effectiveFileId } == true) {
+            return MobileSubtitleAdoptionResult.Superseded
+        }
         val catalogVersionIndex = before.versions.indexOfFirst { it.fileId == effectiveFileId }
         val effectiveVersions = if (catalogVersionIndex >= 0) {
             before.versions
@@ -3340,6 +3882,7 @@ class PlayerViewModel(
             resumePositionOverride = state.position,
             suppressResumeRewind = true,
             preserveRouteIntent = true,
+            room = roomRestartContext(state.position),
         )
         Log.w(TAG, "Subtitle committed-playback adoption failed: $detail")
     }
@@ -3668,6 +4211,8 @@ class PlayerViewModel(
      * "Translate with AI…" row is hidden (no error surfaced).
      */
     fun onTracksSheetOpened() {
+        // Opening re-reads sync state so a job that finished meanwhile shows.
+        subtitleSync.reload()
         if (aiStatusFetched) return
         aiStatusFetched = true
         viewModelScope.launch {
@@ -3736,6 +4281,8 @@ class PlayerViewModel(
             if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
             when (r) {
                 is ApiResult.Success -> {
+                    // Follows the automatic sync the server starts for a new download.
+                    subtitleSync.remember(r.data.subtitle)
                     doRefreshSubtitles(autoSelectSubtitleId = r.data.subtitle.id)
                     if (generation != subtitleDownloadGeneration || _uiState.value.mediaFileId != mediaFileId || _uiState.value.sessionId != sessionId) return@launch
                     _subtitleTools.update { it.copy(downloadingKey = null, downloadCompleted = true) }
@@ -3796,6 +4343,50 @@ class PlayerViewModel(
                 ?.let { mobileSubtitleTransactions.selectFromRefresh(owner, it) }
                 ?: false
             if (selected) pendingAuthoritativeSubtitleDownloadId = null
+        }
+    }
+
+    /**
+     * The server retimed a subtitle of the file, stored or a sidecar (a sync,
+     * or a timing set or reset). The sync controller re-reads it and reports
+     * the change through [onSubtitleSyncTimingChanged].
+     */
+    fun applySubtitleTimingChanged(update: PlaybackSubtitleTimingChanged) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        val key = update.syncKey ?: update.subtitleId?.let(SubtitleSyncState::storedKey) ?: return
+        subtitleSync.timingChanged(key)
+    }
+
+    /** A step of a sync job of the file (realtime): progress, then the outcome. */
+    fun applySubtitleSyncUpdated(update: PlaybackSubtitleSyncUpdated?) {
+        update ?: return
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (update.sessionId != null && update.sessionId != sessionId) return
+        if (update.mediaFileId != null && update.mediaFileId != state.mediaFileId) return
+        subtitleSync.syncUpdated(update)
+    }
+
+    /**
+     * A syncable subtitle's timing changed. Media3 keeps the cues it already
+     * parsed, so when that subtitle is the mounted sidecar, remount the same
+     * item at the same position to fetch it again. Its cue revision tells the
+     * sync feedback when the new cues show.
+     */
+    private fun onSubtitleSyncTimingChanged(key: String) {
+        _uiState.update { state ->
+            val mounted = state.sessionId != null && subtitlesForVideoMediaMount(
+                subtitles = state.subtitleTracks,
+                playbackPlan = state.playbackPlan,
+                subtitleIdentity = state.localSubtitleMountIdentity ?: state.committedSubtitleIdentity,
+            ).includesSyncKey(key)
+            state.copy(
+                subtitleCueRevisions = state.subtitleCueRevisions + (key to (state.subtitleCueRevisions[key] ?: 0) + 1),
+                subtitleRefreshNonce = if (mounted) state.subtitleRefreshNonce + 1 else state.subtitleRefreshNonce,
+            )
         }
     }
 
@@ -3978,6 +4569,13 @@ class PlayerViewModel(
     }
 
     /**
+     * The intro pill's Select in a Watch Party: resolves the pill and returns
+     * where to go, so the screen can send it as a room seek instead of moving
+     * this player alone.
+     */
+    fun selectIntroPromptTarget(): Double? = introAutoSkipController.select()
+
+    /**
      * System back while the intro pill is showing: take it down and resolve the
      * intro without moving playback. True when a pill was actually dismissed,
      * so the caller consumes the press only then.
@@ -4022,10 +4620,23 @@ class PlayerViewModel(
     /** On Deck tap — an explicit choice: reset the pass-out streak and load
      *  the picked item in place (resuming its saved position, iOS parity). */
     fun playOnDeckItemNow(contentId: String) {
+        // Only the room chooses what a Watch Party plays.
+        if (inRoom) return
         autoPlayGuard.recordUserAction()
         upNextCountdownJob?.cancel()
         upNextCountdownJob = null
-        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
+        // An On Deck item is outside the shuffle: playback leaves it, but the
+        // shuffle stays on the server for another device to continue. An
+        // advance, part change, or Pick Another still running must not move
+        // the shuffle or load over the On Deck item.
+        if (shuffleAdvanceJob?.isActive == true) {
+            shuffleAdvanceJob?.cancel()
+            // An advance may already hold the transition for its pick.
+            nextUpTransitionGate.cancel()
+        }
+        shufflePickJob?.cancel()
+        shufflePlayback = null
+        _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null, shuffle = null) }
         viewModelScope.launch {
             val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
             if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) return@launch
@@ -4034,6 +4645,10 @@ class PlayerViewModel(
     }
 
     private fun resolveNextEpisode() {
+        if (shufflePlayback != null) {
+            resolveShuffleNext()
+            return
+        }
         val state = _uiState.value
         val seriesId = state.seriesId ?: return
         val curSeason = state.seasonNumber ?: return
@@ -4098,8 +4713,19 @@ class PlayerViewModel(
      */
     fun onApproachingEnd(videoEnded: Boolean = false) {
         if (nextUpTransitionGate.isActive) return
-        // Watch Together is authoritative — never auto-advance a room member.
+        // Watch Party is authoritative — never auto-advance a room member.
         if (remoteTransportSuppressed) return
+        if (shufflePlayback != null) {
+            // A multi-part pick plays its later parts before the shuffle moves on.
+            shuffleNextPartFileId?.let { fileId ->
+                if (videoEnded) playNextShufflePart(fileId)
+                return
+            }
+            if (!shuffleRefreshedForPostRoll) {
+                shuffleRefreshedForPostRoll = true
+                refreshShuffleNext()
+            }
+        }
         if (autoAdvanceHandled) {
             if (videoEnded) {
                 // Keep Watching dismisses the credits prompt, but finishing the
@@ -4248,6 +4874,10 @@ class PlayerViewModel(
             _uiState.update { it.copy(showUpNext = false, upNextCountdownSeconds = null) }
             return
         }
+        if (shufflePlayback != null) {
+            advanceShuffle()
+            return
+        }
         val nextContentId = _uiState.value.nextEpisode?.contentId ?: return
         if (!nextUpTransitionGate.begin(nextContentId)) return
         _uiState.update {
@@ -4270,6 +4900,204 @@ class PlayerViewModel(
                 resumePositionOverride = 0.0,
                 suppressResumeRewind = true,
             )
+        }
+    }
+
+    // ---- Shuffle ----------------------------------------------------------------
+
+    /**
+     * Plays this player's items as picks of the running shuffle [shuffleId]:
+     * the Up Next card announces the server's next pick, and no sequential
+     * next episode is offered. Called once, before the route's first load.
+     */
+    fun attachShuffle(shuffleId: String?) {
+        if (shuffleId.isNullOrBlank() || shufflePlayback?.shuffleId == shuffleId) return
+        val store = shuffleFeatureStore ?: return
+        shufflePlayback = store.playback(shuffleId)
+        _uiState.update { it.copy(shuffle = ShuffleUiState()) }
+    }
+
+    private fun resolveShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val state = _uiState.value
+        val forContentId = state.contentId
+        // The post-roll waits for the last part of a multi-part pick.
+        shuffleNextPartFileId = org.siloserver.silo.playback.nextPlaybackPartFileId(
+            versions = state.versions,
+            currentFileId = state.versions.getOrNull(state.selectedVersionIndex)?.fileId,
+        )
+        if (shuffleNextPartFileId != null) return
+        resolveNextEpisodeJob?.cancel()
+        // The advance that started this item already returned its next pick.
+        if (shuffle.latest?.current?.contentId == forContentId) {
+            publishShuffleNext(forContentId)
+            return
+        }
+        resolveNextEpisodeJob = viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Re-reads the shuffle as the card opens: the server replaces a next pick that can no longer play. */
+    private fun refreshShuffleNext() {
+        val shuffle = shufflePlayback ?: return
+        val forContentId = _uiState.value.contentId
+        viewModelScope.launch {
+            shuffle.refresh()
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /** Shows the shuffle's pick after [forContentId], or the finished state when there is none. */
+    private fun publishShuffleNext(forContentId: String) {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.contentId != forContentId || nextUpTransitionGate.isActive) return
+        val info = shuffle.nextPickAfter(forContentId)?.let { pick ->
+            NextEpisodeInfo(
+                contentId = pick.contentId,
+                seasonNumber = pick.seasonNumber,
+                episodeNumber = pick.episodeNumber,
+                title = pick.title,
+                stillUrl = pick.stillUrl,
+                stillThumbhash = pick.stillThumbhash,
+                runtimeMinutes = pick.runtimeMinutes,
+                seriesTitle = pick.seriesTitle,
+                overview = pick.overview,
+                isEpisode = pick.isEpisode,
+            )
+        }
+        val previous = _uiState.value.nextEpisode
+        _uiState.update {
+            it.copy(
+                nextEpisode = info,
+                shuffle = it.shuffle?.copy(scopeLabel = shuffle.scopeLabel ?: it.shuffle.scopeLabel),
+            )
+        }
+        val countingDownAtEnd = upNextCountdownJob?.isActive == true && _uiState.value.upNextVideoEnded
+        when {
+            info == null -> cancelUpNextCountdown()
+            // A different pick, such as Pick Another, gets the full countdown
+            // rather than whatever was left of the previous one.
+            previous != null && previous.contentId != info.contentId && countingDownAtEnd -> {
+                _uiState.update { it.copy(upNextCountdownSeconds = UP_NEXT_COUNTDOWN_SECONDS) }
+                startUpNextCountdown()
+            }
+            previous == null && !autoAdvanceHandled ->
+                pendingApproachingEndVideoEnded?.let { videoEnded -> commitApproachingEnd(info, videoEnded) }
+        }
+    }
+
+    /** Plays the next part of a multi-part pick from its start. */
+    private fun playNextShufflePart(fileId: Int) {
+        if (shuffleAdvanceJob?.isActive == true) return
+        shuffleNextPartFileId = null
+        val contentId = _uiState.value.contentId
+        val shuffle = shufflePlayback
+        // Every load moves this counter, so a reload of the same item during the stop also ends the part change.
+        val loadGeneration = aiPlaybackGeneration
+        fun stillCurrent() = loadGeneration == aiPlaybackGeneration &&
+            shufflePlayback === shuffle && _uiState.value.contentId == contentId
+        shuffleAdvanceJob = viewModelScope.launch {
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                // Nothing played, so the part is still next when playback ends.
+                if (stillCurrent() && shuffleNextPartFileId == null) shuffleNextPartFileId = fileId
+                return@launch
+            }
+            if (!stillCurrent()) return@launch
+            loadContent(
+                contentId = contentId,
+                preferredFileId = fileId,
+                resumePositionOverride = 0.0,
+                suppressResumeRewind = true,
+                preserveRouteIntent = true,
+            )
+        }
+    }
+
+    /**
+     * Moves the shuffle past the item that played and plays the returned
+     * pick from the beginning. The server moves on only while that item is
+     * still current, so a repeated press or a retry plays the same pick.
+     */
+    private fun advanceShuffle() {
+        val shuffle = shufflePlayback ?: return
+        if (_uiState.value.nextEpisode == null) return
+        if (shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val fromContentId = _uiState.value.contentId
+        _uiState.update { it.copy(upNextCountdownSeconds = null) }
+        val pendingPick = shufflePickJob
+        shuffleAdvanceJob = viewModelScope.launch {
+            // A Pick Another still in flight decides what plays; wait for it.
+            pendingPick?.join()
+            if (shufflePlayback !== shuffle) return@launch
+            val result = shuffle.advance(fromContentId)
+            if (_uiState.value.contentId != fromContentId || shufflePlayback !== shuffle) return@launch
+            val target = (result as? ApiResult.Success)?.data?.current?.contentId
+            if (target == null) {
+                if (shuffle.exhausted) publishShuffleNext(fromContentId) else showShuffleMessage(SHUFFLE_CONTINUE_FAILED)
+                return@launch
+            }
+            if (!nextUpTransitionGate.begin(target)) return@launch
+            _uiState.update {
+                it.copy(showUpNext = true, isNextUpTransitioning = true, upNextCountdownSeconds = null)
+            }
+            val outgoingSession = retainedOwnedSessionId ?: _uiState.value.sessionId
+            if (!sessionLifecycle.stop(expectedSessionId = outgoingSession)) {
+                nextUpTransitionGate.cancel()
+                _uiState.update { it.copy(showUpNext = false, isNextUpTransitioning = false) }
+                return@launch
+            }
+            if (!nextUpTransitionGate.isActive) return@launch
+            loadContent(
+                contentId = target,
+                // Like the first pick, every shuffled item plays from the start.
+                resumePositionOverride = 0.0,
+                suppressResumeRewind = true,
+            )
+        }
+    }
+
+    /** Up Next "Pick Another": the server replaces the announced pick. */
+    fun pickAnotherShuffle() {
+        val shuffle = shufflePlayback ?: return
+        if (shufflePickJob?.isActive == true || shuffleAdvanceJob?.isActive == true || nextUpTransitionGate.isActive) return
+        val forContentId = _uiState.value.contentId
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = true)) }
+        shufflePickJob = viewModelScope.launch {
+            val result = shuffle.pickAnother()
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(pickingAnother = false)) }
+            if (_uiState.value.contentId != forContentId || shufflePlayback !== shuffle) return@launch
+            if (result !is ApiResult.Success && !shuffle.exhausted) {
+                showShuffleMessage(SHUFFLE_PICK_FAILED)
+                return@launch
+            }
+            publishShuffleNext(forContentId)
+        }
+    }
+
+    /**
+     * Up Next "Stop shuffling": ends the shuffle on the server. The screen
+     * leaves the player right after, back to where the shuffle started.
+     */
+    fun stopShuffling() {
+        val shuffle = shufflePlayback ?: return
+        shufflePlayback = null
+        shuffleAdvanceJob?.cancel()
+        shufflePickJob?.cancel()
+        upNextCountdownJob?.cancel()
+        upNextCountdownJob = null
+        shuffle.stopInBackground()
+        _uiState.update { it.copy(shuffle = null, nextEpisode = null, upNextCountdownSeconds = null) }
+    }
+
+    private fun showShuffleMessage(message: String) {
+        shuffleMessageJob?.cancel()
+        _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = message)) }
+        shuffleMessageJob = viewModelScope.launch {
+            delay(4_000)
+            _uiState.update { it.copy(shuffle = it.shuffle?.copy(message = null)) }
         }
     }
 
@@ -4378,6 +5206,8 @@ class PlayerViewModel(
      * flag, not by a sentinel.
      */
     private fun startVersionPlayback(index: Int, isRecovery: Boolean = false) {
+        // A Watch Party plays exactly the room's file; switching versions is refused.
+        if (inRoom) return
         val state = _uiState.value
         val version = state.versions.getOrNull(index) ?: return
         if (!isRecovery && index == state.selectedVersionIndex) return
@@ -4385,6 +5215,9 @@ class PlayerViewModel(
             routeIntentState.recoverVersionSelection(state.contentId)
         } else {
             routeIntentState.beginVersionSelection(state.contentId, version.fileId)
+            // Choosing a file drops a picked quality: a quality served by
+            // another version would move playback straight off this one.
+            sessionQualityOverride = null
         }
         val currentVersion = state.versions.getOrNull(state.selectedVersionIndex)
         val carriedAudioIndex = desiredAudio
@@ -4488,6 +5321,16 @@ class PlayerViewModel(
         }
     }
 
+    /**
+     * Holds the controls on screen while the seek bar is dragged: an auto-hide
+     * mid-drag would remove the bar and drop the seek. The timer restarts when
+     * the drag ends.
+     */
+    fun onScrubbingChanged(active: Boolean) {
+        scrubbing = active
+        scheduleControlsHide()
+    }
+
     /** Called when the user exits the player. */
     fun onExit() {
         if (!exitPrepared.compareAndSet(false, true)) return
@@ -4560,6 +5403,7 @@ class PlayerViewModel(
 
     private fun scheduleControlsHide() {
         controlsHideJob?.cancel()
+        if (scrubbing) return
         controlsHideJob = viewModelScope.launch {
             delay(CONTROLS_AUTO_HIDE_MS)
             val state = _uiState.value
@@ -4698,6 +5542,7 @@ class PlayerViewModel(
                 error = null,
                 title = title,
                 subtitle = subtitle,
+                contentType = watchDetail?.type,
                 artworkUrl = artworkUrl,
                 // Playback fields — file:// is read directly by Media3, no
                 // server session needed.
@@ -4953,4 +5798,24 @@ internal fun authoritativePlaybackSubtitleOrdinal(
     -1 -> -1
     else -> playbackTracks.indexOfFirst { it.index == serverIndex }
         .takeIf { it >= 0 }
+}
+
+/**
+ * Whether a quality picked earlier carries into this load. It does for a
+ * reload of the same title outside a room, unless the route itself names a
+ * quality, and for a reload inside the same room epoch. Any other title or
+ * room epoch starts from the route's quality.
+ */
+internal fun keepsPickedQuality(
+    contentId: String,
+    previousContentId: String?,
+    routeNamesQuality: Boolean,
+    room: WatchPartyPlaybackContext?,
+    currentRoom: WatchPartyPlaybackContext?,
+): Boolean = if (room == null) {
+    contentId == previousContentId && !routeNamesQuality
+} else {
+    currentRoom != null &&
+        currentRoom.roomId == room.roomId &&
+        currentRoom.selectionRevision == room.selectionRevision
 }

@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,8 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SettingsRemote
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -127,7 +127,7 @@ fun HomeScreen(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -462,7 +462,7 @@ fun HomeScreen(
             onRemoteDisconnectClick = onRemoteDisconnectClick,
             isRemoteControlActive = isRemoteControlActive,
             onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
+            onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
@@ -499,7 +499,7 @@ private fun HomeFloatingChrome(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -519,7 +519,7 @@ private fun HomeFloatingChrome(
                 activeProfile = activeProfile,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
-                onWatchTogetherClick = onWatchTogetherClick,
+                onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
                 onSwitchServerClick = onSwitchServerClick,
@@ -545,18 +545,18 @@ private fun HomeFloatingChrome(
                                 contentDescription = "Remote Control",
                             )
                         }
-                        DropdownMenu(
+                        SiloDropdownMenu(
                             expanded = remoteMenuExpanded,
                             onDismissRequest = { remoteMenuExpanded = false },
                         ) {
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Remote Control") },
                                 onClick = {
                                     remoteMenuExpanded = false
                                     onRemoteControlClick()
                                 },
                             )
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Choose TV") },
                                 onClick = {
                                     remoteMenuExpanded = false
@@ -564,7 +564,7 @@ private fun HomeFloatingChrome(
                                 },
                             )
                             HorizontalDivider()
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = {
                                     Text(
                                         "Turn Off Control Mode",

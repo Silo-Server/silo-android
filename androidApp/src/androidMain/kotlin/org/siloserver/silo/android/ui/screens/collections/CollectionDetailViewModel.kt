@@ -53,6 +53,17 @@ class CollectionDetailViewModel(
     private val collectionSource: String? = savedStateHandle.get<String>("source")
     private val isLibraryUserCollection: Boolean
         get() = libraryId != null && collectionSource == "user_collection"
+
+    /** The shuffle scope this collection is: a library's server collection or a user collection. */
+    val shuffleScopeKind: org.siloserver.silo.model.shuffle.ShuffleScopeKind
+        get() = if (libraryId != null && !isLibraryUserCollection) {
+            org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY_COLLECTION
+        } else {
+            org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION
+        }
+
+    /** The library the collection was opened from, carried into shuffled playback. */
+    val browseLibraryId: Int? get() = libraryId
     private val pageSize = 40
 
     fun initialize(id: String) {

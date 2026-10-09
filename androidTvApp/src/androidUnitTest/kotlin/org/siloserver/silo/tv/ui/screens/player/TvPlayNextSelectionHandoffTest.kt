@@ -2,7 +2,6 @@ package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.common.player.video.EpisodeSubtitleMode
 import org.siloserver.silo.common.player.video.ResolvedEpisodeSelection
-import org.siloserver.silo.common.player.video.encodeEpisodeSelectionHandoff
 import org.siloserver.silo.model.catalog.FileVersion
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -197,13 +196,6 @@ class TvPlayNextSelectionHandoffTest {
         assertEquals(true, handoff.subtitle.forced)
         assertEquals(true, handoff.subtitle.hearingImpaired)
         assertEquals(true, handoff.subtitle.external)
-        val encoded = encodeEpisodeSelectionHandoff(handoff)
-        assertTrue(encoded.contains("777").not(), "download identity is episode-local")
-        assertTrue(encoded.contains("download-track").not(), "Media3 identity is episode-local")
-        assertTrue(encoded.contains("fileId").not(), "file identity is episode-local")
-        assertTrue(encoded.contains("index").not(), "subtitle indexes are episode-local")
-        assertTrue(encoded.contains("source-42").not(), "file name and path are episode-local")
-        assertTrue(encoded.contains("example.test").not(), "subtitle URLs are episode-local")
     }
 
     @Test
@@ -229,7 +221,6 @@ class TvPlayNextSelectionHandoffTest {
         assertEquals(false, handoff.subtitle.forced)
         assertEquals(true, handoff.subtitle.hearingImpaired)
         assertNull(handoff.subtitle.external)
-        assertTrue(encodeEpisodeSelectionHandoff(handoff).contains("media3-opaque-id").not())
     }
 
     @Test

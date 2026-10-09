@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material.icons.outlined.CollectionsBookmark
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,10 +45,14 @@ fun CollectionDetailScreen(
     collectionId: String,
     onBackClick: () -> Unit,
     onItemClick: (String) -> Unit,
+    // Plays the first pick of a shuffle started from the top bar.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: CollectionDetailViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
+    val shuffleKind = viewModel.shuffleScopeKind
 
     LaunchedEffect(collectionId) {
         viewModel.initialize(collectionId)
@@ -70,6 +77,16 @@ fun CollectionDetailScreen(
             SiloTopBar(
                 title = state.title,
                 onBackClick = onBackClick,
+                actions = {
+                    if (state.items.isNotEmpty() && shuffleLauncher.supports(shuffleKind)) {
+                        IconButton(
+                            onClick = { shuffleLauncher.start(shuffleKind, collectionId) },
+                            enabled = !shuffleLauncher.isStarting,
+                        ) {
+                            Icon(Icons.Filled.Shuffle, contentDescription = "Shuffle")
+                        }
+                    }
+                },
             )
         },
         containerColor = MaterialTheme.colorScheme.background,

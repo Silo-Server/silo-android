@@ -69,6 +69,10 @@ class SectionRepository(
     ): ApiResult<HomeSectionItemsResponse> =
         sectionApi.getLibrarySectionItems(libraryId, sectionId, owner)
 
+    suspend fun getLibrarySectionCatalogItems(libraryId: Int, sectionId: String,
+        owner: org.siloserver.silo.network.AuthScopeSnapshot, continuation: CatalogContinuationV2?) =
+        sectionApi.getLibrarySectionCatalogItems(libraryId, sectionId, owner, continuation)
+
     /** Lists collections within a library as a flat list. Callers that need
      *  the grouped layout should use [getLibraryCollectionsGrouped]. */
     suspend fun getLibraryCollections(libraryId: Int): ApiResult<List<LibraryCollection>> =
@@ -88,6 +92,9 @@ class SectionRepository(
         order: String? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(),
         match: String? = null,
+        mediaType: String? = null,
+        libraryId: Int? = null,
+        source: String = "library_collection",
     ): ApiResult<CatalogResponse> =
         sectionApi.getLibraryCollectionItems(
             collectionId = collectionId,
@@ -97,5 +104,8 @@ class SectionRepository(
             order = order,
             queryGroups = queryGroups,
             match = match,
+            mediaType = mediaType,
+            libraryId = libraryId,
+            source = source,
         )
 }

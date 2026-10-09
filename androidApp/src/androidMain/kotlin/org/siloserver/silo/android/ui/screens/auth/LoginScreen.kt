@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -22,7 +24,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -430,19 +431,11 @@ private fun AccountProviderChooser(
     onChoose: (SignInProvider) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
+    SiloDialog(
+        title = "Use a different account",
         onDismissRequest = onDismiss,
-        title = { Text("Use a different account") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                providers.forEach { provider ->
-                    TextButton(onClick = { onChoose(provider) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(signInWithLabel(provider))
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        actions = providers.map { provider ->
+            SiloDialogAction(label = signInWithLabel(provider), onClick = { onChoose(provider) })
+        } + SiloDialogAction(label = "Cancel", onClick = onDismiss),
     )
 }

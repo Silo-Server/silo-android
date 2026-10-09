@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.settings.diagnostics
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -22,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -195,26 +194,20 @@ fun DiagnosticsReportScreen(
     }
 
     if (confirmDelete && report != null) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete this report?") },
-            text = {
-                Text(
-                    if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
-                        "The local evidence will be removed from this device. If this report was already " +
-                            "submitted, its copy in Silo Diagnostics will also be permanently deleted."
-                    } else {
-                        "The local evidence will be permanently removed from this device."
-                    },
-                )
+        SiloConfirmDialog(
+            title = "Delete this report?",
+            body = if (report.destinationKind == DiagnosticsDestinationKind.HOSTED) {
+                "The local evidence will be removed from this device. If this report was already " +
+                    "submitted, its copy in Silo Diagnostics will also be permanently deleted."
+            } else {
+                "The local evidence will be permanently removed from this device."
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmDelete = false
-                    viewModel.delete(report.id, onBackClick)
-                }) { Text("Delete") }
+            confirmLabel = "Delete",
+            onConfirm = {
+                confirmDelete = false
+                viewModel.delete(report.id, onBackClick)
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+            onDismiss = { confirmDelete = false },
         )
     }
 }

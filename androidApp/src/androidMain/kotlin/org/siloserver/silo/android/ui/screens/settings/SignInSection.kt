@@ -1,14 +1,15 @@
 package org.siloserver.silo.android.ui.screens.settings
 
+import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -94,7 +95,7 @@ fun SignInSection(
         state.network?.let { provider ->
             SettingsNavigationRow(
                 label = "Connect ${provider.displayName}",
-                description = SignInSettingsViewModel.connectDescription(provider.displayName),
+                description = SignInSettingsViewModel.connectNetworkDescription(provider.displayName, state.networkLinkKeepsPassword),
                 onClick = { viewModel.onConnectNetwork(provider) },
                 enabled = !state.busy,
             )
@@ -120,7 +121,11 @@ fun SignInSection(
     state.networkPrompt?.let { provider ->
         ConfirmPasswordDialog(
             providerName = provider.displayName,
-            body = SignInSettingsViewModel.connectNetworkPrompt(provider.displayName, provider.networkIdentity?.label),
+            body = SignInSettingsViewModel.connectNetworkPrompt(
+                provider.displayName,
+                provider.networkIdentity?.label,
+                state.networkLinkKeepsPassword,
+            ),
             confirmLabel = "Connect",
             error = state.passwordError,
             busy = state.busy,
@@ -174,39 +179,33 @@ private fun ConfirmPasswordDialog(
     onDismiss: () -> Unit,
 ) {
     var password by remember { mutableStateOf("") }
-    AlertDialog(
+    SiloDialog(
+        title = "Connect $providerName",
+        message = body,
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(SettingsDimens.cardRadius),
-        containerColor = SiloSurfaceContainer,
-        titleContentColor = SiloForeground,
-        textContentColor = SiloMutedText,
-        title = { Text("Connect $providerName") },
-        text = {
-            Column {
-                Text(body)
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("Password") },
-                    singleLine = true,
-                    isError = error != null,
-                    supportingText = error?.let { { Text(it, color = SiloDestructive) } },
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (!busy && password.isNotEmpty()) onConfirm(password) }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = !busy && password.isNotEmpty(), onClick = { onConfirm(password) }) {
-                Text(if (busy) "Checking…" else confirmLabel)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+        actions = listOf(
+            SiloDialogAction(
+                label = if (busy) "Checking…" else confirmLabel,
+                onClick = { onConfirm(password) },
+                style = SiloDialogActionStyle.Primary,
+                enabled = !busy && password.isNotEmpty(),
+            ),
+            SiloDialogAction("Cancel", onDismiss),
+        ),
+    ) {
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            isError = error != null,
+            supportingText = error?.let { { Text(it, color = SiloDestructive) } },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (!busy && password.isNotEmpty()) onConfirm(password) }),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 @Composable
@@ -221,57 +220,48 @@ private fun ConnectDirectoryDialog(
     var username by remember { mutableStateOf("") }
     var directoryPassword by remember { mutableStateOf("") }
     val complete = !busy && password.isNotEmpty() && username.isNotBlank() && directoryPassword.isNotEmpty()
-    AlertDialog(
+    SiloDialog(
+        title = "Connect $providerName",
+        message = SignInSettingsViewModel.connectDirectoryPrompt(providerName),
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(SettingsDimens.cardRadius),
-        containerColor = SiloSurfaceContainer,
-        titleContentColor = SiloForeground,
-        textContentColor = SiloMutedText,
-        title = { Text("Connect $providerName") },
-        text = {
-            Column {
-                Text(SignInSettingsViewModel.connectDirectoryPrompt(providerName))
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    label = { Text("This account's password") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it },
-                    label = { Text("$providerName username") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = directoryPassword,
-                    onValueChange = { directoryPassword = it },
-                    label = { Text("$providerName password") },
-                    singleLine = true,
-                    isError = error != null,
-                    supportingText = error?.let { { Text(it, color = SiloDestructive) } },
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { if (complete) onConfirm(password, username, directoryPassword) }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = complete,
+        actions = listOf(
+            SiloDialogAction(
+                label = if (busy) "Checking…" else "Connect",
                 onClick = { onConfirm(password, username, directoryPassword) },
-            ) {
-                Text(if (busy) "Checking…" else "Connect")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-    )
+                style = SiloDialogActionStyle.Primary,
+                enabled = complete,
+            ),
+            SiloDialogAction("Cancel", onDismiss),
+        ),
+    ) {
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("This account's password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = username,
+            onValueChange = { username = it },
+            label = { Text("$providerName username") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = directoryPassword,
+            onValueChange = { directoryPassword = it },
+            label = { Text("$providerName password") },
+            singleLine = true,
+            isError = error != null,
+            supportingText = error?.let { { Text(it, color = SiloDestructive) } },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (complete) onConfirm(password, username, directoryPassword) }),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }

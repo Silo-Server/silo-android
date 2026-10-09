@@ -26,7 +26,6 @@ object PlaybackMutationOutcomeV2 {
     const val STALE_SAMPLE = "stale_sample"
     const val STOPPED = "stopped"
     val PROGRESS = setOf(APPLIED, REPLAYED, STALE_SAMPLE)
-    val STOP = setOf(STOPPED, REPLAYED)
 }
 
 /** `revision` and `deliveries` are served but never read by Android. */

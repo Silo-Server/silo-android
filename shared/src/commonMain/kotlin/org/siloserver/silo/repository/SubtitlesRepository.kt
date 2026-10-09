@@ -17,6 +17,10 @@ import org.siloserver.silo.model.subtitles.SubtitleSearchResponse
 import org.siloserver.silo.model.subtitles.SubtitleTranslateRequest
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.SubtitlesApi
+import org.siloserver.silo.network.apiv2.SubtitleSyncV2Api
+import org.siloserver.silo.model.subtitles.SubtitleSyncCapability
+import org.siloserver.silo.model.subtitles.SubtitleSyncState
+import org.siloserver.silo.model.subtitles.SubtitleTiming
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -32,7 +36,20 @@ import kotlinx.coroutines.delay
  *  - rethrows [CancellationException] so callers can cancel via structured
  *    concurrency (player exit cancels the viewModelScope job)
  */
-class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org.siloserver.silo.network.TokenManager? = null) {
+/** The subtitle sync operations the player needs, by media file and sync key. */
+interface SubtitleSyncSource {
+    suspend fun syncCapability(): ApiResult<SubtitleSyncCapability>
+    suspend fun listSync(mediaFileId: Int): ApiResult<List<SubtitleSyncState>>
+    suspend fun readSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState>
+    suspend fun startSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState>
+    suspend fun resetTiming(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState>
+}
+
+class SubtitlesRepository(
+    private val api: SubtitlesApi,
+    private val tokens: org.siloserver.silo.network.TokenManager? = null,
+    private val sync: SubtitleSyncV2Api? = null,
+) : SubtitleSyncSource {
 
     /** Terminal result of [pollJob]. */
     sealed class SubtitleJobOutcome {
@@ -51,6 +68,22 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
 
     suspend fun list(mediaFileId: Int): ApiResult<DownloadedSubtitlesResponse> =
         api.list(mediaFileId)
+
+    // ---- Subtitle sync (stored subtitles and sidecars, by sync key) ----
+
+    override suspend fun syncCapability(): ApiResult<SubtitleSyncCapability> = sync?.status() ?: syncUnavailable
+
+    override suspend fun listSync(mediaFileId: Int): ApiResult<List<SubtitleSyncState>> =
+        sync?.list(mediaFileId) ?: syncUnavailable
+
+    override suspend fun readSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
+        sync?.read(mediaFileId, key) ?: syncUnavailable
+
+    override suspend fun startSync(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
+        sync?.start(mediaFileId, key) ?: syncUnavailable
+
+    override suspend fun resetTiming(mediaFileId: Int, key: String): ApiResult<SubtitleSyncState> =
+        sync?.setTiming(mediaFileId, key, SubtitleTiming()) ?: syncUnavailable
 
     suspend fun aiStatus(): ApiResult<SubtitleAiStatus> = api.aiStatus()
 
@@ -125,3 +158,5 @@ class SubtitlesRepository(private val api: SubtitlesApi, private val tokens: org
         }
     }
 }
+
+private val syncUnavailable = ApiResult.Error(0, "sync_unavailable", "Subtitle sync is not available.")

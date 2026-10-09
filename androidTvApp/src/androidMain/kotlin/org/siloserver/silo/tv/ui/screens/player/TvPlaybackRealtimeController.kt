@@ -5,6 +5,8 @@ import org.siloserver.silo.network.PlaybackRealtimeEvent
 import org.siloserver.silo.playback.PlaybackAction
 import org.siloserver.silo.playback.decodeMarkersUpdate
 import org.siloserver.silo.playback.decodePlaybackSubtitleReady
+import org.siloserver.silo.playback.decodePlaybackSubtitleSyncUpdated
+import org.siloserver.silo.playback.decodePlaybackSubtitleTimingChanged
 import org.siloserver.silo.playback.decidePlaybackAction
 import org.siloserver.silo.playback.isTransport
 import kotlinx.coroutines.CancellationException
@@ -27,6 +29,13 @@ class TvPlaybackRealtimeController(
     private val client: PlaybackRealtimeClient,
     private val viewModel: TvPlayerViewModel,
     private val scope: CoroutineScope,
+    /**
+     * Set while the player belongs to a Watch Party. Transport commands then
+     * go through the room's permission decision instead of the player, and
+     * Stop/terminate end only this device's engagement. Returns whether the
+     * command was accepted.
+     */
+    private val roomTransport: ((PlaybackAction) -> Boolean)? = null,
 ) {
     private companion object {
         const val BACKOFF_START_MS = 2_000L
@@ -62,9 +71,22 @@ class TvPlaybackRealtimeController(
     private suspend fun handleCommand(cmd: PlaybackRealtimeEvent.Command) {
         client.sendAck(sessionId, cmd.commandId)
         val action = decidePlaybackAction(cmd)
-        // Watch Together is authoritative for transport — reject (don't apply)
-        // transport commands while in a room so an admin can't desync members.
-        val gated = action.isTransport && viewModel.remoteTransportSuppressed
+        val room = roomTransport
+        if (room != null && action.isTransport) {
+            // The room is authoritative for transport: an admin command is one
+            // more input, decided by this membership's permissions.
+            if (action is PlaybackAction.Stop) {
+                // Result first: leaving tears the screen down.
+                client.sendResult(sessionId, cmd.commandId, STATUS_COMPLETED)
+                room(action)
+            } else {
+                val accepted = room(action)
+                client.sendResult(sessionId, cmd.commandId, if (accepted) STATUS_COMPLETED else STATUS_REJECTED)
+            }
+            return
+        }
+        // A party player with no room route yet must not let transport through.
+        val gated = action.isTransport && viewModel.inWatchParty
         val status = if (action is PlaybackAction.Reject || gated) STATUS_REJECTED else STATUS_COMPLETED
         // Result BEFORE applying — a Stop tears the screen down (cancelling this
         // coroutine), so applying first could drop the result.
@@ -89,6 +111,10 @@ class TvPlaybackRealtimeController(
     private suspend fun handleServerEvent(event: PlaybackRealtimeEvent.ServerEvent) {
         when (event.name) {
             "subtitle_ready" -> viewModel.applySubtitleReady(decodePlaybackSubtitleReady(event))
+            "subtitle_timing_changed" ->
+                viewModel.applySubtitleTimingChanged(decodePlaybackSubtitleTimingChanged(event))
+            "subtitle_sync_updated" ->
+                viewModel.applySubtitleSyncUpdated(decodePlaybackSubtitleSyncUpdated(event))
             "markers_updated" -> {
                 val markers = decodeMarkersUpdate(event)
                 viewModel.applyUpdatedMarkers(markers.intro, markers.credits, markers.recap, markers.preview)

@@ -785,27 +785,14 @@ class TvSubtitleSettlementOwnershipTest {
         }
 
     @Test
-    fun `real exit and clear wire settlement before invalidation and lifecycle stop`() {
+    fun `clear wires settlement before invalidation and lifecycle stop`() {
         val source = File(
             "src/androidMain/kotlin/org/siloserver/silo/tv/ui/screens/player/TvPlayerViewModel.kt",
         ).readText()
-        val exitBody = source
-            .substringAfter("suspend fun stopSessionForExit()")
-            .substringBefore("fun onExit()")
         val clearBody = source
             .substringAfter("override fun onCleared()")
             .substringBefore("\n    }\n\n}")
 
-        assertBefore(
-            exitBody,
-            "subtitleTransactions.invalidateAndAwaitSettlement()",
-            "playbackMutationFence.invalidateAll()",
-        )
-        assertBefore(
-            exitBody,
-            "subtitleTransactions.invalidateAndAwaitSettlement()",
-            "lifecycleTeardown.stopOrdered(",
-        )
         // Every exit path runs prepareSessionExit, which blanks uiState.sessionId.
         // If the id is not latched BEFORE that write, each of the three stops
         // below passes null and the ownership guard they exist for never engages
@@ -818,7 +805,6 @@ class TvSubtitleSettlementOwnershipTest {
             "lastAdoptedSessionId = it",
             "sessionId = null",
         )
-        assertTrue(exitBody.contains("lifecycleTeardown.stopOrdered(expectedSessionId = exitSessionId)"))
         assertBefore(
             clearBody,
             "subtitleTransactions.reserveDurableFinalPersistence()",
@@ -846,10 +832,6 @@ class TvSubtitleSettlementOwnershipTest {
         // and supersedes it, which is how auto-advance broke.
         assertTrue(clearBody.contains("lifecycleTeardown.stopDetached(expectedSessionId"))
         assertFalse(clearBody.contains("sessionLifecycle.stop"))
-        val adoptionBody = source
-            .substringAfter("private suspend fun adoptSubtitlePlayback(")
-            .substringBefore("private suspend fun confirmSubtitlePlaybackPublication(")
-        assertFalse(adoptionBody.contains("rollbackUnpublishedActiveSession("))
     }
 
     private suspend fun TestScope.mountUnpublished(

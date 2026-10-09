@@ -44,36 +44,66 @@ fun formatSubtitleTrackDisplayLabel(
     isForced: Boolean,
     index: Int,
 ): String {
-    val cleanRaw = rawLabel?.trim().takeUnless { it.isNullOrBlank() }
-    val providerId = providerIdentifier(cleanRaw)
-    val provider = providerDisplayName(cleanRaw)
-    val labelWithoutProvider = cleanRaw?.replace(providerSuffix, "")?.trim()
-    val inferredLanguage = languageCodeFor(language) ?: inferLanguageCode(labelWithoutProvider)
-    val languageName = languageDisplayName(inferredLanguage)
-    val format = subtitleFormatLabel(codecOrMime ?: labelWithoutProvider)
-    val forced = isForced || labelWithoutProvider?.let { forcedToken.containsMatchIn(it) } == true
-    val sdh = labelWithoutProvider?.let { sdhToken.containsMatchIn(it) } == true
-    val aiGenerated = providerId == "translated" ||
-        labelWithoutProvider?.contains(Regex("""(?i)\bAI\b""")) == true
-    val descriptor = meaningfulDescriptor(
-        rawLabel = labelWithoutProvider,
-        languageName = languageName,
-        forced = forced,
-        sdh = sdh,
-    ).takeUnless { aiGenerated }
-
+    val label = subtitleTrackLabelParts(rawLabel, language, codecOrMime, isForced)
     val parts = buildList {
-        languageName?.let { add(it) }
-        if (aiGenerated) add("AI Translation")
-        if (forced) add("Forced")
-        if (sdh) add("SDH")
-        descriptor?.let { add(it) }
-        format?.let { add(it) }
-        if (!aiGenerated) provider?.let { add(it) }
+        label.languageName?.let { add(it) }
+        if (label.aiGenerated) add("AI Translation")
+        if (label.forced) add("Forced")
+        if (label.sdh) add("SDH")
+        label.descriptor?.let { add(it) }
+        label.format?.let { add(it) }
+        label.provider?.let { add(it) }
     }.distinctBy { it.lowercase(Locale.US) }
 
     return parts.takeIf { it.isNotEmpty() }?.joinToString(" • ")
         ?: "Subtitle ${index + 1}"
+}
+
+/**
+ * The facts [formatSubtitleTrackDisplayLabel] joins into one string, kept
+ * apart so a picker can lay them out: the language as the row title, Forced
+ * and SDH as chips, the format and provider as a detail line. The provider
+ * and descriptor are null for an AI translation, which is labelled as one.
+ */
+data class SubtitleTrackLabelParts(
+    val languageName: String?,
+    val forced: Boolean,
+    val sdh: Boolean,
+    val aiGenerated: Boolean,
+    val descriptor: String?,
+    val format: String?,
+    val provider: String?,
+)
+
+fun subtitleTrackLabelParts(
+    rawLabel: String?,
+    language: String?,
+    codecOrMime: String?,
+    isForced: Boolean,
+): SubtitleTrackLabelParts {
+    val cleanRaw = rawLabel?.trim().takeUnless { it.isNullOrBlank() }
+    val providerId = providerIdentifier(cleanRaw)
+    val labelWithoutProvider = cleanRaw?.replace(providerSuffix, "")?.trim()
+    val inferredLanguage = languageCodeFor(language) ?: inferLanguageCode(labelWithoutProvider)
+    val languageName = languageDisplayName(inferredLanguage)
+    val forced = isForced || labelWithoutProvider?.let { forcedToken.containsMatchIn(it) } == true
+    val sdh = labelWithoutProvider?.let { sdhToken.containsMatchIn(it) } == true
+    val aiGenerated = providerId == "translated" ||
+        labelWithoutProvider?.contains(Regex("""(?i)\bAI\b""")) == true
+    return SubtitleTrackLabelParts(
+        languageName = languageName,
+        forced = forced,
+        sdh = sdh,
+        aiGenerated = aiGenerated,
+        descriptor = meaningfulDescriptor(
+            rawLabel = labelWithoutProvider,
+            languageName = languageName,
+            forced = forced,
+            sdh = sdh,
+        ).takeUnless { aiGenerated },
+        format = subtitleFormatLabel(codecOrMime ?: labelWithoutProvider),
+        provider = providerDisplayName(cleanRaw).takeUnless { aiGenerated },
+    )
 }
 
 private fun providerIdentifier(rawLabel: String?): String? =

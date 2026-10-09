@@ -39,14 +39,24 @@ open class ProfileRepository(
     open suspend fun listProfiles(): ApiResult<List<Profile>> =
         profileApi.listProfiles().map { it.profiles }
 
-    /** Creates a new profile. */
+    /**
+     * The picker's manage mode: management calls act as the household's primary
+     * profile while it runs. Held in memory only; see [HouseholdManagementSession].
+     */
+    val householdManagement = HouseholdManagementSession(
+        verifyPin = { id, pin -> profileApi.verifyPin(id, pin) },
+        captureScope = { tokenManager.snapshotCurrentScope() },
+    )
+
+    /** Creates a new profile, as the household manager while manage mode is on. */
     open suspend fun createProfile(request: CreateProfileRequest): ApiResult<Profile> =
-        profileApi.createProfile(request)
+        householdManagement.run { profileApi.createProfile(request, it) }
 
-    /** Updates an existing profile. */
+    /** Updates an existing profile, as the household manager while manage mode is on. */
     open suspend fun updateProfile(id: String, request: UpdateProfileRequest): ApiResult<Profile> =
-        profileApi.updateProfile(id, request)
+        householdManagement.run { profileApi.updateProfile(id, request, it) }
 
+    /** Updates the selected profile as itself, even while manage mode is on. */
     suspend fun updateActiveProfile(request: UpdateProfileRequest): ApiResult<Profile> {
         val profileId = getActiveProfileId()
             ?: return ApiResult.Error(
@@ -54,12 +64,12 @@ open class ProfileRepository(
                 error = "bad_request",
                 message = "No active profile selected",
             )
-        return updateProfile(profileId, request)
+        return profileApi.updateProfile(profileId, request)
     }
 
-    /** Deletes a profile by ID. */
+    /** Deletes a profile by ID, as the household manager while manage mode is on. */
     suspend fun deleteProfile(id: String): ApiResult<Unit> =
-        profileApi.deleteProfile(id)
+        householdManagement.run { profileApi.deleteProfile(id, it) }
 
     /**
      * Verifies a profile's PIN.

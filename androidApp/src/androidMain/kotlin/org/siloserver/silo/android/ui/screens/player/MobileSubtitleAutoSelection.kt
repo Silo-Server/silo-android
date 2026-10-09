@@ -2,8 +2,11 @@ package org.siloserver.silo.android.ui.screens.player
 
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.playback.AutoSubtitleCandidate
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
+import org.siloserver.silo.model.playback.autoSubtitlePreferenceOrder
+import org.siloserver.silo.model.playback.toAutoSubtitleCandidate
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.hasPositiveSubtitleDiscriminator
 import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
@@ -131,7 +134,7 @@ internal fun resolveMobileAutoSubtitleSelection(
         targetLanguage = targetLanguage,
         preferForced = showForcedSubtitles,
     ) ?: if (showForcedSubtitles) {
-        subtitles.indexOfFirst { it.forced == true }.takeIf { it >= 0 }
+        bestRankedOrdinal(subtitles.withIndex().filter { (_, subtitle) -> subtitle.forced == true })
     } else {
         null
     }
@@ -215,6 +218,11 @@ private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
     }
 }
 
+/**
+ * Ranks with the shared [autoSubtitlePreferenceOrder] — burn-in, then
+ * forced/SDH, then embedded over external over downloaded — so the mounted
+ * order (externals first) no longer decides a tie.
+ */
 private fun bestAutoSubtitleOrdinal(
     subtitles: List<PlayerSubtitleInfo>,
     targetLanguage: String?,
@@ -226,37 +234,44 @@ private fun bestAutoSubtitleOrdinal(
     if (pool.isEmpty()) return null
 
     if (preferForced) {
-        pool.firstOrNull { (_, subtitle) ->
-            subtitle.forced == true && !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap()
-        }?.let { return it.index }
+        // Only a plain TEXT forced track jumps the queue here, as before: this
+        // step predates the shared "forced never outranks full dialogue" rule,
+        // and widening it to every renderable bitmap would let a forced PGS
+        // track displace the full one.
+        bestRankedOrdinal(
+            pool.filter { (_, subtitle) ->
+                subtitle.forced == true &&
+                    !subtitle.isEffectivelyHearingImpaired() &&
+                    !subtitle.isBitmap()
+            },
+        )?.let { return it }
     }
-    pool.firstOrNull { (_, subtitle) ->
-        subtitle.forced != true && !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap()
-    }?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) ->
-        subtitle.forced != true && !subtitle.isBitmap()
-    }?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isBitmap() }
-        ?.let { return it.index }
-    return pool.first().index
+    return bestRankedOrdinal(pool)
 }
 
 private fun bestForcedAutoSubtitleOrdinal(
     subtitles: List<PlayerSubtitleInfo>,
     targetLanguage: String?,
-): Int? {
-    val pool = subtitles.withIndex().filter { (_, subtitle) ->
+): Int? = bestRankedOrdinal(
+    subtitles.withIndex().filter { (_, subtitle) ->
         subtitle.forced == true &&
             (targetLanguage == null || canonicalSubtitleLanguage(subtitle.language) == targetLanguage)
-    }
-    if (pool.isEmpty()) return null
+    },
+)
 
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isEffectivelyHearingImpaired() && !subtitle.isBitmap() }
-        ?.let { return it.index }
-    pool.firstOrNull { (_, subtitle) -> !subtitle.isEffectivelyHearingImpaired() }
-        ?.let { return it.index }
-    return pool.first().index
-}
+/** The ordinal of the best-ranked row, or null for an empty pool. */
+private fun bestRankedOrdinal(pool: List<IndexedValue<PlayerSubtitleInfo>>): Int? =
+    pool
+        .map { (ordinal, subtitle) -> ordinal to subtitle.toMobileAutoSubtitleCandidate() }
+        .minWithOrNull(compareBy(autoSubtitlePreferenceOrder) { it.second })
+        ?.first
+
+/**
+ * The phone's SDH predicate reads the runtime label, source and URL rather
+ * than the catalog title, so it replaces the shared title check.
+ */
+private fun PlayerSubtitleInfo.toMobileAutoSubtitleCandidate(): AutoSubtitleCandidate =
+    toAutoSubtitleCandidate().copy(title = label, hearingImpaired = isEffectivelyHearingImpaired())
 
 private fun PlayerSubtitleInfo.isEffectivelyHearingImpaired(): Boolean =
     subtitleLabelIndicatesHearingImpaired(label) ||

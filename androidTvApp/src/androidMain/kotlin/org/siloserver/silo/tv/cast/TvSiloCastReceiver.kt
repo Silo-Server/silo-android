@@ -5,6 +5,7 @@ import java.io.Closeable
 import java.net.ServerSocket
 import java.net.Socket
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -14,6 +15,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -24,7 +26,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastError
 import org.siloserver.silo.cast.SiloCastHello
 import org.siloserver.silo.cast.SiloCastHandoffCancel
@@ -68,6 +72,10 @@ class TvSiloCastReceiver(
     private val identityManager: RemotePlaybackIdentityManager,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
+    /** Suspends until the player's queued session teardown has finished. */
+    private val awaitPlaybackTeardown: suspend () -> Unit,
+    /** True while this TV is in a Watch Party, whose membership an identity swap would end. */
+    private val inWatchParty: () -> Boolean = { false },
 ) {
     data class StandbyState(
         val controllerName: String?,
@@ -101,23 +109,35 @@ class TvSiloCastReceiver(
     // stop() cancels the receiver scope, so cleanup for a ready-but-unconsumed
     // temporary identity must have an owner that survives that cancellation.
     private val identityCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Bumped by every start(). Handoffs tag the identity with the run that
+    // claimed it, so stop()'s deferred cleanup can tell a returning phone's
+    // claim from one made by the session it is tearing down.
+    @Volatile
+    private var receiverRun: Long = 0
 
     @Synchronized
     fun start() {
         if (scope != null) return
+        receiverRun += 1
         DiagnosticsCastLogger.event("TV cast receiver started")
         val newScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope = newScope
         newScope.launch {
-            val socket = ServerSocket(0).also { serverSocket = it }
-            val server = serverRegistry.activeEntry.value
-            val remote = identityManager.activeIdentity
-            advertiser.start(
-                port = socket.localPort,
-                serverId = remote?.serverId ?: server?.id,
-                serverName = remote?.serverName ?: server?.displayName,
-                playing = activePlayer != null,
-            )
+            val socket = ServerSocket(0)
+            // stop() can run while the socket is being created, and scope
+            // cancellation can't interrupt that. Publish and advertise under the
+            // lock only if this scope is still current; otherwise the stopped
+            // receiver would keep listening and stay listed in Bonjour.
+            val published = synchronized(this@TvSiloCastReceiver) {
+                if (scope !== newScope) return@synchronized false
+                serverSocket = socket
+                refreshAdvertisement()
+                true
+            }
+            if (!published) {
+                runCatching { socket.close() }
+                return@launch
+            }
             Log.i(TAG, "SiloCast listening on ${socket.localPort} for ${SiloCastProtocol.serviceType}")
             acceptLoop(socket)
         }
@@ -125,21 +145,21 @@ class TvSiloCastReceiver(
         // receiver runs (it stays up across server switches until onStop), and
         // drop the live controller session — its hello was authorized against
         // the previous server, so keeping it would let an old-server remote
-        // drive playback on the new one.
+        // drive playback on the new one. Only a different server or advertised
+        // name counts: profile and last-used updates rewrite the entry too, and
+        // re-registering on a profile clear raced the stop() that follows it,
+        // losing the Bonjour goodbye so the TV stayed listed after sign-out.
         newScope.launch {
-            serverRegistry.activeEntry.drop(1).collect { entry ->
-                closePreviousController()
-                identityManager.end()
-                val port = synchronized(this@TvSiloCastReceiver) { serverSocket?.localPort }
-                if (port != null) {
-                    advertiser.start(
-                        port = port,
-                        serverId = entry?.id,
-                        serverName = entry?.displayName,
-                        playing = activePlayer != null,
-                    )
+            serverRegistry.activeEntry
+                .distinctUntilChangedBy { it?.id to it?.displayName }
+                .drop(1)
+                .collect {
+                    closePreviousController()
+                    identityManager.end()
+                    // Re-advertises under the lock, and is a no-op once stop()
+                    // has cleared the socket.
+                    refreshAdvertisement()
                 }
-            }
         }
     }
 
@@ -147,7 +167,7 @@ class TvSiloCastReceiver(
     fun stop() {
         DiagnosticsCastLogger.event("TV cast receiver stopped")
         advertiser.stop()
-        val identityGeneration = identityManager.activeIdentity?.generationId
+        val stoppedRun = receiverRun
         pendingPlayerIdentityGeneration = null
         identityEndJob = null
         // Close the session directly (not via closePreviousController, which
@@ -163,14 +183,22 @@ class TvSiloCastReceiver(
         serverSocket = null
         scope?.cancel()
         scope = null
-        if (identityGeneration != null) {
-            identityCleanupScope.launch {
-                // Exact-generation guard: a rapid stop/start/new handoff must
-                // not let the old shutdown clean up the replacement identity.
-                if (identityManager.activeIdentity?.generationId == identityGeneration) {
-                    identityManager.end()
-                }
-            }
+        // Always scheduled, even with no identity yet: a handoff from the
+        // session being torn down can still install or reuse one after this.
+        identityCleanupScope.launch {
+            // The player's ON_STOP observer runs before this (Activity
+            // onStop) and has already queued its final progress report and
+            // stopSession, which ride on this temporary identity. Ending it
+            // first revokes the session under them (401). The player's
+            // unregister path cannot own this: its composition is not
+            // disposed until the activity starts again. Wait for the queued
+            // teardown (bounded, so the identity is always ended), then end it.
+            withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
+            // Run guard: only a handoff from a later start() protects the
+            // identity, whether it reused this generation or replaced it.
+            // Claims from the stopped run's own sessions do not, since
+            // nothing else is left to end them.
+            identityManager.endIfNotClaimedSince(stoppedRun)
         }
     }
 
@@ -205,6 +233,8 @@ class TvSiloCastReceiver(
                     refreshStandbyState()
                 }
             }
+            // After the slot is cleared: a handoff waiting on this checks it next.
+            player.unregistered.complete(Unit)
         }
     }
 
@@ -400,6 +430,20 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.HandoffOffer -> {
                 val offer = message.handoffOffer
+                // A handoff swaps in the phone's profile, and any identity
+                // change leaves the Watch Party this TV is in.
+                if (inWatchParty()) {
+                    session.send(
+                        SiloCastMessage.HandoffCancel(
+                            SiloCastHandoffCancel(
+                                requestId = offer.requestId,
+                                reason = "watch_party_active",
+                                message = "Leave the Watch Party on the TV first.",
+                            ),
+                        ),
+                    )
+                    return true
+                }
                 val controllerId = session.controllerDeviceId
                 if (session.negotiatedVersion != SiloCastProtocol.version || controllerId == null) {
                     session.send(
@@ -414,14 +458,23 @@ class TvSiloCastReceiver(
                     return true
                 }
                 session.handoffJob?.cancel()
-                identityEndJob?.cancel()
-                identityEndJob = null
+                // A reused identity must survive a pending cleanup. One this
+                // offer would replace stays until approval, so its cleanup still
+                // runs if the handoff fails; after a replacement it finds a newer
+                // generation and does nothing.
+                if (identityManager.matches(offer, controllerId)) {
+                    identityEndJob?.cancel()
+                    identityEndJob = null
+                }
+                val run = receiverRun
                 session.handoffJob = scope?.launch {
                     try {
                         val ready = identityManager.prepare(
                             offer = offer,
                             controllerDeviceId = controllerId,
                             controllerDeviceName = session.controllerDeviceName,
+                            receiverRun = run,
+                            beforeActivation = ::stopPlayerBeforeIdentitySwap,
                         ) { challenge ->
                             if (activeSession === session) {
                                 session.send(SiloCastMessage.HandoffChallenge(challenge))
@@ -500,6 +553,25 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.Launch -> {
                 if (!requireAuthorized(session)) return true
+                // A Watch Party player is never silently replaced by a cast.
+                activePlayer?.adapter?.launchRefusal?.invoke()?.let { refusal ->
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(code = "watch_party_active", message = refusal),
+                        ),
+                    )
+                    return true
+                }
+                // In a party lobby no party player is registered yet, but a
+                // solo launch would still take the shared player from the room.
+                if (inWatchParty()) {
+                    session.send(
+                        SiloCastMessage.Error(
+                            SiloCastError(code = "watch_party_active", message = "Leave the Watch Party on the TV first."),
+                        ),
+                    )
+                    return true
+                }
                 if (!session.remoteLaunchReady || identityManager.activeIdentity == null) {
                     session.send(
                         SiloCastMessage.Error(
@@ -547,6 +619,13 @@ class TvSiloCastReceiver(
             }
             is SiloCastMessage.Control -> {
                 if (!requireAuthorized(session)) return true
+                if (message.control.name !in SiloCastControlCommand.knownNames) {
+                    // A command from a newer (or retired, like set_hdr_enabled)
+                    // remote. Ignored without an error, as tvOS does: the phone
+                    // shows errors as banners, and nothing happened anyway.
+                    Log.i(TAG, "SiloCast ignoring unsupported command ${message.control.name}")
+                    return true
+                }
                 val player = activePlayer
                 if (player == null) {
                     session.send(
@@ -576,6 +655,31 @@ class TvSiloCastReceiver(
         return true
     }
 
+    /**
+     * Stops the registered player and waits for its server session to close.
+     * An approved handoff runs this just before it installs the phone's
+     * identity, including for a title the TV started under its own account:
+     * the player's stop rides on the identity it started under, so after the
+     * swap it is refused and the session lingers beside the phone's. Runs under
+     * the identity manager's lock, which also holds off the stopped player's
+     * own identity cleanup until the swap is done.
+     */
+    private suspend fun stopPlayerBeforeIdentitySwap() {
+        val player = activePlayer ?: return
+        withContext(Dispatchers.Main.immediate) {
+            player.adapter.handle(SiloCastControlCommand(name = SiloCastControlCommand.Stop))
+        }
+        val tornDown = withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) {
+            // The exit queues the session stop before the route unregisters.
+            player.unregistered.await()
+            awaitPlaybackTeardown()
+        } != null
+        // The player or its session stop outlived the teardown limit, or
+        // something started playing meanwhile; swapping the identity now would
+        // strand that session.
+        check(tornDown && activePlayer == null) { "The TV is still playing. Try again." }
+    }
+
     private suspend fun requireAuthorized(session: ControllerSession): Boolean {
         if (session.isAuthorized) return true
         session.send(
@@ -594,8 +698,7 @@ class TvSiloCastReceiver(
         val owner = scope ?: return
         identityEndJob = owner.launch {
             delay(delayMs)
-            if (identityManager.activeIdentity?.generationId != generationId) return@launch
-            identityManager.end()
+            if (!identityManager.end(generationId)) return@launch
             pendingPlayerIdentityGeneration = null
             refreshAdvertisement()
             val session = activeSession
@@ -651,8 +754,8 @@ class TvSiloCastReceiver(
             if (read < 0) return
             val payloads = buffer.append(chunk.copyOf(read))
             for (payload in payloads) {
-                val text = payload.decodeToString()
-                val message = json.decodeFromString(SiloCastMessage.serializer(), text)
+                // A kind added after this build is skipped, not fatal.
+                val message = SiloCastMessage.decodeOrNull(json, payload.decodeToString()) ?: continue
                 if (!onMessage(message)) return
             }
         }
@@ -781,6 +884,7 @@ class TvSiloCastReceiver(
         val adapter: TvSiloCastPlayerAdapter,
         val stateProvider: () -> SiloCastPlaybackState,
         val identityGeneration: String?,
+        val unregistered: CompletableDeferred<Unit> = CompletableDeferred(),
     )
 
     private companion object {
@@ -794,5 +898,6 @@ class TvSiloCastReceiver(
         const val GOODBYE_TIMEOUT_MS = 1_000L
         const val READY_TIMEOUT_MS = 60_000L
         const val IDENTITY_END_GRACE_MS = 2_000L
+        const val PLAYBACK_TEARDOWN_TIMEOUT_MS = 15_000L
     }
 }

@@ -6,7 +6,10 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -27,26 +31,25 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Brightness6
-import androidx.compose.material.icons.filled.HighQuality
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.ScreenLockRotation
-import androidx.compose.material.icons.filled.ScreenRotation
-import androidx.compose.material.icons.filled.SkipNext
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.automirrored.filled.SpeakerNotes
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Brightness6
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.ScreenLockRotation
+import androidx.compose.material.icons.rounded.ScreenRotation
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Subtitles
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -56,33 +59,37 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.SeekIntervalIcon
-import org.siloserver.silo.android.ui.layout.useCompactPlayerToolbar
 
 /**
- * Transport controls overlay for the video player. Top-bar icon layout
- * mirrors iOS phone's `MobilePlayerControls` (lock | chapters | tracks |
- * settings) — see `iosApp/Screens/Player/iOS/MobilePlayerControls.swift:73`.
+ * Transport controls over the video, after iOS `MobilePlayerControls`:
  *
- * Fullscreen uses the existing three-row HUD; tabletop groups the same shared
- * controls into the lower pane, keeps brightness available at every size, and
- * adds volume, speed, and next-episode shortcuts when the pane is large enough.
+ * - Top: back, eyebrow + title, then utility discs (Picture in Picture, Cast,
+ *   rotation lock).
+ * - Center, on the true center of the screen: skip back, a Paper play disc,
+ *   skip forward.
+ * - Bottom: elapsed and remaining time, the seek bar, and a row of labeled
+ *   actions that also say what they are set to (Audio & Subtitles · English,
+ *   Chapters · Scene 10, Quality · 1080p), with the full settings menu behind ⋯.
  *
- * Core rows:
- * - Top: Back (chevron) · title · orientation lock toggle · chapters (when
- *   present) · tracks (audio + subs) · quality (when multiple versions) ·
- *   settings (gear)
- * - Center: Skip back · play/pause · skip forward
- * - Bottom: Seek bar with timestamps
+ * While the seek bar is being scrubbed everything except the bar fades to 12%
+ * so the bubble and the picture carry the moment.
+ *
+ * Tabletop posture groups the same pieces into the lower pane and adds the
+ * brightness, volume, speed, and next-episode shortcuts when they fit.
  */
 @Composable
 fun PlayerControls(
@@ -95,9 +102,10 @@ fun PlayerControls(
     bufferedPosition: Double,
     hasChapters: Boolean,
     hasTracks: Boolean,
-    // Quality lives on the HUD (chapters + tracks + quality product decision);
-    // hidden when the item has a single file version.
-    hasMultipleVersions: Boolean,
+    // The plan's Quality menu; hidden only when there is no playback plan
+    // (offline downloads). Version, for a title with several files, lives in
+    // the settings menu behind ⋯.
+    hasQualityMenu: Boolean,
     chapters: List<org.siloserver.silo.model.catalog.VersionChapter> = emptyList(),
     intro: org.siloserver.silo.model.catalog.TimeRange? = null,
     credits: org.siloserver.silo.model.catalog.TimeRange? = null,
@@ -107,9 +115,11 @@ fun PlayerControls(
     orientationLockSupported: Boolean = true,
     tabletopMode: Boolean = false,
     playbackSpeed: Double = 1.0,
+    // False in a Watch Party, where speed is a session-only 1x.
+    playbackSpeedEnabled: Boolean = true,
     nextEpisode: PlayerViewModel.NextEpisodeInfo? = null,
     brightnessFraction: Float = 0.5f,
-    // Watch Together guest gate: when false the scrubber + skip buttons are
+    // Watch Party guest gate: when false the scrubber + skip buttons are
     // inert and dimmed (seek is host-only, so disabled for all guests).
     // Defaults true for solo playback.
     seekEnabled: Boolean = true,
@@ -120,6 +130,14 @@ fun PlayerControls(
     // revision-9 server, the legacy fixed pair otherwise).
     skipBackSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.backSeconds,
     skipForwardSeconds: Int = PlayerViewModel.LEGACY_VIDEO_SEEK_INTERVALS.forwardSeconds,
+    // "MOVIE · 2026" or "SEVERANCE · S2:E4" above the title.
+    eyebrow: String = subtitle,
+    // Current values shown on the action pills.
+    tracksValue: String? = null,
+    chapterValue: String? = null,
+    qualityValue: String? = null,
+    pictureInPictureAvailable: Boolean = false,
+    onEnterPictureInPicture: () -> Unit = {},
     onBack: () -> Unit,
     onPlayPause: () -> Unit,
     onSeek: (Double) -> Unit,
@@ -133,19 +151,31 @@ fun PlayerControls(
     onSetPlaybackSpeed: (Double) -> Unit = {},
     onPlayNextEpisode: () -> Unit = {},
     onSetBrightness: (Float) -> Unit = {},
+    // True while the seek bar is being dragged, so the auto-hide can hold off.
+    onScrubbingChange: (Boolean) -> Unit = {},
     // Google Cast (Chromecast) button — sits in the top bar alongside the other
     // controls. Provided by PlayerScreen; empty by default so this stateless
-    // composable stays test-friendly and decoupled from the Cast SDK.
-    castSlot: @Composable () -> Unit = {},
+    // composable stays test-friendly and decoupled from the Cast SDK. The
+    // modifier dresses it as a player disc.
+    castSlot: @Composable (Modifier) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    // iOS dims the entire screen with a flat `Color.black.opacity(0.4)`
-    // backdrop (MobilePlayerControls) — no top/bottom gradients. The VStack
-    // sits inside the dim with iOS's default 16pt edge padding.
+    var isScrubbing by remember { mutableStateOf(false) }
+    val chromeAlpha by animateFloatAsState(
+        targetValue = if (isScrubbing) 0.12f else 1f,
+        animationSpec = tween(180),
+        label = "playerChromeAlpha",
+    )
+    val scrimBoost by animateFloatAsState(
+        targetValue = if (isScrubbing) 0.18f else 0f,
+        animationSpec = tween(180),
+        label = "playerScrimBoost",
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.4f)),
+            .playerScrim(boost = scrimBoost),
     ) {
         val contentModifier = if (tabletopMode) {
             Modifier
@@ -154,7 +184,7 @@ fun PlayerControls(
                 // bar inset here would create a fake gap below the hinge. Only
                 // reserve the real bottom navigation/gesture inset.
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
         } else {
             // In landscape the safe-drawing insets are lopsided (camera cutout
             // on one edge, nothing on the other), so padding by them directly
@@ -182,28 +212,24 @@ fun PlayerControls(
             Modifier
                 .fillMaxSize()
                 .padding(horizontal = horizontalInset)
-                .padding(16.dp)
+                .padding(horizontal = 18.dp, vertical = 6.dp)
         }
 
-        val toolbar: @Composable () -> Unit = {
-            PlayerToolbar(
+        val topBar: @Composable () -> Unit = {
+            PlayerTopBar(
+                eyebrow = eyebrow,
                 title = title,
-                subtitle = subtitle,
                 isOrientationLocked = isOrientationLocked,
                 orientationLockSupported = orientationLockSupported,
-                hasChapters = hasChapters,
-                hasTracks = hasTracks,
-                hasMultipleVersions = hasMultipleVersions,
+                pictureInPictureAvailable = pictureInPictureAvailable,
                 onBack = onBack,
+                onEnterPictureInPicture = onEnterPictureInPicture,
                 onToggleOrientationLock = onToggleOrientationLock,
-                onOpenChapters = onOpenChapters,
-                onOpenTracks = onOpenTracks,
-                onOpenQuality = onOpenQuality,
-                onOpenSettings = onOpenSettings,
                 castSlot = castSlot,
+                modifier = Modifier.alpha(chromeAlpha),
             )
         }
-        val transportControls: @Composable () -> Unit = {
+        val transport: @Composable () -> Unit = {
             PlayerTransportControls(
                 isPlaying = isPlaying,
                 isPaused = isPaused,
@@ -214,21 +240,41 @@ fun PlayerControls(
                 onPlayPause = onPlayPause,
                 onSkipForward = onSkipForward,
                 onSkipBackward = onSkipBackward,
+                modifier = Modifier.alpha(chromeAlpha),
             )
         }
-        val progressBar: @Composable () -> Unit = {
-            PlayerProgressBar(
-                position = position,
-                duration = duration,
-                bufferedPosition = bufferedPosition,
-                onSeek = onSeek,
-                enabled = seekEnabled,
-                chapters = chapters,
-                intro = intro,
-                credits = credits,
-                recap = recap,
-                preview = preview,
-            )
+        val bottom: @Composable () -> Unit = {
+            Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+                PlayerProgressBar(
+                    position = position,
+                    duration = duration,
+                    bufferedPosition = bufferedPosition,
+                    onSeek = onSeek,
+                    enabled = seekEnabled,
+                    chapters = chapters,
+                    intro = intro,
+                    credits = credits,
+                    recap = recap,
+                    preview = preview,
+                    onScrubbingChange = {
+                        isScrubbing = it
+                        onScrubbingChange(it)
+                    },
+                )
+                PlayerActionPillRow(
+                    hasTracks = hasTracks,
+                    hasChapters = hasChapters,
+                    hasQualityMenu = hasQualityMenu,
+                    tracksValue = tracksValue,
+                    chapterValue = chapterValue,
+                    qualityValue = qualityValue,
+                    onOpenTracks = onOpenTracks,
+                    onOpenChapters = onOpenChapters,
+                    onOpenQuality = onOpenQuality,
+                    onOpenSettings = onOpenSettings,
+                    modifier = Modifier.alpha(chromeAlpha),
+                )
+            }
         }
 
         if (tabletopMode) {
@@ -241,11 +287,12 @@ fun PlayerControls(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    toolbar()
-                    transportControls()
-                    progressBar()
+                    topBar()
+                    transport()
+                    bottom()
                     TabletopUtilityRow(
                         playbackSpeed = playbackSpeed,
+                        playbackSpeedEnabled = playbackSpeedEnabled,
                         nextEpisode = nextEpisode,
                         compact = !showFullUtilityRow,
                         brightnessFraction = brightnessFraction,
@@ -256,100 +303,117 @@ fun PlayerControls(
                 }
             }
         } else {
-            // The toolbar and progress bar respect the safe-drawing insets, but
-            // those insets are asymmetric in landscape (cutout on one side,
-            // navigation bar on the other), so a transport row inside the same
-            // padded column lands visibly off-center. Anchor the transport
-            // cluster to the true center of the overlay instead.
             Column(modifier = contentModifier) {
-                toolbar()
+                topBar()
                 Spacer(modifier = Modifier.weight(1f))
-                progressBar()
+                bottom()
             }
+            // The insets are asymmetric in landscape, so a transport row inside
+            // the padded column lands off-centre. Anchor it to the true centre.
             Box(
                 modifier = Modifier.align(Alignment.Center),
                 contentAlignment = Alignment.Center,
             ) {
-                transportControls()
+                transport()
             }
         }
     }
+}
+
+/**
+ * Gradients instead of a flat dim: dark enough at the top and bottom edges for
+ * the chrome to read over any frame, while a paused picture stays visible in
+ * the middle. [boost] adds an even dim while scrubbing.
+ */
+private fun Modifier.playerScrim(boost: Float): Modifier = drawBehind {
+    drawRect(Color.Black.copy(alpha = 0.12f + boost))
+    val top = 116.dp.toPx()
+    drawRect(
+        brush = Brush.verticalGradient(0f to Color.Black.copy(alpha = 0.6f), 1f to Color.Transparent, endY = top),
+        size = Size(size.width, top),
+    )
+    val bottom = 200.dp.toPx()
+    drawRect(
+        brush = Brush.verticalGradient(
+            0f to Color.Transparent,
+            1f to Color.Black.copy(alpha = 0.78f),
+            startY = size.height - bottom,
+            endY = size.height,
+        ),
+        topLeft = Offset(0f, size.height - bottom),
+        size = Size(size.width, bottom),
+    )
 }
 
 @Composable
-private fun PlayerToolbar(
+private fun PlayerTopBar(
+    eyebrow: String,
     title: String,
-    subtitle: String,
     isOrientationLocked: Boolean,
     orientationLockSupported: Boolean,
-    hasChapters: Boolean,
-    hasTracks: Boolean,
-    hasMultipleVersions: Boolean,
+    pictureInPictureAvailable: Boolean,
     onBack: () -> Unit,
+    onEnterPictureInPicture: () -> Unit,
     onToggleOrientationLock: () -> Unit,
-    onOpenChapters: () -> Unit,
-    onOpenTracks: () -> Unit,
-    onOpenQuality: () -> Unit,
-    onOpenSettings: () -> Unit,
-    castSlot: @Composable () -> Unit,
+    castSlot: @Composable (Modifier) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        val trailingActionCount = 3 +
-            (if (orientationLockSupported) 1 else 0) +
-            (if (hasChapters) 1 else 0) +
-            (if (hasMultipleVersions) 1 else 0)
-        val compact = useCompactPlayerToolbar(
-            availableWidthDp = maxWidth.value,
-            trailingActionCount = trailingActionCount,
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        PlayerIconDisc(
+            icon = Icons.AutoMirrored.Rounded.ArrowBack,
+            contentDescription = "Back",
+            onClick = onBack,
         )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 8.dp),
         ) {
-            ControlButton(
-                icon = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = "Back",
-                onClick = onBack,
-            )
-            PlayerToolbarTitle(
-                title = title,
-                subtitle = subtitle,
-                modifier = Modifier.weight(1f),
-            )
-            if (compact) {
-                castSlot()
-                PlayerToolbarOverflow(
-                    isOrientationLocked = isOrientationLocked,
-                    orientationLockSupported = orientationLockSupported,
-                    hasChapters = hasChapters,
-                    hasTracks = hasTracks,
-                    hasMultipleVersions = hasMultipleVersions,
-                    onToggleOrientationLock = onToggleOrientationLock,
-                    onOpenChapters = onOpenChapters,
-                    onOpenTracks = onOpenTracks,
-                    onOpenQuality = onOpenQuality,
-                    onOpenSettings = onOpenSettings,
-                )
-            } else {
-                PlayerToolbarActions(
-                    isOrientationLocked = isOrientationLocked,
-                    orientationLockSupported = orientationLockSupported,
-                    hasChapters = hasChapters,
-                    hasTracks = hasTracks,
-                    hasMultipleVersions = hasMultipleVersions,
-                    onToggleOrientationLock = onToggleOrientationLock,
-                    onOpenChapters = onOpenChapters,
-                    onOpenTracks = onOpenTracks,
-                    onOpenQuality = onOpenQuality,
-                    onOpenSettings = onOpenSettings,
-                    castSlot = castSlot,
+            if (eyebrow.isNotBlank()) {
+                Text(
+                    text = eyebrow.uppercase(),
+                    style = PlayerType.Eyebrow,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            Text(
+                text = title,
+                style = PlayerType.HudTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp),
+            )
+        }
+        if (pictureInPictureAvailable) {
+            PlayerIconDisc(
+                icon = Icons.Rounded.PictureInPictureAlt,
+                contentDescription = "Picture in picture",
+                onClick = onEnterPictureInPicture,
+            )
+        }
+        castSlot(Modifier.playerDiscSurface())
+        if (orientationLockSupported) {
+            PlayerIconDisc(
+                icon = if (isOrientationLocked) Icons.Rounded.ScreenLockRotation else Icons.Rounded.ScreenRotation,
+                contentDescription = if (isOrientationLocked) "Landscape locked" else "Rotate freely",
+                onClick = onToggleOrientationLock,
+            )
         }
     }
 }
+
+/** Dresses a foreign button (Cast) as a player disc. */
+private fun Modifier.playerDiscSurface(): Modifier = this
+    .minimumInteractiveComponentSize()
+    .size(PlayerChrome.DiscSize)
+    .clip(CircleShape)
+    .background(PlayerChrome.Disc)
+    .border(1.dp, PlayerChrome.DiscStroke, CircleShape)
 
 @Composable
 private fun PlayerTransportControls(
@@ -362,83 +426,134 @@ private fun PlayerTransportControls(
     onPlayPause: () -> Unit,
     onSkipForward: () -> Unit,
     onSkipBackward: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
+    val showPlay = isPaused || !isPlaying
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(48.dp, Alignment.CenterHorizontally),
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(46.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(
+        PlayerDisc(
+            contentDescription = "Skip back $skipBackSeconds seconds",
             onClick = onSkipBackward,
+            size = 54.dp,
             enabled = seekEnabled,
-            modifier = Modifier.size(52.dp),
         ) {
             SeekIntervalIcon(
                 forward = false,
                 seconds = skipBackSeconds,
-                contentDescription = "Skip back $skipBackSeconds seconds",
-                tint = if (seekEnabled) Color.White else Color.White.copy(alpha = 0.3f),
-                modifier = Modifier.size(32.dp),
+                contentDescription = null,
+                tint = PlayerChrome.Paper,
+                modifier = Modifier.size(31.dp),
             )
         }
-        IconButton(
+        PlayerDisc(
+            contentDescription = if (showPlay) "Play" else "Pause",
             onClick = onPlayPause,
+            size = 70.dp,
             enabled = playPauseEnabled,
-            modifier = Modifier
-                .size(64.dp)
-                .background(Color.White.copy(alpha = 0.14f), CircleShape),
+            fill = PlayerChrome.Paper,
+            contentColor = PlayerChrome.Ink,
+            stroke = Color.Transparent,
         ) {
             Icon(
-                imageVector = if (isPaused || !isPlaying) {
-                    Icons.Default.PlayArrow
-                } else {
-                    Icons.Default.Pause
-                },
-                contentDescription = if (isPaused || !isPlaying) "Play" else "Pause",
-                tint = if (playPauseEnabled) Color.White else Color.White.copy(alpha = 0.3f),
-                modifier = Modifier.size(38.dp),
+                imageVector = if (showPlay) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                contentDescription = null,
+                tint = PlayerChrome.Ink,
+                // The play triangle's visual centre sits left of its box.
+                modifier = Modifier
+                    .size(44.dp)
+                    .offset(x = if (showPlay) 2.dp else 0.dp),
             )
         }
-        IconButton(
+        PlayerDisc(
+            contentDescription = "Skip forward $skipForwardSeconds seconds",
             onClick = onSkipForward,
+            size = 54.dp,
             enabled = seekEnabled,
-            modifier = Modifier.size(52.dp),
         ) {
             SeekIntervalIcon(
                 forward = true,
                 seconds = skipForwardSeconds,
-                contentDescription = "Skip forward $skipForwardSeconds seconds",
-                tint = if (seekEnabled) Color.White else Color.White.copy(alpha = 0.3f),
-                modifier = Modifier.size(32.dp),
+                contentDescription = null,
+                tint = PlayerChrome.Paper,
+                modifier = Modifier.size(31.dp),
             )
         }
     }
 }
 
+/** How much of each action pill fits: label and value, label, or icon only. */
+private enum class ActionPillDensity { Full, Labels, Icons }
+
 @Composable
-private fun PlayerToolbarTitle(
-    title: String,
-    subtitle: String,
+private fun PlayerActionPillRow(
+    hasTracks: Boolean,
+    hasChapters: Boolean,
+    hasQualityMenu: Boolean,
+    tracksValue: String?,
+    chapterValue: String?,
+    qualityValue: String?,
+    onOpenTracks: () -> Unit,
+    onOpenChapters: () -> Unit,
+    onOpenQuality: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = title,
-            fontSize = 15.sp,
-            color = Color.White,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                fontSize = 12.sp,
-                color = Color.White.copy(alpha = 0.64f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val density = when {
+            maxWidth >= 680.dp -> ActionPillDensity.Full
+            maxWidth >= 480.dp -> ActionPillDensity.Labels
+            else -> ActionPillDensity.Icons
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // The left pills share what Quality and ⋯ leave, so a long track or
+            // chapter name ellipsizes instead of pushing them off the row.
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PlayerActionPill(
+                    icon = Icons.Rounded.Subtitles,
+                    label = "Audio & Subtitles",
+                    value = tracksValue.takeIf { density == ActionPillDensity.Full },
+                    compact = density == ActionPillDensity.Icons,
+                    enabled = hasTracks,
+                    onClick = onOpenTracks,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (hasChapters) {
+                    PlayerActionPill(
+                        icon = Icons.AutoMirrored.Rounded.FormatListBulleted,
+                        label = "Chapters",
+                        value = chapterValue.takeIf { density == ActionPillDensity.Full },
+                        compact = density == ActionPillDensity.Icons,
+                        onClick = onOpenChapters,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+            }
+            if (hasQualityMenu) {
+                PlayerActionPill(
+                    icon = Icons.Rounded.Tune,
+                    label = "Quality",
+                    value = qualityValue.takeIf { density != ActionPillDensity.Icons },
+                    compact = density == ActionPillDensity.Icons,
+                    onClick = onOpenQuality,
+                )
+            }
+            PlayerIconDisc(
+                icon = Icons.Rounded.MoreHoriz,
+                contentDescription = "Playback settings",
+                onClick = onOpenSettings,
+                size = 36.dp,
+                iconSize = 21.dp,
             )
         }
     }
@@ -447,6 +562,7 @@ private fun PlayerToolbarTitle(
 @Composable
 private fun TabletopUtilityRow(
     playbackSpeed: Double,
+    playbackSpeedEnabled: Boolean,
     nextEpisode: PlayerViewModel.NextEpisodeInfo?,
     compact: Boolean,
     brightnessFraction: Float,
@@ -458,7 +574,7 @@ private fun TabletopUtilityRow(
 
     val brightnessControl: @Composable (Modifier) -> Unit = { modifier ->
         TabletopSliderControl(
-            icon = Icons.Default.Brightness6,
+            icon = Icons.Rounded.Brightness6,
             contentDescription = "Player brightness",
             value = brightnessFraction,
             onValueChange = onSetBrightness,
@@ -500,7 +616,7 @@ private fun TabletopUtilityRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TabletopSliderControl(
-            icon = Icons.AutoMirrored.Filled.VolumeUp,
+            icon = Icons.AutoMirrored.Rounded.VolumeUp,
             contentDescription = "Media volume",
             value = volumeFraction,
             onValueChange = { fraction ->
@@ -514,14 +630,16 @@ private fun TabletopUtilityRow(
             modifier = Modifier.weight(1f),
         )
         brightnessControl(Modifier.weight(1f))
-        TabletopActionButton(
-            icon = Icons.Default.Speed,
-            label = playbackSpeedLabel(playbackSpeed),
-            onClick = { onSetPlaybackSpeed(nextTabletopPlaybackSpeed(playbackSpeed)) },
-        )
+        if (playbackSpeedEnabled) {
+            TabletopActionButton(
+                icon = Icons.Rounded.Speed,
+                label = playbackSpeedLabel(playbackSpeed),
+                onClick = { onSetPlaybackSpeed(nextTabletopPlaybackSpeed(playbackSpeed)) },
+            )
+        }
         nextEpisode?.let { episode ->
             TabletopActionButton(
-                icon = Icons.Default.SkipNext,
+                icon = Icons.Rounded.SkipNext,
                 label = "Next S${episode.seasonNumber}·E${episode.episodeNumber}",
                 onClick = onPlayNextEpisode,
             )
@@ -531,7 +649,7 @@ private fun TabletopUtilityRow(
 
 @Composable
 private fun TabletopSliderControl(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     contentDescription: String,
     value: Float,
     onValueChange: (Float) -> Unit,
@@ -540,21 +658,26 @@ private fun TabletopSliderControl(
     Row(
         modifier = modifier
             .height(48.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.08f))
-            .padding(horizontal = 10.dp),
+            .clip(RoundedCornerShape(16.dp))
+            .background(PlayerChrome.Raised)
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = 0.82f),
+            tint = PlayerChrome.Paper.copy(alpha = 0.82f),
             modifier = Modifier.size(20.dp),
         )
         Slider(
             value = value,
             onValueChange = onValueChange,
+            colors = SliderDefaults.colors(
+                thumbColor = PlayerChrome.Paper,
+                activeTrackColor = PlayerChrome.Paper,
+                inactiveTrackColor = Color.White.copy(alpha = 0.22f),
+            ),
             modifier = Modifier.weight(1f),
         )
     }
@@ -562,7 +685,7 @@ private fun TabletopSliderControl(
 
 @Composable
 private fun TabletopActionButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     label: String,
     onClick: () -> Unit,
 ) {
@@ -570,8 +693,8 @@ private fun TabletopActionButton(
         modifier = Modifier
             .height(48.dp)
             .widthIn(min = 112.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.10f))
+            .clip(RoundedCornerShape(16.dp))
+            .background(PlayerChrome.Raised)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -580,16 +703,10 @@ private fun TabletopActionButton(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White,
+            tint = PlayerChrome.Paper,
             modifier = Modifier.size(19.dp),
         )
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-        )
+        Text(text = label, style = PlayerType.PillLabel, maxLines = 1)
     }
 }
 
@@ -598,156 +715,4 @@ internal fun nextTabletopPlaybackSpeed(current: Double): Double =
 
 internal fun playbackSpeedLabel(speed: Double): String {
     return "${formatPlaybackSpeed(speed)}× Speed"
-}
-
-@Composable
-private fun PlayerToolbarActions(
-    isOrientationLocked: Boolean,
-    orientationLockSupported: Boolean,
-    hasChapters: Boolean,
-    hasTracks: Boolean,
-    hasMultipleVersions: Boolean,
-    onToggleOrientationLock: () -> Unit,
-    onOpenChapters: () -> Unit,
-    onOpenTracks: () -> Unit,
-    onOpenQuality: () -> Unit,
-    onOpenSettings: () -> Unit,
-    castSlot: @Composable () -> Unit,
-) {
-    if (orientationLockSupported) {
-        ControlButton(
-            icon = if (isOrientationLocked) {
-                Icons.Default.ScreenLockRotation
-            } else {
-                Icons.Default.ScreenRotation
-            },
-            contentDescription = if (isOrientationLocked) "Landscape Locked" else "Rotate Freely",
-            onClick = onToggleOrientationLock,
-        )
-    }
-    if (hasChapters) {
-        ControlButton(
-            icon = Icons.AutoMirrored.Filled.List,
-            contentDescription = "Chapters",
-            onClick = onOpenChapters,
-        )
-    }
-    ControlButton(
-        icon = Icons.AutoMirrored.Filled.SpeakerNotes,
-        contentDescription = "Audio and subtitles",
-        onClick = onOpenTracks,
-        enabled = hasTracks,
-    )
-    if (hasMultipleVersions) {
-        ControlButton(
-            icon = Icons.Default.HighQuality,
-            contentDescription = "Quality",
-            onClick = onOpenQuality,
-        )
-    }
-    castSlot()
-    ControlButton(
-        icon = Icons.Default.Settings,
-        contentDescription = "Playback settings",
-        onClick = onOpenSettings,
-    )
-}
-
-@Composable
-private fun PlayerToolbarOverflow(
-    isOrientationLocked: Boolean,
-    orientationLockSupported: Boolean,
-    hasChapters: Boolean,
-    hasTracks: Boolean,
-    hasMultipleVersions: Boolean,
-    onToggleOrientationLock: () -> Unit,
-    onOpenChapters: () -> Unit,
-    onOpenTracks: () -> Unit,
-    onOpenQuality: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box {
-        ControlButton(
-            icon = Icons.Default.MoreVert,
-            contentDescription = "More playback controls",
-            onClick = { expanded = true },
-        )
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            if (orientationLockSupported) {
-                DropdownMenuItem(
-                    text = {
-                        Text(if (isOrientationLocked) "Unlock orientation" else "Lock orientation")
-                    },
-                    onClick = {
-                        expanded = false
-                        onToggleOrientationLock()
-                    },
-                )
-            }
-            if (hasChapters) {
-                DropdownMenuItem(
-                    text = { Text("Chapters") },
-                    onClick = {
-                        expanded = false
-                        onOpenChapters()
-                    },
-                )
-            }
-            DropdownMenuItem(
-                text = { Text("Audio and subtitles") },
-                enabled = hasTracks,
-                onClick = {
-                    expanded = false
-                    onOpenTracks()
-                },
-            )
-            if (hasMultipleVersions) {
-                DropdownMenuItem(
-                    text = { Text("Quality") },
-                    onClick = {
-                        expanded = false
-                        onOpenQuality()
-                    },
-                )
-            }
-            DropdownMenuItem(
-                text = { Text("Playback settings") },
-                onClick = {
-                    expanded = false
-                    onOpenSettings()
-                },
-            )
-        }
-    }
-}
-
-/**
- * Top-bar control button matching iOS `controlButton`: a `size 20` icon inside
- * a 48x48 tap target (Android minimum touch target), white, dimmed to 0.3 when
- * disabled.
- */
-@Composable
-private fun ControlButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    contentDescription: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-) {
-    IconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(48.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = if (enabled) Color.White else Color.White.copy(alpha = 0.3f),
-            modifier = Modifier.size(22.dp),
-        )
-    }
 }
