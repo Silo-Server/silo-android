@@ -116,6 +116,9 @@ data class DetailPortraitArtwork(
     val url: String?,
     val thumbhash: String?,
     val reserveSpace: Boolean = false,
+    /** False while a fallback poster may still arrive, so a blank [url] keeps
+     *  the box empty rather than showing the default artwork. */
+    val isResolved: Boolean = true,
 )
 
 /**
@@ -255,9 +258,9 @@ private fun ExpandedDetailHero(
                                 shape = RoundedCornerShape(12.dp),
                             ),
                     ) {
-                        // A blank URL here can mean the series poster is still
-                        // loading, so only a failed poster shows the default artwork.
-                        if (!portraitArtwork.url.isNullOrBlank()) {
+                        // A blank URL can mean the series poster is still loading,
+                        // so the default artwork waits until the poster is resolved.
+                        if (!portraitArtwork.url.isNullOrBlank() || portraitArtwork.isResolved) {
                             ThumbhashImage(
                                 url = portraitArtwork.url,
                                 thumbhash = portraitArtwork.thumbhash,

@@ -145,6 +145,9 @@ fun ThumbhashImage(
     val cachedPlaceholder = remember(thumbhash) {
         thumbhash?.takeIf { it.isNotBlank() }?.let { ThumbhashPainterCache.get(it) }
     }
+    // Set when a nonblank ThumbHash fails to decode, so the image can fall back
+    // to the default artwork rather than wait on a placeholder that never comes.
+    var thumbhashUnusable by remember(thumbhash) { mutableStateOf(false) }
     // Plain `val` (not `by`) so the null-checked `placeholder` smart-casts below.
     val placeholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
         if (cachedPlaceholder != null) return@produceState
@@ -153,9 +156,10 @@ fun ThumbhashImage(
             return@produceState
         }
         val decoded = withContext(Dispatchers.Default) { decodeThumbhashPainter(hash) }
-        if (decoded != null) ThumbhashPainterCache.put(hash, decoded)
+        if (decoded != null) ThumbhashPainterCache.put(hash, decoded) else thumbhashUnusable = true
         value = decoded
     }.value
+    val hasUsableThumbhash = !thumbhash.isNullOrBlank() && !thumbhashUnusable
 
     if (url.isNullOrBlank()) {
         when {
@@ -165,9 +169,9 @@ fun ThumbhashImage(
                 contentScale = contentScale,
                 modifier = modifier,
             )
-            // Checks the hash, not the decode, so a ThumbHash still decoding
-            // doesn't flash the default artwork first.
-            defaultArtwork != null && thumbhash.isNullOrBlank() ->
+            // Waits on a ThumbHash still decoding, so it doesn't flash the
+            // default artwork first.
+            defaultArtwork != null && !hasUsableThumbhash ->
                 DefaultArtwork(defaultArtwork, modifier = modifier, contentDescription = contentDescription)
             !transparent -> Box(modifier = modifier.background(DefaultPlaceholderColor))
         }
@@ -177,7 +181,7 @@ fun ThumbhashImage(
     // A failed load keeps the ThumbHash; only without one does a poster fall
     // back to the default artwork.
     var failed by remember(url) { mutableStateOf(false) }
-    val failedArtwork = defaultArtwork?.takeIf { failed && thumbhash.isNullOrBlank() }
+    val failedArtwork = defaultArtwork?.takeIf { failed && !hasUsableThumbhash }
 
     val model = remember(url, decodeSizePx, crossfadeMillis, cacheKey) {
         ImageRequest.Builder(context)

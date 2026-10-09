@@ -856,6 +856,7 @@ fun ItemDetailScreen(
                                     state.episodeSeriesPosterThumbhash
                                 },
                                 reserveSpace = true,
+                                isResolved = seasonPosterUrl != null || state.episodeSeriesPosterResolved,
                             )
                         } else {
                             DetailPortraitArtwork(
