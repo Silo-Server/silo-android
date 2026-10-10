@@ -123,3 +123,10 @@ data class VerifyPinResponse(
  */
 fun VerifyPinResponse.authorizedProfileToken(): String? =
     profileToken?.takeIf { valid && it.isNotBlank() }
+
+/**
+ * The household's primary profile, the only one the server lets manage the
+ * other profiles. A one-profile household is its own primary, as on Apple.
+ */
+fun List<Profile>.householdPrimary(): Profile? =
+    firstOrNull { it.isPrimary } ?: singleOrNull()

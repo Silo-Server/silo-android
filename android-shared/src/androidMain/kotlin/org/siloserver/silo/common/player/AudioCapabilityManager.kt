@@ -15,6 +15,7 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioCapabilities
 import androidx.media3.exoplayer.audio.AudioCapabilitiesReceiver
+import org.siloserver.silo.common.player.audio.HdmiSinkDtsSupport
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
 import org.siloserver.silo.model.playback.AudioPassthroughEntry
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -224,8 +225,13 @@ class AudioCapabilityManager(
     }
 
     private fun mapCapabilities(caps: AudioCapabilities): AudioPassthroughCapabilities {
+        // The platform can accept DTS for a sink that does not decode it (an
+        // Amlogic box in front of an LG 2025 TV); never claim passthrough there.
+        val sinkDecodesDts by lazy { HdmiSinkDtsSupport.hdmiSinkDecodesDts(appContext) }
         val supportedEncodings = encodingSupport.filter { support ->
-            Build.VERSION.SDK_INT >= support.minSdk && caps.supportsEncoding(support.encoding)
+            Build.VERSION.SDK_INT >= support.minSdk &&
+                caps.supportsEncoding(support.encoding) &&
+                (support.codec !in DTS_CODECS || sinkDecodesDts)
         }
         val codecs = supportedEncodings.map(EncodingSupport::codec)
 
@@ -428,6 +434,7 @@ class AudioCapabilityManager(
     private companion object {
         const val TAG = "AudioCapabilityMgr"
         const val ROUTE_HASH_BYTES = 16
+        val DTS_CODECS = setOf("dts", "dts_hd")
 
         val encodingSupport = listOf(
             EncodingSupport("ac3", AudioFormat.ENCODING_AC3),

@@ -20,7 +20,6 @@ import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.CatalogCachePort
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class PersonalDataRepositoryCacheTest {
 
@@ -62,7 +61,8 @@ class PersonalDataRepositoryCacheTest {
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) { }
         releaseResponse.complete(Unit)
 
-        assertTrue(oldProfileRequest.await() is ApiResult.Success)
+        // The old profile's list doesn't come back for the new profile either.
+        assertEquals("identity_changed", (oldProfileRequest.await() as ApiResult.Error).error)
         assertEquals(null, cache.cachedLibraries)
     }
 }

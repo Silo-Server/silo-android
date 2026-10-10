@@ -167,7 +167,7 @@ object SettingsDimens {
  */
 object MenuDimens {
     /** Popup corner radius. */
-    val cornerRadius = 16.dp
+    val cornerRadius = 20.dp
 
     /** Menu row height. Clears the 48dp touch-target minimum exactly. */
     val rowMinHeight = 48.dp
@@ -180,7 +180,7 @@ object MenuDimens {
      * otherwise size down to a sliver; Material's own menus carry a similar
      * minimum.
      */
-    val minWidth = 184.dp
+    val minWidth = 220.dp
 
     /** Outline separating the popup from whatever artwork sits behind it. */
     val borderThickness = SettingsDimens.dividerThickness

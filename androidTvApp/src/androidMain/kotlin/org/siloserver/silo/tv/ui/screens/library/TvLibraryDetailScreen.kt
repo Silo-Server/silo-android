@@ -57,6 +57,7 @@ import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import androidx.tv.material3.Card
+import androidx.tv.material3.Button
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
@@ -101,6 +102,7 @@ fun TvLibraryDetailScreen(
     libraryId: Int,
     libraryTitle: String,
     libraryType: String,
+    mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onCollectionClick: (collectionId: String, title: String, isUserCollection: Boolean) -> Unit,
     onInitialContentFocus: () -> Unit = {},
@@ -114,12 +116,30 @@ fun TvLibraryDetailScreen(
     // again rather than being keyed on the section value alone.
     sectionRequestNonce: Int = 0,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    // Plays the first pick of a shuffle started from the Library tab.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvLibraryDetailViewModel = koinViewModel(
-        key = "library-$libraryId",
-        parameters = { parametersOf(libraryId, libraryTitle, libraryType) },
+        key = "library-$libraryId-${mediaScope.orEmpty()}",
+        parameters = { parametersOf(libraryId, libraryTitle, libraryType, mediaScope) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
+    // Movie, TV, and mixed libraries shuffle when the server offers it. A
+    // Movies- or Series-scoped view of a mixed library does not: a shuffle
+    // request carries no media type, so it would draw from both.
+    val onShuffleLibrary = if (
+        mediaScope == null &&
+        org.siloserver.silo.model.shuffle.isShuffleLibraryType(libraryType) &&
+        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY)
+    ) {
+        { shuffleLauncher.start(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY, libraryId.toString()) }
+    } else {
+        null
+    }
 
     // Apply the committed cascade section on entry / whenever the commit
     // changes it. Keyed on sectionRequestNonce (bumped on every commit) AND the
@@ -138,7 +158,7 @@ fun TvLibraryDetailScreen(
     ) {
         when (state.selectedTab) {
             TvLibraryTab.Recommended -> RecommendedTab(
-                surfaceKey = "library-$libraryId",
+                surfaceKey = "library-$libraryId-${mediaScope.orEmpty()}",
                 state = state,
                 onItemClick = onItemClick,
                 onRetry = viewModel::retryRecommended,
@@ -160,7 +180,9 @@ fun TvLibraryDetailScreen(
                 showBrowseControls = true,
                 onSortKeySelected = viewModel::onSortKeySelected,
                 onFacetSelectionApplied = viewModel::onFacetSelectionApplied,
+                onPreserveFiltersChanged = viewModel::onPreserveFiltersChanged,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
+                onShuffle = onShuffleLibrary,
             )
             TvLibraryTab.Genres -> LibraryTab(
                 state = state,
@@ -252,6 +274,7 @@ fun TvLibraryDetailScreen(
 // Tab content
 // ============================================================================
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun RecommendedTab(
     /** Distinguishes this feed's saveable slots from other surfaces'. */
@@ -291,14 +314,28 @@ private fun RecommendedTab(
             )
         }
         else -> {
-            TvSkylineSectionFeed(
-                surfaceKey = surfaceKey,
-                sections = rows,
-                onItemClick = onItemClick,
-                focusRequest = focusRequest,
-                onInitialContentFocus = onInitialContentFocus,
-                onContentUpFallbackChanged = onContentUpFallbackChanged,
-            )
+            Box {
+                TvSkylineSectionFeed(
+                    surfaceKey = surfaceKey,
+                    sections = rows,
+                    onItemClick = onItemClick,
+                    focusRequest = focusRequest,
+                    onInitialContentFocus = onInitialContentFocus,
+                    onContentUpFallbackChanged = onContentUpFallbackChanged,
+                )
+                state.recommendedError?.let { message ->
+                    Row(
+                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal = Spacing.safeArea, vertical = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(message, modifier = Modifier.weight(1f))
+                        Button(onClick = onRetry) { Text("Retry") }
+                    }
+                }
+            }
         }
     }
 }
@@ -329,9 +366,11 @@ private fun LibraryTab(
     showBrowseControls: Boolean = false,
     onSortKeySelected: (TvLibrarySortOption) -> Unit = {},
     onFacetSelectionApplied: (TvCatalogFacetSelection) -> Unit = {},
+    onPreserveFiltersChanged: ((Boolean) -> Unit)? = null,
     /** Shell hook for overriding D-pad Up while the A–Z rail holds focus. */
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
     onClearAudiobookGroup: (() -> Unit)? = null,
+    onShuffle: (() -> Unit)? = null,
 ) {
     val restoredGridItemFocusRequester = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
@@ -361,9 +400,16 @@ private fun LibraryTab(
     )
 
     if (state.browseError != null) {
+        // The error replaces the Sort/Filter row, and Retry resends the same
+        // query. A saved filter the server rejects would otherwise keep
+        // Browse failing across restarts, so offer to clear it here; that
+        // also overwrites the saved state.
+        val canClearFilters = showBrowseControls && state.browseFilter.facetSelection.canReset
         TvErrorScreen(
             message = state.browseError,
             onRetry = onRetry,
+            secondaryActionLabel = "Clear filters".takeIf { canClearFilters },
+            onSecondaryAction = { onFacetSelectionApplied(TvCatalogFacetSelection()) }.takeIf { canClearFilters },
             modifier = Modifier.padding(
                 start = Spacing.safeArea,
                 top = TvTopMenuLayout.contentTopInset,
@@ -407,6 +453,7 @@ private fun LibraryTab(
                 onOpenSortPanel = { openPanel = TvBrowsePanel.Sort },
                 onOpenFilterPanel = { openPanel = TvBrowsePanel.Filter },
                 onClearFilters = { onFacetSelectionApplied(TvCatalogFacetSelection()) },
+                onShuffle = onShuffle,
             )
         }
         // The A–Z jump rail only makes sense for title-sorted browsing (the
@@ -439,6 +486,7 @@ private fun LibraryTab(
             initial = state.browseFilter.facetSelection,
             onApply = onFacetSelectionApplied,
             onClose = { openPanel = null },
+            preserve = onPreserveFiltersChanged?.let { TvBrowsePreserveToggle(state.preserveFilters, it) },
         )
         null -> Unit
     }
@@ -466,6 +514,7 @@ private fun LibraryGrid(
     onOpenSortPanel: () -> Unit = {},
     onOpenFilterPanel: () -> Unit = {},
     onClearFilters: () -> Unit = {},
+    onShuffle: (() -> Unit)? = null,
 ) {
     var attachedRestoreItemId by remember { mutableStateOf<String?>(null) }
     val nearEnd by remember(
@@ -560,6 +609,7 @@ private fun LibraryGrid(
                         onFilter = onOpenFilterPanel,
                         onClearFilters = onClearFilters,
                         modifier = Modifier.onFocusChanged { controlsFocused = it.hasFocus },
+                        onShuffle = onShuffle,
                     )
                 }
             }

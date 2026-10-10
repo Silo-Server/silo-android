@@ -512,7 +512,7 @@ object TvPlaybackFormatting {
     /**
      * Inputs needed to preview what the player's subtitle auto-resolver would
      * land on, so the row can annotate "Auto" with the concrete track (or
-     * "None"). Mirrors the subset of [TvPlayerViewModel.resolveAutoSubtitleSelection]'s
+     * "None"). Mirrors the subset of `resolveTvAutoSubtitleIdentity`'s
      * inputs the detail page can supply. Analogue of silo-apple's
      * `DetailPlaybackFormatting.SubtitleAutoContext`.
      */
@@ -532,7 +532,7 @@ object TvPlaybackFormatting {
      * Selector VALUE label for Subtitles.
      *
      * When [autoContext] is supplied, the Auto preview is resolved through the
-     * SAME rules the player runs at launch ([TvPlayerViewModel.resolveAutoSubtitleSelection],
+     * SAME rules the player runs at launch (`resolveTvAutoSubtitleIdentity`,
      * mirrored in [autoResolvedSubtitle]) — preferred-language / mode /
      * forced-subs — so the row shows exactly what will play, including
      * "Auto - None" when Auto resolves to no subtitles. It never consults the
@@ -578,7 +578,7 @@ object TvPlaybackFormatting {
      * subtitle auto-resolver would pick for the no-override case, or `null`
      * when Auto resolves to no subtitles (mode off, "no subs" preference, no
      * language match, or audio already in the preferred language). Mirrors
-     * [TvPlayerViewModel.resolveAutoSubtitleSelection] branch-for-branch over
+     * `resolveTvAutoSubtitleIdentity` branch-for-branch over
      * the catalog [SubtitleTrack] list. A resolver `NoChange`/`Disable` maps to
      * `null` here: the detail page starts from nothing playing, so both mean
      * "no subtitle".

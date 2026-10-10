@@ -297,6 +297,8 @@ open class PlaybackSessionManager(
         progressPersistence: ProgressPersistenceV3 = ProgressPersistenceV3.SERVER,
         deferPublication: Boolean = false,
         expectedMetadataOwner: AuthScopeSnapshot? = null,
+        /** False pins [fileId] through every replan (Watch Party). Null keeps the server default. */
+        allowAlternateVersions: Boolean? = null,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
         if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
             return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
@@ -375,6 +377,7 @@ open class PlaybackSessionManager(
                 bandwidthCapKbps = maxBitrateKbps?.takeIf { it > 0 },
                 capabilities = capabilities,
                 clientPlaybackContext = clientPlaybackContext,
+                allowAlternateVersions = allowAlternateVersions,
             )
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
@@ -1241,24 +1244,6 @@ open class PlaybackSessionManager(
             )
         }
         return true
-    }
-
-    /**
-     * Rolls back whatever deferred publication this manager still holds.
-     *
-     * The lifecycle's `rollbackCurrentPendingPublication` can only settle a
-     * publication the *lifecycle* knows about, and reports success when it has
-     * none — but the manager's is created first, so a cancellation between the
-     * two leaves this side pending with no owner. Callers about to start fresh
-     * content should clear both.
-     *
-     * Returns true when nothing is pending or the rollback succeeded.
-     */
-    suspend fun rollbackCurrentPendingVideoPublication(): Boolean {
-        val pendingSessionId = videoAttemptMutex.withLock {
-            pendingVideoPublication?.replacement?.sessionId
-        } ?: return true
-        return rollbackUnpublishedVideoSession(pendingSessionId)
     }
 
     /**

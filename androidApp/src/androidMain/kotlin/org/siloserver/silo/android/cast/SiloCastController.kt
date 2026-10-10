@@ -7,18 +7,25 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -26,6 +33,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import org.siloserver.silo.cast.SiloCastControlCommand
 import org.siloserver.silo.cast.SiloCastHello
@@ -52,6 +60,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.DeviceLoginApi
+import org.siloserver.silo.repository.CatalogRepository
 
 data class SiloCastControllerState(
     val targets: List<SiloCastTarget> = emptyList(),
@@ -69,16 +78,27 @@ data class SiloCastControllerState(
     /** A silent foreground re-attach probe is in flight or unconfirmed —
      *  the mini bar stays hidden until the TV confirms it is playing. */
     val isAutoResuming: Boolean = false,
-    /** A launch (connect + profile handoff + launch frame) is in flight. The
-     *  TV keeps pushing idle state until its player registers, so without
-     *  this the remote would show "Pick something from your library…" for
-     *  seconds right after the user picked something. */
-    val isLaunching: Boolean = false,
+    /** A Play sent to the TV, from the tap until the TV reports that title.
+     *  The TV keeps pushing idle state (or the outgoing title's state) until
+     *  its player registers, so without this the remote would show "Pick
+     *  something from your library…" right after the user picked something. */
+    val launch: SiloCastPendingLaunch? = null,
     val error: String? = null,
 ) {
     val isConnected: Boolean get() = connectedTarget != null && !isReconnecting
     val hasActiveSession: Boolean get() = connectedTarget != null || isReconnecting
 }
+
+data class SiloCastPendingLaunch(
+    val contentId: String,
+    /** The launch frame is on the wire; only the TV's state after that counts. */
+    val isSent: Boolean = false,
+    /** What the TV reported playing when the launch went out; its state does not end the launch. */
+    val replacingContentId: String? = null,
+)
+
+/** Haptic moments of a Play sent to a TV, mirroring silo-apple's remote. */
+enum class SiloCastLaunchFeedback { Sent, Started, Failed }
 
 /**
  * Phone-side SiloCast controller. Wire-compatible with silo-apple's
@@ -104,6 +124,7 @@ class SiloCastController(
     private val serverRegistry: ServerRegistry,
     private val tokenManager: TokenManager,
     private val deviceLoginApi: DeviceLoginApi,
+    private val catalogRepository: CatalogRepository,
     private val lastTargetStore: SiloCastLastTargetStore,
     private val deviceNameProvider: () -> String,
     private val deviceIdProvider: () -> String,
@@ -148,6 +169,12 @@ class SiloCastController(
 
     private val _state = MutableStateFlow(SiloCastControllerState())
     val state: StateFlow<SiloCastControllerState> = _state.asStateFlow()
+
+    private val _launchFeedback = MutableSharedFlow<SiloCastLaunchFeedback>(
+        extraBufferCapacity = 4,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
     private var session: SiloCastTlsClientSession? = null
     private var output: OutputStream? = null
@@ -209,16 +236,31 @@ class SiloCastController(
     }
 
     fun launchOnTarget(target: SiloCastTarget, request: SiloCastLaunchRequest) {
+        val pending = SiloCastPendingLaunch(contentId = request.playback.contentId)
         val job = scope.launch(start = CoroutineStart.LAZY) {
             val self = currentCoroutineContext()[Job] ?: return@launch
+            // Looked up alongside the connect: the TV shows it while a full
+            // profile handoff runs.
+            val title = async { launchTitle(request.playback.contentId) }
             try {
                 launchMutex.withLock {
                     ensureConnected(target, allowCrossServer = true)
-                    // AFTER ensureConnected: its teardown of any previous session
-                    // resets the flag, so setting it earlier would be undone.
-                    _state.update { it.copy(isLaunching = true) }
-                    prepareRemoteIdentity(request)
+                    // Again AFTER ensureConnected: its teardown of a previous
+                    // session clears the launch set at the tap.
+                    _state.update { if (isCurrentLaunch(self)) it.copy(launch = pending) else it }
+                    prepareRemoteIdentity(request, title)
+                    // Read before sending: the TV's state for the new title can
+                    // arrive before the update below, and must not be taken
+                    // for the title being replaced.
+                    val replacing = _state.value.playbackState?.contentId
                     send(SiloCastMessage.Launch(request))
+                    _state.update {
+                        if (isCurrentLaunch(self) && it.launch == pending) {
+                            it.copy(launch = pending.copy(isSent = true, replacingContentId = replacing))
+                        } else {
+                            it
+                        }
+                    }
                     // A cross-server handoff changes the TV's advertised
                     // server after the socket was opened. Persist the actual
                     // remote session scope, not the target's stale discovery
@@ -231,12 +273,20 @@ class SiloCastController(
                         ),
                     )
                 }
+                // The TV reports a launched title within moments (its player
+                // registers before the stream loads); give up on one it never
+                // reports instead of leaving the remote on "Starting…".
+                val sent = _state.value.launch?.takeIf { it.isSent && it.contentId == pending.contentId }
+                if (sent != null) {
+                    val ended = withTimeoutOrNull(LAUNCH_START_TIMEOUT_MS) { _state.first { it.launch !== sent } }
+                    if (ended == null && isCurrentLaunch(self)) failLaunch("The TV didn't start playback.")
+                }
             } catch (error: CancellationException) {
                 // Transport teardown cancels the handoff deferreds. Clear the
                 // spinner when this is still the active launch, but do not let a
                 // superseded launch overwrite the replacement's state.
                 if (isCurrentLaunch(self)) {
-                    _state.update { it.copy(isConnecting = false, connectingDeviceId = null, isLaunching = false) }
+                    _state.update { it.copy(isConnecting = false, connectingDeviceId = null, launch = null) }
                 }
                 throw error
             } catch (error: Throwable) {
@@ -245,12 +295,14 @@ class SiloCastController(
                         it.copy(
                             isConnecting = false,
                             connectingDeviceId = null,
-                            isLaunching = false,
+                            launch = null,
                             error = error.message ?: "Unable to cast.",
                         )
                     }
+                    _launchFeedback.tryEmit(SiloCastLaunchFeedback.Failed)
                 }
             } finally {
+                title.cancel()
                 synchronized(launchJobLock) {
                     if (launchJob === self) launchJob = null
                 }
@@ -261,9 +313,37 @@ class SiloCastController(
             launchJob = job
             old
         }
+        // From the tap, after the swap: a superseded job can no longer
+        // overwrite this launch.
+        _state.update { it.copy(launch = pending, error = null) }
+        _launchFeedback.tryEmit(SiloCastLaunchFeedback.Sent)
         previous?.cancel(CancellationException("Superseded by a newer remote launch."))
         job.start()
     }
+
+    /** Ends the pending launch as failed; the haptic fires only if one was pending. */
+    private fun failLaunch(message: String?) {
+        var failed = false
+        _state.update {
+            failed = it.launch != null
+            it.copy(launch = null, error = message ?: it.error)
+        }
+        if (failed) _launchFeedback.tryEmit(SiloCastLaunchFeedback.Failed)
+    }
+
+    /** The launched item's display title; display-only. */
+    private suspend fun launchTitle(contentId: String): String? =
+        try {
+            // A warm-up, so the remote's artwork lookup for the same item
+            // joins this request instead of fetching it again.
+            val detail = catalogRepository.getCachedItemDetail(contentId)
+                ?: (catalogRepository.warmItemDetail(contentId) as? ApiResult.Success)?.data
+            detail?.let(::castDisplayTitle)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            null
+        }
 
     private fun isCurrentLaunch(job: Job): Boolean = synchronized(launchJobLock) { launchJob === job }
 
@@ -444,10 +524,6 @@ class SiloCastController(
 
     fun setVideoGravity(value: String) {
         sendControl(SiloCastControlCommand.setVideoGravity(value))
-    }
-
-    fun setHdrEnabled(enabled: Boolean) {
-        sendControl(SiloCastControlCommand.setHdrEnabled(enabled))
     }
 
     fun setSubtitleSyncMs(milliseconds: Int) {
@@ -653,7 +729,7 @@ class SiloCastController(
         )
     }
 
-    private suspend fun prepareRemoteIdentity(request: SiloCastLaunchRequest) {
+    private suspend fun prepareRemoteIdentity(request: SiloCastLaunchRequest, title: Deferred<String?>) {
         val version = awaitHandoffStep(VERSION_TIMEOUT_MS, "The TV did not respond.") { negotiatedVersion.await() }
         require(version == SiloCastProtocol.version) { "Update Silo on both devices to use Remote Control." }
 
@@ -679,6 +755,10 @@ class SiloCastController(
                         serverName = server.displayName,
                         profileId = profileId,
                         profileName = null,
+                        // Brief wait only: a TV that already has this profile
+                        // answers at once, and the title shows only during a
+                        // full handoff.
+                        title = withTimeoutOrNull(OFFER_TITLE_WAIT_MS) { title.await() },
                     ),
                 ),
             )
@@ -757,7 +837,8 @@ class SiloCastController(
                 val read = withContext(Dispatchers.IO) { input.read(chunk) }
                 if (read < 0) break
                 frameBuffer.append(chunk.copyOf(read)).forEach { payload ->
-                    handleMessage(json.decodeFromString(SiloCastMessage.serializer(), payload.decodeToString()))
+                    // A kind added after this build is skipped, not fatal.
+                    SiloCastMessage.decodeOrNull(json, payload.decodeToString())?.let { handleMessage(it) }
                 }
             }
         } catch (e: CancellationException) {
@@ -822,7 +903,8 @@ class SiloCastController(
                 // opened.
                 if (session !== deadSession || suppressReconnect || reconnectJob != null) return@launch
                 teardownTransportLocked()
-                _state.update { it.copy(isReconnecting = true, isConnecting = false, isLaunching = false) }
+                // Quietly: a launch already sent may still start on the TV.
+                _state.update { it.copy(isReconnecting = true, isConnecting = false, launch = null) }
                 reconnectJob = scope.launch {
                     try {
                         for (attempt in 1..MAX_RECONNECT_ATTEMPTS) {
@@ -914,6 +996,7 @@ class SiloCastController(
                     return
                 }
                 val now = nowMs()
+                var started = false
                 val reconciled = synchronized(volumeStateLock) {
                     val next = if (isIdle) {
                         volumeReconciler.clear()
@@ -925,22 +1008,33 @@ class SiloCastController(
                         )
                     }
                     _state.update {
+                        // The launch ends when the TV reports that title, or
+                        // anything besides what it was playing at the tap (the
+                        // TV may report a resolved id for the same title).
+                        val launch = it.launch
+                        started = launch != null && launch.isSent && !isIdle &&
+                            (next.contentId == launch.contentId || next.contentId != launch.replacingContentId)
                         it.copy(
                             playbackState = next,
                             error = null,
                             isAutoResuming = if (!isIdle) false else it.isAutoResuming,
-                            isLaunching = if (!isIdle) false else it.isLaunching,
+                            launch = if (started) null else launch,
                         )
                     }
                     next
                 }
                 clock.ingest(reconciled, now)
+                if (started) _launchFeedback.tryEmit(SiloCastLaunchFeedback.Started)
             }
             is SiloCastMessage.Error -> {
                 if (sessionIsAutoResumed && !remoteScreenVisible) {
                     quietDisconnect()
+                } else if (_state.value.launch?.isSent == true && message.error.code !in CONTROL_REPLY_ERRORS) {
+                    failLaunch(message.error.message)
                 } else {
-                    _state.update { it.copy(error = message.error.message, isLaunching = false) }
+                    // A reply to a control pressed mid-launch, or an error the
+                    // launch's own handoff will surface, does not end it.
+                    _state.update { it.copy(error = message.error.message) }
                 }
             }
             is SiloCastMessage.Ping -> send(SiloCastMessage.Pong())
@@ -1025,7 +1119,7 @@ class SiloCastController(
                     connectingDeviceId = null,
                     isReconnecting = false,
                     isAutoResuming = false,
-                    isLaunching = false,
+                    launch = null,
                 )
             }
         }
@@ -1079,6 +1173,10 @@ class SiloCastController(
         const val VERSION_TIMEOUT_MS = 5_000L
         const val CHALLENGE_TIMEOUT_MS = 15_000L
         const val READY_TIMEOUT_MS = 35_000L
+        const val OFFER_TITLE_WAIT_MS = 300L
+        const val LAUNCH_START_TIMEOUT_MS = 30_000L
+        /** TV errors that answer a control command rather than a launch. */
+        val CONTROL_REPLY_ERRORS = setOf("player_not_ready", "command_failed")
         const val HEARTBEAT_INTERVAL_MS = 3_000L
         const val MAX_MISSED_HEARTBEATS = 3
         const val MAX_RECONNECT_ATTEMPTS = 5

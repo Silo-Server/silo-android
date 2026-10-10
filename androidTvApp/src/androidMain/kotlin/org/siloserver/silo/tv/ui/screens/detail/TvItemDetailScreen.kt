@@ -1,6 +1,5 @@
 package org.siloserver.silo.tv.ui.screens.detail
 
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -40,6 +39,14 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.rounded.CheckCircleOutline
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.HeartBroken
+import androidx.compose.material.icons.rounded.RemoveDone
+import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -112,11 +119,9 @@ import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaRelatedItem
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
 import org.siloserver.silo.model.section.SectionItem
-import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.navigation.explicitTvSubtitleLaunchSelection
 import org.siloserver.silo.tv.ui.components.TvDialogOption
@@ -134,10 +139,13 @@ import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.screens.audiobook.formatAudiobookTime
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvSuggestToRoomViewModel
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherEntryDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyDetailEffects
+import org.siloserver.silo.tv.ui.screens.watchparty.TvWatchPartyPlayGuardDialog
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyDetailEntry
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyDetailOption
+import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyPlayGuard
+import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyItem
+import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 
@@ -190,15 +198,22 @@ fun TvItemDetailScreen(
     ) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
-    onWatchTogether: (RoomSnapshot) -> Unit,
+    /** Open a Watch Party screen: the lobby or player, or the hub for null. */
+    onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the More menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvItemDetailViewModel = koinViewModel(
         key = "item-detail-$contentId-$libraryId-${seasonNumber ?: "default"}-${initialEpisodeContentId ?: "default"}",
         parameters = { parametersOf(contentId, libraryId) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
     val seriesRedirect = remember(state.detail) {
         state.detail?.let(::tvSeriesDetailRedirect)
     }
@@ -215,6 +230,17 @@ fun TvItemDetailScreen(
     }
 
     BackHandler(enabled = true) { onBack() }
+
+    // D5: while this TV is in a Watch Party, Play (and extras) first asks to
+    // leave the party; leaving is never hidden behind a solo start.
+    val watchPartyPlayGuard = rememberTvWatchPartyPlayGuard()
+    val guardedOnPlay: (String, Int?, Int?, Boolean, TvSubtitleLaunchSelection?, String?, Double?) -> Unit =
+        { playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds ->
+            watchPartyPlayGuard.requestPlay {
+                onPlay(playContentId, fileId, audioTrackIndex, audioPicked, subtitleSelection, itemType, resumePositionSeconds)
+            }
+        }
+    TvWatchPartyPlayGuardDialog(watchPartyPlayGuard)
 
     LaunchedEffect(seriesRedirect, seriesRedirectFailed) {
         val redirect = seriesRedirect ?: return@LaunchedEffect
@@ -307,13 +333,15 @@ fun TvItemDetailScreen(
             initialSeasonNumber = seasonNumber,
             initialEpisodeContentId = initialEpisodeContentId,
             viewModel = viewModel,
-            onPlay = onPlay,
+            libraryId = libraryId,
+            onPlay = guardedOnPlay,
             onItemDetail = onItemDetail,
             onItemDetailReplace = onItemDetailReplace,
             onSeriesClick = onSeriesClick,
             onSeasonClick = onSeasonClick,
-            onWatchTogether = onWatchTogether,
+            onWatchParty = onWatchParty,
             onOpenPerson = onOpenPerson,
+            shuffleLauncher = shuffleLauncher,
         )
     }
 }
@@ -326,13 +354,15 @@ private fun TvDetailContent(
     initialSeasonNumber: Int?,
     initialEpisodeContentId: String?,
     viewModel: TvItemDetailViewModel,
+    libraryId: Int?,
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onItemDetail: (contentId: String) -> Unit,
     onItemDetailReplace: (contentId: String) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
-    onWatchTogether: (RoomSnapshot) -> Unit,
+    onWatchParty: (WatchPartyDestination?) -> Unit,
     onOpenPerson: (personId: Long) -> Unit,
+    shuffleLauncher: org.siloserver.silo.common.ui.ShuffleLauncher,
 ) {
     val playFocus = remember { FocusRequester() }
     // The circular Version control in the hero action cluster. Hoisted here so
@@ -843,12 +873,42 @@ private fun TvDetailContent(
                                     onPlay = onPlay,
                                     onSeriesClick = onSeriesClick,
                                     onSeasonClick = onSeasonClick,
-                                    onWatchTogether = onWatchTogether,
+                                    libraryId = libraryId,
+                                    onWatchParty = onWatchParty,
                                     // Season mode marks the selected season;
                                     // Show mode offers only the whole series.
                                     watchedSeason = state.seasons
                                         .firstOrNull { it.seasonNumber == state.selectedSeason }
                                         ?.takeIf { isSeriesDetail && !isShowingSeriesOverview && it.episodeCount > 0 },
+                                    onShuffleSeries = if (
+                                        isSeriesDetail &&
+                                        shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                                    ) {
+                                        {
+                                            shuffleLauncher.start(
+                                                org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                                detail.contentId,
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                    // Season mode offers the season on screen,
+                                    // hidden with fewer than two playable episodes.
+                                    shuffleSeason = state.seasons
+                                        .firstOrNull { it.seasonNumber == state.selectedSeason }
+                                        ?.takeIf { season ->
+                                            isSeriesDetail && !isShowingSeriesOverview && !state.episodesLoading &&
+                                                state.episodes.all { it.seasonNumber == season.seasonNumber } &&
+                                                org.siloserver.silo.model.shuffle.canShuffleSeason(state.episodes) &&
+                                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                                        },
+                                    onShuffleSeason = { season ->
+                                        shuffleLauncher.start(
+                                            org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                            season.contentId,
+                                        )
+                                    },
                                 )
                             },
                         )
@@ -1494,24 +1554,15 @@ private fun HeroActionRow(
     onPlay: (contentId: String, fileId: Int?, audioTrackIndex: Int?, audioPickedThisSession: Boolean, subtitleSelection: TvSubtitleLaunchSelection?, itemType: String?, resumePositionSeconds: Double?) -> Unit,
     onSeriesClick: (seriesId: String) -> Unit,
     onSeasonClick: (seriesId: String, seasonNumber: Int) -> Unit,
-    onWatchTogether: (RoomSnapshot) -> Unit,
+    libraryId: Int?,
+    onWatchParty: (WatchPartyDestination?) -> Unit,
     watchedSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeries: (() -> Unit)? = null,
+    shuffleSeason: org.siloserver.silo.model.catalog.Season? = null,
+    onShuffleSeason: (org.siloserver.silo.model.catalog.Season) -> Unit = {},
 ) {
-    val suggestViewModel: TvSuggestToRoomViewModel = koinViewModel()
-    val activeRoom by suggestViewModel.room.collectAsState()
-    val suggestState by suggestViewModel.uiState.collectAsState()
-    val suggestContext = LocalContext.current
-    LaunchedEffect(suggestState.notice, suggestState.error) {
-        val message = suggestState.notice ?: suggestState.error
-        if (message != null) {
-            Toast.makeText(suggestContext, message, Toast.LENGTH_SHORT).show()
-            suggestViewModel.consumeNotice()
-            suggestViewModel.clearError()
-        }
-    }
+    val watchPartyEntry = rememberTvWatchPartyDetailEntry()
     var moreOpen by remember(detail.contentId) { mutableStateOf(false) }
-    var watchTogetherOpen by remember(detail.contentId) { mutableStateOf(false) }
-    var joinCodeOpen by remember(detail.contentId) { mutableStateOf(false) }
     var playLaunchPending by remember(detail.contentId) { mutableStateOf(false) }
     LaunchedEffect(playLaunchPending) {
         if (playLaunchPending) {
@@ -1547,11 +1598,6 @@ private fun HeroActionRow(
     // higher-frequency Watchlist toggle is visible in the stable action row.
     val hasSeriesNavigation = detail.type in setOf("episode", "season") && detail.seriesId != null
     val hasOverflowNavigation = hasSeriesNavigation
-    val hasWatchTogether =
-        CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && !isAudiobookItemType(detail.type)
-    val hasSuggestionTarget = detail.type in setOf("movie", "episode") || nextUp != null
-    val canSuggestToRoom =
-        CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && activeRoom != null && hasSuggestionTarget
 
     // Version set + selection state driving the selector row / Play file id.
     // Series/season use the next-up episode's versions + the next-up selection;
@@ -1591,6 +1637,37 @@ private fun HeroActionRow(
         )
     }
     val selectedFileId = selectedVersion?.fileId
+    // Watch Party offers movies, episodes, and series (as the next-up
+    // episode), staging the edition this page displays.
+    val watchPartyItem = when {
+        detail.type == "movie" || detail.type == "episode" -> tvWatchPartyItem(
+            contentId = detail.contentId,
+            contentType = detail.type,
+            title = detail.title,
+            subtitle = if (detail.type == "episode") {
+                listOfNotNull(
+                    detail.seriesTitle,
+                    detail.seasonNumber?.let { season -> detail.episodeNumber?.let { "S${season}E$it" } },
+                ).joinToString(" · ")
+            } else {
+                detail.year.takeIf { it > 0 }?.toString()
+            },
+            posterUrl = detail.posterUrl,
+            fileId = selectedFileId,
+            libraryId = libraryId,
+        )
+        detail.type == "series" && nextUp != null && playReady -> tvWatchPartyItem(
+            contentId = nextUp.contentId,
+            contentType = "episode",
+            title = nextUp.title?.takeIf { it.isNotBlank() } ?: "Episode ${nextUp.episodeNumber}",
+            subtitle = "${detail.title} · S${nextUp.seasonNumber}E${nextUp.episodeNumber}",
+            posterUrl = nextUp.stillUrl ?: detail.posterUrl,
+            fileId = selectedFileId,
+            libraryId = libraryId,
+        )
+        else -> null
+    }
+    val watchPartyOption = rememberTvWatchPartyDetailOption(watchPartyEntry, watchPartyItem)
     val automaticAudioTrackOrdinal = resolveTvAutomaticAudioTrackOrdinal(
         version = selectedVersion,
         preferredAudioLanguage = state.preferredAudioLanguage,
@@ -1761,11 +1838,39 @@ private fun HeroActionRow(
 
     if (moreOpen) {
         val options = buildList {
+            // Shuffle leads the menu, as on the web.
+            if (onShuffleSeries != null) {
+                add(
+                    TvDialogOption(
+                        key = "shuffle-series",
+                        title = "Shuffle Series",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeries()
+                        },
+                    ),
+                )
+            }
+            shuffleSeason?.let { season ->
+                add(
+                    TvDialogOption(
+                        key = "shuffle-season",
+                        title = "Shuffle ${tvSeasonPickerLabel(season)}",
+                        icon = Icons.Rounded.Shuffle,
+                        onClick = {
+                            moreOpen = false
+                            onShuffleSeason(season)
+                        },
+                    ),
+                )
+            }
             add(
                 TvDialogOption(
                     key = "favorite",
                     title = if (state.isFavorite) "Remove from Favorites" else "Add to Favorites",
-                    selected = state.isFavorite,
+                    // Actions take icons, not checks: a check means "selected".
+                    icon = if (state.isFavorite) Icons.Rounded.HeartBroken else Icons.Rounded.FavoriteBorder,
                     onClick = {
                         moreOpen = false
                         viewModel.onToggleFavorite()
@@ -1776,7 +1881,7 @@ private fun HeroActionRow(
                 TvDialogOption(
                     key = "watched",
                     title = if (state.isWatched) watchedUnmarkLabel(detail) else watchedMarkLabel(detail),
-                    selected = state.isWatched,
+                    icon = if (state.isWatched) Icons.Rounded.RemoveDone else Icons.Rounded.CheckCircleOutline,
                     onClick = {
                         moreOpen = false
                         viewModel.onToggleWatched()
@@ -1790,7 +1895,7 @@ private fun HeroActionRow(
                         key = "season-watched",
                         title = "Mark ${tvSeasonPickerLabel(season)} " +
                             if (seasonWatched) "Unwatched" else "Watched",
-                        selected = seasonWatched,
+                        icon = if (seasonWatched) Icons.Rounded.RemoveDone else Icons.Rounded.CheckCircleOutline,
                         onClick = {
                             moreOpen = false
                             viewModel.onSetSeasonWatched(season, !seasonWatched)
@@ -1798,34 +1903,16 @@ private fun HeroActionRow(
                     ),
                 )
             }
-            if (canSuggestToRoom) {
+            watchPartyOption?.let { option ->
                 add(
                     TvDialogOption(
-                        key = "suggest-to-room",
-                        title = "Suggest to Watch Together",
-                        subtitle = "Add to the room you are in",
+                        key = "watch-party",
+                        title = option.title,
+                        subtitle = option.subtitle,
+                        icon = Icons.Rounded.Groups,
                         onClick = {
                             moreOpen = false
-                            suggestViewModel.suggest(
-                                contentId = playContentId,
-                                contentType = playType,
-                                title = nextUp?.title ?: detail.title,
-                                subtitle = if (nextUp != null) detail.title else detail.seriesTitle,
-                                posterUrl = nextUp?.stillUrl ?: detail.posterUrl,
-                            )
-                        },
-                    ),
-                )
-            }
-            if (hasWatchTogether) {
-                add(
-                    TvDialogOption(
-                        key = "watch-together",
-                        title = "Watch Together",
-                        subtitle = "Host a room or join by code",
-                        onClick = {
-                            moreOpen = false
-                            watchTogetherOpen = true
+                            option.onSelect()
                         },
                     ),
                 )
@@ -1841,6 +1928,7 @@ private fun HeroActionRow(
                                     key = "season-$season",
                                     title = "Go to Season $season",
                                     subtitle = detail.seriesTitle,
+                                    icon = Icons.Rounded.VideoLibrary,
                                     onClick = {
                                         moreOpen = false
                                         onSeasonClick(seriesId, season)
@@ -1854,6 +1942,7 @@ private fun HeroActionRow(
                             key = "series",
                             title = "Go to Series",
                             subtitle = detail.seriesTitle,
+                            icon = Icons.Rounded.Tv,
                             onClick = {
                                 moreOpen = false
                                 onSeriesClick(seriesId)
@@ -1867,48 +1956,12 @@ private fun HeroActionRow(
             title = "More Actions",
             options = options,
             onDismiss = { moreOpen = false },
+            // Shuffle is first and takes focus over a selected toggle below it.
+            initialFocusKey = options.firstOrNull()?.key?.takeIf { it.startsWith("shuffle-") },
         )
     }
 
-    if (watchTogetherOpen && hasWatchTogether) {
-        val watchTogetherViewModel: TvWatchTogetherViewModel = koinViewModel()
-        val watchTogetherState by watchTogetherViewModel.uiState.collectAsState()
-
-        LaunchedEffect(watchTogetherState.result) {
-            val room = watchTogetherState.result ?: return@LaunchedEffect
-            watchTogetherViewModel.consumeResult()
-            watchTogetherOpen = false
-            joinCodeOpen = false
-            onWatchTogether(room)
-        }
-
-        if (joinCodeOpen) {
-            TvJoinCodeDialog(
-                isBusy = watchTogetherState.isBusy,
-                error = watchTogetherState.error,
-                onJoin = watchTogetherViewModel::joinRoom,
-                onDismiss = {
-                    watchTogetherViewModel.clearError()
-                    joinCodeOpen = false
-                },
-            )
-        } else {
-            TvWatchTogetherEntryDialog(
-                isBusy = watchTogetherState.isBusy,
-                error = watchTogetherState.error,
-                onHost = { watchTogetherViewModel.createRoom(playContentId, playFileId) },
-                onHostVote = watchTogetherViewModel::createEmptyVoteRoom,
-                onJoin = {
-                    watchTogetherViewModel.clearError()
-                    joinCodeOpen = true
-                },
-                onDismiss = {
-                    watchTogetherViewModel.clearError()
-                    watchTogetherOpen = false
-                },
-            )
-        }
-    }
+    TvWatchPartyDetailEffects(entry = watchPartyEntry, onNavigate = onWatchParty)
 }
 
 internal data class SeriesEpisodePlaybackLaunch(

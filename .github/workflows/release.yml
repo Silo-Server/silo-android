@@ -2,8 +2,8 @@ name: Release
 
 # One release pipeline, playing the role of silo-apple's TestFlight
 # (release.yml) and sideload (sideload-ipa.yml) workflows combined: a version
-# tag or a manual dispatch publishes both App Bundles to Google Play, then
-# builds the signed sideload APKs and attaches them to a GitHub release for
+# tag or a manual dispatch prepares both App Bundles for Google Play and
+# signed sideload APKs in parallel, then attaches the APKs to a GitHub release for
 # the same version. Dispatch runs mint the v<version> tag when creating the
 # GitHub release — no manual tagging is necessary (apple's sideload pattern).
 #
@@ -80,6 +80,17 @@ jobs:
       play_publish: ${{ steps.ver.outputs.play_publish }}
       tag: ${{ steps.ver.outputs.tag }}
     steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check build supply chain
+        run: |
+          ./scripts/test-release-workflow.sh
+          ./scripts/test-check-build-supply-chain.sh
+          ./scripts/check-build-supply-chain.sh
+
       - id: ver
         shell: bash
         env:
@@ -184,6 +195,7 @@ jobs:
   # owned the APK release path.
   unit-tests:
     name: Unit tests
+    needs: [setup]
     runs-on: ubuntu-latest
 
     steps:
@@ -191,12 +203,6 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
-      - name: Check build supply chain
-        run: |
-          ./scripts/test-release-workflow.sh
-          ./scripts/test-check-build-supply-chain.sh
-          ./scripts/check-build-supply-chain.sh
 
       - name: Set up JDK 21
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
@@ -206,6 +212,16 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
+
+      # Robolectric downloads its Android runtimes outside Gradle's cache.
+      # Share the normal CI key so releases reuse those runtime downloads.
+      - name: Cache Robolectric Android runtimes
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-${{ runner.os }}-
 
       - name: Run unit tests
         shell: bash
@@ -226,14 +242,18 @@ jobs:
             **/build/reports/tests/**
           if-no-files-found: ignore
 
-  # Publish both App Bundles to Google Play via the fastlane android beta
-  # lane. No status function in the if -> implicit success() gate on needs,
-  # so failed setup/tests skip this job.
-  play:
-    name: Publish to Google Play
-    needs: [setup, unit-tests]
+  # Prepare final signed bundles while tests run. Publication consumes these
+  # exact bytes only after both preparation and tests succeed.
+  play-bundles:
+    name: Prepare Google Play bundles
+    needs: [setup]
     if: ${{ needs.setup.outputs.play_publish == 'true' }}
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
+      artifact_name: ${{ steps.identity.outputs.artifact_name }}
+      producer_attempt: ${{ steps.identity.outputs.producer_attempt }}
+      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
 
     steps:
       - name: Check out sources
@@ -254,33 +274,98 @@ jobs:
         with:
           bundler-cache: true
 
-      # The Fastfile re-validates the version and derives the versionCode
-      # base from it before building.
-      - name: Build & upload to Google Play
-        run: bundle exec fastlane android beta
+      - name: Prepare signed Google Play bundles
+        run: bundle exec fastlane android prepare_bundles
         env:
           SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
           SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
           PLAY_TRACK: ${{ inputs.track || 'beta' }}
-          PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           SILO_RELEASE_KEYSTORE_B64: ${{ secrets.SILO_RELEASE_KEYSTORE_B64 }}
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
           SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
 
-  # Signed sideload APKs (moved here from android-build.yml). Runs when the
-  # Play publish succeeded or was skipped (prerelease tags) — never when it
-  # failed, so the GitHub release can't outrun the Play track.
+      - name: Identify bundle artifact
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest_sha256="$(sha256sum build/play-bundles-manifest.json | cut -d ' ' -f1)"
+          {
+            echo "artifact_name=android-play-bundles-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "producer_attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "manifest_sha256=${manifest_sha256}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Upload prepared Play bundles
+        id: bundles
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: ${{ steps.identity.outputs.artifact_name }}
+          path: |
+            androidApp/build/outputs/bundle/release/androidApp-release.aab
+            androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
+            build/play-bundles-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+
+  play:
+    name: Publish to Google Play
+    needs: [setup, unit-tests, play-bundles]
+    if: ${{ needs.setup.outputs.play_publish == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          bundler-cache: true
+
+      - name: Verify bundle artifact provenance
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAY_BUNDLE_ARTIFACT_ID: ${{ needs.play-bundles.outputs.artifact_id }}
+          PLAY_BUNDLE_ARTIFACT_NAME: ${{ needs.play-bundles.outputs.artifact_name }}
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == 'Silo-Server/silo-android' ]]
+          [[ "${PLAY_BUNDLE_ARTIFACT_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${SILO_PLAY_BUNDLE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PLAY_BUNDLE_ARTIFACT_ID}" |
+            ruby fastlane/play_bundle_manifest.rb verify-artifact
+
+      - name: Download prepared Play bundles
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          artifact-ids: ${{ needs.play-bundles.outputs.artifact_id }}
+          path: .
+
+      - name: Upload verified bundles to Google Play
+        run: bundle exec fastlane android upload_bundles
+        env:
+          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
+          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
+          PLAY_TRACK: ${{ inputs.track || 'beta' }}
+          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
+          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
+          PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+  # Prepare signed sideload APKs alongside Play after setup and tests succeed.
+  # publish-release waits for both paths before exposing the APKs.
   apks:
     name: ${{ matrix.name }}
-    needs: [setup, unit-tests, play]
-    if: >-
-      ${{ !cancelled() &&
-          needs.setup.result == 'success' &&
-          needs.unit-tests.result == 'success' &&
-          (needs.play.result == 'success' || needs.play.result == 'skipped') }}
+    needs: [setup, unit-tests]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -385,14 +470,6 @@ jobs:
             apk_name="$(basename "${apk}")"
             variant="${apk_name#${{ matrix.module }}-}"
             cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-${version_label}-${variant}"
-
-            if [[ "${variant}" == "universal-release.apk" ]]; then
-              cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-latest-${variant}"
-              # The Downloader by AFTVnews short codes redirect to the old
-              # debug-named asset URL. Keep publishing the release build under
-              # that filename until the aftv.news codes are re-registered.
-              cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-latest-universal-debug.apk"
-            fi
           done
 
       - name: Upload release APKs
@@ -409,11 +486,14 @@ jobs:
   # re-trigger workflows, so this cannot recurse.
   publish-release:
     name: Publish GitHub Release
-    needs: [setup, apks]
+    needs: [setup, unit-tests, play-bundles, play, apks]
     if: >-
       ${{ !cancelled() &&
           needs.setup.result == 'success' &&
-          needs.apks.result == 'success' }}
+          needs.unit-tests.result == 'success' &&
+          needs.apks.result == 'success' &&
+          ((needs.setup.outputs.play_publish == 'true' && needs.play-bundles.result == 'success' && needs.play.result == 'success') ||
+           (needs.setup.outputs.play_publish == 'false' && needs.play-bundles.result == 'skipped' && needs.play.result == 'skipped')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -431,9 +511,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.setup.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
+
+          # Transfer each APK once, then recreate the universal aliases here.
+          # Downloader by AFTVnews still redirects to the debug-named aliases.
+          for prefix in silo-android silo-android-tv; do
+            universal_apks=(release-artifacts/**/"${prefix}-${RELEASE_VERSION}-universal-release.apk")
+            if (( ${#universal_apks[@]} != 1 )) || [[ ! -s "${universal_apks[0]}" ]]; then
+              echo "::error::Expected one nonempty universal APK for ${prefix}."
+              exit 1
+            fi
+            universal_apk="${universal_apks[0]}"
+            artifact_dir="$(dirname "${universal_apk}")"
+            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-release.apk"
+            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-debug.apk"
+          done
 
           release_title="Silo Android ${RELEASE_TAG}"
           android_latest_url="https://github.com/${GH_REPO}/releases/latest/download/silo-android-latest-universal-release.apk"

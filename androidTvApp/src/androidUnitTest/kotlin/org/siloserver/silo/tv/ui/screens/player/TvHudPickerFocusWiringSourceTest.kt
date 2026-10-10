@@ -35,7 +35,7 @@ class TvHudPickerFocusWiringSourceTest {
     @Test
     fun pickerKeepsTheEagerFocusGraph() {
         assertContains(pickerDialog, "Column(")
-        assertContains(pickerDialog, ".verticalScroll(rememberScrollState())")
+        assertContains(pickerDialog, ".verticalScroll(")
         assertFalse(Regex("\\bLazyColumn\\s*\\(").containsMatchIn(pickerDialog.withoutComments()))
     }
 

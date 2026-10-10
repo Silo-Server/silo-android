@@ -86,6 +86,12 @@ data class ExternalSignInCapabilities(
      * discovery, which lists a network provider only through its own network.
      */
     val networkSignIn: Boolean = false,
+    /**
+     * Linking a network identity keeps the account's local password sign-in.
+     * False when network sign-in is not served; servers without the field
+     * turn the password off on such a link, as for other providers.
+     */
+    val networkLinkKeepsPassword: Boolean = false,
 )
 
 /**

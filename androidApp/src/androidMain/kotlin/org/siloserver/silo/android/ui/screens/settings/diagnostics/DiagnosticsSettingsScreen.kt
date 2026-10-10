@@ -1,18 +1,17 @@
 package org.siloserver.silo.android.ui.screens.settings.diagnostics
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -249,21 +248,16 @@ internal fun DiagnosticsSettingsContent(
     }
 
     if (confirmAlways && state.allowsAutomaticUpload) {
-        AlertDialog(
-            onDismissRequest = { confirmAlways = false },
-            title = { Text("Always send crash reports?") },
-            text = {
-                Text("Future eligible crash reports may be uploaded automatically. You can inspect pending reports and change this at any time.")
+        SiloConfirmDialog(
+            title = "Always send crash reports?",
+            body = "Future eligible crash reports may be uploaded automatically. You can inspect pending reports and change this at any time.",
+            confirmLabel = "Always send",
+            destructive = false,
+            onConfirm = {
+                confirmAlways = false
+                onConsentChanged(DiagnosticsConsentMode.ALWAYS)
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmAlways = false
-                    onConsentChanged(DiagnosticsConsentMode.ALWAYS)
-                }) { Text("Always send") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmAlways = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmAlways = false },
         )
     }
 }

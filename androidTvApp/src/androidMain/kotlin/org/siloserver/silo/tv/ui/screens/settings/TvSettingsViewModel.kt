@@ -29,8 +29,11 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
+import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.data.preferences.SubtitleSize
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,6 +69,8 @@ class TvSettingsViewModel(
     private val tvLibraryScopeStore: org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore? = null,
     private val seekIntervalStore: SeekIntervalStore? = null,
     audiobookSettingsStore: AudiobookSettingsStore? = null,
+    private val profileLaunchPreferences: TvProfileLaunchPreferences? = null,
+    private val watchNextSeeder: WatchNextSeeder? = null,
 ) : ViewModel() {
 
     /**
@@ -123,9 +128,12 @@ class TvSettingsViewModel(
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
+        // Profile Selection (tvOS General → PROFILE AT LAUNCH), device-wide.
+        val profileLaunchBehavior: ProfileLaunchBehavior = ProfileLaunchBehavior.Automatic,
         val subtitleMatchesDevice: Boolean = false,
-        val dvProfile7HDR10Fallback: Boolean = true,
+        val dvProfile7HDR10Fallback: Boolean = false,
         val forceHdrPassthrough: Boolean = false,
+        val trueBlackBars: Boolean = false,
         val autoSkipCredits: Boolean = false,
         // Seconds to skip back on resume (0 = off); consecutive auto-advances
         // before the "Still watching?" prompt (0 = off).
@@ -151,6 +159,16 @@ class TvSettingsViewModel(
         loadSettings()
         observePlayerSettings()
         observeCardPresentation()
+        observeProfileLaunch()
+    }
+
+    private fun observeProfileLaunch() {
+        val preferences = profileLaunchPreferences ?: return
+        viewModelScope.launch {
+            preferences.state.collect { launch ->
+                _uiState.update { it.copy(profileLaunchBehavior = launch.behavior) }
+            }
+        }
     }
 
     /**
@@ -393,6 +411,11 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             playerSettingsStore.forceHdrPassthroughFlow.collect { value ->
                 _uiState.update { it.copy(forceHdrPassthrough = value) }
+            }
+        }
+        viewModelScope.launch {
+            playerSettingsStore.trueBlackBarsFlow.collect { value ->
+                _uiState.update { it.copy(trueBlackBars = value) }
             }
         }
         viewModelScope.launch {
@@ -644,6 +667,31 @@ class TvSettingsViewModel(
         }
     }
 
+    /**
+     * Profile Selection takes effect the next time Silo starts or returns; it
+     * never ejects the current session (silo-apple design §4.5). Every Time
+     * empties the launcher's Watch Next row, and leaving it refills the row.
+     */
+    fun onProfileLaunchBehaviorChanged(behavior: ProfileLaunchBehavior) {
+        val preferences = profileLaunchPreferences ?: return
+        val previous = preferences.state.value.behavior
+        if (previous == behavior) return
+        preferences.setBehavior(behavior)
+        val seeder = watchNextSeeder ?: return
+        if (behavior == ProfileLaunchBehavior.EveryTime) {
+            seeder.clear()
+        } else if (previous == ProfileLaunchBehavior.EveryTime) {
+            viewModelScope.launch {
+                if (tokenManager.getProfileId().isNullOrBlank()) return@launch
+                // A later choice may have gone back to Every Time (which
+                // cleared the row) while this read was in flight.
+                if (preferences.state.value.behavior == ProfileLaunchBehavior.EveryTime) return@launch
+                seeder.seedNow()
+                seeder.enqueuePeriodic()
+            }
+        }
+    }
+
     fun onSubtitleMatchesDeviceChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setSubtitleMatchesDevice(value) }
     }
@@ -658,6 +706,10 @@ class TvSettingsViewModel(
 
     fun onForceHdrPassthroughChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setForceHdrPassthrough(value) }
+    }
+
+    fun onTrueBlackBarsChanged(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setTrueBlackBars(value) }
     }
 
     fun onIntroSkipModeChanged(value: IntroSkipMode) {

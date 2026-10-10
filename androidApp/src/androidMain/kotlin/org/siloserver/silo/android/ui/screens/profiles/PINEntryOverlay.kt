@@ -82,6 +82,7 @@ fun PINEntryOverlay(
     errorCount: Int,
     onPinComplete: (String) -> Unit,
     onDismiss: () -> Unit,
+    prompt: String = "Enter your PIN",
 ) {
     // Deliberately NOT rememberSaveable: saved-instance state is serialized by
     // the OS across configuration change and process death, which would put the
@@ -147,7 +148,7 @@ fun PINEntryOverlay(
                     when {
                         error != null -> Text(error, color = MarqueeColors.Error, fontSize = 15.sp, textAlign = TextAlign.Center)
                         isVerifying -> CircularProgressIndicator(color = MarqueeColors.Ink, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
-                        else -> Text("Enter your PIN", color = MarqueeColors.InkSecondary, fontSize = 15.sp)
+                        else -> Text(prompt, color = MarqueeColors.InkSecondary, fontSize = 15.sp)
                     }
                 }
 

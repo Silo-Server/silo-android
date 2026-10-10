@@ -40,6 +40,7 @@ import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
+import org.siloserver.silo.common.player.audio.HdmiSinkDtsSupport
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
 import org.siloserver.silo.common.player.subtitle.OffsetSubtitleParserFactory
 import org.siloserver.silo.common.player.subtitle.PgsSupExtractor
@@ -180,9 +181,10 @@ class SiloPlayerFactory(
     ): ExoPlayer {
         // When the build flag is on and the current ABI's JNI library loads,
         // extension renderers (FFmpeg audio) follow the platform renderers and
-        // fill only codec gaps. This keeps native passthrough/MediaCodec paths
+        // fill codec gaps. This keeps native passthrough/MediaCodec paths
         // preferred while retaining a last-resort local decoder for
-        // forced-original and recovery cases.
+        // forced-original and recovery cases. The one exception is DTS on an
+        // HDMI sink without DTS, which goes to FFmpeg (see [HdmiSinkDtsSupport]).
         //
         // When the flag is off (compile-time bisect), we set _MODE_OFF
         // rather than _MODE_ON so extension renderers are *not even
@@ -201,11 +203,17 @@ class SiloPlayerFactory(
         // across players because Koin gives us a single DelayAudioProcessor
         // instance; in practice SiloPlaybackService creates exactly
         // one ExoPlayer per process so there's no contention.
-        val audioSink: AudioSink = PassthroughSuppressingAudioSink(DefaultAudioSink.Builder(context)
-            .setAudioProcessorChain(
-                DefaultAudioSink.DefaultAudioProcessorChain(delayProcessor),
-            )
-            .build())
+        val audioSink: AudioSink = PassthroughSuppressingAudioSink(
+            DefaultAudioSink.Builder(context)
+                .setAudioProcessorChain(
+                    DefaultAudioSink.DefaultAudioProcessorChain(delayProcessor),
+                )
+                .build(),
+            forceDecode = { format ->
+                preferFfmpegAudio &&
+                    HdmiSinkDtsSupport.shouldDecodeWithFfmpeg(context, format.sampleMimeType)
+            },
+        )
 
         val media3RenderersFactory = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -274,10 +282,18 @@ class SiloPlayerFactory(
             setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
                 val infos = MediaCodecSelector.DEFAULT
                     .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
-                if (mimeType == MimeTypes.VIDEO_H265) {
-                    infos.filter { it.hardwareAccelerated }.ifEmpty { infos }
-                } else {
-                    infos
+                when {
+                    mimeType == MimeTypes.VIDEO_H265 ->
+                        infos.filter { it.hardwareAccelerated }.ifEmpty { infos }
+                    // Amlogic boxes expose a platform DTS decoder that played
+                    // silent on a sink without DTS (LG 2025 TVs). Hiding it
+                    // hands the track to FFmpeg, which outputs multichannel PCM.
+                    // A DTS:X track also queries plain DTS as its alternative
+                    // MIME, so on such a sink it is left without a local
+                    // decoder and goes back to the server, which beats silence.
+                    preferFfmpegAudio && !requiresSecureDecoder &&
+                        HdmiSinkDtsSupport.shouldDecodeWithFfmpeg(context, mimeType) -> emptyList()
+                    else -> infos
                 }
             }
         }
@@ -725,11 +741,29 @@ class SiloPlayerFactory(
             // A sidecar must not decide when playback starts or what loads
             // next — left as a plain merged child it starves the video until
             // its own download reaches the resume point. See the wrapper.
-            return SidecarSubtitleMediaSource(progressive, playbackFloor)
+            // A PGS sidecar also reads only a bounded stretch ahead: each of
+            // its cues carries a caption image, and a whole film of them does
+            // not fit in a phone's heap.
+            return SidecarSubtitleMediaSource(
+                progressive,
+                playbackFloor,
+                maxLookaheadUs = if (configuration.mimeType == MimeTypes.APPLICATION_PGS) {
+                    PGS_SIDECAR_LOOKAHEAD_US
+                } else {
+                    C.TIME_UNSET
+                },
+            )
         }
     }
 
     private companion object {
+        /**
+         * Two minutes of captions ahead of the playhead. The loader can read
+         * one check interval (1 MiB of the file) past that before it parks,
+         * so a PGS sidecar holds a few MB instead of the whole film.
+         */
+        const val PGS_SIDECAR_LOOKAHEAD_US = 120_000_000L
+
         val replayableTextSubtitleMimeTypes = setOf(
             MimeTypes.TEXT_SSA,
             MimeTypes.APPLICATION_SUBRIP,

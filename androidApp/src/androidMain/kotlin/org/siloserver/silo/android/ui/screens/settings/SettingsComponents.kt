@@ -456,7 +456,7 @@ fun SettingsSwitchRow(
 
 /** Apple's switch: green track while on, a white thumb in both states. */
 @Composable
-private fun settingsSwitchColors() = SwitchDefaults.colors(
+internal fun settingsSwitchColors() = SwitchDefaults.colors(
     checkedThumbColor = Color.White,
     checkedTrackColor = SiloSwitchOn,
     checkedBorderColor = Color.Transparent,

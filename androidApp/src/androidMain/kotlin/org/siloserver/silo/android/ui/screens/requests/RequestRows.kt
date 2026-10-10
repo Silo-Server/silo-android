@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -33,8 +35,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -201,8 +201,8 @@ internal fun MyRequestRow(
                     else -> Text(text = "›", fontSize = 20.sp, color = SiloSecondaryText.copy(alpha = 0.7f))
                 }
             }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
+            SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                SiloDropdownMenuItem(
                     text = { Text("Cancel Request", color = RequestColors.Rose) },
                     leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null, tint = RequestColors.Rose) },
                     onClick = {

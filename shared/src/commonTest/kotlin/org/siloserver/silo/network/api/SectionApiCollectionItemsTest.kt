@@ -22,6 +22,23 @@ import kotlin.test.assertTrue
 
 class SectionApiCollectionItemsTest {
 
+    @Test
+    fun mixedCollectionTypeRemainsRequiredWithMatchAny() = runTest {
+        val requests = mutableListOf<Map<String, String?>>()
+        val api = SectionApi(clientFor(requests, """{"total":0,"total_exact":true,"window_cursor":"w","page":{"has_more":false},"items":[]}"""))
+        val result = api.getLibraryCollectionItems(
+            "c1", mediaType = "series", libraryId = 7, source = "user_collection", match = "any",
+            queryGroups = listOf(CatalogQueryGroup(rules = listOf(CatalogQueryRule("genre", "contains", "Drama")))),
+        )
+        assertTrue(result is ApiResult.Success)
+        val body = SiloJson.parseToJsonElement(requests.single().getValue("body")!!).jsonObject
+        assertEquals("series", body["type"]?.jsonPrimitive?.content)
+        assertEquals("7", body["library_id"]?.jsonPrimitive?.content)
+        assertEquals("user_collection", body["source"]?.jsonPrimitive?.content)
+        assertEquals("any", body["match"]?.jsonPrimitive?.content)
+        assertEquals("genre", body["groups"]!!.jsonArray.single().jsonObject["rules"]!!.jsonArray.single().jsonObject["field"]?.jsonPrimitive?.content)
+    }
+
     /**
      * The collection's own order is expressed by sending no sort at all, so a
      * null sort must not leak an `order` param either.

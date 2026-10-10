@@ -33,6 +33,8 @@ kotlin {
             implementation(compose.ui)
             implementation(compose.foundation)
             implementation(compose.runtime)
+            // DefaultArtwork's marks; both apps already ship this library.
+            implementation(compose.materialIconsExtended)
 
             // Image loading
             implementation(libs.coil.compose)

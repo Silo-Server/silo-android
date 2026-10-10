@@ -1,5 +1,19 @@
 package org.siloserver.silo.android.cast
 
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.rounded.Tv
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Cast
+import org.siloserver.silo.android.ui.theme.SiloForeground
+import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,13 +24,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.CastConnected
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -68,81 +80,77 @@ fun SiloCastButton(
     }
 
     if (showPicker) {
-        AlertDialog(
+        SiloDialog(
+            title = "Cast to",
+            message = if (routes.isEmpty()) {
+                "No cast devices found. Make sure your Chromecast is on the same Wi-Fi network."
+            } else {
+                null
+            },
             onDismissRequest = { showPicker = false },
-            title = { Text("Cast to") },
-            text = {
-                if (routes.isEmpty()) {
-                    Text(
-                        text = "No cast devices found. Make sure your Chromecast is on the same Wi-Fi network.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            icon = Icons.Rounded.Cast,
+            actions = buildList {
+                if (castState.isConnected) {
+                    add(
+                        SiloDialogAction(
+                            label = "Stop casting",
+                            style = SiloDialogActionStyle.Destructive,
+                            onClick = {
+                                castManager.disconnect()
+                                showPicker = false
+                            },
+                        ),
                     )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        routes.forEachIndexed { index, route ->
-                            if (index > 0) {
-                                HorizontalDivider(
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                )
-                            }
-                            TextButton(
-                                onClick = {
+                }
+                add(SiloDialogAction("Close", { showPicker = false }))
+            },
+        ) {
+            if (routes.isNotEmpty()) {
+                Column {
+                    routes.forEach { route ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (route.isSelected) Color.White.copy(alpha = 0.07f) else Color.Transparent)
+                                .clickable {
                                     // Stage the cast stream, then join the route.
                                     onStartCast()
                                     castManager.selectRoute(route.id)
                                     showPicker = false
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = route.name,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                        if (route.isConnecting) {
-                                            Text(
-                                                text = "Connecting…",
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                        }
-                                    }
-                                    if (route.isSelected) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = "Selected",
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
                                 }
+                                .heightIn(min = 52.dp)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Tv,
+                                contentDescription = null,
+                                tint = SiloForeground.copy(alpha = 0.78f),
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 14.dp),
+                            ) {
+                                Text(text = route.name, color = SiloForeground, fontSize = 15.sp)
+                                if (route.isConnecting) {
+                                    Text(text = "Connecting…", fontSize = 12.sp)
+                                }
+                            }
+                            if (route.isSelected) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = SiloForeground,
+                                    modifier = Modifier.size(20.dp),
+                                )
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                if (castState.isConnected) {
-                    TextButton(
-                        onClick = {
-                            castManager.disconnect()
-                            showPicker = false
-                        },
-                    ) { Text("Stop casting") }
-                } else {
-                    TextButton(onClick = { showPicker = false }) { Text("Close") }
-                }
-            },
-            dismissButton = {
-                if (castState.isConnected) {
-                    TextButton(onClick = { showPicker = false }) { Text("Close") }
-                }
-            },
-        )
+            }
+        }
     }
 }

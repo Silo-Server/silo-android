@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.screens.detail.CircleActionButton
 import org.siloserver.silo.audiobook.buildAudiobookTimeline
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.audiobook.AudiobookNarration
 import org.siloserver.silo.model.catalog.FileVersion
@@ -190,6 +191,7 @@ fun AudiobookDetailContent(
                     modifier = Modifier
                         .size(AudiobookCoverSizeDp.dp)
                         .clip(RoundedCornerShape(12.dp)),
+                    defaultArtwork = DefaultArtworkKind.Audiobook,
                 )
                 Text(
                     text = detail.title,

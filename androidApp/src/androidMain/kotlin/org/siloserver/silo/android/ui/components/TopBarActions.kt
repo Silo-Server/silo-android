@@ -95,7 +95,7 @@ fun TopBarIconButton(
 fun TopBarProfileMenu(
     activeProfile: Profile?,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -130,11 +130,12 @@ fun TopBarProfileMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
             onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
+            onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
             onSignOutClick = onSignOutClick,
+            activeProfile = activeProfile,
         )
     }
 }
@@ -148,7 +149,7 @@ fun TabTopBarActions(
     activeProfile: Profile?,
     onSearchClick: () -> Unit,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -171,7 +172,7 @@ fun TabTopBarActions(
         TopBarProfileMenu(
             activeProfile = activeProfile,
             onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
+            onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,

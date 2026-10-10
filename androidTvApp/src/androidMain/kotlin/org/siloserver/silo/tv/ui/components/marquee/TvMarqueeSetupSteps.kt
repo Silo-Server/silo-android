@@ -1,6 +1,6 @@
 package org.siloserver.silo.tv.ui.components.marquee
 
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.colorResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -32,7 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
-import kotlin.math.tan
+import org.siloserver.silo.tv.R
 
 /**
  * How to set this TV up from a phone: three numbered steps, one action each,
@@ -80,33 +82,24 @@ private fun Step(number: Int, title: String, picture: @Composable () -> Unit) {
     }
 }
 
-/** The Silo app icon: the three-bar mark on black. */
+/** The Silo app icon: the mark on the deep blue field. */
 @Composable
 private fun AppIconPicture() {
     Box(
         Modifier
             .size(46.dp)
             .clip(RoundedCornerShape(11.dp))
-            .background(Color.Black)
+            .background(colorResource(R.color.silo_icon_background))
             .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(11.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(width = 13.dp, height = 28.dp)) {
-            val bar = size.height / 3.6f
-            val slope = tan(Math.toRadians(-18.0)).toFloat()
-            listOf(MarqueeColors.BrandBlue, MarqueeColors.BrandRed, MarqueeColors.BrandOrange).forEachIndexed { index, color ->
-                val top = index * (bar + size.height * 0.05f)
-                // A bar slanted like CSS skewY(-18deg).
-                val path = Path().apply {
-                    moveTo(0f, top)
-                    lineTo(size.width, top + slope * size.width)
-                    lineTo(size.width, top + bar + slope * size.width)
-                    lineTo(0f, top + bar)
-                    close()
-                }
-                drawPath(path, color)
-            }
-        }
+        // The icon draws the mark at 84% of its height.
+        Image(
+            painter = painterResource(R.drawable.silo_mark),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.height(38.5.dp),
+        )
     }
 }
 

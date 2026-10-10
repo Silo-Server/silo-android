@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.cast
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -43,10 +46,7 @@ import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Tv
 import androidx.compose.material.icons.outlined.TvOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,7 +56,6 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -119,7 +118,9 @@ fun SiloCastRemoteScreen(
 ) {
     val state by controller.state.collectAsState()
     val playback = state.playbackState
-    val artwork = rememberSiloCastArtwork(playback?.contentId)
+    val launch = state.launch
+    // A title on its way to the TV shows its own artwork, not the outgoing one.
+    val artwork = rememberSiloCastArtwork(launch?.contentId ?: playback?.contentId)
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var showTargetPicker by remember { mutableStateOf(false) }
@@ -166,7 +167,6 @@ fun SiloCastRemoteScreen(
                 onChooseTv = { showTargetPicker = true },
                 onStopPlayback = { controller.stopPlayback() },
                 onSetVideoGravity = controller::setVideoGravity,
-                onSetHdrEnabled = controller::setHdrEnabled,
                 onDisconnect = {
                     controller.disconnect()
                     onBack()
@@ -183,6 +183,14 @@ fun SiloCastRemoteScreen(
             ) {
                 when {
                     state.isReconnecting -> RemoteStatus(title = "Reconnecting…", showSpinner = true)
+                    // From the tap until the TV reports the title, including
+                    // over an idle TV or the title being replaced.
+                    launch != null -> RemoteLaunching(
+                        title = artwork.title,
+                        targetName = state.connectedTarget?.name,
+                        posterUrl = artwork.posterUrl ?: artwork.backdropUrl,
+                        posterThumbhash = artwork.posterThumbhash ?: artwork.backdropThumbhash,
+                    )
                     playback == null -> RemoteConnecting(
                         targetName = state.connectedTarget?.name,
                         // A fully torn-down session (TV disconnected, reconnect
@@ -190,10 +198,6 @@ fun SiloCastRemoteScreen(
                         error = state.error
                             ?: "Not connected to a TV.".takeIf { state.connectedTarget == null && !state.isConnecting },
                         onChooseTv = { showTargetPicker = true },
-                    )
-                    playback.contentId == null && state.isLaunching -> RemoteStatus(
-                        title = "Starting playback on ${state.connectedTarget?.name ?: "Silo TV"}…",
-                        showSpinner = true,
                     )
                     playback.contentId == null -> RemoteIdleConnected(
                         targetName = state.connectedTarget?.name,
@@ -219,34 +223,21 @@ fun SiloCastRemoteScreen(
     }
 
     if (showBatteryPrompt) {
-        AlertDialog(
-            onDismissRequest = {
-                RemoteControlBatteryOptimization.markPromptShown(context)
-                showBatteryPrompt = false
+        val dismissBatteryPrompt = {
+            RemoteControlBatteryOptimization.markPromptShown(context)
+            showBatteryPrompt = false
+        }
+        SiloConfirmDialog(
+            title = stringResource(R.string.remote_battery_title),
+            body = stringResource(R.string.remote_battery_message),
+            confirmLabel = stringResource(R.string.remote_battery_settings),
+            dismissLabel = stringResource(R.string.remote_battery_not_now),
+            destructive = false,
+            onConfirm = {
+                dismissBatteryPrompt()
+                RemoteControlBatteryOptimization.openSettings(context)
             },
-            title = { Text(stringResource(R.string.remote_battery_title)) },
-            text = { Text(stringResource(R.string.remote_battery_message)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        RemoteControlBatteryOptimization.markPromptShown(context)
-                        showBatteryPrompt = false
-                        RemoteControlBatteryOptimization.openSettings(context)
-                    },
-                ) {
-                    Text(stringResource(R.string.remote_battery_settings))
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        RemoteControlBatteryOptimization.markPromptShown(context)
-                        showBatteryPrompt = false
-                    },
-                ) {
-                    Text(stringResource(R.string.remote_battery_not_now))
-                }
-            },
+            onDismiss = dismissBatteryPrompt,
         )
     }
 }
@@ -280,7 +271,6 @@ private fun RemoteTopBar(
     onChooseTv: () -> Unit,
     onStopPlayback: () -> Unit,
     onSetVideoGravity: (String) -> Unit,
-    onSetHdrEnabled: (Boolean) -> Unit,
     onDisconnect: () -> Unit,
     showBatterySettings: Boolean,
     onBatterySettings: () -> Unit,
@@ -310,8 +300,8 @@ private fun RemoteTopBar(
                     tint = RemoteOnSurface,
                 )
             }
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                DropdownMenuItem(
+            SiloDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                SiloDropdownMenuItem(
                     text = { Text("Choose a Different TV") },
                     leadingIcon = { Icon(Icons.Outlined.Tv, contentDescription = null) },
                     onClick = {
@@ -319,7 +309,7 @@ private fun RemoteTopBar(
                         onChooseTv()
                     },
                 )
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text("Stop Playback") },
                     leadingIcon = { Icon(Icons.Filled.Stop, contentDescription = null) },
                     onClick = {
@@ -328,7 +318,7 @@ private fun RemoteTopBar(
                     },
                 )
                 if (playback?.supportsVideoGravity == true) {
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text("Aspect Ratio") },
                         leadingIcon = {
                             Icon(Icons.Outlined.AspectRatio, contentDescription = null)
@@ -342,25 +332,8 @@ private fun RemoteTopBar(
                         },
                     )
                 }
-                if (playback?.supportsHDRToggle == true) {
-                    DropdownMenuItem(
-                        text = { Text("HDR") },
-                        leadingIcon = {
-                            Icon(Icons.Outlined.AspectRatio, contentDescription = null)
-                        },
-                        trailingIcon = {
-                            if (playback.hdrEnabled) {
-                                Icon(Icons.Filled.Check, contentDescription = "Enabled")
-                            }
-                        },
-                        onClick = {
-                            menuExpanded = false
-                            onSetHdrEnabled(!playback.hdrEnabled)
-                        },
-                    )
-                }
                 if (showBatterySettings) {
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text(stringResource(R.string.remote_battery_settings)) },
                         leadingIcon = {
                             Icon(Icons.Outlined.SettingsRemote, contentDescription = null)
@@ -372,7 +345,7 @@ private fun RemoteTopBar(
                     )
                 }
                 HorizontalDivider()
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text("Disconnect", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {
                         Icon(
@@ -387,7 +360,7 @@ private fun RemoteTopBar(
                     },
                 )
             }
-            DropdownMenu(
+            SiloDropdownMenu(
                 expanded = aspectMenuExpanded && playback?.supportsVideoGravity == true,
                 onDismissRequest = { aspectMenuExpanded = false },
             ) {
@@ -401,7 +374,7 @@ private fun RemoteTopBar(
                     .forEach { (id, label) ->
                         val selected = playback?.videoGravity == id ||
                             (id == "fill" && playback?.videoGravity in listOf("zoom", "crop"))
-                        DropdownMenuItem(
+                        SiloDropdownMenuItem(
                             text = { Text(label) },
                             leadingIcon = {
                                 if (selected) {
@@ -434,6 +407,49 @@ private fun RemoteStatus(title: String, showSpinner: Boolean) {
     ) {
         if (showSpinner) CircularProgressIndicator(color = RemoteOnSurface)
         Text(title, style = MaterialTheme.typography.titleMedium, color = RemoteSecondary)
+    }
+}
+
+/** A Play on its way to the TV: the title's poster and "Starting on <TV>…". */
+@Composable
+private fun RemoteLaunching(
+    title: String?,
+    targetName: String?,
+    posterUrl: String?,
+    posterThumbhash: String?,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        modifier = Modifier.padding(24.dp),
+    ) {
+        RemotePoster(posterUrl = posterUrl, posterThumbhash = posterThumbhash)
+        if (!title.isNullOrEmpty()) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = RemoteOnSurface,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            CircularProgressIndicator(
+                color = RemoteOnSurface,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                "Starting on ${targetName ?: "Silo TV"}…",
+                style = MaterialTheme.typography.titleMedium,
+                color = RemoteSecondary,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -980,12 +996,12 @@ private fun subtitleMenuEntries(
     }
     if (playback.supportsSubtitlePosition == true) {
         add(MenuEntry(label = "Position", selected = false, isSectionHeader = true))
-        listOf("standard" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
+        // tvOS SubtitlePositionPreset raw values; it rejects anything else.
+        listOf("bottom" to "Bottom", "lower-third" to "Lower Third", "top" to "Top").forEach { (id, label) ->
             add(
                 MenuEntry(
                     label = label,
-                    selected = playback.subtitlePosition == id ||
-                        (id == "standard" && playback.subtitlePosition == "bottom"),
+                    selected = playback.subtitlePosition == id,
                     onClick = { controller.setSubtitlePosition(id) },
                 ),
             )
@@ -1024,7 +1040,7 @@ private fun RemoteChipMenu(
                 color = if (enabled) RemoteOnSurface.copy(alpha = 0.9f) else RemoteSecondary.copy(alpha = 0.5f),
             )
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        SiloDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             entries.forEach { entry ->
                 if (entry.isSectionHeader) {
                     Text(
@@ -1034,7 +1050,7 @@ private fun RemoteChipMenu(
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                     )
                 } else {
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text(entry.label) },
                         enabled = entry.enabled,
                         leadingIcon = {

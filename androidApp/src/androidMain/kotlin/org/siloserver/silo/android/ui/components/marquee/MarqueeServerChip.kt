@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.components.marquee
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,8 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -84,10 +84,9 @@ fun MarqueeServerChip(
             )
             Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null, tint = MarqueeColors.InkTertiary, modifier = Modifier.size(16.dp))
         }
-        DropdownMenu(
+        SiloDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            containerColor = Color(0xFF1C1C1E),
         ) {
             Text(
                 hostLabel,
@@ -95,7 +94,7 @@ fun MarqueeServerChip(
                 fontSize = 13.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            DropdownMenuItem(
+            SiloDropdownMenuItem(
                 text = { Text(actionLabel, color = MarqueeColors.Ink) },
                 leadingIcon = { Icon(Icons.Outlined.Dns, contentDescription = null, tint = MarqueeColors.Ink) },
                 onClick = {

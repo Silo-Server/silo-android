@@ -46,6 +46,7 @@ import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
 import java.util.Locale
 import kotlinx.coroutines.launch
+import org.siloserver.silo.tv.ui.screens.player.TvPlayerChrome
 
 data class TvMediaInfoTrackSummary(
     val primary: String,
@@ -111,8 +112,8 @@ fun TvMediaInfoDialog(
             .fillMaxWidth(0.36f)
             .fillMaxHeight(0.88f)
             .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
-            .border(0.6.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
+            .background(TvPlayerChrome.Card)
+            .border(1.dp, TvPlayerChrome.PanelStroke, RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp))
             .onPreviewKeyEvent { ev ->
                 when {
                     ev.type == KeyEventType.KeyUp && (ev.key == Key.Back || ev.key == Key.Escape) -> {

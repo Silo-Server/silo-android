@@ -26,6 +26,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -73,6 +74,7 @@ import org.siloserver.silo.common.player.PlaybackSessionManager
 import org.siloserver.silo.common.player.SleepTimerController
 import org.siloserver.silo.common.player.StartParams
 import org.siloserver.silo.common.player.VideoSessionStartV3
+import org.siloserver.silo.common.player.video.PlaybackDiagnosticsCode
 import org.siloserver.silo.common.player.video.VideoPlaybackSessionCoordinator
 import org.siloserver.silo.common.player.video.VideoPlaybackStartRequest
 import org.siloserver.silo.common.player.video.VideoPlaybackStartResult
@@ -116,6 +118,7 @@ import org.siloserver.silo.repository.port.NoOpUserItemStatePort
 import org.siloserver.silo.repository.port.UserItemStatePort
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.encodeCatalogSubtitlePreference
+import org.siloserver.silo.watchtogether.WatchPartyPlaybackContext
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -252,6 +255,33 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                 store.clear()
             }
         }
+
+    @Test
+    fun sameTitleReloadsStartWithThePickedQualityAndAnotherTitleDropsIt() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.loadContent(contentId = "movie", preferredFileId = 1)
+            starter.awaitRequestCount(1)
+            assertNull(starter.request(0).preferredQualityOverride)
+
+            // What a committed Quality menu pick leaves behind.
+            viewModel.setPickedQuality("720p-medium")
+            starter.complete(0, VideoPlaybackStartResult.ServerUnreachable(contentId = "movie"))
+            viewModel.awaitState { it.serverUnreachable }
+            viewModel.playIgnoringServerReachability()
+            starter.awaitRequestCount(2)
+            assertEquals("720p-medium", starter.request(1).preferredQualityOverride)
+
+            viewModel.loadContent(contentId = "other", preferredFileId = 2)
+            starter.awaitRequestCount(3)
+            assertNull(starter.request(2).preferredQualityOverride)
+        } finally {
+            store.clear()
+        }
+    }
 
     @Test
     fun staleErrorCannotOverwriteCurrentReady() = runTest(dispatcher) {
@@ -443,7 +473,7 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     }
 
     @Test
-    fun pendingSessionStopCancelsNextUpWithoutStartingTheSuccessor() = runTest(dispatcher) {
+    fun failedSessionStopStillStartsTheSuccessor() = runTest(dispatcher) {
         val starter = DeferredNonCooperativeStarter()
         val fixture = playerViewModel(starter, backgroundScope)
         val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
@@ -466,10 +496,9 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
             viewModel.offerNextEpisode()
             viewModel.playUpNextNow()
             fixture.manager.awaitStopped("session-a")
-            viewModel.awaitState { !it.isNextUpTransitioning }
-            assertEquals("episode-a", viewModel.uiState.value.contentId)
-            assertFalse(viewModel.uiState.value.showUpNext)
-            assertEquals(1, starter.startedRequestCount)
+            // The playback journal retries the stop before a later start; it never holds up this one.
+            starter.awaitRequestCount(2)
+            assertEquals(2, starter.startedRequestCount)
         } finally {
             store.clear()
         }
@@ -511,12 +540,190 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
         }
     }
 
+    @Test
+    fun roomStartStreamsTheRoomFilePausedAndEveryRestartKeepsTheRoom() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val room = WatchPartyPlaybackContext(
+                roomId = "room",
+                selectionRevision = 3,
+                contentId = "movie",
+                fileId = 41,
+                libraryId = 7,
+                positionSeconds = 120.0,
+                paused = false,
+            )
+            viewModel.startRoomPlayback(room)
+            starter.awaitRequestCount(1)
+            val request = starter.request(0)
+            assertEquals(room, request.room)
+            assertEquals("room", request.roomId)
+            assertEquals("movie", request.contentId)
+            assertEquals(41, request.preferredFileId)
+            assertEquals(7, request.libraryId)
+
+            starter.complete(0, ready(request, "session-3"))
+            viewModel.awaitState { it.sessionId == "session-3" && !it.isLoading }
+            advanceUntilIdle()
+            // Only the room's command may start playback.
+            assertTrue(viewModel.uiState.value.isPaused)
+            assertFalse(viewModel.uiState.value.isPlaying)
+            assertEquals("session-3", viewModel.roomObservation.value.sessionId)
+            assertEquals(3L, viewModel.roomObservation.value.selectionRevision)
+
+            // The screen collecting the same epoch again (recreation) restarts nothing.
+            viewModel.startRoomPlayback(room)
+            advanceUntilIdle()
+            assertEquals(1, starter.startedRequestCount)
+
+            // A new epoch never exposes the outgoing session under its revision.
+            val next = room.copy(selectionRevision = 4, fileId = 42)
+            viewModel.startRoomPlayback(next)
+            starter.awaitRequestCount(2)
+            advanceUntilIdle()
+            assertNull(viewModel.roomObservation.value.sessionId)
+            assertEquals(4L, viewModel.roomObservation.value.selectionRevision)
+            assertTrue(viewModel.roomObservation.value.seekPending)
+
+            // Retry and Try Anyway replay the room start, never a solo one.
+            starter.complete(1, VideoPlaybackStartResult.ServerUnreachable(contentId = "movie"))
+            viewModel.awaitState { it.serverUnreachable }
+            viewModel.playIgnoringServerReachability()
+            starter.awaitRequestCount(3)
+            val retry = starter.request(2)
+            assertEquals(next, retry.room)
+            assertEquals(42, retry.preferredFileId)
+            assertTrue(retry.force)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun roomStartRefusalIsHandedToTheRoomWithoutChoosingAnotherFile() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            val room = WatchPartyPlaybackContext(
+                roomId = "room",
+                selectionRevision = 5,
+                contentId = "movie",
+                fileId = 41,
+                libraryId = null,
+                positionSeconds = 0.0,
+                paused = true,
+            )
+            viewModel.startRoomPlayback(room)
+            starter.awaitRequestCount(1)
+            starter.complete(
+                0,
+                VideoPlaybackStartResult.Error(
+                    contentId = "movie",
+                    message = "This title needs HDR tone mapping.",
+                    diagnosticsCode = PlaybackDiagnosticsCode.serverTerminal("hdr_transcode_unsupported"),
+                    terminalReason = "hdr_transcode_unsupported",
+                ),
+            )
+            viewModel.awaitState { it.error != null }
+            advanceUntilIdle()
+            assertEquals(
+                PlayerViewModel.RoomRefusal(room, fileId = 41, reason = "hdr_transcode_unsupported"),
+                viewModel.roomRefusal.value,
+            )
+            assertEquals(1, starter.startedRequestCount)
+            viewModel.roomRefusal.value?.let(viewModel::consumeRoomRefusal)
+            assertNull(viewModel.roomRefusal.value)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun outsideRoomSeekStaysUnreportableUntilTheRestoreLands() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.startRoomPlayback(
+                WatchPartyPlaybackContext("room", 3, "movie", 41, null, 20.0, false),
+            )
+            starter.awaitRequestCount(1)
+            starter.complete(0, ready(starter.request(0), "session-3"))
+            viewModel.awaitState { it.sessionId == "session-3" && !it.isLoading }
+            advanceUntilIdle()
+            viewModel.onMediaMountApplied(viewModel.uiState.value.mediaMountGeneration)
+
+            fun sample(positionMs: Long) {
+                viewModel.onRoomEngineSample(
+                    positionMs, positionMs, playWhenReady = true, isPlaying = true,
+                    playbackState = androidx.media3.common.Player.STATE_READY,
+                )
+                viewModel.onPositionChanged(positionMs, 300_000L)
+            }
+            sample(20_000L)
+            assertFalse(viewModel.roomObservation.value.seekPending)
+
+            // A MediaSession controller has already jumped to 80 seconds.
+            // PlayerScreen arms the undo before publishing that sample.
+            viewModel.applyRoomSeek(20.0)
+            sample(80_000L)
+            assertEquals(80.0, viewModel.roomObservation.value.sourcePositionSeconds)
+            assertTrue(viewModel.roomObservation.value.seekPending)
+            assertEquals(20.0, viewModel.immediateSeeks.first())
+
+            sample(20_000L)
+            assertEquals(20.0, viewModel.roomObservation.value.sourcePositionSeconds)
+            assertFalse(viewModel.roomObservation.value.seekPending)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun roomCommandsHoldALocalSuspensionUntilTheViewerResumes() = runTest(dispatcher) {
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            viewModel.setInWatchTogetherRoom(true)
+            viewModel.applyRoomPlaying(true)
+            assertFalse(viewModel.uiState.value.isPaused)
+
+            viewModel.beginRoomSuspension(PlayerViewModel.RoomSuspensionReason.SleepTimer)
+            assertTrue(viewModel.uiState.value.isPaused)
+            assertTrue(viewModel.roomSuspended.value)
+            // The room plays on; this device stays held.
+            viewModel.applyRoomPlaying(true)
+            assertTrue(viewModel.uiState.value.isPaused)
+
+            viewModel.endRoomSuspensions(resumeLocally = true)
+            assertFalse(viewModel.uiState.value.isPaused)
+            assertFalse(viewModel.roomSuspended.value)
+        } finally {
+            store.clear()
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     private fun PlayerViewModel.mutableUiState(): MutableStateFlow<PlayerViewModel.PlayerUiState> =
         PlayerViewModel::class.java.getDeclaredField("_uiState").let {
             it.isAccessible = true
             it.get(this) as MutableStateFlow<PlayerViewModel.PlayerUiState>
         }
+
+    private fun PlayerViewModel.setPickedQuality(quality: String) {
+        PlayerViewModel::class.java.getDeclaredField("sessionQualityOverride").let {
+            it.isAccessible = true
+            it.set(this, quality)
+        }
+    }
 
     private fun PlayerViewModel.offerNextEpisode() {
         mutableUiState().update { it.copy(nextEpisode = PlayerViewModel.NextEpisodeInfo(
@@ -528,6 +735,9 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
     private fun playerViewModel(
         starter: DeferredNonCooperativeStarter,
         scope: CoroutineScope,
+        shufflesApi: org.siloserver.silo.network.apiv2.ShufflesV2Api? = null,
+        shuffleStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? =
+            shufflesApi?.let { org.siloserver.silo.model.feature.ShuffleFeatureStore(it) },
     ): PlayerFixture {
         val client = noOpClient()
         val tokenManager = FakeTokenManager()
@@ -577,10 +787,306 @@ class PlayerViewModelLoadOwnershipIntegrationTest {
                     scopeProvider = { null },
                     write = {},
                 ),
+                shuffleFeatureStore = shuffleStore,
             ),
             manager = manager,
             lifecycle = lifecycle,
         )
+    }
+
+    /** A shuffle server whose answers each test scripts; it records every request. */
+    private class FakeShuffleServer(testDispatcher: CoroutineDispatcher? = null) {
+        val requests: MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+        var read: String = shuffle(current = EPISODE_A, next = MOVIE_B)
+        var advance: String = shuffle(current = MOVIE_B, next = EPISODE_C)
+        var skip: String = shuffle(current = EPISODE_A, next = EPISODE_C)
+        var readStatus: HttpStatusCode = HttpStatusCode.OK
+        /** Holds the skip response until completed, to model a slow Pick Another. */
+        var skipGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+        val api = org.siloserver.silo.network.apiv2.ShufflesV2Api(
+            HttpClient(MockEngine.create {
+                dispatcher = testDispatcher
+                addHandler { request ->
+                    val body = (request.body as? io.ktor.http.content.TextContent)?.text.orEmpty()
+                    requests += "${request.method.value} ${request.url.encodedPath} $body".trim()
+                    val path = request.url.encodedPath
+                    val (status, json) = when {
+                        request.method.value == "DELETE" -> HttpStatusCode.NoContent to ""
+                        path == "/api/v2/shuffles" -> HttpStatusCode.Created to
+                            shuffle(current = EPISODE_A, next = MOVIE_B)
+                        path.endsWith("/advance") -> HttpStatusCode.OK to advance
+                        path.endsWith("/skip") -> {
+                            skipGate?.await()
+                            HttpStatusCode.OK to skip
+                        }
+                        readStatus.value >= 400 -> readStatus to
+                            """{"type":"https://siloserver.org/docs/api/v2/problems/conflict","title":"Conflict","status":${readStatus.value}}"""
+                        else -> HttpStatusCode.OK to read
+                    }
+                    respond(json, status, headersOf(HttpHeaders.ContentType, "application/json"))
+                }
+            }) { install(ContentNegotiation) { json(SiloJson) } },
+            FakeTokenManager(),
+            ApiV2Gate.Unrestricted,
+        )
+
+        companion object {
+            const val EPISODE_A =
+                """{"content_id":"episode-a","type":"episode","title":"Pilot","series_title":"Show","season_number":1,"episode_number":1}"""
+            const val MOVIE_B = """{"content_id":"movie-b","type":"movie","title":"Film","runtime":90}"""
+            const val EPISODE_C =
+                """{"content_id":"episode-c","type":"episode","title":"Third","series_title":"Show","season_number":0,"episode_number":3}"""
+
+            fun shuffle(current: String, next: String) =
+                """{"id":"sh1","scope":{"kind":"season","id":"show-S1","title":"Season 1","parent_title":"Show"},"current":$current,"next":$next,"created_at":"2026-10-05T10:00:00.000Z","updated_at":"2026-10-05T10:00:00.000Z"}"""
+        }
+    }
+
+    private suspend fun TestScope.startShuffledEpisode(
+        starter: DeferredNonCooperativeStarter,
+        viewModel: PlayerViewModel,
+    ) {
+        viewModel.attachShuffle("sh1")
+        viewModel.loadContent("episode-a", preferredFileId = 1, resumePositionOverride = 0.0, suppressResumeRewind = true)
+        starter.awaitRequestCount(1)
+        starter.complete(0, ready(starter.request(0), "session-a"))
+        viewModel.awaitState { it.sessionId == "session-a" && !it.isLoading }
+        runCurrent()
+    }
+
+    @Test
+    fun shuffleAnnouncesTheServerPickAndAdvancesToItFromTheBeginning() = runTest(dispatcher) {
+        val server = FakeShuffleServer()
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.awaitState { it.nextEpisode != null }
+            val state = viewModel.uiState.value
+            assertEquals("Show · Season 1", state.shuffle?.scopeLabel)
+            val next = requireNotNull(state.nextEpisode)
+            assertEquals("movie-b", next.contentId)
+            // A movie heads the card with its own title, without an S:E line.
+            assertFalse(next.isEpisode)
+            assertEquals("Film", next.label)
+
+            viewModel.onApproachingEnd(videoEnded = true)
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
+
+            viewModel.playUpNextNow()
+            starter.awaitRequestCount(2)
+            // A second press while the advance is in flight plays the same pick once.
+            viewModel.playUpNextNow()
+            runCurrent()
+            val successor = starter.request(1)
+            assertEquals("movie-b", successor.contentId)
+            assertEquals(0.0, successor.resumePositionOverride)
+            assertTrue(successor.suppressResumeRewind)
+            assertEquals(2, starter.startedRequestCount)
+            assertEquals(
+                1,
+                server.requests.count { it == """POST /api/v2/shuffles/sh1/advance {"from_content_id":"episode-a"}""" },
+            )
+
+            starter.complete(1, ready(successor, "session-b"))
+            viewModel.awaitState { it.sessionId == "session-b" && !it.isLoading }
+            viewModel.onFirstVideoFrameRendered(viewModel.uiState.value.mediaMountGeneration)
+            runCurrent()
+            // The advance already named the following pick; no sequential episode replaces it.
+            assertEquals("episode-c", viewModel.uiState.value.nextEpisode?.contentId)
+            assertTrue(viewModel.uiState.value.nextEpisode?.isEpisode == true)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun playNowDuringASlowPickAnotherPlaysTheNewPick() = runTest(dispatcher) {
+        val server = FakeShuffleServer().apply { skipGate = kotlinx.coroutines.CompletableDeferred() }
+        server.advance = FakeShuffleServer.shuffle(FakeShuffleServer.EPISODE_C, FakeShuffleServer.MOVIE_B)
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.awaitState { it.nextEpisode != null }
+            viewModel.onApproachingEnd(videoEnded = true)
+
+            viewModel.pickAnotherShuffle()
+            runCurrent()
+            assertTrue(viewModel.uiState.value.shuffle?.pickingAnother == true)
+            // Play Now while Pick Another is still waiting for the server.
+            viewModel.playUpNextNow()
+            runCurrent()
+            assertTrue(server.requests.none { it.contains("/advance") })
+
+            requireNotNull(server.skipGate).complete(Unit)
+            starter.awaitRequestCount(2)
+            assertEquals("episode-c", starter.request(1).contentId)
+            val skip = server.requests.indexOfFirst { it.contains("/skip") }
+            val advance = server.requests.indexOfFirst { it.contains("/advance") }
+            assertTrue(skip in 0 until advance)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun theFirstPickKnowsItsNextFromTheStartEvenWhenReadsFail() = runTest(dispatcher) {
+        val server = FakeShuffleServer().apply { readStatus = HttpStatusCode.ServiceUnavailable }
+        val starter = DeferredNonCooperativeStarter()
+        val shuffleStore = org.siloserver.silo.model.feature.ShuffleFeatureStore(server.api)
+        assertTrue(
+            shuffleStore.start(org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY, "1") is
+                org.siloserver.silo.model.feature.ShuffleStart.Started,
+        )
+        val fixture = playerViewModel(starter, backgroundScope, server.api, shuffleStore)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.onApproachingEnd(videoEnded = true)
+            // The card's re-read fails like every read here.
+            withContext(Dispatchers.Default) {
+                withTimeout(5_000) {
+                    while (server.requests.toList().none { it == "GET /api/v2/shuffles/sh1" }) delay(10)
+                }
+            }
+            runCurrent()
+            // The pick the start returned still plays next.
+            assertEquals("movie-b", viewModel.uiState.value.nextEpisode?.contentId)
+            assertTrue(viewModel.uiState.value.showUpNext)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun aShuffleWithOnePlayableItemShowsFinishedAndPlayNowDoesNothing() = runTest(dispatcher) {
+        val server = FakeShuffleServer().apply {
+            read = FakeShuffleServer.shuffle(FakeShuffleServer.EPISODE_A, FakeShuffleServer.EPISODE_A)
+        }
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.onApproachingEnd(videoEnded = true)
+            runCurrent()
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertNull(viewModel.uiState.value.nextEpisode)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+            viewModel.playUpNextNow()
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            assertEquals(1, starter.startedRequestCount)
+            assertTrue(server.requests.none { it.contains("/advance") })
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun aShuffleThatCanNoLongerPlayAnythingShowsFinishedWhenTheCardOpens() = runTest(dispatcher) {
+        val server = FakeShuffleServer()
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.awaitState { it.nextEpisode != null }
+            server.readStatus = HttpStatusCode.Conflict
+            viewModel.onApproachingEnd(videoEnded = true)
+            viewModel.awaitState { it.nextEpisode == null }
+            assertTrue(viewModel.uiState.value.showUpNext)
+            assertNull(viewModel.uiState.value.upNextCountdownSeconds)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun pickAnotherReplacesThePickWithAFullCountdownAndStopEndsTheShuffle() = runTest(dispatcher) {
+        val server = FakeShuffleServer(dispatcher)
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            viewModel.awaitState { it.nextEpisode != null }
+            viewModel.onApproachingEnd(videoEnded = true)
+            testScheduler.advanceTimeBy(3_500)
+            runCurrent()
+            assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS - 3, viewModel.uiState.value.upNextCountdownSeconds)
+
+            viewModel.pickAnotherShuffle()
+            // Keep the response and this waiter on the countdown's scheduler.
+            // Returning through Dispatchers.Default lets virtual time tick
+            // between publication of the full countdown and this assertion.
+            withTimeout(30_000) { viewModel.uiState.first { it.nextEpisode?.contentId == "episode-c" } }
+            assertTrue(server.requests.contains("""POST /api/v2/shuffles/sh1/skip {"next_content_id":"movie-b"}"""))
+            assertEquals(PlayerViewModel.UP_NEXT_COUNTDOWN_SECONDS, viewModel.uiState.value.upNextCountdownSeconds)
+
+            viewModel.stopShuffling()
+            assertNull(viewModel.uiState.value.shuffle)
+            assertNull(viewModel.uiState.value.nextEpisode)
+            testScheduler.advanceTimeBy(30_000)
+            runCurrent()
+            // Stopping cancels the countdown: nothing else starts.
+            assertEquals(1, starter.startedRequestCount)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun aReplacementLoadDuringThePartChangeStopKeepsThePartChangeFromLoading() = runTest(dispatcher) {
+        val server = FakeShuffleServer()
+        val starter = DeferredNonCooperativeStarter()
+        val fixture = playerViewModel(starter, backgroundScope, server.api)
+        val store = ViewModelStore().also { it.put("player", fixture.viewModel) }
+        try {
+            val viewModel = fixture.viewModel
+            startShuffledEpisode(starter, viewModel)
+            // Part 1 of a two-part pick is playing; part 2 is queued.
+            PlayerViewModel::class.java.getDeclaredField("shuffleNextPartFileId").let {
+                it.isAccessible = true
+                it.set(viewModel, 2)
+            }
+            fixture.lifecycle.adoptActiveSession(
+                params = StartParams(
+                    contentId = "episode-a", fileId = 1, capabilities = ClientCodecCapabilities(),
+                    clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+                ),
+                session = allocatedReady("session-a").session,
+                manageProgress = false,
+            )
+            fixture.manager.sequenced = true
+            val stopGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            fixture.manager.stopGate = stopGate
+
+            // Part 1 ends: the part change stops the session and is held there.
+            viewModel.onApproachingEnd(videoEnded = true)
+            fixture.manager.awaitStopped("session-a")
+            // A replacement load of the same item starts while that stop is pending.
+            viewModel.loadContent("episode-a", preferredFileId = 1, preserveRouteIntent = true)
+            stopGate.complete(Unit)
+            starter.awaitRequestCount(2)
+            runCurrent()
+
+            assertEquals(2, starter.startedRequestCount)
+            assertEquals(1, starter.request(1).preferredFileId)
+        } finally {
+            store.clear()
+        }
     }
 
     private fun ready(
@@ -1089,6 +1595,8 @@ private class RecordingPlaybackSessionManager(
 ) {
     var sequenced = false
     var stopResult: ApiResult<Unit> = ApiResult.Success(Unit)
+    /** Holds every stop until completed, to model a slow stop request. */
+    var stopGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     override fun isSequenced(sessionId: String): Boolean = sequenced
 
     private val stopped = mutableListOf<String>()
@@ -1108,6 +1616,7 @@ private class RecordingPlaybackSessionManager(
             stopActiveContexts += contextActive
         }
         stoppedSignal.update { it + sessionId }
+        stopGate?.await()
         return stopResult
     }
 

@@ -1,5 +1,10 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -38,14 +43,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Surface
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -85,6 +86,7 @@ import org.siloserver.silo.android.ui.theme.PillShape
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.ExternalRatings
@@ -114,6 +116,9 @@ data class DetailPortraitArtwork(
     val url: String?,
     val thumbhash: String?,
     val reserveSpace: Boolean = false,
+    /** False while a fallback poster may still arrive, so a blank [url] keeps
+     *  the box empty rather than showing the default artwork. */
+    val isResolved: Boolean = true,
 )
 
 /**
@@ -253,13 +258,16 @@ private fun ExpandedDetailHero(
                                 shape = RoundedCornerShape(12.dp),
                             ),
                     ) {
-                        if (!portraitArtwork.url.isNullOrBlank()) {
+                        // A blank URL can mean the series poster is still loading,
+                        // so the default artwork waits until the poster is resolved.
+                        if (!portraitArtwork.url.isNullOrBlank() || portraitArtwork.isResolved) {
                             ThumbhashImage(
                                 url = portraitArtwork.url,
                                 thumbhash = portraitArtwork.thumbhash,
                                 contentDescription = detail.title,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
+                                defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
                             )
                         }
                     }
@@ -1140,7 +1148,7 @@ fun CircleOverflowButton(
             }
             Text("More", fontSize = 10.sp, fontWeight = FontWeight.Medium, color = Color.White.copy(alpha = 0.60f))
         }
-        DropdownMenu(
+        SiloDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
@@ -1309,26 +1317,27 @@ fun HeroActionStack(
 
     if (showResumeDialog && onPlayFromBeginning != null) {
         val stoppedAt = resumeStoppedAtLabel
-        AlertDialog(
+        SiloDialog(
+            title = "Continue Watching?",
+            message = stoppedAt?.let { "You stopped at $it." },
             onDismissRequest = { showResumeDialog = false },
-            title = { Text("Continue Watching?") },
-            text = if (stoppedAt != null) {
-                { Text("You stopped at $stoppedAt.") }
-            } else {
-                null
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    showResumeDialog = false
-                    onPlay()
-                }) { Text("Resume") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    showResumeDialog = false
-                    onPlayFromBeginning()
-                }) { Text("Play from Beginning") }
-            },
+            actions = listOf(
+                SiloDialogAction(
+                    label = "Resume",
+                    style = SiloDialogActionStyle.Primary,
+                    onClick = {
+                        showResumeDialog = false
+                        onPlay()
+                    },
+                ),
+                SiloDialogAction(
+                    label = "Play from Beginning",
+                    onClick = {
+                        showResumeDialog = false
+                        onPlayFromBeginning()
+                    },
+                ),
+            ),
         )
     }
 }
@@ -1478,11 +1487,11 @@ fun SeasonChips(
                         )
                     }
                 }
-                DropdownMenu(
+                SiloDropdownMenu(
                     expanded = menuExpanded,
                     onDismissRequest = { menuExpanded = false },
                 ) {
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text(if (isWatched) "Mark Season Unwatched" else "Mark Season Watched") },
                         onClick = {
                             menuExpanded = false

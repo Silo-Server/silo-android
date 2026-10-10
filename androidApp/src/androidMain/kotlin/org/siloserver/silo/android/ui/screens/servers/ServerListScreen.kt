@@ -1,5 +1,11 @@
 package org.siloserver.silo.android.ui.screens.servers
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,9 +32,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,7 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -175,25 +177,15 @@ fun ServerListScreen(
     }
 
     removeTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { removeTarget = null },
-            title = { Text("Remove this server?") },
-            text = {
-                Text(
-                    "Sign-in credentials for ${target.displayName} will be " +
-                        "forgotten on this device.",
-                )
+        SiloConfirmDialog(
+            title = "Remove this server?",
+            body = "Sign-in credentials for ${target.displayName} will be forgotten on this device.",
+            confirmLabel = "Remove",
+            onConfirm = {
+                viewModel.onRemove(target.id)
+                removeTarget = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.onRemove(target.id)
-                    removeTarget = null
-                }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { removeTarget = null }) { Text("Cancel") }
-            },
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            onDismiss = { removeTarget = null },
         )
     }
 }
@@ -276,11 +268,11 @@ private fun ServerRow(
                     modifier = Modifier.size(20.dp),
                 )
             }
-            DropdownMenu(
+            SiloDropdownMenu(
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false },
             ) {
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text("Rename") },
                     onClick = {
                         menuExpanded = false
@@ -288,7 +280,7 @@ private fun ServerRow(
                     },
                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
                 )
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text("Remove Server") },
                     onClick = {
                         menuExpanded = false
@@ -344,44 +336,26 @@ private fun RenameDialog(
 ) {
     var input by remember { mutableStateOf(entry.userOverrideName ?: entry.fetchedName.orEmpty()) }
     val hasOverride = entry.userOverrideName != null
-    AlertDialog(
+    SiloDialog(
+        title = "Rename server",
+        message = "Override the server-provided name with a label just for this device.",
         onDismissRequest = onDismiss,
-        title = { Text("Rename server") },
-        text = {
-            Column {
-                Text(
-                    text = "Override the server-provided name with a label just " +
-                        "for this device.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    label = { Text("Name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(input) }) { Text("Save") }
-        },
-        dismissButton = {
+        actions = buildList {
+            add(SiloDialogAction("Save", { onConfirm(input) }, SiloDialogActionStyle.Primary))
             if (hasOverride) {
-                TextButton(onClick = { onConfirm("") }) {
-                    Text(
-                        "Reset to server-provided name",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            } else {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                add(SiloDialogAction("Reset to server-provided name", { onConfirm("") }))
             }
+            add(SiloDialogAction("Cancel", onDismiss))
         },
-        containerColor = MaterialTheme.colorScheme.primaryContainer,
-    )
+    ) {
+        OutlinedTextField(
+            value = input,
+            onValueChange = { input = it },
+            label = { Text("Name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 
 @Composable

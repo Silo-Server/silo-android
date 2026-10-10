@@ -40,8 +40,9 @@ fun createSiloClient(
     deviceMetadataProvider: DeviceMetadataProvider? = null,
     diagnosticsObserver: NetworkDiagnosticsObserver? = null,
     cleartextOriginConsent: CleartextOriginConsent? = null,
+    retryOnConnectionFailure: Boolean = true,
 ): HttpClient {
-    val platformClient = createPlatformHttpClient()
+    val platformClient = createPlatformHttpClient(retryOnConnectionFailure)
 
     return platformClient.config {
         install(ContentNegotiation) {

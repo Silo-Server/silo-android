@@ -4,7 +4,6 @@ import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
 import android.media.MediaCodecList
-import android.media.MediaFormat
 import android.os.Build
 import androidx.annotation.OptIn
 import androidx.compose.runtime.RememberObserver
@@ -42,7 +41,6 @@ import org.siloserver.silo.model.playback.PlaybackTransformationExecutor
 import org.siloserver.silo.model.playback.PlaybackTransformationV3
 import org.siloserver.silo.model.playback.PlaybackOutputContext
 import org.siloserver.silo.model.playback.AudioPassthroughCapabilities
-import org.siloserver.silo.model.playback.AudioPassthroughEntry
 import kotlinx.coroutines.flow.StateFlow
 import org.siloserver.silo.libass.LibassBridge
 
@@ -175,13 +173,6 @@ class PlaybackCapabilityDetector(
             }
         }
 
-    /** Decoder-only HDR facts from the most recent [detect], for diagnostics. */
-    @Volatile
-    private var lastDecoderHdr: HdrCapabilities? = null
-
-    /** Decoder-only HDR support independent of the attached display. */
-    val decoderHdrCapabilities: HdrCapabilities?
-        get() = lastDecoderHdr
     /**
      * Inspect the resolved [Tracks] object (emitted by `Player.Listener.onTracksChanged`)
      * and declare whether direct play can proceed. Looks at the selected video
@@ -359,7 +350,6 @@ class PlaybackCapabilityDetector(
             display = displayProbe.hdr,
         ).withDolbyVisionPolicy(dolbyVision)
         lastDisplayProbe = displayProbe
-        lastDecoderHdr = codecProbe.hdr.withDolbyVisionPolicy(dolbyVision)
 
         val platformAudio = detectPlatformSoftwareAudioCodecs()
         val ffmpegAudio = if (ffmpegAvailable) {

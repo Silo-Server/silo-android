@@ -1148,7 +1148,6 @@ class PlaybackSessionManagerStagedReplanTest {
         )
         assertFalse(harness.manager.rollbackUnpublishedVideoSession("s1"))
         assertFalse(harness.manager.confirmVideoSessionPublication("s1"))
-        assertTrue(harness.manager.rollbackCurrentPendingVideoPublication())
         assertEquals(
             emptyMap(),
             harness.stoppedSessions.groupingBy { it }.eachCount(),

@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CollectionsBookmark
@@ -25,7 +26,6 @@ import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,7 +43,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.BuildConfig
 import org.siloserver.silo.android.R
@@ -58,7 +57,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSettingsBackground
 import org.siloserver.silo.common.diagnostics.DiagnosticsAvailabilityUi
 import org.siloserver.silo.common.network.clientVersionLabel
-import org.siloserver.silo.common.player.rememberPlaybackRecoverySettings
 import org.siloserver.silo.common.settings.CardPresentationSupport
 import org.siloserver.silo.model.settings.LanguageOptions
 import org.siloserver.silo.model.settings.QualityPresets
@@ -74,8 +72,8 @@ internal const val SILO_PRIVACY_POLICY_URL = "https://siloserver.org/privacy"
  *
  * Android adds what the Apple apps keep elsewhere: Notifications, the Library
  * shortcuts (Watchlist, Favorites, History, Collections — reachable only from
- * here on the phone), Sign in a TV, and playback-stop recovery. Each sits in
- * the group it belongs to rather than in a group of its own. The Sign-in group
+ * here on the phone) and Sign in a TV. Each sits in the group it belongs to
+ * rather than in a group of its own. The Sign-in group
  * (the server's external sign-in providers) appears only on servers that
  * offer one.
  */
@@ -100,7 +98,6 @@ fun SettingsScreen(
     diagnosticsViewModel: DiagnosticsViewModel = koinViewModel(),
     signInViewModel: SignInSettingsViewModel = koinViewModel(),
 ) {
-    val recovery = rememberPlaybackRecoverySettings(koinInject())
     val state by viewModel.uiState.collectAsState()
     val signInState by signInViewModel.uiState.collectAsState()
     val diagnosticsState by diagnosticsViewModel.state.collectAsState()
@@ -111,6 +108,9 @@ fun SettingsScreen(
     // The large title scrolls away and the bar takes the title over, the way
     // a large navigation title collapses to an inline one.
     val titleScrolledAway by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    val watchPartyExperiment: org.siloserver.silo.common.watchparty.WatchPartyExperiment =
+        org.koin.compose.koinInject()
+    val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
 
     LaunchedEffect(state.loggedOut) {
         if (state.loggedOut) {
@@ -124,8 +124,6 @@ fun SettingsScreen(
     val serverLabel = state.serverName.ifBlank { serverHost(state.serverUrl) ?: "Not connected" }
     val showDiagnostics = shouldShowDiagnosticsEntry(diagnosticsState) &&
         search.matches("diagnostics", "support", "reports", "debug", "crash")
-    val showRecovery = recovery.visible &&
-        search.matches("playback", "recovery", "retry", "stops", "support")
 
     val matchesInterface = search.matches(
         "interface", "appearance", "cards", "posters", "captions", "home", "sections",
@@ -151,13 +149,15 @@ fun SettingsScreen(
     // External sign-in (OIDC/LDAP): shown only on servers that have it.
     val matchesSignIn = signInState.visible &&
         search.matches("sign-in", "sign in", "account", "provider", "connect", "disconnect", "sso")
-    val matchesExperimental = search.matches("experimental", "beta", "testing", "audiobooks", "navigation")
+    val matchesExperimental = search.matches(
+        "experimental", "beta", "testing", "audiobooks", "navigation", "watch party", "party",
+    )
     val matchesAbout = search.matches("about", "version", versionLabel, "privacy", "policy", "information")
     val matchesSignOut = search.matches("sign out", "account")
 
     val hasResults = matchesInterface || matchesNotifications || matchesPlayback || matchesSubtitles ||
         matchesDownloads || matchesWatchlist || matchesFavorites || matchesHistory || matchesCollections ||
-        showDiagnostics || showRecovery || matchesServer || matchesPairDevice || matchesExperimental ||
+        showDiagnostics || matchesServer || matchesPairDevice || matchesExperimental ||
         matchesAbout || matchesSignOut || matchesSignIn
 
     Scaffold(
@@ -308,28 +308,15 @@ fun SettingsScreen(
                 }
             }
 
-            if (showDiagnostics || showRecovery) {
+            if (showDiagnostics) {
                 item(key = "support") {
-                    SettingsSection(
-                        title = "Support",
-                        footer = recovery.message.takeIf { showRecovery },
-                    ) {
-                        if (showDiagnostics) {
-                            SettingsNavigationRow(
-                                label = "Diagnostics",
-                                icon = Icons.Filled.MonitorHeart,
-                                value = diagnosticsAvailabilityLabel(diagnosticsState.availability),
-                                onClick = onNavigateToDiagnostics,
-                            )
-                        }
-                        if (showRecovery) {
-                            SettingsNavigationRow(
-                                label = if (recovery.busy) "Recovering Playback…" else "Retry Pending Playback Stops",
-                                icon = Icons.Filled.Restore,
-                                onClick = recovery.retry,
-                                enabled = !recovery.busy,
-                            )
-                        }
+                    SettingsSection(title = "Support") {
+                        SettingsNavigationRow(
+                            label = "Diagnostics",
+                            icon = Icons.Filled.MonitorHeart,
+                            value = diagnosticsAvailabilityLabel(diagnosticsState.availability),
+                            onClick = onNavigateToDiagnostics,
+                        )
                     }
                 }
             }
@@ -370,6 +357,14 @@ fun SettingsScreen(
                             icon = Icons.AutoMirrored.Filled.MenuBook,
                             checked = state.showAudiobooks,
                             onCheckedChange = viewModel::setShowAudiobooks,
+                        )
+                        // Device-local; never synced with the server's settings.
+                        SettingsSwitchRow(
+                            label = "Watch Party",
+                            description = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
+                            icon = Icons.Filled.Groups,
+                            checked = watchPartyEnabled,
+                            onCheckedChange = watchPartyExperiment::setEnabled,
                         )
                     }
                 }

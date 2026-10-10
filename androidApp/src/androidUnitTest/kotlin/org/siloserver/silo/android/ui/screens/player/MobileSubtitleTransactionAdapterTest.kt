@@ -748,6 +748,27 @@ class MobileSubtitleTransactionAdapterTest {
     }
 
     @Test
+    fun `failed quality change is reported apart from subtitle failures`() = runTest {
+        val harness = harness(backgroundScope)
+
+        harness.adapter.selectQuality("720p-medium")
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("offline")))
+        runCurrent()
+
+        assertTrue(harness.adapter.snapshot.failureMessage != null)
+        assertTrue(harness.adapter.snapshot.qualityChangeFailed)
+
+        harness.adapter.select(sidecar(4))
+        runCurrent()
+        harness.port.failStage(ApiResult.NetworkError(IllegalStateException("offline")))
+        runCurrent()
+
+        assertTrue(harness.adapter.snapshot.failureMessage != null)
+        assertFalse(harness.adapter.snapshot.qualityChangeFailed)
+    }
+
+    @Test
     fun `missing sidecar and network failure retain committed selection and preference`() = runTest {
         val harness = harness(backgroundScope)
 
