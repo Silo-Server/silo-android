@@ -74,6 +74,17 @@ class WatchNextHomeSyncTest {
         assertEquals(1, applies)
     }
 
+    @Test fun failedSeriesLookupRetriesInsteadOfDroppingProtectedTiles() = runTest {
+        episodeRows = true
+        scenario { repo ->
+            assertFalse(syncWatchNextHome(repo, gate, { false },
+                spoilerPreferences = { EpisodeSpoilerPrefs(hideImages = true) },
+                seriesArtwork = { null },
+            ) { _, _, _ -> applies++ })
+        }
+        assertEquals(0, applies)
+    }
+
     @Test fun unknownPreferencesRetryWithoutPublishingAndChangedPreferencesFenceWrites() = runTest {
         scenario { repo ->
             assertFalse(syncWatchNextHome(repo, gate, { false }, spoilerPreferences = { null }) { _, _, _ -> applies++ })

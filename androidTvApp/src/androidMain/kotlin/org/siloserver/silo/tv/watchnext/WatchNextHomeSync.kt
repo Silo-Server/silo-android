@@ -8,7 +8,11 @@ import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 
-/** Actual worker read branch, with provider dispatch injected for synthetic tests. */
+/**
+ * Actual worker read branch, with provider dispatch injected for synthetic tests.
+ * [seriesArtwork] answers null only when the lookup failed; the run then retries
+ * instead of dropping the tile.
+ */
 internal suspend fun syncWatchNextHome(
     sections: SectionRepository,
     gate: WatchNextWriteGate,
@@ -36,7 +40,7 @@ internal suspend fun syncWatchNextHome(
     if (response !is ApiResult.Success) return false
 
     val fields = mutableListOf<WatchNextProgramFields>()
-    val artworkBySeries = mutableMapOf<String, ItemDetail?>()
+    val artworkBySeries = mutableMapOf<String, ItemDetail>()
     for (section in response.data.sections.filter { it.sectionType in setOf("continue_watching", "next_up") }) {
         var items = section.items
         if (items.isEmpty() && section.totalCount > 0) {
@@ -52,8 +56,13 @@ internal suspend fun syncWatchNextHome(
                 resolvedPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item))) {
                 val seriesId = item.seriesId?.takeIf { it.isNotBlank() }
                 if (seriesId != null) {
-                    if (seriesId !in artworkBySeries) artworkBySeries[seriesId] = seriesArtwork(seriesId)
-                    if (!current()) return true
+                    if (seriesId !in artworkBySeries) {
+                        val series = seriesArtwork(seriesId)
+                        if (!current()) return true
+                        // A failed lookup is not "no safe artwork": publishing
+                        // without the tile would remove it from the launcher.
+                        artworkBySeries[seriesId] = series ?: return false
+                    }
                     mapped = WatchNextProgramMapper.map(item, section.sectionType, resolvedPrefs, artworkBySeries[seriesId])
                 }
             }

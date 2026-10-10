@@ -46,8 +46,18 @@ class WatchNextSeeder(
     /** Clear exposed tiles only when known image protection changes from off to on. */
     fun updateImageProtection(enabled: Boolean) {
         val wasEnabled = protectionPrefs.getBoolean("hide_images", false)
-        if (enabled && !wasEnabled) clear()
-        protectionPrefs.edit().putBoolean("hide_images", enabled).apply()
+        if (enabled && !wasEnabled) {
+            clear()
+            // Record the change only once the wipe has finished: a process
+            // death before then must wipe again on the next start.
+            val wipe = clearJob
+            scope.launch {
+                wipe?.join()
+                if (wipe?.isCancelled != true) protectionPrefs.edit().putBoolean("hide_images", true).apply()
+            }
+        } else {
+            protectionPrefs.edit().putBoolean("hide_images", enabled).apply()
+        }
         seedNow()
         enqueuePeriodic()
     }

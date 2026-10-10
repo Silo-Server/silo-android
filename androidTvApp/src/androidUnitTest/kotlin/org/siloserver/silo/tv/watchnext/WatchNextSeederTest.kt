@@ -11,6 +11,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], application = Application::class)
@@ -30,6 +31,12 @@ class WatchNextSeederTest {
         seeder.updateImageProtection(true)
         val protected = repository.writeGate.capture()
         assertNotEquals(original, protected)
+        // The setting is recorded only once the wipe finishes; a restart before
+        // then must wipe again.
+        val prefs = context.getSharedPreferences("silo_watch_next_protection", Context.MODE_PRIVATE)
+        val deadline = System.currentTimeMillis() + 5_000
+        while (!prefs.getBoolean("hide_images", false) && System.currentTimeMillis() < deadline) Thread.sleep(10)
+        assertTrue(prefs.getBoolean("hide_images", false))
         // Recreating the seeder models a process restart with the same known setting.
         WatchNextSeeder(context, repository).updateImageProtection(true)
         assertEquals(protected, repository.writeGate.capture())
