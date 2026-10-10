@@ -4443,11 +4443,11 @@ class TvPlayerViewModel(
         val state = _uiState.value
         val forContentId = state.contentId
         val currentSeriesId = state.seriesId
-        val sessionId = state.sessionId
         _uiState.update { it.copy(onDeckItems = emptyList()) }
         if (roomId != null) return
-        fun stillCurrent() = run == onDeckGeneration &&
-            _uiState.value.contentId == forContentId && _uiState.value.sessionId == sessionId
+        // Not keyed on the session: a startup replan swaps it for the same
+        // item without reloading, and the row doesn't depend on it.
+        fun stillCurrent() = run == onDeckGeneration && _uiState.value.contentId == forContentId
         viewModelScope.launch {
             val owner = repository.captureHomeAuthority() ?: return@launch
             repository.loadScopedHomeSections(owner, ::stillCurrent) { sections ->
