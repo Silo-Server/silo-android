@@ -71,7 +71,7 @@ class CollectionRouteTest {
     }
 
     @Test
-    fun collectionItemsOpenWithoutALibraryScope() {
+    fun collectionItemsAndShufflesOpenWithoutALibraryScope() {
         val collectionDestination = appNavigationSource.substringAfter(
             "route = Route.CollectionDetail.ROUTE",
         ).substringBefore(
@@ -83,5 +83,7 @@ class CollectionRouteTest {
             0,
             Regex("Route\\.ItemDetail\\([^)]*libraryId").findAll(collectionDestination).count(),
         )
+        // A collection shuffle draws from the whole collection.
+        assertEquals(1, Regex("shufflePlayerRoute\\(shuffle\\)").findAll(collectionDestination).count())
     }
 }

@@ -69,8 +69,6 @@ class CollectionDetailViewModel(
             org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION
         }
 
-    /** The library the collection was opened from, carried into shuffled playback. */
-    val browseLibraryId: Int? get() = libraryId
     private val pageSize = 40
 
     fun initialize(id: String) {

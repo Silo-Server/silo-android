@@ -1675,14 +1675,14 @@ fun TvAppNavigation(
                 title = title,
                 libraryType = libraryType,
                 // Collection items can live in other libraries, and a
-                // library-scoped item read 404s for those. Open them unscoped,
-                // like the web client.
+                // library-scoped item read 404s for those. Open them, and
+                // shuffle picks, unscoped, like the web client.
                 onItemClick = { contentId ->
                     navController.navigateToTvItemDetail(contentId)
                 },
                 onBack = { navController.popBackStack() },
                 onShuffleStarted = { shuffle ->
-                    navController.navigateToTvShufflePlayback(shuffle, libraryId, lastPlaybackNavigation)
+                    navController.navigateToTvShufflePlayback(shuffle, null, lastPlaybackNavigation)
                 },
             )
         }

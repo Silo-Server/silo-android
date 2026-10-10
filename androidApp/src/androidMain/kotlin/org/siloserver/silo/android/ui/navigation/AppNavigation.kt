@@ -1175,17 +1175,14 @@ fun AppNavigation(
             CollectionDetailScreen(
                 collectionId = backStackEntry.arguments?.getString("collectionId") ?: "",
                 onBackClick = { navController.popBackStack() },
+                // Collection items can live in other libraries, and a
+                // library-scoped item read 404s for those. Open them, and
+                // shuffle picks, unscoped, like the web client.
                 onShuffleStarted = { shuffle ->
                     navController.navigate(
-                        org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(
-                            shuffle,
-                            backStackEntry.arguments?.getString("libraryId")?.toIntOrNull(),
-                        ),
+                        org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(shuffle),
                     )
                 },
-                // Collection items can live in other libraries, and a
-                // library-scoped item read 404s for those. Open them unscoped,
-                // like the web client.
                 onItemClick = { contentId ->
                     navController.navigate(Route.ItemDetail(contentId).route)
                 },
