@@ -65,9 +65,12 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
 import org.siloserver.silo.tv.ui.components.tvEpisodeCardWidth
@@ -358,6 +361,8 @@ private fun TvDetailEpisodeCard(
     // Continue Watching rail. Legacy season/episode routes keep their existing
     // geometry so this targeted parity change cannot disturb those layouts.
     val cardWidth = if (usesSeriesGeometry) tvEpisodeCardWidth() else 230.dp.cardScaled()
+    val spoilers = LocalEpisodeSpoilerPrefs.current
+    val unwatched = EpisodeSpoilers.isUnwatched(episode.userData)
     val stillHeight = if (usesSeriesGeometry) cardWidth * (9f / 16f) else 130.dp.cardScaled()
     val eyebrowFontSize = if (usesSeriesGeometry) 11.sp else 14.sp
     val eyebrowLineHeight = if (usesSeriesGeometry) 14.sp else 17.sp
@@ -429,9 +434,10 @@ private fun TvDetailEpisodeCard(
                     },
                 ),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
                 url = episode.stillUrl,
                 thumbhash = episode.stillThumbhash,
+                hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -556,9 +562,12 @@ private fun TvDetailEpisodeCard(
                     // exactly 3 text lines (minLines/maxLines rather than a fixed dp
                     // clamp so accessibility text scaling can't clip glyphs), and
                     // render even when there is no overview so every card keeps
-                    // identical vertical metrics.
+                    // identical vertical metrics. Spoiler protection blanks it
+                    // the same way.
                     Text(
-                        text = episode.overview?.takeIf { it.isNotBlank() }.orEmpty(),
+                        text = episode.overview
+                            ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
+                            .orEmpty(),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Normal,
                         color = SiloSecondaryText,

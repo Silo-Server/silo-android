@@ -334,7 +334,7 @@ val androidTvModule = module {
     // reset every path uses to drop the active profile.
     single { TvProfileLaunchPreferences(androidContext()) }
     single { TvProfileAwayTracker(get(), get(), get()) }
-    single { TvActiveProfileReset(get(), get(), get(), get(), get(), get(), get()) }
+    single { TvActiveProfileReset(get(), get(), get(), get(), get(), get(), get(), get()) }
 
     // Deep-link bridge between MainTvActivity (producer) and TvAppNavigation
     // (consumer). The Activity writes incoming Silo app-scheme URIs here on
@@ -628,6 +628,7 @@ val androidTvModule = module {
             profileSettings = get(),
             tvLibraryScopeStore = getOrNull(),
             seekIntervalStore = get(),
+            episodeSpoilerStore = get(),
             audiobookSettingsStore = get(),
             profileLaunchPreferences = get(),
             watchNextSeeder = get(),

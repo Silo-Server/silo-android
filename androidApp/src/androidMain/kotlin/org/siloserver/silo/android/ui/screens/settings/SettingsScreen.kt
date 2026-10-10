@@ -135,6 +135,7 @@ fun SettingsScreen(
     val matchesPlayback = search.matches(
         "playback", "quality", "audio", "dolby vision", "picture-in-picture", "episodes", "next up",
         "skip", "intros", "credits", "rewind", "still watching", "skip interval", "audiobooks",
+        "spoilers", "unwatched", "blur", "descriptions",
     )
     val matchesSubtitles = search.matches(
         "subtitles", "captions", "language", "behavior", "appearance", "forced", "metadata",

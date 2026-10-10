@@ -11,6 +11,43 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class SiloDatabaseMigrationTest {
+    @Test
+    fun migration14To15PreservesDownloadsWithUnknownArtworkState() {
+        val name = "migration-14-to-15"
+        migrationHelper.createDatabase(name, 14).use { database ->
+            database.execSQL(
+                "INSERT INTO downloads (serverId, profileId, mediaFileId, recordId, contentId, title, mediaType, status, kind, " +
+                    "fileSize, bytesSent, createdAt, updatedAtMs) VALUES ('s', 'p', 42, 'row', 'episode', 'Episode', 'tv', " +
+                    "'completed', 'queued', 1024, 1024, '2026-10-01T00:00:00Z', 123)",
+            )
+            database.execSQL("INSERT INTO content_item_state (serverId, profileId, contentId, watched, clientUpdatedAtMs) " +
+                "VALUES ('s', 'p', 'episode', 1, 1000)")
+            database.execSQL("INSERT INTO user_item_state (serverId, profileId, contentId, fileId, positionSeconds, audioFingerprint, clientUpdatedAtMs) " +
+                "VALUES ('s', 'p', 'episode', 42, 30, 'audio', 1000)")
+        }
+        migrationHelper.runMigrationsAndValidate(name, 15, true).use { database ->
+            database.query("SELECT watched, watchedUpdatedAtMs FROM content_item_state").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(1, cursor.getInt(0))
+                assertEquals(true, cursor.isNull(1))
+            }
+            database.query("SELECT positionSeconds, audioFingerprint, positionUpdatedAtMs FROM user_item_state").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals(30.0, cursor.getDouble(0))
+                assertEquals("audio", cursor.getString(1))
+                assertEquals(true, cursor.isNull(2))
+            }
+            database.query("SELECT recordId, status, posterIsEpisodeStill, episodeUserDataJson FROM downloads").use { cursor ->
+                assertEquals(true, cursor.moveToFirst())
+                assertEquals("row", cursor.getString(0))
+                assertEquals("completed", cursor.getString(1))
+                assertEquals(true, cursor.isNull(2))
+                assertEquals(true, cursor.isNull(3))
+                assertEquals(false, cursor.moveToNext())
+            }
+        }
+    }
+
     @get:Rule
     val migrationHelper =
         MigrationTestHelper(

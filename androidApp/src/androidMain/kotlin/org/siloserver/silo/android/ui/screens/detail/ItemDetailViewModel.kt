@@ -348,6 +348,8 @@ class ItemDetailViewModel(
                     episodeNumber = item.episodeNumber,
                     episodeTitle = item.title,
                     posterUrl = knownPoster ?: parent?.posterUrl ?: pageDetail?.posterUrl,
+                    posterIsEpisodeStill = if (knownPoster != null || parent?.posterUrl != null) false
+                        else pageDetail?.posterIsEpisodeStill,
                     downloadQualityOverride = downloadQuality,
                 )
             }
@@ -1255,14 +1257,14 @@ class ItemDetailViewModel(
 
     fun toggleWatched() {
         val currentDetail = _uiState.value.detail ?: return
-        val current = currentDetail.userData?.played == true
-        val target = !current
+        val previous = currentDetail.userData
+        val target = previous?.played != true
         val generation = ++watchedMutationGeneration
         val isSeries = currentDetail.type == "series"
         if (isSeries) seasonsRefreshGeneration++
         val episodeGenerationsAtStart = episodeWatchedMutationGenerations.toMap()
         val admittedAtMs = System.currentTimeMillis()
-        updatePlayedState(target)
+        updateOwnUserData { it.withPlayed(target) }
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
         viewModelScope.launch {
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
@@ -1297,7 +1299,7 @@ class ItemDetailViewModel(
                 }
                 else -> if (generation == watchedMutationGeneration) {
                     if (isSeries) failedSeriesWatchedGeneration = generation
-                    updatePlayedState(current)
+                    updateOwnUserData { it.withoutPlayed(target, previous) }
                 }
             }
         }
@@ -1486,18 +1488,16 @@ class ItemDetailViewModel(
     /** Marks one episode from the in-page rail without navigating away. */
     fun setEpisodeWatched(episodeContentId: String, watched: Boolean) {
         val state = _uiState.value
-        val previous = state.episodes.firstOrNull { it.contentId == episodeContentId }
-            ?.userData?.played
+        val previous = (state.episodes.firstOrNull { it.contentId == episodeContentId }
             ?: state.episodesBySeason.values.asSequence()
                 .flatten()
-                .firstOrNull { it.contentId == episodeContentId }
-                ?.userData?.played
-            ?: false
-        if (previous == watched) return
+                .firstOrNull { it.contentId == episodeContentId })
+            ?.userData
+        if ((previous?.played ?: false) == watched) return
 
         val generation = (episodeWatchedMutationGenerations[episodeContentId] ?: 0) + 1
         episodeWatchedMutationGenerations[episodeContentId] = generation
-        updateEpisodePlayedState(episodeContentId, watched)
+        updateEpisodeUserData(episodeContentId) { it.withPlayed(watched) }
         val writeIntent = personalDataRepository.beginWatched(episodeContentId, watched)
         viewModelScope.launch {
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
@@ -1512,28 +1512,24 @@ class ItemDetailViewModel(
                 }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     failedEpisodeWatchedGenerations[episodeContentId] = generation
-                    updateEpisodePlayedState(episodeContentId, previous)
+                    updateEpisodeUserData(episodeContentId) { it.withoutPlayed(watched, previous) }
                 }
             }
         }
     }
 
-    private fun updateEpisodePlayedState(episodeContentId: String, played: Boolean) {
+    private fun updateEpisodeUserData(episodeContentId: String, transform: (LeafItemUserData?) -> LeafItemUserData?) {
         fun EpisodeListItem.updated(): EpisodeListItem =
-            if (contentId != episodeContentId) this else copy(
-                userData = (userData ?: LeafItemUserData()).copy(played = played),
-            )
+            if (contentId != episodeContentId) this else copy(userData = transform(userData))
 
         _uiState.update { state ->
             val selectedDetail = state.selectedEpisodeDetail?.let { episodeDetail ->
-                if (episodeDetail.contentId != episodeContentId) episodeDetail else episodeDetail.copy(
-                    userData = (episodeDetail.userData ?: LeafItemUserData()).copy(played = played),
-                )
+                if (episodeDetail.contentId != episodeContentId) episodeDetail
+                else episodeDetail.copy(userData = transform(episodeDetail.userData))
             }
             val ownDetail = state.detail?.let { itemDetail ->
-                if (itemDetail.contentId != episodeContentId) itemDetail else itemDetail.copy(
-                    userData = (itemDetail.userData ?: LeafItemUserData()).copy(played = played),
-                )
+                if (itemDetail.contentId != episodeContentId) itemDetail
+                else itemDetail.copy(userData = transform(itemDetail.userData))
             }
             state.copy(
                 detail = ownDetail,
@@ -1546,11 +1542,31 @@ class ItemDetailViewModel(
         }
     }
 
-    private fun updatePlayedState(played: Boolean) {
+    private fun updateOwnUserData(transform: (LeafItemUserData?) -> LeafItemUserData?) {
         _uiState.update { state ->
             val detail = state.detail ?: return@update state
-            val userData = detail.userData ?: LeafItemUserData()
-            state.copy(detail = detail.copy(userData = userData.copy(played = played)))
+            state.copy(detail = detail.copy(userData = transform(detail.userData)))
         }
     }
+}
+
+/**
+ * Watched and unwatched both reset resume progress, as the server does, so
+ * spoiler protection sees the reset episode as not started.
+ */
+internal fun LeafItemUserData?.withPlayed(played: Boolean): LeafItemUserData =
+    (this ?: LeafItemUserData()).copy(played = played, isInProgress = false, positionSeconds = null)
+
+/**
+ * Undoes a failed [withPlayed] field by field, only where it still shows: a
+ * reload's watched state, or progress recorded since the toggle, stays.
+ */
+internal fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItemUserData?): LeafItemUserData? {
+    if (this == null || this.played != played) return this
+    val progressUntouched = isInProgress == false && positionSeconds == null
+    return copy(
+        played = previous?.played ?: false,
+        isInProgress = if (progressUntouched) previous?.isInProgress else isInProgress,
+        positionSeconds = if (progressUntouched) previous?.positionSeconds else positionSeconds,
+    )
 }

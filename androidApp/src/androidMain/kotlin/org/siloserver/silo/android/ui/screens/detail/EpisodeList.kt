@@ -53,9 +53,12 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
 
 /**
@@ -173,6 +176,8 @@ private fun EpisodeRailCard(
     var menuExpanded by remember { mutableStateOf(false) }
     val isWatched = episode.userData?.played == true
     val stillShape = RoundedCornerShape(8.dp)
+    val spoilers = LocalEpisodeSpoilerPrefs.current
+    val unwatched = EpisodeSpoilers.isUnwatched(episode.userData)
     val progress = episodeProgressFraction(
         positionSeconds = episode.userData?.positionSeconds,
         durationSeconds = episode.userData?.durationSeconds,
@@ -198,9 +203,10 @@ private fun EpisodeRailCard(
                     shape = stillShape,
                 ),
         ) {
-            ThumbhashImage(
+            SpoilerImage(
                 url = episode.stillUrl,
                 thumbhash = episode.stillThumbhash,
+                hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
                 modifier = Modifier.fillMaxSize(),
                 // The play button covers the centre, so no mark under it.
@@ -314,7 +320,11 @@ private fun EpisodeRailCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                episode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                // Spoiler protection omits the text; the fixed-height column
+                // keeps the card the same size.
+                val overview = episode.overview
+                    ?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(unwatched) }
+                if (overview != null) {
                     Text(
                         text = overview,
                         style = MaterialTheme.typography.bodySmall,

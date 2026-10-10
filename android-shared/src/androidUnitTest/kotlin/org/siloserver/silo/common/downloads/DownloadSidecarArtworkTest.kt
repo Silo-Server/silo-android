@@ -51,7 +51,7 @@ class DownloadSidecarArtworkTest {
     fun movieTilesUseTheSavedPosterThenTheCatalogUrl() {
         val movie = sidecar.copy(mediaType = "movie", posterThumbhash = "MOVIE", offlinePosterPath = "/art/poster")
 
-        assertEquals(DownloadTileArtwork("file:///art/poster", "MOVIE"), movie.tileArtwork { true })
+        assertEquals(DownloadTileArtwork("file:///art/poster", "MOVIE", isEpisodeStill = false), movie.tileArtwork { true })
         // A file removed behind the app's back falls back to the catalog URL.
         assertEquals(
             DownloadTileArtwork("https://silo.example/api/v2/artwork/poster", "MOVIE"),
@@ -69,7 +69,7 @@ class DownloadSidecarArtworkTest {
             seriesPosterThumbhash = "SERIES",
         )
 
-        assertEquals(DownloadTileArtwork("file:///art/series_poster", "SERIES"), episode.tileArtwork { true })
+        assertEquals(DownloadTileArtwork("file:///art/series_poster", "SERIES", isEpisodeStill = false), episode.tileArtwork { true })
         // The saved still exists, but the tile falls back to the catalog series poster.
         assertEquals(
             DownloadTileArtwork("https://silo.example/api/v2/artwork/poster", "SERIES"),
@@ -94,7 +94,7 @@ class DownloadSidecarArtworkTest {
         )
 
         assertEquals(
-            DownloadTileArtwork("file:///art/2/series_poster", "SERIES"),
+            DownloadTileArtwork("file:///art/2/series_poster", "SERIES", isEpisodeStill = false),
             listOf(first, second).tileArtwork { true },
         )
         // No series poster on disk: the catalog URL, not an episode still.

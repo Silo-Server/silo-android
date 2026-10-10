@@ -35,6 +35,7 @@ internal suspend fun UserItemStateDao.restorePlaybackProgressForTerminalOp(op: D
             fileId = progress.fileId,
             positionSeconds = progress.positionSeconds,
             previousUpdatedAtMs = progress.previousClientUpdatedAtMs,
+            previousPositionUpdatedAtMs = progress.previousPositionUpdatedAtMs,
             clearedAtMs = progress.clearedAtMs,
         )
     }

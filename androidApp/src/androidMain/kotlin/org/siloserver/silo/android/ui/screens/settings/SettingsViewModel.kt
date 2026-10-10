@@ -7,6 +7,11 @@ import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
+import org.siloserver.silo.common.settings.EpisodeSpoilerSetting
+import org.siloserver.silo.common.settings.EpisodeSpoilerState
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
+import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
+import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalSettingsModel
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -140,6 +145,10 @@ data class SettingsUiState(
     // Media cards: the effective `ui.card_presentation` value plus where it
     // resolved from and whether the server supports the key at all.
     val cardPresentation: CardPresentationUiState = CardPresentationUiState(),
+    /** Spoiler protection for unwatched episodes; toggles show only when supported. */
+    val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
+    /** Why the last spoiler switch change wasn't saved. */
+    val episodeSpoilerSaveError: String? = null,
 
     // Notifications (in-app). Section is hidden entirely unless the server
     // reports in-app notifications are enabled AND preferences load.
@@ -159,6 +168,7 @@ class SettingsViewModel(
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
+    private val episodeSpoilerStore: EpisodeSpoilerStore,
     private val signOutTeardown: SignOutTeardown,
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
@@ -185,6 +195,7 @@ class SettingsViewModel(
         observePlaybackBehaviorSettings()
         observeNotifications()
         observeCardPresentation()
+        observeEpisodeSpoilers()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
     }
@@ -469,6 +480,28 @@ class SettingsViewModel(
     /** Deletes the `profile_client` row so the profile-wide value applies. */
     fun useCardProfileDefault() {
         viewModelScope.launch { cardPresentationStore.useProfileDefault() }
+    }
+
+    // -- Spoilers --
+
+    private fun observeEpisodeSpoilers() {
+        episodeSpoilerStore.state.onEach { state ->
+            _uiState.update { it.copy(episodeSpoilers = state) }
+        }.launchIn(viewModelScope)
+        episodeSpoilerStore.saveError.onEach { error ->
+            _uiState.update { it.copy(episodeSpoilerSaveError = error) }
+        }.launchIn(viewModelScope)
+        // Opening Settings is a refresh edge, so a change made on another
+        // device shows here without waiting for the next foreground.
+        viewModelScope.launch { episodeSpoilerStore.refresh() }
+    }
+
+    fun setHideUnwatchedEpisodeImages(enabled: Boolean) {
+        episodeSpoilerStore.set(EpisodeSpoilerSetting.Images, enabled)
+    }
+
+    fun setHideUnwatchedEpisodeOverviews(enabled: Boolean) {
+        episodeSpoilerStore.set(EpisodeSpoilerSetting.Overviews, enabled)
     }
 
     fun setNotificationsEnabled(value: Boolean) {

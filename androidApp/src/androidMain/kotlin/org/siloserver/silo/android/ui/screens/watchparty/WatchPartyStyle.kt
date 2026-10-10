@@ -67,7 +67,7 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.watchtogether.WatchPartySeatState
@@ -128,18 +128,25 @@ internal fun WatchPartyBackdrop(
     thumbhash: String? = null,
     isPoster: Boolean = false,
     modifier: Modifier = Modifier,
+    /** Spoiler protection hides this artwork: an unwatched episode's still. */
+    hidden: Boolean = false,
 ) {
     Box(modifier.fillMaxSize().background(SiloBackground)) {
-        Crossfade(targetState = url?.takeIf { it.isNotBlank() }, animationSpec = tween(400), label = "backdrop") { art ->
+        // Each artwork keeps its own treatment while it fades out, so an
+        // outgoing protected still is never drawn unhidden. A layer showing
+        // the current artwork is hidden at once when protection turns on.
+        val target = url?.takeIf { it.isNotBlank() }?.let { BackdropArt(it, thumbhash, isPoster, hidden) }
+        Crossfade(targetState = target, animationSpec = tween(400), label = "backdrop") { art ->
             if (art != null) {
-                ThumbhashImage(
-                    url = art,
-                    thumbhash = thumbhash,
+                SpoilerImage(
+                    url = art.url,
+                    thumbhash = art.thumbhash,
+                    hidden = art.hidden || (target?.hidden == true && art.url == target.url),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .then(if (isPoster) Modifier.blur(28.dp).alpha(0.7f) else Modifier),
+                        .then(if (art.isPoster) Modifier.blur(28.dp).alpha(0.7f) else Modifier),
                 )
             }
         }
@@ -158,6 +165,8 @@ internal fun WatchPartyBackdrop(
         )
     }
 }
+
+private data class BackdropArt(val url: String, val thumbhash: String?, val isPoster: Boolean, val hidden: Boolean)
 
 /** Transparent bar: a round Back and the centred page title. */
 @Composable
@@ -546,6 +555,8 @@ internal fun WatchPartyPoster(
     width: Dp,
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp,
+    /** Spoiler protection hides this artwork: an unwatched episode's still. */
+    hidden: Boolean = false,
 ) {
     val shape = RoundedCornerShape(cornerRadius)
     Box(
@@ -555,9 +566,10 @@ internal fun WatchPartyPoster(
         if (url.isNullOrBlank()) {
             Icon(Icons.Outlined.Movie, contentDescription = null, tint = SiloSecondaryText)
         } else {
-            ThumbhashImage(
+            SpoilerImage(
                 url = url,
                 thumbhash = thumbhash,
+                hidden = hidden,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -568,11 +580,12 @@ internal fun WatchPartyPoster(
 
 /** A poster with Apple's lifted shadow, for the lobby hero and the confirmation page. */
 @Composable
-internal fun WatchPartyHeroPoster(url: String?, thumbhash: String?, width: Dp) {
+internal fun WatchPartyHeroPoster(url: String?, thumbhash: String?, width: Dp, hidden: Boolean = false) {
     WatchPartyPoster(
         url = url,
         thumbhash = thumbhash,
         width = width,
+        hidden = hidden,
         modifier = Modifier.shadow(16.dp, RoundedCornerShape(8.dp), ambientColor = Color.Black, spotColor = Color.Black),
     )
 }

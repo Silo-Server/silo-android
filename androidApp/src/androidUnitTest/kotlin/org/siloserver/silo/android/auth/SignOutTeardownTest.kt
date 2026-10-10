@@ -56,6 +56,7 @@ class SignOutTeardownTest {
             cardPresentationStore = idle(),
             seekIntervalStore = idle(),
             titleArtStore = idle(),
+            episodeSpoilerStore = idle(),
             requestsFeatureStore = RequestsFeatureStore(RequestsRepository(idle())),
             metadataAiFeatureStore = MetadataAiFeatureStore(MetadataAiRepository(idle())),
             serverRegistry = registry,

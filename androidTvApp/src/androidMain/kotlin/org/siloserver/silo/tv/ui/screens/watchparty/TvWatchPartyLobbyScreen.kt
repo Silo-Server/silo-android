@@ -51,6 +51,7 @@ import org.siloserver.silo.watchtogether.WatchPartyFeatures
 import org.siloserver.silo.watchtogether.canRemoveSuggestion
 import org.siloserver.silo.watchtogether.roomVoteWinner
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 
 /**
  * The Watch Party lobby, laid out as the tvOS lobby ([TvWatchPartyRoomView]):
@@ -226,6 +227,7 @@ fun TvWatchPartyLobbyScreen(
         fileId = room?.selectedFileId,
         libraryId = room?.selectedLibraryId,
         suggestions = suggestions,
+        refreshKey = room?.phase,
     )
     val stagedId = room?.selectedContentId?.takeIf { it.isNotBlank() }
     val memberState by produceState<ItemMemberState?>(initialValue = null, stagedId) {
@@ -339,6 +341,7 @@ fun TvWatchPartyLobbyScreen(
             inviteUrl = inviteUrl,
             backdropUrl = staged?.backdropUrl,
             backdropThumbhash = staged?.backdropThumbhash,
+            backdropHidden = staged?.spoilers?.hidesBackdrop(LocalEpisodeSpoilerPrefs.current, staged.backdropUrl) == true,
             onDismiss = { inviteOpen = false },
         )
     }

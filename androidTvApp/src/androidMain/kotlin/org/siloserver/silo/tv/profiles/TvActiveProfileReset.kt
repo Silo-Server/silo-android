@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.profiles
 
 import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -20,6 +21,7 @@ class TvActiveProfileReset(
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
     private val titleArtStore: TitleArtStore,
+    private val episodeSpoilerStore: EpisodeSpoilerStore,
     private val watchNextSeeder: WatchNextSeeder,
 ) {
     suspend fun clearActiveProfile() {
@@ -35,6 +37,7 @@ class TvActiveProfileReset(
         cardPresentationStore.clear()
         seekIntervalStore.clear()
         titleArtStore.clear()
+        episodeSpoilerStore.clear()
         // Clear the previous profile's Watch Next rows before
         // landing on the picker; the new profile will re-seed
         // when it is selected.

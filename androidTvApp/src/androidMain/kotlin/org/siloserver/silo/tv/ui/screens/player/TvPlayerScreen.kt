@@ -3206,9 +3206,13 @@ private fun TvPlayerNextUpOverlay(
         val cardSpacing = 20.dp
         val onDeckCardWidth = (maxWidth - 160.dp - cardSpacing * 4) / 5
         // tvOS backgroundArtwork: the next episode's still, else the first
-        // On Deck item's art.
-        val backdrop = nextEpisode?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
-            ?: onDeckItems.firstOrNull()?.let { it.artUrl to it.artThumbhash }
+        // On Deck item's art. Art spoiler protection hides is skipped.
+        val spoilers = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
+        val backdrop = nextEpisode
+            ?.takeUnless { it.isEpisode && spoilers.hidesImage(it.isUnwatched) }
+            ?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
+            ?: onDeckItems.firstOrNull { !spoilers.hidesImage(it.unwatchedEpisode, it.artIsEpisodeStill) }
+                ?.let { it.artUrl to it.artThumbhash }
         TvNextUpBackdrop(
             url = backdrop?.first,
             thumbhash = backdrop?.second,
@@ -3347,7 +3351,9 @@ private fun TvPlayerNextUpOverlay(
                                         style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
                                     )
                                 }
-                                nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                                val hidesOverview = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
+                                    .hidesOverview(nextEpisode.isUnwatched)
+                                nextEpisode.overview?.takeIf { it.isNotBlank() && !hidesOverview }?.let { overview ->
                                     androidx.tv.material3.Text(
                                         text = overview,
                                         color = Color.White.copy(alpha = 0.58f),
@@ -3561,6 +3567,7 @@ private fun TvNextUpOnDeckRow(
     cardSpacing: androidx.compose.ui.unit.Dp,
     onPlay: (TvOnDeckItem) -> Unit,
 ) {
+    val spoilers = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3586,6 +3593,7 @@ private fun TvNextUpOnDeckRow(
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         TvMediaCard(
                             title = item.title,
+                            hideArtwork = spoilers.hidesImage(item.unwatchedEpisode, item.artIsEpisodeStill),
                             posterUrl = item.artUrl,
                             posterThumbhash = item.artThumbhash,
                             onClick = { onPlay(item) },

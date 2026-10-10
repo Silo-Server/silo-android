@@ -4,8 +4,12 @@ import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadSidecar
 import java.io.File
 
-/** Image source and blur-up placeholder for a download's 2:3 tile. */
-data class DownloadTileArtwork(val url: String?, val thumbhash: String?)
+/**
+ * Image source and blur-up placeholder for a download's 2:3 tile.
+ * [isEpisodeStill] is the provenance of [url]: false for a saved poster, the
+ * catalog's answer for a catalog URL, and null when that is unknown.
+ */
+data class DownloadTileArtwork(val url: String?, val thumbhash: String?, val isEpisodeStill: Boolean? = null)
 
 /**
  * The 2:3 tile artwork for one download. A movie uses its saved poster, else
@@ -27,9 +31,11 @@ fun List<DownloadSidecar>.tileArtwork(isFile: (String) -> Boolean = ::isSavedArt
         ?: firstNotNullOfOrNull { sidecar ->
             sidecar.offlinePosterPath?.takeIf { !sidecar.isEpisodeDownload() && isFile(it) }
         }
+    val catalog = firstOrNull { it.posterUrl != null }
     return DownloadTileArtwork(
-        url = saved?.let(::localArtworkUrl) ?: firstNotNullOfOrNull { it.posterUrl },
+        url = saved?.let(::localArtworkUrl) ?: catalog?.posterUrl,
         thumbhash = firstNotNullOfOrNull { it.seriesPosterThumbhash } ?: firstNotNullOfOrNull { it.posterThumbhash },
+        isEpisodeStill = if (saved != null) false else catalog?.posterIsEpisodeStill,
     )
 }
 

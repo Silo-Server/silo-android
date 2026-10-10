@@ -67,7 +67,6 @@ import androidx.tv.material3.Glow
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.watchtogether.RoomMember
 import org.siloserver.silo.model.watchtogether.RoomPhase
 import org.siloserver.silo.tv.ui.components.rememberTvDialogInitialFocus
@@ -88,6 +87,7 @@ import org.siloserver.silo.watchtogether.watchPartyPresenceSummary
 import org.siloserver.silo.watchtogether.watchPartySeatOrder
 import org.siloserver.silo.watchtogether.watchPartySeatState
 import org.siloserver.silo.watchtogether.watchPartySeatStatus
+import org.siloserver.silo.common.ui.components.SpoilerImage
 
 /*
  * The Watch Party look, ported from the tvOS clients (`WatchPartyComponents`
@@ -179,12 +179,15 @@ internal fun TvPartyBackdrop(
     thumbhash: String? = null,
     isPoster: Boolean = false,
     modifier: Modifier = Modifier,
+    /** Spoiler protection hides this artwork: an unwatched episode's still. */
+    hidden: Boolean = false,
 ) {
     Box(modifier = modifier.fillMaxSize().background(DarkBackground)) {
         if (!url.isNullOrBlank() || !thumbhash.isNullOrBlank()) {
-            ThumbhashImage(
+            SpoilerImage(
                 url = url,
                 thumbhash = thumbhash,
+                hidden = hidden,
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()

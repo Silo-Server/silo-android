@@ -9,15 +9,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import org.siloserver.silo.domain.MediaActionsCoordinator
 import org.siloserver.silo.model.catalog.BrowseItem
+import org.siloserver.silo.model.catalog.withWatched
 import org.siloserver.silo.model.catalog.MediaItemUserState
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 /**
- * Returns a [MediaCardActions] that delegates to a Koin-injected
- * [MediaActionsCoordinator]. Each invocation also exposes the *current* state
- * (after any optimistic update) via the trailing [view] block so callers can
- * render the up-to-date watched / favorite / watchlist state on the card.
+ * Returns actions, current optimistic user state, and resume position.
+ * Watched changes clear progress together; failed writes restore the snapshot.
  *
  * Use this for grid screens (search, catalog, library, person detail) whose
  * ViewModels don't yet manage these actions. The Home screen wires actions
@@ -27,7 +26,7 @@ import org.koin.compose.koinInject
 @Composable
 fun rememberBrowseItemCardActions(
     item: BrowseItem,
-): Pair<MediaCardActions, MediaItemUserState> {
+): Triple<MediaCardActions, MediaItemUserState, Double?> {
     val coordinator: MediaActionsCoordinator = koinInject()
     val scope = rememberCoroutineScope()
 
@@ -35,16 +34,16 @@ fun rememberBrowseItemCardActions(
     // (local watched/favorite applied), the card must pick it up — keying on
     // contentId alone kept the stale state and hid the overlay. The card's own
     // optimistic toggles mutate `state` (not item.userState), so they aren't reset.
-    var state by remember(item.contentId, item.userState) {
-        mutableStateOf(item.userState ?: MediaItemUserState())
+    var state by remember(item.contentId, item.userState, item.positionSeconds) {
+        mutableStateOf(item)
     }
 
-    val actions = remember(item.contentId, coordinator, scope) {
+    val actions = remember(item.contentId, item.userState, item.positionSeconds, coordinator, scope) {
         MediaCardActions(
             onSetWatched = { watched ->
                 val writeIntent = coordinator.beginWatched(item.contentId, watched)
                 val previous = state
-                state = state.copy(played = watched)
+                state = state.withWatched(watched)
                 scope.launch {
                     if (coordinator.performPersonalWrite(writeIntent).isFailure()) {
                         if (coordinator.isCurrent(writeIntent)) state = previous
@@ -63,12 +62,12 @@ fun rememberBrowseItemCardActions(
     }
 
     val membershipActions by coordinator.memberships.actions.collectAsState()
-    var displayed = state
+    var displayed = state.userState ?: MediaItemUserState()
     membershipActions.values.filter { it.intent.key.itemId == item.contentId && it.baseline != null && coordinator.memberships.current(it.intent) }.forEach {
         displayed = if (it.intent.key.kind == org.siloserver.silo.repository.port.MembershipPort.Kind.FAVORITE)
             displayed.copy(isFavorite = it.baseline!!.present) else displayed.copy(inWatchlist = it.baseline!!.present)
     }
-    return actions to displayed
+    return Triple(actions, displayed, state.positionSeconds)
 }
 
 private fun org.siloserver.silo.network.ApiResult<Unit>.isFailure(): Boolean =

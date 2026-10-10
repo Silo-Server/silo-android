@@ -32,7 +32,7 @@ interface UserItemStateDao {
 
     /** Clears resume state without discarding per-file playback or reading preferences. */
     @Query(
-        "UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs " +
+        "UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
             "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
             "AND positionSeconds <> 0",
     )
@@ -43,17 +43,23 @@ interface UserItemStateDao {
         updatedAtMs: Long,
     )
 
-    /** A delayed watched acknowledgement must not clear a newer local resume sample. */
-    @Query("UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs " +
+    /**
+     * A delayed watched acknowledgement must not clear a newer local resume sample.
+     * Rows written before positionUpdatedAtMs existed fall back to clientUpdatedAtMs.
+     */
+    @Query("UPDATE user_item_state SET positionSeconds = 0, clientUpdatedAtMs = :updatedAtMs, positionUpdatedAtMs = :updatedAtMs " +
         "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
-        "AND clientUpdatedAtMs < :admittedAtMs")
+        "AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) < :admittedAtMs")
     suspend fun clearPlaybackProgressBefore(serverId: String, profileId: String, contentId: String, admittedAtMs: Long, updatedAtMs: Long)
 
-    /** Restore a reset resume row only while it is still the untouched reset. */
+    /**
+     * Restore a reset resume row only while it is still the untouched reset.
+     * A reset made before positionUpdatedAtMs existed is matched by clientUpdatedAtMs.
+     */
     @Query(
-        "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = :previousUpdatedAtMs " +
+        "UPDATE user_item_state SET positionSeconds = :positionSeconds, clientUpdatedAtMs = CASE WHEN clientUpdatedAtMs = :clearedAtMs THEN :previousUpdatedAtMs ELSE clientUpdatedAtMs END, positionUpdatedAtMs = :previousPositionUpdatedAtMs " +
             "WHERE serverId = :serverId AND profileId = :profileId AND contentId = :contentId " +
-            "AND fileId = :fileId AND positionSeconds = 0 AND clientUpdatedAtMs = :clearedAtMs",
+            "AND fileId = :fileId AND positionSeconds = 0 AND COALESCE(positionUpdatedAtMs, clientUpdatedAtMs) = :clearedAtMs",
     )
     suspend fun restorePlaybackProgressIfUnchanged(
         serverId: String,
@@ -62,6 +68,7 @@ interface UserItemStateDao {
         fileId: Int,
         positionSeconds: Double,
         previousUpdatedAtMs: Long,
+        previousPositionUpdatedAtMs: Long?,
         clearedAtMs: Long,
     )
 

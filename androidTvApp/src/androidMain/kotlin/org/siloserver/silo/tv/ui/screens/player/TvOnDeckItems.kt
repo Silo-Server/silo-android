@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 
 /** One On Deck card on the Up Next overlay (tvOS `nextUpCarouselItems` parity). */
@@ -13,6 +14,10 @@ data class TvOnDeckItem(
     val artUrl: String?,
     val artThumbhash: String?,
     val progressFraction: Float?,
+    /** An episode the profile has not started; spoiler protection may hide [artUrl]. */
+    val unwatchedEpisode: Boolean = false,
+    /** Whether [artUrl] is the episode's own still (null when the server doesn't say). */
+    val artIsEpisodeStill: Boolean? = null,
 )
 
 /**
@@ -52,6 +57,9 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,
+                unwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
+                    EpisodeSpoilers.isUnwatched(item),
+                artIsEpisodeStill = item.backdropIsEpisodeStill,
             )
         }
 }

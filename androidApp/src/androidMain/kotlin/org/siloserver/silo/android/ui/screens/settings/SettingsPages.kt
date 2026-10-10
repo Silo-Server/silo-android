@@ -168,6 +168,17 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                 onUseProfileSetting = viewModel::useProfileSetting,
             )
         }
+        if (state.episodeSpoilers.isSupported) {
+            item(key = "spoilers") {
+                EpisodeSpoilerSettings(
+                    hideImages = state.episodeSpoilers.hideImages,
+                    hideOverviews = state.episodeSpoilers.hideOverviews,
+                    onHideImagesChanged = viewModel::setHideUnwatchedEpisodeImages,
+                    onHideOverviewsChanged = viewModel::setHideUnwatchedEpisodeOverviews,
+                    saveError = state.episodeSpoilerSaveError,
+                )
+            }
+        }
         SeekMedia.entries.forEach { media ->
             item(key = "seek-$media") {
                 SeekIntervalSettings(

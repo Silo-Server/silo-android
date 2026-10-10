@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.search
 
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -126,8 +129,13 @@ fun SearchResults(
             key = { it.contentId },
             contentType = { item -> item.type },
         ) { item ->
-            val (actions, userState) = rememberBrowseItemCardActions(item)
+            val (actions, userState, positionSeconds) = rememberBrowseItemCardActions(item)
+            val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+            val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
+            val hideDetailArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, selectBackdrop = true, positionSeconds = positionSeconds)
             MediaCard(
+                hideArtwork = hideArtwork,
+                hideDetailArtwork = hideDetailArtwork,
                 title = item.title,
                 posterUrl = item.posterUrl,
                 posterThumbhash = item.posterThumbhash,

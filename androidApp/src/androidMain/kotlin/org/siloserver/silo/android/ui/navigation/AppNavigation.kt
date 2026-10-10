@@ -119,6 +119,7 @@ import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsSe
 import org.siloserver.silo.android.ui.screens.settings.diagnostics.DiagnosticsViewModel
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
 import org.siloserver.silo.common.cards.ProvideCardPresentation
+import org.siloserver.silo.common.cards.ProvideEpisodeSpoilerPrefs
 import org.siloserver.silo.common.settings.ProvideTitleArt
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
@@ -213,6 +214,7 @@ fun AppNavigation(
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val activeProfileStore: ActiveProfileStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
+    val episodeSpoilerStore: org.siloserver.silo.common.settings.EpisodeSpoilerStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val titleArtStore: TitleArtStore = koinInject()
     val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
@@ -338,6 +340,7 @@ fun AppNavigation(
                         activeProfileStore.reset()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        episodeSpoilerStore.clear()
                         titleArtStore.clear()
                     }
                 }
@@ -477,6 +480,7 @@ fun AppNavigation(
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
+    ProvideEpisodeSpoilerPrefs(store = episodeSpoilerStore, sessionKey = overlaySessionKey) {
     ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     // Shared-element host: lets a tapped poster morph into the item-detail
     // backdrop. The scope is published via CompositionLocal so deep descendants
@@ -891,9 +895,10 @@ fun AppNavigation(
                     overlayPrefsStore.clear()
                     activeProfileStore.reset()
                     cardPresentationStore.clear()
-                    // Not seekIntervalStore.clear(): the registry switch has already
-                    // reset it and started hydrating the new server's profile through
-                    // its identity flow, and a clear here would discard that load.
+                    // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+                    // the registry switch has already reset them and started
+                    // hydrating the new server's profile through their identity
+                    // flow, and a clear here would discard that load.
                     navController.navigate(target) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
@@ -934,6 +939,7 @@ fun AppNavigation(
                         overlayPrefsStore.hydrateIfNeeded()
                         cardPresentationStore.hydrateIfNeeded()
                         seekIntervalStore.hydrateIfNeeded()
+                        episodeSpoilerStore.hydrateIfNeeded()
                         titleArtStore.hydrateIfNeeded()
                     }
                     // Route through the tour gate: OnboardingTourScreen checks
@@ -1819,6 +1825,7 @@ fun AppNavigation(
                 LoadingIndicator()
             }
         }
+    }
     }
     }
     }

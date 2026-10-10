@@ -36,6 +36,7 @@ import org.siloserver.silo.android.ui.theme.SiloBackground
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControl
 import org.siloserver.silo.android.ui.theme.SiloDetailActionControlActive
 import org.siloserver.silo.android.ui.util.rememberDominantColor
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.movieDirectorCredit
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.catalog.ItemDetail
@@ -43,6 +44,7 @@ import org.siloserver.silo.model.catalog.ItemExtra
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
@@ -122,6 +124,9 @@ fun MovieDetailContent(
     } else {
         null
     }
+    // Spoiler protection: an unwatched episode's page drops its description.
+    val hidesEpisodeOverview = detail.type == "episode" &&
+        LocalEpisodeSpoilerPrefs.current.hidesOverview(EpisodeSpoilers.isUnwatched(detail.userData))
     val sourceTokens = HeroMetadata.movieSourceTokens(detail)
     val selectedRuntimeMinutes = selectedMediaRuntimeMinutes(detail, selectedVersion)
     val factsLine = HeroMetadata.movieFactsLine(detail, selectedRuntimeMinutes)
@@ -166,7 +171,9 @@ fun MovieDetailContent(
                 portraitArtwork = portraitArtwork,
                 dominantColor = dominantColor,
                 directorText = movieDirectorCredit(detail),
-                translation = translation,
+                overviewText = if (hidesEpisodeOverview) null else detail.overview,
+                // No "Translate description" under a hidden description.
+                translation = if (hidesEpisodeOverview) null else translation,
                 belowOverview = {
                     // PR #212 places the grouped playback card after overview,
                     // credits, and translation—not inside the action stack.

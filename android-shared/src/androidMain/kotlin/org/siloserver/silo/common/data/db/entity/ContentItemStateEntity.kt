@@ -30,4 +30,6 @@ data class ContentItemStateEntity(
     val favorite: Boolean?,
     val clientUpdatedAtMs: Long,
     val serverUpdatedAtMs: Long?,
+    /** Timestamp of the watch/progress mutation, excluding ratings and track choices. */
+    val watchedUpdatedAtMs: Long? = null,
 )

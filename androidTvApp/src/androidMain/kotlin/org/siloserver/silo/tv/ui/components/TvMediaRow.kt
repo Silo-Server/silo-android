@@ -26,7 +26,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.ExperimentalComposeUiApi
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.overlays.OverlayData
 import org.siloserver.silo.overlays.OverlayDataExtractor
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
@@ -51,6 +53,10 @@ private data class TvMediaRowItemModel(
     val shelfSubtitle: String?,
     val overlay: OverlayData,
     val contentType: String,
+    /** Spoiler protection: blur this card's still (an unstarted episode). */
+    val hidesArtwork: Boolean,
+    /** The same for the poster layout, which shows the item's own poster. */
+    val hidesPoster: Boolean,
 )
 
 /**
@@ -75,6 +81,12 @@ fun TvMediaRow(
     icon: ImageVector? = null,
     onSeeAllClick: (() -> Unit)? = null,
     showProgress: Boolean = false,
+    /**
+     * This profile's own unwatched state per content id, when [items] carry
+     * someone else's progress (a party picker's group progress). Spoiler
+     * protection uses it instead of the items' position.
+     */
+    unwatchedById: Map<String, Boolean>? = null,
     style: TvRowStyle = TvRowStyle.Poster,
     cardLayout: TvRowCardLayout = TvRowCardLayout.Default,
     horizontalPadding: androidx.compose.ui.unit.Dp = Spacing.safeArea,
@@ -135,13 +147,16 @@ fun TvMediaRow(
     }
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
-    val rowItems = remember(items, showProgress, style, cardLayout) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
         // can legitimately overlap, so this is a property of the row, not a
         // bug to fix upstream of it.
         items.distinctBy { it.contentId }.map { item ->
+            val unwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
+                (unwatchedById?.get(item.contentId) ?: EpisodeSpoilers.isUnwatched(item))
             TvMediaRowItemModel(
                 item = item,
                 progress = if (showProgress) item.progressFraction() else null,
@@ -152,6 +167,9 @@ fun TvMediaRow(
                 shelfSubtitle = item.shelfSubtitle(showProgress = showProgress),
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
+                // Protect the selected still while preserving series fallback art.
+                hidesArtwork = spoilerPrefs.hidesImage(unwatchedEpisode, EpisodeSpoilers.selectedImageIsStill(item)),
+                hidesPoster = spoilerPrefs.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill),
             )
         }
     }
@@ -342,6 +360,7 @@ fun TvMediaRow(
                 val itemLongClick = remember(item, longClickAction) { longClickAction(item) }
                 when (cardLayout) {
                     TvRowCardLayout.ReferenceShelf -> TvReferenceShelfCard(
+                        hideArtwork = rowItem.hidesArtwork,
                         title = rowItem.shelfTitle,
                         imageUrl = rowItem.backdropUrl,
                         imageThumbhash = rowItem.backdropThumbhash,
@@ -361,6 +380,7 @@ fun TvMediaRow(
                             title = item.title,
                             stillUrl = rowItem.backdropUrl,
                             stillThumbhash = rowItem.backdropThumbhash,
+                            hideStill = rowItem.hidesArtwork,
                             seriesTitle = item.seriesTitle,
                             seasonNumber = item.seasonNumber,
                             episodeNumber = item.episodeNumber,
@@ -376,6 +396,7 @@ fun TvMediaRow(
                             onLongClick = itemLongClick,
                         )
                         TvRowStyle.Poster -> TvMediaCard(
+                            hideArtwork = rowItem.hidesPoster,
                             title = item.title,
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,
@@ -428,11 +449,11 @@ private fun SectionItem.remainingMinutes(): Int? {
 
 /** Prefer wide artwork for 16:9 row cards, falling back to poster only if needed. */
 private fun SectionItem.bestBackdropUrl(): String? {
-    return backdropUrl ?: posterUrl
+    return backdropUrl?.takeIf { it.isNotBlank() } ?: posterUrl
 }
 
 private fun SectionItem.bestBackdropThumbhash(): String? {
-    return backdropThumbhash ?: posterThumbhash
+    return if (!backdropUrl.isNullOrBlank()) backdropThumbhash else posterThumbhash
 }
 
 private fun SectionItem.shelfTitle(showProgress: Boolean): String {
@@ -455,4 +476,3 @@ private fun SectionItem.shelfSubtitle(showProgress: Boolean): String? {
         else -> null
     }
 }
-

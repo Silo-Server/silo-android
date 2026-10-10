@@ -183,6 +183,10 @@ class SettingsViewModelOfflinePreferencesTest {
                 "getState" to MutableStateFlow(SeekIntervalState()),
                 "getLastError" to MutableStateFlow<String?>(null),
             )),
+            episodeSpoilerStore = idleStore(mapOf(
+                "getState" to MutableStateFlow(org.siloserver.silo.common.settings.EpisodeSpoilerState()),
+                "getSaveError" to MutableStateFlow<String?>(null),
+            )),
             signOutTeardown = SignOutTeardown(
                 authRepository = authRepository,
                 playerSettingsStore = idleStore(),
@@ -192,6 +196,7 @@ class SettingsViewModelOfflinePreferencesTest {
                 cardPresentationStore = idleStore(),
                 seekIntervalStore = idleStore(),
                 titleArtStore = idleStore(),
+                episodeSpoilerStore = idleStore(),
                 requestsFeatureStore = RequestsFeatureStore(RequestsRepository(idleStore())),
                 metadataAiFeatureStore = MetadataAiFeatureStore(MetadataAiRepository(idleStore())),
                 serverRegistry = idleStore(mapOf("getActiveServerId" to MutableStateFlow<String?>(null))),

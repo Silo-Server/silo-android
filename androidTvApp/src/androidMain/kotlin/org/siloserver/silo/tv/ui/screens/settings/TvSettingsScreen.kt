@@ -294,6 +294,8 @@ fun TvSettingsScreen(
         onAutoPlayNextChanged = viewModel::onAutoPlayNextChanged,
         onIntroSkipModeChanged = viewModel::onIntroSkipModeChanged,
         onAutoSkipCreditsChanged = viewModel::onAutoSkipCreditsChanged,
+        onHideUnwatchedEpisodeImagesChanged = viewModel::setHideUnwatchedEpisodeImages,
+        onHideUnwatchedEpisodeOverviewsChanged = viewModel::setHideUnwatchedEpisodeOverviews,
         onMatchContentFrameRateChanged = viewModel::onMatchContentFrameRateChanged,
         onDolbyVisionEnabledChanged = viewModel::onDolbyVisionEnabledChanged,
         onDvProfile7HDR10FallbackChanged = viewModel::onDvProfile7HDR10FallbackChanged,
@@ -445,6 +447,8 @@ private fun SettingsSplitLayout(
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
@@ -527,6 +531,8 @@ private fun SettingsSplitLayout(
             onAutoPlayNextChanged = onAutoPlayNextChanged,
             onIntroSkipModeChanged = onIntroSkipModeChanged,
             onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
+            onHideUnwatchedEpisodeImagesChanged = onHideUnwatchedEpisodeImagesChanged,
+            onHideUnwatchedEpisodeOverviewsChanged = onHideUnwatchedEpisodeOverviewsChanged,
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
@@ -811,6 +817,8 @@ private fun SettingsDetailPane(
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
@@ -868,6 +876,8 @@ private fun SettingsDetailPane(
                 onAutoPlayNextChanged = onAutoPlayNextChanged,
                 onIntroSkipModeChanged = onIntroSkipModeChanged,
                 onAutoSkipCreditsChanged = onAutoSkipCreditsChanged,
+                onHideUnwatchedEpisodeImagesChanged = onHideUnwatchedEpisodeImagesChanged,
+                onHideUnwatchedEpisodeOverviewsChanged = onHideUnwatchedEpisodeOverviewsChanged,
             onMatchContentFrameRateChanged = onMatchContentFrameRateChanged,
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
@@ -1186,6 +1196,8 @@ private fun TvPlaybackSettingsPane(
     onAutoPlayNextChanged: (Boolean) -> Unit,
     onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
     onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeImagesChanged: (Boolean) -> Unit,
+    onHideUnwatchedEpisodeOverviewsChanged: (Boolean) -> Unit,
     onMatchContentFrameRateChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
@@ -1360,6 +1372,30 @@ private fun TvPlaybackSettingsPane(
                         "Watching Prompt sets how many episodes play in a row before Silo asks whether " +
                         "you're still watching.",
                 )
+            }
+        }
+        if (state.episodeSpoilers.isSupported) {
+            item {
+                // Spoiler protection (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Profile-wide, so
+                // the footer says it follows the profile to other devices.
+                // Hidden on servers that do not know the keys.
+                SettingsGroup(title = "Spoilers") {
+                    SettingsToggleRow(
+                        label = "Blur unwatched episode images",
+                        checked = state.episodeSpoilers.hideImages,
+                        onCheckedChange = onHideUnwatchedEpisodeImagesChanged,
+                    )
+                    SettingsToggleRow(
+                        label = "Hide unwatched episode descriptions",
+                        checked = state.episodeSpoilers.hideOverviews,
+                        onCheckedChange = onHideUnwatchedEpisodeOverviewsChanged,
+                    )
+                    SettingsFooterText(
+                        text = "Applies to episodes you have not started, on every device " +
+                            "that uses this profile.",
+                    )
+                    state.episodeSpoilerSaveError?.let { SettingsFooterText(text = it) }
+                }
             }
         }
         if (seekState != null) {

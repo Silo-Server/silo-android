@@ -40,7 +40,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.model.download.DownloadMediaType
 import org.siloserver.silo.model.download.DownloadStatus
 import org.siloserver.silo.model.ebook.ebookFormatKey
@@ -51,6 +54,28 @@ internal enum class DownloadRowAction {
     ReadInApp,
     OpenExternally,
     OpenInAppPlayer,
+}
+
+internal fun downloadItemHidesArtwork(item: DownloadItem, prefs: EpisodeSpoilerPrefs): Boolean =
+    item.mediaType == DownloadMediaType.TvShow &&
+        prefs.hidesImage(EpisodeSpoilers.isUnwatched(item.episodeUserData), item.posterIsEpisodeStill)
+
+internal fun downloadEntryHidesArtwork(entry: DownloadEntry, prefs: EpisodeSpoilerPrefs): Boolean {
+    fun items(node: DownloadEntry): List<DownloadItem> = when (node) {
+        is DownloadEntry.Single -> listOf(node.item)
+        is DownloadEntry.Season -> node.episodes.map { it.item }
+        is DownloadEntry.Series -> node.seasons.flatMap { it.episodes }.map { it.item }
+        is DownloadEntry.Author -> node.books.map { it.item }
+    }
+    // A season row shows the series-wide poster, which may come from another
+    // season's episode, so grouped rows name the download it came from.
+    val declared = when (entry) {
+        is DownloadEntry.Season -> entry.posterSource
+        is DownloadEntry.Series -> entry.posterSource
+        else -> null
+    }
+    val source = declared ?: items(entry).firstOrNull { it.posterUrl == entry.posterUrl } ?: return false
+    return downloadItemHidesArtwork(source, prefs)
 }
 
 internal fun downloadRowAction(item: DownloadItem): DownloadRowAction {
@@ -323,9 +348,10 @@ private fun SingleRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ThumbhashImage(
+        SpoilerImage(
             url = item.posterUrl,
             thumbhash = item.posterThumbhash,
+            hidden = downloadItemHidesArtwork(item, LocalEpisodeSpoilerPrefs.current),
             contentDescription = item.title,
             modifier = Modifier
                 .width(56.dp)
@@ -443,6 +469,7 @@ private fun ExpandableAggregateRow(
             isComplete = entry.isComplete,
             posterUrl = entry.posterUrl,
             posterThumbhash = entry.posterThumbhash,
+            hidden = downloadEntryHidesArtwork(entry, LocalEpisodeSpoilerPrefs.current),
             expanded = expanded,
             onToggleExpand = { expanded = !expanded },
             onDelete = { onDeleteEntry(entry) },
@@ -478,6 +505,7 @@ private fun AggregateRow(
     isComplete: Boolean,
     posterUrl: String?,
     posterThumbhash: String?,
+    hidden: Boolean,
     expanded: Boolean,
     onToggleExpand: () -> Unit,
     onDelete: () -> Unit,
@@ -489,9 +517,10 @@ private fun AggregateRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ThumbhashImage(
+        SpoilerImage(
             url = posterUrl,
             thumbhash = posterThumbhash,
+            hidden = hidden,
             contentDescription = title,
             modifier = Modifier
                 .width(56.dp)

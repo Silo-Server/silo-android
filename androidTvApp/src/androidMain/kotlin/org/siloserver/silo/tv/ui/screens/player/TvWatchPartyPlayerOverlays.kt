@@ -60,6 +60,7 @@ import org.siloserver.silo.watchtogether.WatchPartyAvailabilityRepository
 import org.siloserver.silo.watchtogether.watchPartyEligibility
 import org.siloserver.silo.watchtogether.watchPartyErrorMessage
 import org.siloserver.silo.watchtogether.watchPartyInviteUrl
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 
 /**
  * The Watch Party layer over the TV player: the non-focusable status overlay
@@ -235,6 +236,7 @@ private fun TvWatchPartyPanel(
         fileId = room?.selectedFileId,
         libraryId = room?.selectedLibraryId,
         suggestions = suggestions,
+        refreshKey = room?.phase,
     )
     val focus = rememberTvPartyFocus()
     val context = LocalContext.current
@@ -339,6 +341,7 @@ private fun TvWatchPartyPanel(
             inviteUrl = inviteUrl,
             backdropUrl = staged?.backdropUrl,
             backdropThumbhash = staged?.backdropThumbhash,
+            backdropHidden = staged?.spoilers?.hidesBackdrop(LocalEpisodeSpoilerPrefs.current, staged.backdropUrl) == true,
             onDismiss = { inviteOpen = false },
         )
     }

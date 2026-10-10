@@ -211,6 +211,9 @@ interface UserItemStatePort {
      * a cached card. Batched (one query). Empty map by default / unknown ids absent.
      */
     suspend fun localContentStates(contentIds: List<String>): Map<String, LocalContentState> = emptyMap()
+
+    /** Local writes that must take precedence over a server read started at [sinceMs]. */
+    suspend fun contentIdsWithPendingOrNewerUserState(contentIds: List<String>, sinceMs: Long): Set<String> = emptySet()
 }
 
 /** Local optimistic content-level state; null fields = "no local opinion" (defer to server). */
