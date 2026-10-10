@@ -103,6 +103,22 @@ class RoomUserItemStateRepositoryTest {
     }
 
     @Test
+    fun rowsWrittenBeforeThePositionTimestampKeepTheirGuards() = runTest {
+        val repository = RoomUserItemStateRepository(db, { currentSnapshot }, now = { 1000L })
+        repository.recordPosition("episode", 7, 30.0, 60.0)
+        val legacy = "UPDATE user_item_state SET positionUpdatedAtMs = NULL"
+        db.openHelper.writableDatabase.execSQL(legacy)
+        // A resume sample saved after the watched op was admitted survives its late acknowledgement.
+        db.userItemStateDao().clearPlaybackProgressBefore("s1", "p1", "episode", 500L, 2000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+        // A reset made before the upgrade is still undone when its op is rejected.
+        db.userItemStateDao().clearPlaybackProgress("s1", "p1", "episode", 4000L)
+        db.openHelper.writableDatabase.execSQL(legacy)
+        db.userItemStateDao().restorePlaybackProgressIfUnchanged("s1", "p1", "episode", 7, 30.0, 1000L, null, 4000L)
+        assertEquals(30.0, db.userItemStateDao().get("s1", "p1", "episode", 7)!!.positionSeconds)
+    }
+
+    @Test
     fun recordWatchedWritesProjectionAndContentScopedOutboxOp() = runTest {
         val handle = repo.recordWatched("c1", watched = true)
         assertTrue(handle.opId >= 0)
