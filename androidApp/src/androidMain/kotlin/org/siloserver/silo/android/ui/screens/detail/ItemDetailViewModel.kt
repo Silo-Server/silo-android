@@ -1518,23 +1518,6 @@ class ItemDetailViewModel(
         }
     }
 
-    /**
-     * Watched and unwatched both reset resume progress, as the server does, so
-     * spoiler protection sees the reset episode as not started.
-     */
-    private fun LeafItemUserData?.withPlayed(played: Boolean): LeafItemUserData =
-        (this ?: LeafItemUserData()).copy(played = played, isInProgress = false, positionSeconds = null)
-
-    /** Undoes a failed [withPlayed] only where it still shows; a newer reload wins. */
-    private fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItemUserData?): LeafItemUserData? {
-        if (this == null || this != withPlayed(played)) return this
-        return copy(
-            played = previous?.played ?: false,
-            isInProgress = previous?.isInProgress,
-            positionSeconds = previous?.positionSeconds,
-        )
-    }
-
     private fun updateEpisodeUserData(episodeContentId: String, transform: (LeafItemUserData?) -> LeafItemUserData?) {
         fun EpisodeListItem.updated(): EpisodeListItem =
             if (contentId != episodeContentId) this else copy(userData = transform(userData))
@@ -1565,4 +1548,25 @@ class ItemDetailViewModel(
             state.copy(detail = detail.copy(userData = transform(detail.userData)))
         }
     }
+}
+
+/**
+ * Watched and unwatched both reset resume progress, as the server does, so
+ * spoiler protection sees the reset episode as not started.
+ */
+internal fun LeafItemUserData?.withPlayed(played: Boolean): LeafItemUserData =
+    (this ?: LeafItemUserData()).copy(played = played, isInProgress = false, positionSeconds = null)
+
+/**
+ * Undoes a failed [withPlayed] field by field, only where it still shows: a
+ * reload's watched state, or progress recorded since the toggle, stays.
+ */
+internal fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItemUserData?): LeafItemUserData? {
+    if (this == null || this.played != played) return this
+    val progressUntouched = isInProgress == false && positionSeconds == null
+    return copy(
+        played = previous?.played ?: false,
+        isInProgress = if (progressUntouched) previous?.isInProgress else isInProgress,
+        positionSeconds = if (progressUntouched) previous?.positionSeconds else positionSeconds,
+    )
 }
