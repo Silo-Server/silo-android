@@ -310,6 +310,7 @@ class EpisodeSpoilerStoreTest {
         runCurrent()
 
         assertEquals(listOf<AuthScopeSnapshot?>(original, original), api.putAuthorities.toList())
+        assertEquals(listOf<AuthScopeSnapshot?>(original), api.effectiveAuthorities.toList())
     }
 
     private fun authorityFor(profileId: String) = AuthScopeSnapshot(
@@ -355,6 +356,7 @@ private class FakeSpoilerSettingsApi(
     val puts = mutableListOf<Triple<String, SettingScope, JsonElement>>()
     val putAuthorities = mutableListOf<AuthScopeSnapshot?>()
     val effectiveReads = mutableListOf<List<String>>()
+    val effectiveAuthorities = mutableListOf<AuthScopeSnapshot?>()
     var beforeCapabilities: suspend () -> Unit = { }
     var beforePut: suspend () -> Unit = { }
 
@@ -376,6 +378,7 @@ private class FakeSpoilerSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         effectiveReads += keys
+        effectiveAuthorities += authority
         effectiveError?.let { return it }
         return ApiResult.Success(
             EffectiveSettingValuesResponse(

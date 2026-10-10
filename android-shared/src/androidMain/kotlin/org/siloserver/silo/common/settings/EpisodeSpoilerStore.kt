@@ -232,7 +232,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         val resolved = if (!supported) {
             EpisodeSpoilerState(support = EpisodeSpoilerSupport.Unsupported)
         } else {
-            when (val result = repository.getEffectiveValues(EpisodeSpoilers.KEYS)) {
+            when (val result = repository.getEffectiveValues(EpisodeSpoilers.KEYS, authority = authority)) {
                 is ApiResult.Success -> EpisodeSpoilerState(
                     support = EpisodeSpoilerSupport.Supported,
                     hideImages = decode(result.data, EpisodeSpoilerSetting.Images),
