@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.requests
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -28,11 +29,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -124,17 +123,16 @@ fun RequestDetailScreen(
     }
 
     if (confirmingDecline) {
-        AlertDialog(
-            onDismissRequest = { confirmingDecline = false },
-            title = { Text("Decline this request?") },
-            text = { Text("The person who asked for it will see it as declined.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmingDecline = false
-                    viewModel.moderate(AdminRequestAction.Decline)
-                }) { Text("Decline", color = RequestColors.Rose) }
+        SiloConfirmDialog(
+            title = "Decline this request?",
+            body = "The person who asked for it will see it as declined.",
+            confirmLabel = "Decline",
+            dismissLabel = "Keep",
+            onConfirm = {
+                confirmingDecline = false
+                viewModel.moderate(AdminRequestAction.Decline)
             },
-            dismissButton = { TextButton(onClick = { confirmingDecline = false }) { Text("Keep") } },
+            onDismiss = { confirmingDecline = false },
         )
     }
 

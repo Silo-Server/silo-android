@@ -39,6 +39,20 @@ class NativeEmbeddedSubtitleProtocolTest {
         assertIs<PlaybackV3Validation.ReplanRequired>(validate(plan.copy(source = PlaybackSourceDescriptorV3(container = "mkv"))))
     }
 
+    @Test fun matroskaTextTracksArePlayableOnlyForAdvertisedCodecs() {
+        fun mkv(codec: String) = plan.copy(
+            source = PlaybackSourceDescriptorV3(container = "mkv"),
+            subtitle = plan.subtitle.copy(inventory = listOf(track.copy(codec = codec))),
+        )
+        assertIs<PlaybackV3Validation.Playable>(validate(mkv("subrip")))
+        assertIs<PlaybackV3Validation.Playable>(validate(mkv("ass")))
+        assertIs<PlaybackV3Validation.Playable>(validate(mkv("srt")))
+        assertIs<PlaybackV3Validation.ReplanRequired>(validate(mkv("webvtt")))
+        assertIs<PlaybackV3Validation.ReplanRequired>(validate(plan.copy(
+            subtitle = plan.subtitle.copy(inventory = listOf(track.copy(codec = "subrip"))),
+        )))
+    }
+
     @Test fun nativeCapabilitiesHaveExactWireNames() {
         val capability = DeliverySubtitleCapabilities(nativeEmbedded = listOf(NativeEmbeddedSubtitleCapability("mp4", listOf("mov_text"), "container_track_id")))
         val json = SiloJson.encodeToString(capability)

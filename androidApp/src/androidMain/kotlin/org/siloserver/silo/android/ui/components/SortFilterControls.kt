@@ -19,8 +19,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -88,14 +86,14 @@ fun SortFilterControlsRow(
                 trailingChevron = true,
                 onClick = { sortMenuOpen = true },
             )
-            DropdownMenu(
+            SiloDropdownMenu(
                 expanded = sortMenuOpen,
                 onDismissRequest = { sortMenuOpen = false },
             ) {
                 sortOptions.forEach { option ->
                     val selected = option.id == selectedSortId
                     if (option.dividerAbove) HorizontalDivider()
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = {
                             Text(
                                 text = if (selected) option.selectedLabel else option.label,

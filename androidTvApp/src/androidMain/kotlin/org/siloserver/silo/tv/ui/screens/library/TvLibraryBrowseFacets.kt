@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.library
 
+import org.siloserver.silo.catalog.filter.CatalogFacet
+import org.siloserver.silo.catalog.filter.CatalogFilterState
 import org.siloserver.silo.model.catalog.CatalogFiltersResponse
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
 import org.siloserver.silo.model.catalog.CatalogQueryRule
@@ -272,3 +274,47 @@ data class TvCatalogFacetSelection(
     private fun Set<String>.toggle(value: String): Set<String> =
         if (value in this) this - value else this + value
 }
+
+/**
+ * The persisted half of a Browse filter — sort, order, facets, and match — in
+ * the shared [CatalogFilterState] shape `BrowsePrefsStore` saves on phone and
+ * Apple. The A–Z prefix, the legacy genre chip, and preset query groups are
+ * per-visit and never saved (tvOS strips `namePrefix` the same way).
+ */
+internal fun TvLibraryBrowseFilter.toSavedState(): CatalogFilterState = CatalogFilterState(
+    selections = TvCatalogFacet.entries.associate { facet ->
+        CatalogFacet.valueOf(facet.name) to facetSelection.selectedValues(facet)
+            .map { if (facet == TvCatalogFacet.WatchStatus) it.toSharedWatchStatus() else it }
+            .toSet()
+    }.filterValues { it.isNotEmpty() },
+    matchAll = facetSelection.matchAll,
+    sort = sort,
+    order = order,
+)
+
+/**
+ * Rebuilds the Browse filter from a saved state. Unknown watch-status and
+ * dynamic-range values are dropped; other facet values are restored as saved.
+ */
+internal fun CatalogFilterState.toTvBrowseFilter(): TvLibraryBrowseFilter {
+    var selection = TvCatalogFacetSelection(matchAll = matchAll)
+    for ((facet, values) in selections) {
+        val tvFacet = TvCatalogFacet.entries.firstOrNull { it.name == facet.name } ?: continue
+        for (value in values) {
+            val tvValue = if (tvFacet == TvCatalogFacet.WatchStatus) value.toTvWatchStatus() else value
+            if (tvValue != null && !selection.isSelected(tvFacet, tvValue)) {
+                selection = selection.toggled(tvFacet, tvValue)
+            }
+        }
+    }
+    return TvLibraryBrowseFilter(sort = sort, order = order, facetSelection = selection)
+}
+
+// The shared model spells In Progress `inProgress` (Apple's raw value); the TV
+// panel uses the `in_progress` wire name. Every other status matches.
+private fun String.toSharedWatchStatus(): String =
+    if (this == TvWatchStatusFilter.InProgress.wireValue) "inProgress" else this
+
+private fun String.toTvWatchStatus(): String? =
+    if (this == "inProgress") TvWatchStatusFilter.InProgress.wireValue
+    else TvWatchStatusFilter.entries.firstOrNull { it.wireValue == this }?.wireValue

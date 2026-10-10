@@ -4095,28 +4095,6 @@
 
     <issue
         id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().putString(&quot;$key.state&quot;, json.encodeToString(state)).apply()"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/browse/BrowsePrefsStore.kt"
-            line="42"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
-        message="Use the KTX extension function `SharedPreferences.edit` instead?"
-        errorLine1="        prefs.edit().apply {"
-        errorLine2="        ~~~~~~~~~~~~">
-        <location
-            file="src/androidMain/kotlin/org/siloserver/silo/android/ui/screens/browse/BrowsePrefsStore.kt"
-            line="53"
-            column="9"/>
-    </issue>
-
-    <issue
-        id="UseKtx"
         message="Use the KTX extension function `String.toUri` instead?"
         errorLine1="    val uri = Uri.parse(uriString)"
         errorLine2="              ~~~~~~~~~~~~~~~~~~~~">

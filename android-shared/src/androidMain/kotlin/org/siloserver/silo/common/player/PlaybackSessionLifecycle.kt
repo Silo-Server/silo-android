@@ -102,8 +102,6 @@ class PlaybackSessionLifecycle(
 
     /** Session [pendingStopJob] is stopping; guarded by `pendingStopLock`. */
     private var pendingStopSessionId: String? = null
-    private val externalFinalizationLock = Any()
-    private val pendingExternalFinalizations = mutableMapOf<String, Job>()
 
     private data class ActiveSessionSnapshot(
         val state: SessionState,
@@ -358,20 +356,6 @@ class PlaybackSessionLifecycle(
         true
     }
 
-    suspend fun confirmActiveSessionPublication(sessionId: String): Boolean =
-        settlePendingPublicationIfCurrent(
-            sessionId = sessionId,
-            confirm = true,
-            settleManager = { true },
-        )
-
-    suspend fun rollbackUnpublishedActiveSession(sessionId: String): Boolean =
-        settlePendingPublicationIfCurrent(
-            sessionId = sessionId,
-            confirm = false,
-            settleManager = { true },
-        )
-
     private fun captureActiveSessionSnapshot(): ActiveSessionSnapshot =
         ActiveSessionSnapshot(
             state = _state.value,
@@ -572,20 +556,15 @@ class PlaybackSessionLifecycle(
                 flushFinalProgress()
             }
 
-            var pendingStop = false
+            // A failed stop stays in the playback journal, which retries it before the next
+            // start; the server expires the session if that never comes.
             if (sessionId != null && stopActiveSessionOnStop) {
-                val r = sessionManager.stopSession(sessionId)
-                pendingStop = sessionManager.isSequenced(sessionId) && r !is ApiResult.Success
-                when (r) {
+                when (val r = sessionManager.stopSession(sessionId)) {
                     is ApiResult.Error -> Log.w(TAG, "stopSession error: ${r.code} ${r.message}")
                     is ApiResult.NetworkError ->
                         Log.w(TAG, "stopSession network error: ${r.exception}")
                     else -> {}
                 }
-            }
-            if (pendingStop) {
-                _state.value = SessionState.Failed("Playback stop is pending. Retry from playback recovery.")
-                return@withLock false // Retain the old session and clocks until its terminal receipt.
             }
             lastStartParams = null
             lastReportedPosition = null
@@ -673,47 +652,11 @@ class PlaybackSessionLifecycle(
     }
 
     /**
-     * Reports and stops a session that remains externally owned.
-     *
-     * This does not adopt the session or mutate lifecycle-owned playback state.
-     * The application scope outlives the external owner, while [NonCancellable]
-     * and IO dispatch keep its final network writes off teardown callers.
+     * Waits for a queued [stopAsync] teardown (final progress + stopSession)
+     * to finish. Callers that revoke the credentials those requests ride on
+     * must await this first, or the teardown lands as a 401.
      */
-    fun reportAndStopExternalSessionAsync(
-        sessionId: String,
-        positionSeconds: Double,
-        isPaused: Boolean,
-    ) {
-        val job = synchronized(externalFinalizationLock) {
-            pendingExternalFinalizations[sessionId]
-                ?.takeUnless { it.isCompleted }
-                ?: scope.launch(
-                    context = NonCancellable + Dispatchers.IO,
-                    start = CoroutineStart.LAZY,
-                ) {
-                    runCatching {
-                        sessionManager.reportProgress(
-                            sessionId = sessionId,
-                            position = positionSeconds,
-                            isPaused = isPaused,
-                        )
-                    }
-                    runCatching { sessionManager.stopSession(sessionId) }
-                }.also {
-                    pendingExternalFinalizations[sessionId] = it
-                }
-        }
-        job.invokeOnCompletion {
-            synchronized(externalFinalizationLock) {
-                if (pendingExternalFinalizations[sessionId] === job) {
-                    pendingExternalFinalizations.remove(sessionId)
-                }
-            }
-        }
-        job.start()
-    }
-
-    private suspend fun awaitPendingStop() {
+    suspend fun awaitPendingStop() {
         val job = synchronized(pendingStopLock) { pendingStopJob } ?: return
         job.join()
     }
@@ -1064,4 +1007,6 @@ data class StartParams(
     val qualityPreference: String? = null,
     val startPosition: Double? = null,
     val clientPlaybackContext: ClientPlaybackContext,
+    /** Watch Party starts pin the file (false); renewals must keep that. */
+    val allowAlternateVersions: Boolean? = null,
 )

@@ -1,0 +1,8 @@
+# Pull requests that change the phone app, the TV app, or the Android code they share
+# need evidence before the Evidence check passes. The check reads this file at a pull
+# request's base commit. Maintainers override it with the evidence-required and
+# evidence-not-needed labels. See "Show visible changes" in CONTRIBUTING.md.
+require:
+  - androidApp/src/androidMain/**
+  - androidTvApp/src/androidMain/**
+  - android-shared/src/androidMain/**

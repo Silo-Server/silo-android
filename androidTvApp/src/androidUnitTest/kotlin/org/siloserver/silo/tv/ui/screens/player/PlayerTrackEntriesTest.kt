@@ -8,7 +8,10 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import org.siloserver.silo.model.catalog.AudioTrack
+import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
+import org.siloserver.silo.model.playback.resolveAutoSubtitle
+import org.siloserver.silo.model.playback.selectedCandidate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -85,7 +88,11 @@ class PlayerTrackEntriesTest {
     }
 
     @Test
-    fun autoSubtitlePreferenceMovesSelectedPgsToMatchingTextSidecar() {
+    fun autoSubtitlePreferenceKeepsTheMountedPgsTrackOverAnEquallySdhTextSidecar() {
+        // Both tracks are SDH (the sidecar's file name says so). This used to
+        // move to the sidecar only because PGS was demoted as a bitmap, but
+        // Media3 renders the mounted PGS track itself and no burn-in is
+        // involved, so the tie stays on the file's own track.
         val tracks = listOf(
             PlayerTrackEntry(
                 index = 2,
@@ -103,11 +110,11 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(6, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+        assertEquals(2, autoPick(tracks))
     }
 
     @Test
-    fun autoSubtitlePreferenceLeavesSelectedTextTrackAlone() {
+    fun autoSubtitlePreferenceKeepsTheSelectedTextTrack() {
         val tracks = listOf(
             PlayerTrackEntry(
                 index = 6,
@@ -118,7 +125,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(null, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+        assertEquals(6, autoPick(tracks))
     }
 
     @Test
@@ -140,7 +147,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(7, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+        assertEquals(7, autoPick(tracks))
     }
 
     @Test
@@ -178,8 +185,8 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(7, preferredAutoTextSubtitleIndex(ccFirst, preferredLanguage = "en"))
-        assertEquals(8, preferredAutoTextSubtitleIndex(closedCaptionFirst, preferredLanguage = "en"))
+        assertEquals(7, autoPick(ccFirst))
+        assertEquals(8, autoPick(closedCaptionFirst))
     }
 
     @Test
@@ -194,7 +201,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(4, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+        assertEquals(4, autoPick(tracks))
     }
 
     @Test
@@ -216,7 +223,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(4, preferredAutoTextSubtitleIndex(tracks, preferredLanguage = "en"))
+        assertEquals(4, autoPick(tracks))
     }
 
     @Test
@@ -239,16 +246,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(
-            SubtitleAutoSelection.Disable,
-            resolveAutoSubtitleSelection(
-                audioTracks = audio,
-                subtitleTracks = subtitles,
-                preferredLanguage = "en",
-                subtitleMode = "auto",
-                showForced = true,
-            ),
-        )
+        assertEquals(null, autoPick(subtitles, audio = audio))
     }
 
     @Test
@@ -279,16 +277,7 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(
-            SubtitleAutoSelection.Select(2),
-            resolveAutoSubtitleSelection(
-                audioTracks = audio,
-                subtitleTracks = subtitles,
-                preferredLanguage = "en",
-                subtitleMode = "auto",
-                showForced = true,
-            ),
-        )
+        assertEquals(2, autoPick(subtitles, audio = audio))
     }
 
     @Test
@@ -310,23 +299,15 @@ class PlayerTrackEntriesTest {
             ),
         )
 
-        assertEquals(
-            SubtitleAutoSelection.Select(1),
-            resolveAutoSubtitleSelection(
-                audioTracks = listOf(
-                    PlayerTrackEntry(
-                        index = 0,
-                        label = "Japanese AAC",
-                        language = "ja",
-                        isSelected = true,
-                    ),
-                ),
-                subtitleTracks = subtitles,
-                preferredLanguage = "en",
-                subtitleMode = "auto",
-                showForced = true,
+        val japaneseAudio = listOf(
+            PlayerTrackEntry(
+                index = 0,
+                label = "Japanese AAC",
+                language = "ja",
+                isSelected = true,
             ),
         )
+        assertEquals(1, autoPick(subtitles, audio = japaneseAudio))
     }
 
     @Test
@@ -489,80 +470,6 @@ class PlayerTrackEntriesTest {
         assertEquals(listOf(MimeTypes.APPLICATION_PGS, MimeTypes.APPLICATION_SUBRIP), entries.map { it.codecOrMime })
     }
 
-    @Test
-    fun videoQualityOptionsFlattenPerFormatVariantsWithAutoFirst() {
-        // A single video group carrying three resolution variants must surface
-        // three real options, not collapse to one — plus a synthetic "Auto".
-        val group = TrackGroup(
-            videoFormat(width = 1920, height = 1080, bitrate = 8_000_000),
-            videoFormat(width = 1280, height = 720, bitrate = 4_000_000),
-            videoFormat(width = 640, height = 360, bitrate = 1_000_000),
-        )
-        val tracks = Tracks(
-            listOf(
-                Tracks.Group(
-                    group,
-                    true,
-                    intArrayOf(C.FORMAT_HANDLED, C.FORMAT_HANDLED, C.FORMAT_HANDLED),
-                    // 720p explicitly selected = an override is active.
-                    booleanArrayOf(false, true, false),
-                ),
-            ),
-        )
-
-        val options = extractVideoQualityOptions(tracks)
-
-        // Auto + three variants.
-        assertEquals(4, options.size)
-        assertEquals(VIDEO_QUALITY_AUTO_ID, options.first().id)
-        assertEquals("Auto", options.first().label)
-        assertTrue(options[1].label.contains("1080p"))
-        assertTrue(options[2].label.contains("720p"))
-        assertTrue(options[3].label.contains("360p"))
-        // The explicitly-selected variant (720p) is selected, not Auto.
-        assertEquals(options[2].id, options.first { it.isSelected }.id, "720p variant should be selected")
-    }
-
-    @Test
-    fun videoQualityAutoSelectedWhenNoOverrideAndDisabledWhenSingleVariant() {
-        val adaptiveGroup = TrackGroup(
-            videoFormat(width = 1920, height = 1080, bitrate = 8_000_000),
-            videoFormat(width = 1280, height = 720, bitrate = 4_000_000),
-        )
-        val adaptive = Tracks(
-            listOf(
-                Tracks.Group(
-                    adaptiveGroup,
-                    true,
-                    intArrayOf(C.FORMAT_HANDLED, C.FORMAT_HANDLED),
-                    // Adaptive: both selectable, none pinned as an override.
-                    booleanArrayOf(true, true),
-                ),
-            ),
-        )
-        val adaptiveOptions = extractVideoQualityOptions(adaptive)
-        // With more than one selected variant there is no single override, so
-        // Auto is the selected option.
-        assertTrue(adaptiveOptions.first().isSelected)
-
-        // A single-variant group offers no genuine quality choice: Auto + one
-        // variant = size 2, so the HUD row disables (hasQualityChoice = size>2).
-        val singleGroup = TrackGroup(videoFormat(width = 1920, height = 1080, bitrate = 8_000_000))
-        val single = Tracks(
-            listOf(
-                Tracks.Group(
-                    singleGroup,
-                    true,
-                    intArrayOf(C.FORMAT_HANDLED),
-                    booleanArrayOf(true),
-                ),
-            ),
-        )
-        val singleOptions = extractVideoQualityOptions(single)
-        assertEquals(2, singleOptions.size)
-        assertTrue(singleOptions.first().isSelected)
-    }
-
     private fun videoFormat(width: Int, height: Int, bitrate: Int): Format =
         Format.Builder()
             .setSampleMimeType(MimeTypes.VIDEO_H264)
@@ -581,4 +488,18 @@ class PlayerTrackEntriesTest {
         .setSampleMimeType(MimeTypes.APPLICATION_SUBRIP)
         .setSelectionFlags(if (forced) C.SELECTION_FLAG_FORCED else 0)
         .build()
+
+    /** Auto's pick over mounted tracks: the ranking `resolveTvAutoSubtitleIdentity` runs without a server inventory. */
+    private fun autoPick(
+        subtitles: List<PlayerTrackEntry>,
+        audio: List<PlayerTrackEntry> = emptyList(),
+    ): Int? = resolveAutoSubtitle(
+        candidates = playerTrackAutoSubtitleCandidates(subtitles),
+        context = AutoSubtitleContext(
+            preferredLanguage = "en",
+            mode = "auto",
+            showForced = true,
+            audioLanguage = audio.firstOrNull { it.isSelected }?.language,
+        ),
+    ).selectedCandidate()?.selectionIndex
 }

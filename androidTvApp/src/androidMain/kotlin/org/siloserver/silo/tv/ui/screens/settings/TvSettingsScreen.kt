@@ -63,6 +63,10 @@ import org.siloserver.silo.model.settings.SeekDirection
 import org.siloserver.silo.model.settings.SeekIntervalSupport
 import org.siloserver.silo.model.settings.SeekIntervals
 import org.siloserver.silo.model.settings.SeekMedia
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
+import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
@@ -119,6 +123,7 @@ import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import androidx.compose.ui.layout.ContentScale
+import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.ui.screens.player.TvSubtitleAppearanceOptions
 import org.siloserver.silo.tv.ui.screens.settings.diagnostics.TvDiagnosticsSettingsPane
@@ -128,6 +133,7 @@ import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.watchparty.WatchPartyExperiment
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.delay
 
@@ -282,6 +288,7 @@ fun TvSettingsScreen(
         onDolbyVisionEnabledChanged = viewModel::onDolbyVisionEnabledChanged,
         onDvProfile7HDR10FallbackChanged = viewModel::onDvProfile7HDR10FallbackChanged,
         onForceHdrPassthroughChanged = viewModel::onForceHdrPassthroughChanged,
+        onTrueBlackBarsChanged = viewModel::onTrueBlackBarsChanged,
         onResumeRewindSecondsChanged = viewModel::onResumeRewindSecondsChanged,
         onPassOutThresholdChanged = viewModel::onPassOutThresholdChanged,
         onNextUpPromptSecondsChanged = viewModel::onNextUpPromptSecondsChanged,
@@ -309,13 +316,14 @@ fun TvSettingsScreen(
         onSubtitleDeviceOverrideEnabledChanged = viewModel::setSubtitleDeviceOverrideEnabled,
         onSubtitleMatchesDeviceChanged = viewModel::onSubtitleMatchesDeviceChanged,
         onShowAudiobooksTabChanged = viewModel::onShowAudiobooksTabChanged,
+        onProfileLaunchBehaviorChanged = viewModel::onProfileLaunchBehaviorChanged,
     )
 
     if (showSignOutConfirm) {
         TvSettingsConfirmDialog(
-            title = "Sign Out",
-            message = "You will be returned to the login screen.",
-            confirmLabel = "Sign Out",
+            title = "Sign out?",
+            message = "This TV goes back to the sign-in screen. Your profiles and watch history stay on the server.",
+            confirmLabel = "Sign out",
             onConfirm = {
                 showSignOutConfirm = false
                 viewModel.onSignOut(context)
@@ -415,6 +423,7 @@ private fun SettingsSplitLayout(
     onCategorySelected: (TvSettingsCategory) -> Unit,
     onEnterCategory: (TvSettingsCategory) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onSwitchProfile: () -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
@@ -429,6 +438,7 @@ private fun SettingsSplitLayout(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -497,6 +507,7 @@ private fun SettingsSplitLayout(
             detailFocusRequester = detailFocusRequester,
             onDetailFocusChanged = onDetailFocusChanged,
             onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+            onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
             onManageServers = onManageServers,
             onOpenDiagnosticsReport = onOpenDiagnosticsReport,
             onQualityPresetSelected = onQualityPresetSelected,
@@ -508,6 +519,7 @@ private fun SettingsSplitLayout(
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
             onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
+            onTrueBlackBarsChanged = onTrueBlackBarsChanged,
             onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
             onPassOutThresholdChanged = onPassOutThresholdChanged,
             onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -777,6 +789,7 @@ private fun SettingsDetailPane(
     detailFocusRequester: FocusRequester,
     onDetailFocusChanged: (Boolean) -> Unit,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onManageServers: () -> Unit,
     onOpenDiagnosticsReport: (reportId: String) -> Unit,
     /** Receives a [QualityPresets] preset id. */
@@ -789,6 +802,7 @@ private fun SettingsDetailPane(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
@@ -827,6 +841,7 @@ private fun SettingsDetailPane(
                 homeSectionsViewModel = homeSectionsViewModel,
                 firstFocusRequester = detailFocusRequester,
                 onShowAudiobooksTabChanged = onShowAudiobooksTabChanged,
+                onProfileLaunchBehaviorChanged = onProfileLaunchBehaviorChanged,
                 onCardPresentationChanged = onCardPresentationChanged,
                 onCardPresentationDeviceOnlyChanged = onCardPresentationDeviceOnlyChanged,
                 onUseProfileCardDefault = onUseProfileCardDefault,
@@ -843,6 +858,7 @@ private fun SettingsDetailPane(
             onDolbyVisionEnabledChanged = onDolbyVisionEnabledChanged,
             onDvProfile7HDR10FallbackChanged = onDvProfile7HDR10FallbackChanged,
             onForceHdrPassthroughChanged = onForceHdrPassthroughChanged,
+            onTrueBlackBarsChanged = onTrueBlackBarsChanged,
                 onResumeRewindSecondsChanged = onResumeRewindSecondsChanged,
                 onPassOutThresholdChanged = onPassOutThresholdChanged,
                 onNextUpPromptSecondsChanged = onNextUpPromptSecondsChanged,
@@ -943,11 +959,13 @@ private fun TvGeneralSettingsPane(
     homeSectionsViewModel: HomeViewModel,
     firstFocusRequester: FocusRequester,
     onShowAudiobooksTabChanged: (Boolean) -> Unit,
+    onProfileLaunchBehaviorChanged: (ProfileLaunchBehavior) -> Unit,
     onCardPresentationChanged: (CardPresentation) -> Unit,
     onCardPresentationDeviceOnlyChanged: (Boolean) -> Unit,
     onUseProfileCardDefault: () -> Unit,
 ) {
     var activeCardPicker by remember { mutableStateOf<CardPresentationPicker?>(null) }
+    var showProfileLaunchPicker by remember { mutableStateOf(false) }
     var showHomeSectionsEditor by remember { mutableStateOf(false) }
     val titleArtStore: TitleArtStore = koinInject()
     // Opening General is a refresh edge for a title art choice made on another
@@ -961,6 +979,19 @@ private fun TvGeneralSettingsPane(
         contentPadding = PaddingValues(bottom = Spacing.xxxl),
     ) {
         item {
+            // tvOS General → PROFILE AT LAUNCH. Device-wide and never synced,
+            // so it reads the same whichever profile is active.
+            SettingsGroup(title = "Profile at Launch") {
+                SettingsValueRow(
+                    label = "Profile Selection",
+                    value = state.profileLaunchBehavior.title,
+                    onClick = { showProfileLaunchPicker = true },
+                    focusRequester = firstFocusRequester,
+                )
+                SettingsFooterText(text = state.profileLaunchBehavior.description)
+            }
+        }
+        item {
             // Device-local, server/profile-specific visibility and order for
             // the populated rows returned by Home, matching tvOS General.
             SettingsGroup(title = "Home Sections") {
@@ -968,7 +999,6 @@ private fun TvGeneralSettingsPane(
                     label = "Home Sections",
                     value = "",
                     onClick = { showHomeSectionsEditor = true },
-                    focusRequester = firstFocusRequester,
                 )
                 SettingsFooterText(
                     text = "Choose which Home rows are visible and edit the order in which they appear on this Android TV.",
@@ -1039,6 +1069,11 @@ private fun TvGeneralSettingsPane(
                 )
             }
         }
+        item {
+            // Settings → Experimental (D1): device-local, never synced. Turning
+            // Watch Party off hides every entry point and leaves any party.
+            TvExperimentalSettingsGroup()
+        }
         // No Library group — tvOS parity: Apple's TVSettingsView has no such
         // section (it is iOS-only). On TV these destinations live in the
         // For You dropdown (Watchlist/Favorites), the profile menu
@@ -1094,6 +1129,21 @@ private fun TvGeneralSettingsPane(
         null -> Unit
     }
 
+    if (showProfileLaunchPicker) {
+        TvSettingsPickerSheet(
+            title = "Profile Selection",
+            options = ProfileLaunchBehavior.entries.map {
+                PickerOption(it.raw, it.title, detail = it.description)
+            },
+            selectedId = state.profileLaunchBehavior.raw,
+            onSelect = { id ->
+                onProfileLaunchBehaviorChanged(ProfileLaunchBehavior.fromRaw(id))
+                showProfileLaunchPicker = false
+            },
+            onDismiss = { showProfileLaunchPicker = false },
+        )
+    }
+
     if (showHomeSectionsEditor) {
         TvHomeSectionsEditor(
             onDismiss = { showHomeSectionsEditor = false },
@@ -1125,13 +1175,13 @@ private fun TvPlaybackSettingsPane(
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
     onForceHdrPassthroughChanged: (Boolean) -> Unit,
+    onTrueBlackBarsChanged: (Boolean) -> Unit,
     onResumeRewindSecondsChanged: (Int) -> Unit,
     onPassOutThresholdChanged: (Int) -> Unit,
     onNextUpPromptSecondsChanged: (Int) -> Unit,
     onResetPlaybackOverrides: () -> Unit,
     seekIntervals: SeekIntervalSettingsModel? = null,
 ) {
-    val recovery = org.siloserver.silo.common.player.rememberPlaybackRecoverySettings(org.koin.compose.koinInject())
     var activePicker by remember { mutableStateOf<PlaybackPicker?>(null) }
     val seekState = seekIntervals?.state?.collectAsState()?.value
     var seekPicker by remember { mutableStateOf<Pair<SeekMedia, SeekDirection>?>(null) }
@@ -1193,8 +1243,16 @@ private fun TvPlaybackSettingsPane(
                     checked = state.forceHdrPassthrough,
                     onCheckedChange = onForceHdrPassthroughChanged,
                 )
+                // Android TV only: tvOS composites its own letterbox, so the
+                // Apple pane has no counterpart (silo-android#475).
+                SettingsToggleRow(
+                    label = "True Black Bars",
+                    checked = state.trueBlackBars,
+                    onCheckedChange = onTrueBlackBarsChanged,
+                )
                 // tvOS footer: the chosen preset's description, then the
-                // caveat for the one control here that can misbehave.
+                // caveat for Force HDR Passthrough. The True Black Bars
+                // sentence is Android TV's own.
                 SettingsFooterText(
                     text = (
                         QualityPresets.presetFor(state.qualityResolution, state.maxBitrateKbps)?.description
@@ -1202,7 +1260,10 @@ private fun TvPlaybackSettingsPane(
                         ) + " Force HDR Passthrough allows HDR playback when this TV doesn't report " +
                         "support. It does not force the HDMI output into HDR; Android may still convert " +
                         "the picture to SDR. Enable it only if you've confirmed your TV supports the " +
-                        "source format. Unsupported formats may produce a black screen or incorrect colors.",
+                        "source format. Unsupported formats may produce a black screen or incorrect colors." +
+                        " True Black Bars stops Silo from drawing the bars around the picture during " +
+                        "playback. Try it if they look grey in HDR or Dolby Vision, and turn it off again " +
+                        "if they get lighter or show a thin line.",
                 )
             }
         }
@@ -1269,17 +1330,6 @@ private fun TvPlaybackSettingsPane(
                     onRetry = { seekIntervals?.refresh() },
                     fallbackFocus = seekFallbackFocus,
                 )
-            }
-        }
-        if (recovery.visible) {
-            item {
-                SettingsGroup(title = "Playback Recovery") {
-                    SettingsActionRow(
-                        label = if (recovery.busy) "Recovering Playback…" else "Retry Pending Playback Stops",
-                        onClick = recovery.retry,
-                    )
-                    SettingsFooterText(text = recovery.message)
-                }
             }
         }
         item {
@@ -1853,7 +1903,7 @@ private fun TvSubtitleSettingsPane(
 
     if (showResetConfirmation) {
         TvSettingsConfirmDialog(
-            title = "Reset Custom Appearance?",
+            title = "Reset custom appearance?",
             message = "This restores all custom subtitle appearance options to their defaults.",
             confirmLabel = "Reset",
             onConfirm = {
@@ -2047,7 +2097,8 @@ private enum class SubtitlePicker {
 // Reusable picker sheet (centered modal vertical option list)
 // ---------------------------------------------------------------------------
 
-data class PickerOption(val id: String, val label: String)
+/** [detail] is an optional second line explaining the choice (tvOS `TVSettingsOption.detail`). */
+data class PickerOption(val id: String, val label: String, val detail: String? = null)
 
 /**
  * Reusable centered modal option picker. Renders a vertical list with a
@@ -2102,9 +2153,7 @@ fun TvSettingsPickerSheet(
                 modifier = Modifier
                     .width(380.dp)
                     .heightIn(max = 460.dp)
-                    .clip(PickerCardShape)
-                    .background(PickerCardFill)
-                    .border(1.dp, Color.White.copy(alpha = 0.09f), PickerCardShape),
+                    .tvDialogSurface(),
             ) {
                 Row(
                     modifier = Modifier
@@ -2215,13 +2264,21 @@ private fun TvSettingsPickerOptionRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = option.label,
-                style = SettingsRowTextStyle(),
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = foreground,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = option.label,
+                    style = SettingsRowTextStyle(),
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                    color = foreground,
+                )
+                option.detail?.let { detail ->
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                        color = foreground.copy(alpha = 0.72f),
+                    )
+                }
+            }
             // tvOS TVSettingsPickerOptionRow: a filled check circle trails the
             // current option.
             if (selected) {
@@ -2240,7 +2297,6 @@ private fun TvSettingsPickerOptionRow(
 // Confirm dialog
 // ---------------------------------------------------------------------------
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 internal fun TvSettingsConfirmDialog(
     title: String,
@@ -2248,103 +2304,39 @@ internal fun TvSettingsConfirmDialog(
     confirmLabel: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    destructive: Boolean = true,
 ) {
-    BackHandler(onBack = onDismiss)
-    // Default focus lands on Cancel so a stray OK press never triggers the
-    // destructive action.
-    val cancelFocus = remember { FocusRequester() }
-    var confirmHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        requestFocusUntilObserved(
-            maxAttempts = TvContentInitialFocusMaxAttempts,
-            awaitAttempt = { withFrameNanos { } },
-            requestFocus = cancelFocus::requestFocus,
-            isFocused = { confirmHasFocus },
-        )
-    }
-
-    Dialog(
+    // Cancel comes first and takes focus, so a stray OK press never runs the
+    // action. A destructive action reads red at rest and fills red on focus.
+    TvDialog(
+        title = title,
+        message = message,
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        // tvOS confirmation overlay: a #15171C card over a 62% black scrim.
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.62f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(
-                modifier = Modifier
-                    .width(320.dp)
-                    .clip(PickerCardShape)
-                    .background(PickerCardFill)
-                    .border(1.dp, Color.White.copy(alpha = 0.09f), PickerCardShape)
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 19.sp, lineHeight = 22.sp),
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DialogButton(
-                        label = "Cancel",
-                        onClick = onDismiss,
-                        focusRequester = cancelFocus,
-                    )
-                    DialogButton(
-                        label = confirmLabel,
-                        onClick = onConfirm,
-                        destructive = true,
-                    )
-                }
-            }
-        }
-    }
+        actions = listOf(
+            TvDialogAction(label = "Cancel", onClick = onDismiss),
+            TvDialogAction(
+                label = confirmLabel,
+                onClick = onConfirm,
+                style = if (destructive) TvDialogActionStyle.Destructive else TvDialogActionStyle.Primary,
+            ),
+        ),
+    )
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+/** The Experimental group: features that are not finished yet. */
 @Composable
-private fun DialogButton(
-    label: String,
-    onClick: () -> Unit,
-    destructive: Boolean = false,
-    focusRequester: FocusRequester? = null,
+private fun TvExperimentalSettingsGroup(
+    watchPartyExperiment: WatchPartyExperiment = koinInject(),
 ) {
-    val shape = RoundedCornerShape(6.dp)
-    val interactionSource = remember { MutableInteractionSource() }
-    val isFocused by interactionSource.collectIsFocusedAsState()
-    Surface(
-        onClick = onClick,
-        interactionSource = interactionSource,
-        shape = ClickableSurfaceDefaults.shape(shape = shape),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.08f),
-            contentColor = if (destructive) MaterialTheme.colorScheme.error else Color.White,
-            focusedContainerColor = FocusedContainer,
-            focusedContentColor = FocusedContent,
-            pressedContainerColor = FocusedContainer,
-            pressedContentColor = FocusedContent,
-        ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        modifier = (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
-            color = if (isFocused) FocusedContent else if (destructive) MaterialTheme.colorScheme.error else Color.White,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    val watchPartyEnabled by watchPartyExperiment.enabled.collectAsState()
+    SettingsGroup(title = "Experimental") {
+        SettingsToggleRow(
+            label = "Watch Party",
+            checked = watchPartyEnabled,
+            onCheckedChange = watchPartyExperiment::setEnabled,
+        )
+        SettingsFooterText(
+            text = "Try Watch Party before it's finished. Turning it off leaves any party you're in.",
         )
     }
 }
@@ -2439,8 +2431,6 @@ internal val SettingsBackground = Color(0xFF000000)
 private val PaneHeaderTile = Color(0xFF3A3A3C)
 
 /** Picker and confirmation cards (Apple `siloSurfaceElevated`), 30pt corners. */
-private val PickerCardFill = Color(0xFF15171C)
-private val PickerCardShape = RoundedCornerShape(15.dp)
 
 // tvOS destructive row colors: bright red at rest on black, deeper red on the
 // focused white platter (TVSettingsRailRowStyle).

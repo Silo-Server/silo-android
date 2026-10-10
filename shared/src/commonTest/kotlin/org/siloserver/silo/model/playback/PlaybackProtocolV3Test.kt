@@ -686,4 +686,22 @@ class PlaybackProtocolV3Test {
                 playbackClientFeaturesV3(context.copy(output = PlaybackOutputContext())),
         )
     }
+
+    @Test
+    fun `watch party starts pin the file and solo starts leave the field out`() {
+        fun encode(allow: Boolean?) = SiloJson.encodeToString(
+            PlaybackStartRequestV3(
+                clientFeatures = PLAYBACK_START_CLIENT_FEATURES_V3,
+                fileId = 12,
+                profileId = "profile",
+                playbackAttemptId = "attempt",
+                subtitleFidelityPreference = SubtitleFidelityPreference.PRESERVE,
+                capabilities = ClientCodecCapabilities(),
+                clientPlaybackContext = ClientPlaybackContext(formFactor = "mobile", appVersion = "test"),
+                allowAlternateVersions = allow,
+            ),
+        )
+        assertFalse(encode(null).contains("allow_alternate_versions"))
+        assertTrue(encode(false).contains("\"allow_alternate_versions\":false"))
+    }
 }

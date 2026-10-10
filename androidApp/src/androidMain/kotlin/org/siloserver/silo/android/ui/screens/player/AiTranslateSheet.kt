@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,9 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -44,7 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.util.LanguageNames
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.subtitles.SubtitleAiJobKind
@@ -99,35 +100,24 @@ fun AiTranslateSheet(
     }
     // On job completion return to the tracks sheet (via onBack) so the freshly
     // generated track is visible, rather than dropping onto bare player controls.
+    val controller = rememberPlayerMenuController(onDismiss)
+    val back = onBack?.let { parent -> { controller.dismiss(then = parent) } }
     LaunchedEffect(tools.jobJustCompleted) {
-        if (tools.jobJustCompleted) (onBack ?: onDismiss)()
+        if (tools.jobJustCompleted) (back ?: { controller.dismiss() })()
     }
 
-    PlayerModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        tabletopPaneHeight = tabletopPaneHeight,
-    ) {
+    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
+        PlayerSheetHeader(
+            title = "Translate with AI",
+            onBack = back,
+            onDismiss = { controller.dismiss() },
+        )
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .playerSheetContent(tabletopPaneHeight)
-                .nestedScroll(PlayerSheetFlingGuard)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.95f),
-                            Color.Black.copy(alpha = 0.92f),
-                        ),
-                    ),
-                )
+                .weight(1f, fill = false)
                 .verticalScroll(rememberScrollState()),
         ) {
-            PlayerSheetHeader(
-                title = "Translate with AI",
-                onBack = onBack,
-                onDismiss = onDismiss,
-            )
 
             val activeJob = tools.activeJob
             when {
@@ -254,12 +244,16 @@ fun AiTranslateSheet(
                             !(mode == AiMode.Audio && quotaExhausted) &&
                             (if (mode == AiMode.Audio) audioTracks.isNotEmpty() else sourceTracks.isNotEmpty()),
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = PlayerChrome.Paper,
+                            contentColor = PlayerChrome.Ink,
+                        ),
                     ) {
                         if (tools.translateSubmitting) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
-                                color = Color.White,
+                                color = PlayerChrome.Ink,
                             )
                         } else {
                             Text(if (mode == AiMode.Audio) "Generate" else "Translate")
@@ -268,7 +262,7 @@ fun AiTranslateSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
@@ -310,7 +304,7 @@ private fun PickerRow(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                    .background(PlayerChrome.Raised, RoundedCornerShape(12.dp))
                     .clickable { expanded = true }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -328,13 +322,13 @@ private fun PickerRow(
                     tint = Color.White.copy(alpha = 0.7f),
                 )
             }
-            DropdownMenu(
+            SiloDropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
                 modifier = Modifier.heightIn(max = 320.dp),
             ) {
                 options.forEachIndexed { index, option ->
-                    DropdownMenuItem(
+                    SiloDropdownMenuItem(
                         text = { Text(option) },
                         onClick = {
                             onSelect(index)

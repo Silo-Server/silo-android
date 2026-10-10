@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -429,24 +429,14 @@ private fun TvDetailEpisodeCard(
                     },
                 ),
         ) {
-            if (!episode.stillUrl.isNullOrBlank()) {
-                ThumbhashImage(
-                    url = episode.stillUrl,
-                    thumbhash = episode.stillThumbhash,
-                    contentDescription = episode.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.Movie,
-                    contentDescription = null,
-                    tint = SiloSecondaryText,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .align(Alignment.Center),
-                )
-            }
+            ThumbhashImage(
+                url = episode.stillUrl,
+                thumbhash = episode.stillThumbhash,
+                contentDescription = episode.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                defaultArtwork = DefaultArtworkKind.Tv,
+            )
 
             if (episode.userData?.played == true) {
                 Box(

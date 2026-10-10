@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import androidx.compose.material.icons.rounded.Dns
+import org.siloserver.silo.common.ui.marquee.ServerBranding
+import org.siloserver.silo.android.ui.components.SiloMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,8 +29,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -280,17 +282,27 @@ private fun ServerChooser(
         )
         Box {
             OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = selected?.displayName.orEmpty(),
-                    modifier = Modifier.weight(1f),
-                    color = AuthColors.OnBackground,
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = selected?.displayName.orEmpty(), color = AuthColors.OnBackground)
+                    // Saved servers often share a name ("Silo"); the address
+                    // is what tells them apart.
+                    selected?.let { server ->
+                        Text(
+                            text = ServerBranding.hostLabel(server.url),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AuthColors.OnSurfaceVariant,
+                        )
+                    }
+                }
                 Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = AuthColors.OnBackground)
             }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SiloDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 state.servers.forEach { server ->
-                    DropdownMenuItem(
-                        text = { Text(server.displayName) },
+                    SiloMenuItem(
+                        label = server.displayName,
+                        detail = ServerBranding.hostLabel(server.url),
+                        icon = Icons.Rounded.Dns,
+                        checked = server.id == selected?.id,
                         onClick = {
                             expanded = false
                             onSelectServer(server.id)

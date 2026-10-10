@@ -266,11 +266,6 @@ class TvPlaybackFormattingTest {
         assertEquals("4K · HDR", TvPlaybackFormatting.versionCompactLabel(v))
     }
 
-    @Test fun compactSubtitleSelectorValue_dropsAutoAndTechnicalSuffixes() {
-        assertEquals("English", compactSubtitleSelectorValue("Auto - English · SRT"))
-        assertEquals("Off", compactSubtitleSelectorValue("Off"))
-    }
-
     @Test fun versionValueLabel_matchesTvOsDolbyVisionSummary() {
         val v = fileVersion(
             resolution = "2160p",

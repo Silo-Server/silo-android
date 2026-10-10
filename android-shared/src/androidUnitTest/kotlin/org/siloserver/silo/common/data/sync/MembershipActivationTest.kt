@@ -56,6 +56,7 @@ class MembershipActivationTest {
         val app = org.koin.dsl.koinApplication(createEagerInstances = false) {
             modules(org.siloserver.silo.di.repositoryModule, org.koin.dsl.module {
                 single { PersonalDataApi(client) }
+                single { SettingsApi(SettingsV2Api(client, tokens, ApiV2Gate.Unrestricted)) }
                 single<MembershipPort> { port }
                 single<IdentityTransitionBarrier> { barrier }
             })

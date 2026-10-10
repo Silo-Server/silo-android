@@ -397,6 +397,7 @@ internal data class ExternalSignInCapabilitiesV2(
     val identities: Boolean = false,
     @SerialName("credentials_linking") val credentialsLinking: Boolean = false,
     @SerialName("network_sign_in") val networkSignIn: Boolean = false,
+    @SerialName("network_link_keeps_password") val networkLinkKeepsPassword: Boolean = false,
 ) {
     fun domain(): ExternalSignInCapabilities {
         val usable = available && (state == null || state == "available")
@@ -404,6 +405,7 @@ internal data class ExternalSignInCapabilitiesV2(
             identities = usable && identities,
             credentialsLinking = usable && credentialsLinking,
             networkSignIn = usable && networkSignIn,
+            networkLinkKeepsPassword = usable && networkSignIn && networkLinkKeepsPassword,
         )
     }
 }

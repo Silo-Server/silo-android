@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.LocalContext
 import android.os.SystemClock
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -133,6 +136,8 @@ fun TvPlayerScrubber(
     onPlayPause: () -> Unit,
     /** See TvPlayerIdleOverlay.canToggleAfterCommit. */
     canToggleAfterCommit: Boolean = true,
+    /** The current rate, so the wall-clock finish time matches what the viewer will see. */
+    playbackSpeed: Double = 1.0,
     onMoveDownToTransport: () -> Unit,
     onExitWhenIdle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -240,7 +245,11 @@ fun TvPlayerScrubber(
     } else 0f
 
     val trackHeight by animateDpAsState(
-        targetValue = if (isTimelineScrubbing) 6.dp else 3.5.dp,
+        targetValue = when {
+            isTimelineScrubbing -> 7.dp
+            isFocused -> 5.dp
+            else -> 4.dp
+        },
         animationSpec = tween(120),
         label = "scrubberTrackHeight",
     )
@@ -254,37 +263,17 @@ fun TvPlayerScrubber(
         label = "scrubberPuckSize",
     )
 
-    Column(
-        modifier = modifier.height(41.dp),
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = formatScrubberTime(labelPositionSec),
-                color = Color.White.copy(alpha = 0.82f),
-                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
-            )
-            Text(
-                text = formatRemainingTime(durationSec - labelPositionSec),
-                color = Color.White.copy(alpha = 0.70f),
-                style = MaterialTheme.typography.labelLarge,
-            )
-        }
-
-        Box(modifier = Modifier.weight(1f)) {
+    // The bar sits above its clock row, as on tvOS: elapsed on the left, time
+    // left and the wall-clock finish on the right.
+    val context = LocalContext.current
+    val timeFormat = remember(context) { android.text.format.DateFormat.getTimeFormat(context) }
+    Column(modifier = modifier) {
+        Box(modifier = Modifier.fillMaxWidth().height(28.dp)) {
 
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.Center)
-                // Required, not preferred: the column above hands this box
-                // ~14dp once the clock row has taken its share, and a plain
-                // height() is coerced to that, squashing the puck and
-                // clipping the auto-seek chip.
                 .requiredHeight(28.dp)
                 .focusRequester(onRequestFocus)
                 .onFocusChanged { /* state collected via interactionSource */ }
@@ -383,97 +372,50 @@ fun TvPlayerScrubber(
             val barWidthPx = with(density) { barWidthDp.toPx() }
             val puckSizePx = with(density) { puckSize.toPx() }
 
-            // Track (unfocused 0.24, focused 0.35, scrubbing 0.48 — spec).
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.Center)
-                    .height(trackHeight)
-                    .clip(RoundedCornerShape(percent = 50))
-                    .background(
-                        Color.White.copy(
-                            alpha = when {
-                                isTimelineScrubbing -> 0.48f
-                                isFocused -> 0.35f
-                                else -> 0.24f
-                            },
-                        ),
-                    ),
-            )
-
-            // Marker bands — intro/recap/credits/preview, each a tinted band on
-            // the track. Drawn above the bare track but below the played fill /
-            // ticks so the playhead still reads clearly over it.
-            if (durationSec > 0) {
-                val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
-                val markers = listOfNotNull(
-                    introRangeSec?.let { it to Color.Cyan },
+            // Track, marker bands, buffered-ahead and played fill, drawn as one
+            // segmented bar: chapter starts become 2dp gaps rather than ticks.
+            val trackAlpha = when {
+                isTimelineScrubbing -> 0.45f
+                isFocused -> 0.32f
+                else -> 0.22f
+            }
+            val bandAlpha = if (isTimelineScrubbing || isFocused) 0.45f else 0.34f
+            val markerBands = if (durationSec > 0) {
+                listOfNotNull(
+                    introRangeSec?.let { it to Color(0xFF22D3EE) },
                     recapRangeSec?.let { it to Color(0xFF8BC34A) },
                     creditsRangeSec?.let { it to Color(0xFFFFB74D) },
                     previewRangeSec?.let { it to Color(0xFFBA68C8) },
-                )
-                for ((range, color) in markers) {
-                    val start = (range.start / durationSec).toFloat().coerceIn(0f, 1f)
-                    val end = (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f)
-                    if (end > start) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.CenterStart)
-                                .offset(x = barWidthDp * start)
-                                .fillMaxWidth(end - start)
-                                .height(trackHeight)
-                                .clip(RoundedCornerShape(percent = 50))
-                                .background(color.copy(alpha = bandAlpha)),
-                        )
-                    }
+                ).map { (range, color) ->
+                    Triple(
+                        (range.start / durationSec).toFloat().coerceIn(0f, 1f),
+                        (range.endInclusive / durationSec).toFloat().coerceIn(0f, 1f),
+                        color.copy(alpha = bandAlpha),
+                    )
                 }
+            } else {
+                emptyList()
             }
-
-            // Played fill — pure white, follows the preview while scrubbing.
-            Box(
+            val chapterFractions = if (durationSec > 0) {
+                chapters.map { (it.timeSec / durationSec).toFloat() }
+            } else {
+                emptyList()
+            }
+            Canvas(
                 modifier = Modifier
-                    .fillMaxWidth(totalProgress)
-                    .align(Alignment.CenterStart)
+                    .fillMaxWidth()
                     .height(trackHeight)
-                    .clip(RoundedCornerShape(percent = 50))
-                    .background(Color.White),
-            )
-
-            // Buffered-ahead sliver: only the region between playhead and
-            // end-of-buffer. Width can be 0 (live HLS, transcode start).
-            val bufferedAheadFrac = (bufferedFrac - totalProgress).coerceAtLeast(0f)
-            if (bufferedAheadFrac > 0f) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .offset(x = barWidthDp * totalProgress)
-                        .fillMaxWidth(bufferedAheadFrac)
-                        .height(trackHeight)
-                        .clip(RoundedCornerShape(percent = 50))
-                        .background(Color.White.copy(alpha = 0.28f)),
+                    .align(Alignment.Center),
+            ) {
+                drawTvSegmentedTrack(
+                    chapterFractions = chapterFractions,
+                    trackColor = Color.White.copy(alpha = trackAlpha),
+                    bufferedColor = Color.White.copy(alpha = 0.20f),
+                    playedColor = TvPlayerChrome.Paper,
+                    playedFraction = totalProgress,
+                    bufferedFraction = bufferedFrac.coerceAtLeast(totalProgress),
+                    bands = markerBands,
                 )
-            }
-
-            // Chapter marker ticks — skip the chapter-0 tick at x≈0 so it doesn't
-            // sit under the capsule endcap. Iterate with `for` (rather than
-            // `forEach`) so the lambda body keeps composable scope.
-            if (durationSec > 0) {
-                for (ch in chapters) {
-                    val frac = (ch.timeSec / durationSec).toFloat().coerceIn(0f, 1f)
-                    if (frac > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                // CenterStart, not Center: `offset` is anchor-relative,
-                                // so Center adds half the bar width to every tick.
-                                .align(Alignment.CenterStart)
-                                .offset(x = barWidthDp * frac - 1.5.dp)
-                                .width(if (isTimelineScrubbing) 3.dp else 2.dp)
-                                .height(trackHeight + 8.dp)
-                                .clip(RoundedCornerShape(percent = 50))
-                                .background(Color.White.copy(alpha = 0.45f)),
-                        )
-                    }
-                }
             }
 
             // Puck — only while focused so the bar stays passive when
@@ -520,9 +462,76 @@ fun TvPlayerScrubber(
                 )
             }
         }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = formatScrubberTime(labelPositionSec),
+                style = TvPlayerType.Time,
+                modifier = Modifier.weight(1f),
+            )
+            val remainingSec = (durationSec - labelPositionSec).coerceAtLeast(0.0)
+            val wallClockRemainingSec = if (playbackSpeed > 0.0) remainingSec / playbackSpeed else remainingSec
+            Text(
+                text = listOfNotNull(
+                    formatRemainingTime(remainingSec),
+                    finishTimeLabel(timeFormat, wallClockRemainingSec)?.let { "Ends $it" },
+                ).joinToString(" · "),
+                style = TvPlayerType.Time.copy(color = TvPlayerChrome.Graphite),
+            )
+        }
     }
 }
 
+/**
+ * The bar as segments split at chapter starts. Gaps are dropped when a title
+ * has so many short chapters that the segments would stop reading as bars.
+ */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTvSegmentedTrack(
+    chapterFractions: List<Float>,
+    trackColor: Color,
+    bufferedColor: Color,
+    playedColor: Color,
+    playedFraction: Float,
+    bufferedFraction: Float,
+    bands: List<Triple<Float, Float, Color>>,
+) {
+    val width = size.width
+    val height = size.height
+    val radius = androidx.compose.ui.geometry.CornerRadius(height / 2f)
+    val gap = 2.dp.toPx()
+    val boundaries = chapterFractions.filter { it > 0.001f && it < 0.999f }.sorted()
+    val edges = (listOf(0f) + boundaries + listOf(1f)).map { it * width }
+    val useGaps = boundaries.isNotEmpty() && edges.zipWithNext().all { (a, b) -> b - a >= height * 2f + gap }
+    val segments = if (useGaps) edges.zipWithNext() else listOf(0f to width)
+    segments.forEachIndexed { index, (rawStart, rawEnd) ->
+        val start = if (index == 0) rawStart else rawStart + gap / 2f
+        val end = if (index == segments.lastIndex) rawEnd else rawEnd - gap / 2f
+        val topLeft = androidx.compose.ui.geometry.Offset(start, 0f)
+        val segmentSize = androidx.compose.ui.geometry.Size(end - start, height)
+        fun fill(color: Color, untilX: Float, fromX: Float = start) {
+            if (untilX <= fromX) return
+            clipRect(left = fromX, top = 0f, right = untilX.coerceAtMost(end), bottom = height) {
+                drawRoundRect(color = color, topLeft = topLeft, size = segmentSize, cornerRadius = radius)
+            }
+        }
+        drawRoundRect(color = trackColor, topLeft = topLeft, size = segmentSize, cornerRadius = radius)
+        fill(bufferedColor, bufferedFraction * width)
+        bands.forEach { (from, to, color) -> fill(color, untilX = to * width, fromX = maxOf(start, from * width)) }
+        fill(playedColor, playedFraction * width)
+    }
+}
+
+/** "11:42 PM" in the device's 12/24-hour [timeFormat], [remainingSec] of wall-clock time from now. */
+private fun finishTimeLabel(timeFormat: java.text.DateFormat, remainingSec: Double): String? {
+    if (remainingSec <= 0.0 || !remainingSec.isFinite()) return null
+    val finish = java.util.Date(System.currentTimeMillis() + (remainingSec * 1000).toLong())
+    return timeFormat.format(finish)
 }
 
 @Composable
@@ -555,7 +564,7 @@ private fun TvScrubberAutoSeekChip(rate: Int, modifier: Modifier = Modifier) {
 private fun formatScrubberTime(seconds: Double): String = formatTimelineClock(seconds)
 
 private fun formatRemainingTime(secondsRemaining: Double): String =
-    "-${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
+    "−${formatTimelineClock(secondsRemaining.coerceAtLeast(0.0))}"
 
 private fun formatTimelineClock(seconds: Double): String {
     if (seconds <= 0 || seconds.isNaN()) return "0:00"

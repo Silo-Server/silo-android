@@ -465,12 +465,40 @@ class AndroidPlayerSettingsStoreTest {
         )
 
     @Test
-    fun `setPlaybackSpeed clamps out-of-range values`() = runTest {
+    fun `setPlaybackSpeed clamps to the contract range and step`() = runTest {
         val store = newStore()
         store.setPlaybackSpeed(10.0)
-        assertEquals(4.0, store.playbackSpeedFlow.first(), 0.0)
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
+        store.setPlaybackSpeed(3.5)
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
         store.setPlaybackSpeed(0.01)
         assertEquals(0.25, store.playbackSpeedFlow.first(), 0.0)
+        // Off the 0.05 grid: the server would refuse it and the write would
+        // be dropped, so it is snapped before it is stored or sent.
+        store.setPlaybackSpeed(1.33)
+        assertEquals(1.35, store.playbackSpeedFlow.first(), 0.0)
+        assertEquals(
+            listOf("3.0", "3.0", "0.25", "1.35"),
+            fakeFlusher.calls.filter { it.key == PlaybackSettingsKeys.PlaybackSpeed }.map { it.value },
+        )
+    }
+
+    @Test
+    fun `a playback speed stored by an older build is normalized on read`() = runTest {
+        // Older builds clamped to 4.0, so a stored speed can sit outside the
+        // contract range until the next server refresh, or forever offline.
+        val store = newStoreSeededWith { prefs ->
+            prefs[stringPreferencesKey(PlaybackSettingsKeys.PlaybackSpeed)] = "3.5"
+        }
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
+    }
+
+    @Test
+    fun `Profile 7 HDR10 fallback defaults off before the first refresh`() = runTest {
+        // The contract default is false; reading true before hydration (or
+        // offline) sent Profile 7 sources down the HDR10 path.
+        assertFalse(newStore().dvProfile7HDR10FallbackFlow.first())
+        assertFalse(newStore(profileId = null).dvProfile7HDR10FallbackFlow.first())
     }
 
     @Test

@@ -62,6 +62,9 @@ import org.siloserver.silo.tv.ui.screens.player.TvVideoPlaybackStarter
 import org.siloserver.silo.tv.ui.screens.profiles.TvProfileSelectionViewModel
 import org.siloserver.silo.tv.ui.screens.search.TvSearchViewModel
 import org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.profiles.TvActiveProfileReset
+import org.siloserver.silo.tv.profiles.TvProfileAwayTracker
 import org.siloserver.silo.tv.watchnext.WatchNextRepository
 import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import android.net.Uri
@@ -157,6 +160,20 @@ val androidTvModule = module {
     // androidModule for why every identity reporter resolves this instead of
     // deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    // Settings → Experimental → Watch Party: on by default only in debug builds.
+    single {
+        org.siloserver.silo.common.watchparty.WatchPartyExperiment(
+            prefs = androidContext().getSharedPreferences(
+                org.siloserver.silo.common.watchparty.WatchPartyExperiment.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+            defaultEnabled = BuildConfig.DEBUG,
+            onDisabled = { get<org.siloserver.silo.watchtogether.RoomSession>().depart() },
+        )
+    }
+    single<org.siloserver.silo.model.feature.WatchPartyExposure> {
+        get<org.siloserver.silo.common.watchparty.WatchPartyExperiment>()
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
             androidContext(),
@@ -276,6 +293,12 @@ val androidTvModule = module {
         org.siloserver.silo.tv.data.preferences.TvLibraryScopeStore(androidContext(), get())
     }
 
+    // Library Browse sort + filters, per server·profile·library (the phone
+    // store under its own key prefix).
+    single {
+        org.siloserver.silo.common.settings.BrowsePrefsStore(androidContext(), get(), keyPrefix = "androidtv")
+    }
+
     // tvOS-parity Home row visibility/order, local to this TV and partitioned
     // by active server + profile.
     single { TvHomeSectionPreferences(androidContext(), get()) }
@@ -305,6 +328,13 @@ val androidTvModule = module {
     // TvWorkerFactory for why).
     single { WatchNextRepository(androidContext()) }
     single { WatchNextSeeder(androidContext(), get()) }
+
+    // Profile Selection (tvOS General → PROFILE AT LAUNCH): the device-wide
+    // choice, the tracker MainTvActivity drives from onStop/onStart, and the
+    // reset every path uses to drop the active profile.
+    single { TvProfileLaunchPreferences(androidContext()) }
+    single { TvProfileAwayTracker(get(), get(), get()) }
+    single { TvActiveProfileReset(get(), get(), get(), get(), get(), get(), get()) }
 
     // Deep-link bridge between MainTvActivity (producer) and TvAppNavigation
     // (consumer). The Activity writes incoming Silo app-scheme URIs here on
@@ -356,13 +386,20 @@ val androidTvModule = module {
         )
     }
     single {
+        val playbackLifecycle = get<org.siloserver.silo.common.player.PlaybackSessionLifecycle>()
         TvSiloCastReceiver(
             advertiser = get(),
             serverRegistry = get(),
+            tokenManager = get(),
+            identityTransitions = get(),
             identityManager = get(),
             deviceNameProvider = ::tvDeviceName,
             deviceIdProvider = {
                 org.siloserver.silo.common.pairing.PairingDeviceId.stable(androidContext())
+            },
+            awaitPlaybackTeardown = playbackLifecycle::awaitPendingStop,
+            inWatchParty = {
+                get<org.siloserver.silo.repository.WatchTogetherRepository>().roomSnapshot.value != null
             },
         )
     }
@@ -397,7 +434,7 @@ val androidTvModule = module {
             profileId = params.get(),
         )
     }
-    viewModel { TvServerListViewModel(get(), get(), get()) }
+    viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
 
     viewModel { params ->
         org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
@@ -445,7 +482,12 @@ val androidTvModule = module {
             },
         )
     }
-    viewModel { TvLibrariesViewModel(get(), get(), get()) }
+    viewModel {
+        TvLibrariesViewModel(
+            get(), get(), get(),
+            reachability = get<org.siloserver.silo.common.network.ServerReachabilityMonitor>().state,
+        )
+    }
     viewModel { params ->
         TvLibraryDetailViewModel(
             sectionRepository = get(),
@@ -453,6 +495,8 @@ val androidTvModule = module {
             libraryId = params.get(),
             libraryTitle = params.get(),
             libraryType = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
+            browsePrefs = get(),
         )
     }
     viewModel { params ->
@@ -462,6 +506,8 @@ val androidTvModule = module {
             libraryId = params.get(),
             collectionId = params.get(),
             title = params.get(),
+            mediaScope = params.values.getOrNull(3) as? String,
+            collectionSource = params.values.getOrNull(4) as? String ?: "library_collection",
         )
     }
     viewModel { TvSearchViewModel(get(), get(), get()) }
@@ -483,21 +529,43 @@ val androidTvModule = module {
             capabilityDetector = get(),
         )
     }
-    // Watch Together entry (create/join orchestration) — backs the entry +
-    // join-code dialogs on the detail screen.
+    // Watch Party: the shared hub, lobby (keyed per room; roomId is the
+    // positional parameter), and picker ViewModels.
     viewModel {
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel(get())
+        val serverRegistry = get<ServerRegistry>()
+        org.siloserver.silo.viewmodel.WatchPartyHubViewModel(
+            repository = get(),
+            roomSession = get(),
+            availability = get(),
+            recents = get(),
+            isCurrentServer = { url ->
+                org.siloserver.silo.common.watchparty.watchPartyServerMatches(
+                    linkServerUrl = url,
+                    activeServerUrl = serverRegistry.activeEntry.value?.url,
+                )
+            },
+        )
     }
-    viewModel {
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvSuggestToRoomViewModel(get())
-    }
-    // Watch Together lobby — keyed per roomId (koinViewModel key="wt-lobby-$roomId");
-    // roomId is read from the positional parameter.
     viewModel { params ->
-        org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherLobbyViewModel(
+        org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel(
             roomId = params.get(),
             repository = get(),
             roomSession = get(),
+            availability = get(),
+        )
+    }
+    viewModel {
+        val catalog = get<org.siloserver.silo.repository.CatalogRepository>()
+        org.siloserver.silo.viewmodel.WatchPartyPickerViewModel(
+            repository = get(),
+            availability = get(),
+            search = { query ->
+                when (val result = catalog.browse(query = query, limit = 30)) {
+                    is ApiResult.Success -> ApiResult.Success(result.data.items)
+                    is ApiResult.Error -> result
+                    is ApiResult.NetworkError -> result
+                }
+            },
         )
     }
     viewModel { params ->
@@ -518,6 +586,7 @@ val androidTvModule = module {
             catalogRepository = get(),
             serverReachabilityMonitor = get(),
             launchArgs = params.get<TvPlayerLaunchArgs>(),
+            shuffleFeatureStore = get(),
         )
     }
 
@@ -559,6 +628,8 @@ val androidTvModule = module {
             tvLibraryScopeStore = getOrNull(),
             seekIntervalStore = get(),
             audiobookSettingsStore = get(),
+            profileLaunchPreferences = get(),
+            watchNextSeeder = get(),
         )
     }
     viewModel { TvDiagnosticsViewModel(get()) }

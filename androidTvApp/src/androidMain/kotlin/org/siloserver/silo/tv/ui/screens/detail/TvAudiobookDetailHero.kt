@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.tv.ui.navigation.TvSubtitleLaunchSelection
@@ -109,6 +110,7 @@ internal fun TvAudiobookDetailHero(
                     .size(180.dp)
                     .shadow(20.dp, RoundedCornerShape(14.dp)),
                 cornerRadius = 14.dp,
+                defaultArtwork = DefaultArtworkKind.Audiobook,
             )
 
             Column(

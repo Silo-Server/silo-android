@@ -26,7 +26,6 @@ import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.watchtogether.RoomSession
-import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.koin.dsl.module
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,8 +84,10 @@ val repositoryModule = module {
                 ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            hiddenLibraries = get(),
         )
     }
+    single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
     single { CollectionRepository(get()) }
     single {
@@ -111,6 +112,7 @@ val repositoryModule = module {
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
+    single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
     single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
     single { SettingsRepository(get()) }
     // Profile-scoped canonical settings, shared by the phone and TV screens so
@@ -119,7 +121,7 @@ val repositoryModule = module {
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
     single { EbookReaderRepository(get(), get()) }
-    single { SubtitlesRepository(get(), get()) }
+    single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }
 
     // REST-backed inbox state plus a realtime factory that builds the default
@@ -155,7 +157,6 @@ val repositoryModule = module {
             },
         )
     }
-    single<WatchTogetherEntryGateway> { get<WatchTogetherRepository>() }
     // Eager so the identity-transition privacy gate is installed before any
     // profile/server/token mutation can occur. This process-lifetime scope,
     // rather than a screen scope, owns connection replacement and teardown.

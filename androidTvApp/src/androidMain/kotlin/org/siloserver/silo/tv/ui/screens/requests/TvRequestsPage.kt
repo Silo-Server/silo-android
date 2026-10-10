@@ -31,7 +31,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Inbox
-import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -55,7 +54,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -79,6 +77,9 @@ import org.siloserver.silo.model.request.requestBackdropUrl
 import org.siloserver.silo.model.request.requestPosterUrl
 import org.siloserver.silo.model.section.SectionItem
 import org.siloserver.silo.repository.RequestsRepository
+import org.siloserver.silo.tv.ui.components.TvDialog
+import org.siloserver.silo.tv.ui.components.TvDialogAction
+import org.siloserver.silo.tv.ui.components.TvDialogActionStyle
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvFocusMarquee
 import org.siloserver.silo.tv.ui.components.TvHeroFactToken
@@ -780,53 +781,41 @@ private fun TvRequestActionDialog(
     }
     var confirmingDecline by remember(item) { mutableStateOf(false) }
     if (confirmingDecline) {
-        AlertDialog(
+        // Keep comes first and takes focus, so a stray press doesn't decide on
+        // someone's request.
+        TvDialog(
+            title = "Decline this request?",
+            message = "${record.title} will show as declined to the person who asked for it.",
             onDismissRequest = onDismiss,
-            containerColor = DarkSurfaceElevated,
-            titleContentColor = SiloOnSurface,
-            textContentColor = SiloOnSurface.copy(alpha = 0.76f),
-            title = { Text("Decline this request?", color = SiloOnSurface) },
-            text = {
-                Text(
-                    "${record.title} will show as declined to the person who asked for it.",
-                    color = SiloOnSurface.copy(alpha = 0.76f),
-                )
-            },
-            confirmButton = {
-                // Keep first, so a stray press doesn't decide on someone's request.
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = onDismiss) { Text("Keep") }
-                    Button(onClick = { onAction(TvRequestAction.Decline, record) }) { Text("Decline") }
-                }
-            },
+            actions = listOf(
+                TvDialogAction(label = "Keep", onClick = onDismiss),
+                TvDialogAction(
+                    label = "Decline",
+                    onClick = { onAction(TvRequestAction.Decline, record) },
+                    style = TvDialogActionStyle.Destructive,
+                ),
+            ),
         )
         return
     }
-    AlertDialog(
+    // Close comes first and takes focus, so a stray press doesn't send a
+    // non-retryable action.
+    TvDialog(
+        title = record.title,
+        message = if (item is TvRequestItem.Approval) "Requested by someone on this server." else RequestProgress.of(record).longLabel,
         onDismissRequest = onDismiss,
-        containerColor = DarkSurfaceElevated,
-        titleContentColor = SiloOnSurface,
-        textContentColor = SiloOnSurface.copy(alpha = 0.76f),
-        title = { Text(record.title, color = SiloOnSurface) },
-        text = {
-            Text(
-                if (item is TvRequestItem.Approval) "Requested by someone on this server." else RequestProgress.of(record).longLabel,
-                color = SiloOnSurface.copy(alpha = 0.76f),
+        actions = listOf(TvDialogAction(label = "Close", onClick = onDismiss)) + actions.map { action ->
+            TvDialogAction(
+                label = action.label,
+                // Decline asks first.
+                onClick = {
+                    if (action == TvRequestAction.Decline) confirmingDecline = true else onAction(action, record)
+                },
+                style = when (action) {
+                    TvRequestAction.Cancel, TvRequestAction.Decline -> TvDialogActionStyle.Destructive
+                    TvRequestAction.Approve, TvRequestAction.Retry -> TvDialogActionStyle.Primary
+                },
             )
-        },
-        confirmButton = {
-            // Close first, so a stray press doesn't send a non-retryable action.
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onDismiss) { Text("Close") }
-                actions.forEach { action ->
-                    Button(
-                        onClick = {
-                            // Decline asks first.
-                            if (action == TvRequestAction.Decline) confirmingDecline = true else onAction(action, record)
-                        },
-                    ) { Text(action.label) }
-                }
-            }
         },
     )
 }

@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
@@ -25,10 +26,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -134,23 +133,15 @@ fun ServerSetupScreen(
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
     state.pendingCleartextUrl?.let { origin ->
-        AlertDialog(
-            onDismissRequest = viewModel::cancelCleartextConnection,
-            title = { Text("Connect without encryption?") },
-            text = {
-                Text(
-                    "Your password and what you watch will be sent unencrypted to " +
-                        "${ServerBranding.hostLabel(origin)}. Only do this on a network you trust.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = viewModel::confirmCleartextConnection, enabled = !state.isLoading) {
-                    Text("Connect")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::cancelCleartextConnection) { Text("Cancel") }
-            },
+        SiloConfirmDialog(
+            title = "Connect without encryption?",
+            body = "Your password and what you watch will be sent unencrypted to " +
+                "${ServerBranding.hostLabel(origin)}. Only do this on a network you trust.",
+            confirmLabel = "Connect",
+            destructive = false,
+            confirmEnabled = !state.isLoading,
+            onConfirm = viewModel::confirmCleartextConnection,
+            onDismiss = viewModel::cancelCleartextConnection,
         )
     }
 

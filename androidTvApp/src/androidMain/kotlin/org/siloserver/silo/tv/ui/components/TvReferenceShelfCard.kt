@@ -32,6 +32,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.ProgressFill
 import org.siloserver.silo.tv.ui.theme.ProgressTrack
@@ -47,6 +48,8 @@ fun TvReferenceShelfCard(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     detail: String? = null,
+    /** Catalog item type; picks the mark on the default artwork. */
+    mediaType: String? = null,
     progress: Float? = null,
     width: Dp = 268.dp,
     focusRequester: FocusRequester? = null,
@@ -83,6 +86,7 @@ fun TvReferenceShelfCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
                 )
 
             Box(

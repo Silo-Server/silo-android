@@ -32,6 +32,18 @@ class CollectionRouteTest {
     }
 
     @Test
+    fun mixedLibraryCollectionRetainsSeriesScopeInItsDestination() {
+        assertEquals(
+            "collection/user?libraryId=7&source=user_collection&mediaScope=series",
+            libraryCollectionDetailRoute(
+                LibraryCollection(id = "user", name = "User", kind = "user_collections"),
+                libraryId = 7,
+                mediaScope = "series",
+            ),
+        )
+    }
+
+    @Test
     fun legacyLibraryCollectionRouteRemainsSupported() {
         assertEquals(
             "collection/legacy?libraryId=7",

@@ -116,14 +116,17 @@ internal fun Modifier.playerSheetContent(tabletopPaneHeight: Dp?): Modifier =
 internal fun playerSheetScrimColor(tabletopPaneHeight: Dp?): Color =
     if (tabletopPaneHeight == null) Color.Black.copy(alpha = 0.32f) else Color.Transparent
 
-internal val PlayerSheetBackground = Color(0xFF090D12)
-internal val PlayerSheetCardColor = Color(0xFF151B24)
-internal val PlayerSheetSelectedColor = Color(0xFF10333D)
-internal val PlayerSheetDividerColor = Color.White.copy(alpha = 0.08f)
+// Opaque equivalents of the docked panel's smoke and its raised washes, for
+// sheets: a portrait sheet covers the picture, so there is nothing to show
+// through it.
+internal val PlayerSheetBackground = Color(0xFF131417)
+internal val PlayerSheetCardColor = Color(0xFF1C1D20)
+internal val PlayerSheetSelectedColor = Color(0xFF26272B)
+internal val PlayerSheetDividerColor = Color.White.copy(alpha = 0.07f)
 
 internal fun playerSheetShape(tabletopPaneHeight: Dp?): Shape =
     if (tabletopPaneHeight == null) {
-        RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        RoundedCornerShape(topStart = PlayerChrome.PanelRadius, topEnd = PlayerChrome.PanelRadius)
     } else {
         RectangleShape
     }
@@ -213,9 +216,9 @@ internal val PlayerSheetFlingGuard = object : NestedScrollConnection {
 }
 
 /**
- * Header row for the glass-style sheets. When [onBack] is provided (gear
- * submenus), a leading chevron returns to the parent settings sheet — QA:
- * submenus previously had no way back.
+ * Header for a player menu that carries a subtitle line (subtitle search, AI
+ * subtitles). Same chrome as [PlayerPanelHeader]: back chevron when there is a
+ * parent menu, close disc on the right.
  */
 @Composable
 internal fun PlayerSheetHeader(
@@ -224,54 +227,20 @@ internal fun PlayerSheetHeader(
     onDismiss: (() -> Unit)? = null,
     subtitle: String? = null,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 52.dp)
-            .padding(
-                start = if (onBack != null) 4.dp else 20.dp,
-                end = if (onDismiss != null) 4.dp else 20.dp,
-                top = 2.dp,
-                bottom = 2.dp,
-            ),
-    ) {
-        if (onBack != null) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                    contentDescription = "Back to playback settings",
-                    tint = Color.White,
-                )
-            }
-        }
-        Column(modifier = Modifier.weight(1f)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        PlayerPanelHeader(
+            title = title,
+            onClose = onDismiss ?: {},
+            onBack = onBack,
+        )
+        if (subtitle != null) {
             Text(
-                text = title,
-                color = Color.White,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
+                text = subtitle,
+                style = PlayerType.RowDetail,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = if (onBack != null) 52.dp else 18.dp, end = 18.dp),
             )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    color = Color.White.copy(alpha = 0.56f),
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        if (onDismiss != null) {
-            IconButton(onClick = onDismiss) {
-                Icon(
-                    imageVector = Icons.Filled.Close,
-                    contentDescription = "Close menu",
-                    tint = Color.White.copy(alpha = 0.82f),
-                )
-            }
         }
     }
 }
@@ -286,21 +255,6 @@ internal fun PlayerSheetCard(
             .clip(RoundedCornerShape(18.dp))
             .background(PlayerSheetCardColor),
         content = content,
-    )
-}
-
-@Composable
-internal fun PlayerSheetSectionLabel(
-    text: String,
-    modifier: Modifier = Modifier,
-) {
-    Text(
-        text = text.uppercase(),
-        color = Color.White.copy(alpha = 0.52f),
-        fontSize = 11.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 0.8.sp,
-        modifier = modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 8.dp),
     )
 }
 

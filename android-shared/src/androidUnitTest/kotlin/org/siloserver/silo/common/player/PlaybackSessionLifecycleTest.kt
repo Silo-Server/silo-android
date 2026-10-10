@@ -53,22 +53,20 @@ import kotlin.test.fail
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackSessionLifecycleTest {
-    @Test fun `sequenced final flush stays part-local and pending stop retains old ownership for terminal retry`() = runTest {
+    @Test fun `sequenced final flush stays part-local and a failed stop still ends the session`() = runTest {
         val manager = object : FakeSessionManager() { override fun isSequenced(sessionId: String) = true }
         manager.stopResult = ApiResult.Error(0, "stop_pending", "pending")
         val lifecycle = newLifecycle(manager)
         lifecycle.adoptActiveSession(defaultStartParams(), makeSession("part"))
         lifecycle.reportPosition(30.0, 400.0, true, "part", 630.0, 1000.0)
-        assertFalse(lifecycle.stop("part"))
-        assertEquals(30.0, manager.lastProgressPosition)
-        manager.stopResult = ApiResult.Success(Unit)
+        // The journal keeps the stop and retries it before the next start.
         assertTrue(lifecycle.stop("part"))
-        assertEquals(2, manager.stopCallCount)
+        assertEquals(1, manager.stopCallCount)
         assertEquals(30.0, manager.lastProgressPosition)
         assertTrue(lifecycle.state.value is SessionState.Idle)
     }
 
-    @Test fun `sequenced authority outage keeps session and stop pending without legacy progress`() = runTest {
+    @Test fun `sequenced authority outage ends the session without legacy progress`() = runTest {
         val manager = object : FakeSessionManager() {
             override fun isSequenced(sessionId: String) = true
         }.apply {
@@ -84,7 +82,7 @@ class PlaybackSessionLifecycleTest {
         assertTrue(lifecycle.state.value is SessionState.Active)
         assertEquals(0, health.callCount)
         lifecycle.stop(expectedSessionId = "negotiated")
-        assertTrue(lifecycle.state.value is SessionState.Failed)
+        assertTrue(lifecycle.state.value is SessionState.Idle)
         assertTrue(personal.syncCalls.isEmpty())
         assertEquals(1, manager.stopCallCount)
         assertEquals(2, manager.progressCallCount)
@@ -261,7 +259,7 @@ class PlaybackSessionLifecycleTest {
             ),
         )
 
-        assertTrue(lifecycle.confirmActiveSessionPublication("sess-first"))
+        assertTrue(lifecycle.settlePendingPublicationIfCurrent("sess-first", confirm = true) { true })
         assertEquals(
             "sess-first",
             (lifecycle.state.value as SessionState.Active).session.sessionId,
@@ -302,100 +300,6 @@ class PlaybackSessionLifecycleTest {
         )
         assertEquals("sess-new", (lifecycle.state.value as SessionState.Active).session.sessionId)
         assertEquals(listOf("sess-old"), stopped)
-    }
-
-    @Test
-    fun `external session finalization returns before reporting finishes and stops afterward`() = runTest {
-        val reportEntered = CompletableDeferred<Unit>()
-        val releaseReport = CompletableDeferred<Unit>()
-        val stopCompleted = CompletableDeferred<Unit>()
-        val calls = mutableListOf<String>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun reportProgress(
-                sessionId: String,
-                position: Double,
-                isPaused: Boolean,
-            ): ApiResult<Unit> {
-                calls += "report:$sessionId:$position:$isPaused"
-                reportEntered.complete(Unit)
-                releaseReport.await()
-                return ApiResult.Success(Unit)
-            }
-
-            override suspend fun stopSession(sessionId: String): ApiResult<Unit> {
-                calls += "stop:$sessionId"
-                stopCompleted.complete(Unit)
-                return ApiResult.Success(Unit)
-            }
-        }
-        val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-
-        lifecycle.reportAndStopExternalSessionAsync(
-            sessionId = "audiobook-session",
-            positionSeconds = 42.25,
-            isPaused = true,
-        )
-
-        reportEntered.await()
-        assertEquals(
-            listOf("report:audiobook-session:42.25:true"),
-            calls,
-            "the non-blocking caller must return while progress reporting is suspended",
-        )
-
-        releaseReport.complete(Unit)
-        stopCompleted.await()
-
-        assertEquals(
-            listOf(
-                "report:audiobook-session:42.25:true",
-                "stop:audiobook-session",
-            ),
-            calls,
-        )
-    }
-
-    @Test
-    fun `duplicate external session finalization is coalesced`() = runTest {
-        val reportEntered = CompletableDeferred<Unit>()
-        val releaseReport = CompletableDeferred<Unit>()
-        val stopCompleted = CompletableDeferred<Unit>()
-        val sessionMgr = object : FakeSessionManager() {
-            override suspend fun reportProgress(
-                sessionId: String,
-                position: Double,
-                isPaused: Boolean,
-            ): ApiResult<Unit> {
-                progressCallCount++
-                reportEntered.complete(Unit)
-                releaseReport.await()
-                return ApiResult.Success(Unit)
-            }
-
-            override suspend fun stopSession(sessionId: String): ApiResult<Unit> {
-                val result = super.stopSession(sessionId)
-                stopCompleted.complete(Unit)
-                return result
-            }
-        }
-        val lifecycle = newLifecycle(sessionMgr, scope = backgroundScope)
-
-        repeat(2) {
-            lifecycle.reportAndStopExternalSessionAsync(
-                sessionId = "audiobook-session",
-                positionSeconds = 42.25,
-                isPaused = true,
-            )
-        }
-
-        reportEntered.await()
-        assertEquals(1, sessionMgr.progressCallCount)
-
-        releaseReport.complete(Unit)
-        stopCompleted.await()
-
-        assertEquals(1, sessionMgr.progressCallCount)
-        assertEquals(1, sessionMgr.stopCallCount)
     }
 
     @Test

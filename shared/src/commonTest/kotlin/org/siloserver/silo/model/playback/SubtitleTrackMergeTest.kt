@@ -72,6 +72,22 @@ class SubtitleTrackMergeTest {
         assertEquals(313, second.downloadId)
         assertEquals("Dune Part Three (subdl)", second.label)
         assertEquals("/stream/sess-1/subtitles/3.ass", second.url)
+
+        // Stored subtitles the server can retime are named for sync as `stored-{id}`.
+        assertEquals("stored-312", first.syncKey)
+        assertEquals("stored-313", second.syncKey)
+    }
+
+    @Test
+    fun `a stored subtitle the server cannot retime gets no sync key`() {
+        val merged = mergeDownloadedSubtitles(
+            existing = emptyList(),
+            downloaded = listOf(
+                downloaded(id = 7, language = "en", format = "pgs", releaseName = "r", provider = "upload"),
+            ),
+            sessionId = "sess-1",
+        )
+        assertNull(merged.single().syncKey)
     }
 
     @Test

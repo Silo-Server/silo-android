@@ -30,7 +30,7 @@ internal fun tvSelectorRowVisualState(
         FocusedContent.copy(alpha = 0.22f),
     )
     selected -> TvSelectorRowVisualState(
-        SiloOnSurface.copy(alpha = 0.14f),
+        SiloOnSurface.copy(alpha = 0.075f),
         SiloOnSurface,
         SiloOnSurface.copy(alpha = 0.28f),
     )

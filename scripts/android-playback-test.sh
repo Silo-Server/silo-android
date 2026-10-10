@@ -28,6 +28,12 @@
 #                               long-running health check: cold-start playback, sample
 #                               every 10s, fail on crash/stall/error; report drops,
 #                               rebuffers, and any fatal exceptions at the end
+#   party                       Watch Party room and binding state (the "party" object
+#                               of status); never tokens or tickets
+#   spread <serialA> <serialB> [samples] [intervalSec]
+#                               sample two devices in a Watch Party and report the
+#                               inter-client position spread on the room's server clock
+#                               (defaults: 10 samples, 2s apart). Ignores -s.
 #
 # Environment:
 #   SILO_DEVICE_SERIAL   default adb serial (e.g. 192.0.2.10:5555 or a USB serial);
@@ -146,6 +152,57 @@ case "$CMD" in
         ;;
     status)
         status_json
+        ;;
+    party)
+        status_json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d.get("party", {"party": "none"}), sort_keys=True))'
+        ;;
+    spread)
+        [[ $# -ge 2 ]] || die "spread needs two serials"
+        serial_a="$1"; serial_b="$2"; samples="${3:-10}"; interval="${4:-2}"
+        spread_sample() { # spread_sample <serial> -> one status JSON line
+            SERIAL="$1" status_json
+        }
+        for ((i = 1; i <= samples; i++)); do
+            a=$(spread_sample "$serial_a"); b=$(spread_sample "$serial_b")
+            python3 - "$a" "$b" <<'PY'
+import json, sys
+def project(raw):
+    d = json.loads(raw)
+    party = d.get("party") or {}
+    offset = party.get("serverOffsetMs")
+    # The screen position is the source timeline but only ticks every
+    # 500 ms on TV; the player position is fresh. Use the player position
+    # when both are on the same timeline, the screen position otherwise
+    # (a remux or transcode that starts mid-title).
+    pos = d.get("screenPositionSec")
+    player = d["positionMs"] / 1000.0 if d.get("positionMs") is not None else None
+    if player is not None and (pos is None or abs(player - pos) < 1.0):
+        pos = player
+    if offset is None or pos is None:
+        return None, d
+    server_ms = d["sampledWallMs"] + offset
+    return (pos, server_ms, bool(d.get("isPlaying"))), d
+(a, da), (b, db) = project(sys.argv[1]), project(sys.argv[2])
+if a is None or b is None:
+    print("inconclusive: missing position or server clock on", "A" if a is None else "B")
+    sys.exit(0)
+# Project the earlier sample forward to the later one's server time while playing.
+ref = max(a[1], b[1])
+def at(sample):
+    pos, t, playing = sample
+    return pos + ((ref - t) / 1000.0 if playing else 0.0)
+gap_ms = abs(a[1] - b[1])
+spread = abs(at(a) - at(b))
+print(json.dumps({
+    "spreadSec": round(spread, 3),
+    "sampleGapMs": gap_ms,
+    "conclusive": gap_ms <= 1500,
+    "a": {"pos": a[0], "playing": a[2], "party": (da.get("party") or {}).get("playbackState")},
+    "b": {"pos": b[0], "playing": b[2], "party": (db.get("party") or {}).get("playbackState")},
+}))
+PY
+            (( i < samples )) && sleep "$interval"
+        done
         ;;
     wait-playing)
         wait_playing "${1:-30}"

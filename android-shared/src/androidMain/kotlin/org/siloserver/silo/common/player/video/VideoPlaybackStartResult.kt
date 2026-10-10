@@ -56,12 +56,22 @@ sealed interface VideoPlaybackStartResult {
         /** TV's target-catalog resolution of [VideoPlaybackStartRequest.episodeSelectionHandoff]. */
         val resolvedEpisodeSelection: ResolvedEpisodeSelection? = null,
         val seriesTitle: String? = null,
+        /** Release year, for the player's "MOVIE · 2026" line. */
+        val year: Int? = null,
+        /** Catalog item type ("movie", "episode", …); the same line names a film. */
+        val contentType: String? = null,
     ) : VideoPlaybackStartResult
 
     data class Error(
         val contentId: String,
         val message: String,
         val diagnosticsCode: PlaybackDiagnosticsCode? = null,
+        /**
+         * The server's terminal refusal reason exactly as sent, when the
+         * failure was a playback terminal. A Watch Party reports it to the
+         * room; [diagnosticsCode] keeps only the reasons safe for telemetry.
+         */
+        val terminalReason: String? = null,
     ) : VideoPlaybackStartResult
 
     /**
@@ -113,6 +123,7 @@ value class PlaybackDiagnosticsCode private constructor(val wireValue: String) {
             "replan_loop_detected",
             "source_metadata_incomplete",
             "source_unavailable",
+            "subtitle_conversion_unsupported",
             "transcoding_disabled",
             "transcode_start_failed",
             "transcode_node_unavailable",

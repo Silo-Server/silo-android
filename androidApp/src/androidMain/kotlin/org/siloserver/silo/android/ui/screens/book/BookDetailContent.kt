@@ -43,6 +43,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.siloserver.silo.android.ui.screens.detail.CircleActionButton
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.book.BookFormat
 import org.siloserver.silo.model.catalog.FileVersion
@@ -187,6 +188,7 @@ fun BookDetailContent(
                         .width(BookCoverWidthDp.dp)
                         .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(12.dp)),
+                    defaultArtwork = DefaultArtworkKind.forItemType(detail.type),
                 )
                 Text(
                     text = detail.title,

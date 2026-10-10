@@ -73,6 +73,7 @@ import androidx.media3.session.SessionToken
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.player.AudiobookPlayerViewModel
 import org.siloserver.silo.common.player.SiloPlaybackService
 import org.siloserver.silo.model.catalog.VersionChapter
@@ -363,6 +364,7 @@ fun TvAudiobookPlayerScreen(
                                 .size(metrics.coverSizeDp.dp)
                                 .shadow(metrics.coverShadowDp.dp, RoundedCornerShape(metrics.coverCornerRadiusDp.dp)),
                             cornerRadius = metrics.coverCornerRadiusDp.dp,
+                            defaultArtwork = DefaultArtworkKind.Audiobook,
                         )
                         Spacer(Modifier.width(metrics.coverGapDp.dp))
                         Column(
@@ -560,10 +562,7 @@ internal data class TvAudiobookPlayerMetrics(
     val transportPrimaryButtonWidthDp: Int,
     val transportPrimaryButtonHeightDp: Int,
     val transportButtonSpacingDp: Int,
-) {
-    val transportRowWidthDp: Int =
-        (transportButtonSizeDp * 4) + transportPrimaryButtonWidthDp + (transportButtonSpacingDp * 4)
-}
+)
 
 internal fun tvAudiobookPlayerMetrics(
     maxWidthDp: Int,

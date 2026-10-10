@@ -24,6 +24,12 @@ class LibraryChromeInsetSourceTest {
      * top and reads the viewport as its blur source) and every tab clears the
      * chrome's *measured* height rather than a hard-coded runway.
      */
+    /** A shuffle request carries no media type, so a Movies/Series chip view must not offer it. */
+    @Test
+    fun scopedMixedLibraryOffersNoLibraryShuffle() {
+        assertTrue(Regex("val onShuffle = selectedLibrary[\\s\\S]*?\\?\\.takeIf \\{ state\\.mediaScope == null \\}[\\s\\S]*?ShuffleScopeKind\\.LIBRARY").containsMatchIn(libraries))
+    }
+
     @Test
     fun sharedChromeOwnsReservedSpaceBeforeEveryLibraryTab() {
         val viewport = libraries.indexOf("LibraryContentViewport(")

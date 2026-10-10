@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.auth
 
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -10,11 +11,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,17 +66,14 @@ fun InviteClaimScreen(
     MarqueeErrorHaptic(state.error)
 
     state.pendingCleartextOrigin?.let { origin ->
-        AlertDialog(
-            onDismissRequest = viewModel::onCancelCleartext,
-            title = { Text("Connect without encryption?") },
-            text = {
-                Text(
-                    "Your new password will be sent unencrypted to ${ServerBranding.hostLabel(origin)}. " +
-                        "Only do this on a network you trust.",
-                )
-            },
-            confirmButton = { TextButton(onClick = viewModel::onConfirmCleartext) { Text("Connect") } },
-            dismissButton = { TextButton(onClick = viewModel::onCancelCleartext) { Text("Cancel") } },
+        SiloConfirmDialog(
+            title = "Connect without encryption?",
+            body = "Your new password will be sent unencrypted to ${ServerBranding.hostLabel(origin)}. " +
+                "Only do this on a network you trust.",
+            confirmLabel = "Connect",
+            destructive = false,
+            onConfirm = viewModel::onConfirmCleartext,
+            onDismiss = viewModel::onCancelCleartext,
         )
     }
 

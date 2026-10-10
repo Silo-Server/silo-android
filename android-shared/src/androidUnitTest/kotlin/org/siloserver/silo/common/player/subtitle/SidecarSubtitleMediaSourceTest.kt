@@ -97,6 +97,29 @@ class SidecarSubtitleMediaSourceTest {
         assertEquals(3_000_000L, delegate.continueLoadingCalls.last().playbackPositionUs)
     }
 
+    /**
+     * A remount that reselects the same subtitle disables the sidecar's track
+     * and enables it again before the cancelled load lands. Its continue
+     * request then finds no pending reset, which a prepared
+     * ProgressiveMediaPeriod asserts on (a player crash). The wrapper restarts
+     * the load from the playhead instead.
+     */
+    @Test
+    fun restartsFromThePlayheadWhenACancelledLoadHasNoPendingReset() {
+        val delegate = FakePeriod().apply { requirePendingReset = true }
+        val floor = SidecarPlaybackFloor()
+        val period = NonGatingSidecarPeriod(delegate, floor)
+        val upstream = RecordingCallback()
+        period.prepare(upstream, 0L)
+        floor.set(42_000_000L)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        assertEquals(42_000_000L, delegate.lastSeekUs)
+        assertEquals(2, delegate.continueLoadingCalls.size)
+        assertSame(period, upstream.continueLoadingRequestedFrom.single())
+    }
+
     @Test
     fun publishesTheLivePositionAndSeeksAsTheFloor() {
         val delegate = FakePeriod()
@@ -112,6 +135,106 @@ class SidecarSubtitleMediaSourceTest {
         period.seekToUs(1_000_000L)
         assertEquals(1_000_000L, floor.get())
         assertEquals(1_000_000L, delegate.lastSeekUs)
+    }
+
+    /**
+     * A feature-length `.sup` read in one go kept every caption image in the
+     * sample queue and ran a phone with a 192 MB heap out of memory. With a
+     * lookahead, a delegate that parks far enough ahead stays parked until
+     * the playback ticks show the playhead has closed the gap.
+     */
+    @Test
+    fun leavesADelegateParkedWhileItIsFurtherAheadThanTheLookahead() {
+        val delegate = FakePeriod().apply { bufferedUs = 300_000_000L }
+        val floor = SidecarPlaybackFloor()
+        val period = NonGatingSidecarPeriod(delegate, floor, maxLookaheadUs = 120_000_000L)
+        val upstream = RecordingCallback()
+        period.prepare(upstream, 0L)
+        delegate.callback!!.onPrepared(delegate)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+        assertTrue(delegate.continueLoadingCalls.isEmpty())
+        // The merge is still told, as before.
+        assertSame(period, upstream.continueLoadingRequestedFrom.single())
+
+        period.discardBuffer(150_000_000L, false) // 150 s still ahead: keep holding
+        assertTrue(delegate.continueLoadingCalls.isEmpty())
+
+        period.discardBuffer(190_000_000L, false) // 110 s ahead: read on
+        assertEquals(1, delegate.continueLoadingCalls.size)
+        assertEquals(190_000_000L, delegate.continueLoadingCalls.single().playbackPositionUs)
+
+        period.discardBuffer(191_000_000L, false) // no longer held: no second kick
+        assertEquals(1, delegate.continueLoadingCalls.size)
+    }
+
+    @Test
+    fun reevaluateBufferAlsoResumesAHeldDelegate() {
+        val delegate = FakePeriod().apply { bufferedUs = 300_000_000L }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor(), maxLookaheadUs = 120_000_000L)
+        period.prepare(RecordingCallback(), 0L)
+        delegate.callback!!.onPrepared(delegate)
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        period.reevaluateBuffer(200_000_000L)
+
+        assertEquals(1, delegate.continueLoadingCalls.size)
+    }
+
+    @Test
+    fun aSeekAlwaysRestartsAHeldDelegateAndTheHoldStartsOver() {
+        val delegate = FakePeriod().apply { bufferedUs = 300_000_000L }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor(), maxLookaheadUs = 120_000_000L)
+        period.prepare(RecordingCallback(), 0L)
+        delegate.callback!!.onPrepared(delegate)
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+        assertTrue(delegate.continueLoadingCalls.isEmpty())
+
+        period.seekToUs(10_000_000L)
+        assertEquals(1, delegate.continueLoadingCalls.size)
+
+        // The restarted read parks again within the lookahead of the new
+        // position: read on. Once it is too far ahead again, it holds again.
+        delegate.bufferedUs = 60_000_000L
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+        assertEquals(2, delegate.continueLoadingCalls.size)
+        delegate.bufferedUs = 200_000_000L
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+        assertEquals(2, delegate.continueLoadingCalls.size)
+    }
+
+    @Test
+    fun aDelegateThatHasNotPreparedIsNeverHeld() {
+        val delegate = FakePeriod().apply { bufferedUs = 300_000_000L }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor(), maxLookaheadUs = 120_000_000L)
+        period.prepare(RecordingCallback(), 0L)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        assertEquals(1, delegate.continueLoadingCalls.size)
+    }
+
+    @Test
+    fun aFinishedDelegateIsNeverHeld() {
+        val delegate = FakePeriod().apply { bufferedUs = C.TIME_END_OF_SOURCE }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor(), maxLookaheadUs = 120_000_000L)
+        period.prepare(RecordingCallback(), 0L)
+        delegate.callback!!.onPrepared(delegate)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        assertEquals(1, delegate.continueLoadingCalls.size)
+    }
+
+    @Test
+    fun withoutALookaheadTheDelegateReadsTheWholeFile() {
+        val delegate = FakePeriod().apply { bufferedUs = 3_000_000_000L }
+        val period = NonGatingSidecarPeriod(delegate, SidecarPlaybackFloor())
+        period.prepare(RecordingCallback(), 0L)
+
+        delegate.callback!!.onContinueLoadingRequested(delegate)
+
+        assertEquals(1, delegate.continueLoadingCalls.size)
     }
 
     @Test
@@ -144,7 +267,11 @@ class SidecarSubtitleMediaSourceTest {
         var callback: MediaPeriod.Callback? = null
         var loading = false
         var lastSeekUs = C.TIME_UNSET
+        var bufferedUs = 0L
         val continueLoadingCalls = mutableListOf<LoadingInfo>()
+        /** Models a prepared ProgressiveMediaPeriod: a new load needs a pending reset. */
+        var requirePendingReset = false
+        private var pendingReset = false
 
         override fun prepare(callback: MediaPeriod.Callback, positionUs: Long) {
             this.callback = callback
@@ -164,16 +291,19 @@ class SidecarSubtitleMediaSourceTest {
         override fun readDiscontinuity(): Long = C.TIME_UNSET
         override fun seekToUs(positionUs: Long): Long {
             lastSeekUs = positionUs
+            pendingReset = true
             return positionUs
         }
 
         override fun getAdjustedSeekPositionUs(positionUs: Long, seekParameters: SeekParameters): Long =
             positionUs
 
-        override fun getBufferedPositionUs(): Long = 0L
+        override fun getBufferedPositionUs(): Long = bufferedUs
         override fun getNextLoadPositionUs(): Long = 0L
         override fun continueLoading(loadingInfo: LoadingInfo): Boolean {
             continueLoadingCalls += loadingInfo
+            check(!requirePendingReset || pendingReset)
+            pendingReset = false
             return true
         }
 

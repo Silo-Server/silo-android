@@ -51,8 +51,26 @@ class CollectionDetailViewModel(
     private var collectionId: String = ""
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val collectionSource: String? = savedStateHandle.get<String>("source")
+    private val mediaScope = savedStateHandle.get<String>("mediaScope")?.takeIf { it in setOf("movie", "series") }
     private val isLibraryUserCollection: Boolean
         get() = libraryId != null && collectionSource == "user_collection"
+
+    /**
+     * The shuffle scope this collection is: a library's server collection or a
+     * user collection. Null in a Movies- or Series-scoped view: a shuffle
+     * request carries no media type or library, so it would draw from both.
+     */
+    val shuffleScopeKind: org.siloserver.silo.model.shuffle.ShuffleScopeKind?
+        get() = if (mediaScope != null) {
+            null
+        } else if (libraryId != null && !isLibraryUserCollection) {
+            org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY_COLLECTION
+        } else {
+            org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION
+        }
+
+    /** The library the collection was opened from, carried into shuffled playback. */
+    val browseLibraryId: Int? get() = libraryId
     private val pageSize = 40
 
     fun initialize(id: String) {
@@ -139,7 +157,7 @@ class CollectionDetailViewModel(
                 }
             }
 
-            val itemsResult = if (isLibraryUserCollection) {
+            val itemsResult = if (isLibraryUserCollection && mediaScope == null) {
                 collectionRepository.getItems(
                     collectionId,
                     limit = pageSize,
@@ -152,6 +170,9 @@ class CollectionDetailViewModel(
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
                     limit = pageSize,
+                    mediaType = mediaScope,
+                    libraryId = libraryId,
+                    source = if (isLibraryUserCollection) "user_collection" else "library_collection",
                 ).map {
                     libraryContinuation = it.continuation
                     it
@@ -197,11 +218,14 @@ class CollectionDetailViewModel(
         pagingJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMore = true) }
             // Library paging is migrated separately; personal collections use opaque cursors.
-            val result = if (libraryId != null && !isLibraryUserCollection) {
+            val result = if (libraryId != null && (!isLibraryUserCollection || mediaScope != null)) {
                 sectionRepository.getLibraryCollectionItems(
                     collectionId,
                     continuation = libraryContinuation,
                     limit = pageSize,
+                    mediaType = mediaScope,
+                    libraryId = libraryId,
+                    source = if (isLibraryUserCollection) "user_collection" else "library_collection",
                 ).map { libraryContinuation = it.continuation; it }
             } else {
                 collectionRepository.getItems(

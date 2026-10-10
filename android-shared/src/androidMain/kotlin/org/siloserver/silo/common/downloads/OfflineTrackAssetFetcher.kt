@@ -244,10 +244,10 @@ internal class OfflineTrackAssetFetcher(
     }
 
     /**
-     * Re-fetches the saved sidecars whose stored subtitle the server has
-     * retimed since they were saved (its manifest `revision` changed) into
-     * staging files beside them. Nothing is replaced until the caller has
-     * confirmed the download is still the one [tracks] describes and calls
+     * Re-fetches the saved sidecars whose subtitle the server has retimed
+     * since they were saved (its manifest `revision` changed) into staging
+     * files beside them. Nothing is replaced until the caller has confirmed
+     * the download is still the one [tracks] describes and calls
      * [StagedSubtitleRefresh.publish]. Returns null when nothing changed or the
      * manifest is unavailable. A sidecar that fails to fetch keeps its old file
      * and revision, so the next refresh tries it again.
