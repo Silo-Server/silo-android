@@ -247,7 +247,8 @@ fun TvRootHeroBackdrop(
     modifier: Modifier = Modifier,
 ) {
     val spoilers = LocalEpisodeSpoilerPrefs.current
-    val content = remember(item?.contentId, spoilers) {
+    // Keyed on the whole item: a watch-state change re-decides spoiler hiding.
+    val content = remember(item, spoilers) {
         item?.let { TvMarqueeContent.from(it, rowTitle = "", spoilers = spoilers) }
     }
     TvRootHeroBackdrop(content = content, modifier = modifier)
