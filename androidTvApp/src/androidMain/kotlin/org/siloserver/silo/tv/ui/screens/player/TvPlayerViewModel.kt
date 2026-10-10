@@ -621,6 +621,8 @@ data class NextEpisodeState(
     val episodeNumber: Int,
     val title: String?,
     val stillUrl: String?,
+    /** Whether [stillUrl] is the episode's own still (null when the server doesn't say). */
+    val stillIsEpisodeStill: Boolean? = null,
     val overview: String? = null,
     val seriesTitle: String? = null,
     val runtimeMinutes: Int = 0,
@@ -4506,6 +4508,7 @@ class TvPlayerViewModel(
                 episodeNumber = next.episodeNumber,
                 title = next.title,
                 stillUrl = next.stillUrl,
+                stillIsEpisodeStill = next.stillIsEpisodeStill,
                 overview = next.overview,
                 seriesTitle = state.seriesTitle,
                 runtimeMinutes = next.runtime,

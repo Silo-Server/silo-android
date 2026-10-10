@@ -3209,7 +3209,7 @@ private fun TvPlayerNextUpOverlay(
         // On Deck item's art. Art spoiler protection hides is skipped.
         val spoilers = org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs.current
         val backdrop = nextEpisode
-            ?.takeUnless { it.isEpisode && spoilers.hidesImage(it.isUnwatched) }
+            ?.takeUnless { it.isEpisode && spoilers.hidesImage(it.isUnwatched, it.stillIsEpisodeStill) }
             ?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
             ?: onDeckItems.firstOrNull { !spoilers.hidesImage(it.unwatchedEpisode, it.artIsEpisodeStill) }
                 ?.let { it.artUrl to it.artThumbhash }
