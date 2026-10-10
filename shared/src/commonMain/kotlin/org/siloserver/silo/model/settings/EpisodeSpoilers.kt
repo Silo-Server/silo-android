@@ -6,7 +6,7 @@ import org.siloserver.silo.model.section.SectionItem
 
 /**
  * Spoiler protection for episodes the profile has not started (settings
- * contract revision 16). The profile settings
+ * contract revision 17). The profile settings
  * [SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES] and
  * [SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS] choose what to hide;
  * this object owns the rule for which episodes they apply to, shared by every
@@ -15,7 +15,7 @@ import org.siloserver.silo.model.section.SectionItem
  */
 object EpisodeSpoilers {
     /** Contract revision that introduced both keys. */
-    const val MIN_CONTRACT_REVISION = 16
+    const val MIN_CONTRACT_REVISION = 17
 
     /** Settings protocol version these keys are defined against. */
     const val SETTINGS_API_VERSION = 1

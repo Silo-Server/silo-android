@@ -85,11 +85,11 @@ class EpisodeSpoilersTest {
                 manifestRevision = revision,
                 supportsBatchedEffective = batched,
             )
-        assertTrue(EpisodeSpoilers.isSupported(caps(16)))
         assertTrue(EpisodeSpoilers.isSupported(caps(17)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(15)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(16, batched = false)))
-        assertFalse(EpisodeSpoilers.isSupported(caps(16, apiVersion = 2)))
+        assertTrue(EpisodeSpoilers.isSupported(caps(18)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(16)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(17, batched = false)))
+        assertFalse(EpisodeSpoilers.isSupported(caps(17, apiVersion = 2)))
     }
 
     @Test

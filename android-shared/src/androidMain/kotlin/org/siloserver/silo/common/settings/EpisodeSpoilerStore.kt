@@ -23,7 +23,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 
-/** Whether the connected server knows the revision-16 spoiler keys. */
+/** Whether the connected server knows the revision-17 spoiler keys. */
 enum class EpisodeSpoilerSupport {
     Supported,
 
@@ -68,7 +68,7 @@ data class EpisodeSpoilerState(
 /**
  * The signed-in profile's spoiler protection for unwatched episodes
  * (`catalog.hide_unwatched_episode_images` and
- * `catalog.hide_unwatched_episode_overviews`, settings contract revision 16),
+ * `catalog.hide_unwatched_episode_overviews`, settings contract revision 17),
  * shared by every phone and TV surface through `LocalEpisodeSpoilerPrefs`.
  *
  * Both keys allow only `scope=profile`, so writes go straight to the profile
