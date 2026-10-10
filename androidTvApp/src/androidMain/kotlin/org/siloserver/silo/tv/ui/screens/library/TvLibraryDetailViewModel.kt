@@ -596,9 +596,10 @@ class TvLibraryDetailViewModel(
             }
 
             val facetGroups = filter.facetSelection.toQueryGroups()
+            val browseMediaType = mediaScope ?: mediaTypeFor(libraryType)
             val result = catalogRepository.browse(
                 source = "query",
-                mediaType = mediaScope ?: mediaTypeFor(libraryType),
+                mediaType = browseMediaType,
                 libraryId = libraryId,
                 genre = filter.genre,
                 sort = filter.sort,
@@ -624,7 +625,8 @@ class TvLibraryDetailViewModel(
                     val visibleItems = response.items.visibleOnTv()
                     // An empty first page only says this view matched nothing (#451):
                     // with nothing narrowing it, the page was the whole library;
-                    // otherwise one unfiltered item decides. Loading stays up
+                    // otherwise one unfiltered item decides, within the Movies/Series
+                    // scope of a mixed library as Apple does. Loading stays up
                     // meanwhile, so the wrong message never flashes.
                     val libraryHasItems = when {
                         !reset || visibleItems.isNotEmpty() -> null
@@ -632,7 +634,7 @@ class TvLibraryDetailViewModel(
                         // mean the library is not empty.
                         response.items.isNotEmpty() -> true
                         filter == TvLibraryBrowseFilter(sort = filter.sort, order = filter.order) -> false
-                        else -> catalogRepository.libraryHasItems(libraryId, mediaTypeFor(libraryType))
+                        else -> catalogRepository.libraryHasItems(libraryId, browseMediaType)
                     }
                     if (generation != browseGeneration) return@launch
                     browseContinuation = response.continuation

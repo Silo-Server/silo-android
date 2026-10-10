@@ -731,12 +731,13 @@ class LibrariesViewModel(
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     // An empty first page only says this view matched nothing (#451).
                     // With nothing narrowing it, the page was the whole library;
-                    // otherwise one unfiltered item decides. Loading stays up
-                    // meanwhile, so the wrong message never flashes.
+                    // otherwise one unfiltered item decides. A Movies/Series view
+                    // of a mixed library asks within that type, as Apple does.
+                    // Loading stays up meanwhile, so the wrong message never flashes.
                     val libraryHasItems = when {
                         !reset || overlaid.isNotEmpty() -> null
                         !requestState.filterState.hasActiveFilters && requestState.selectedNamePrefix == null -> false
-                        else -> catalogRepository.libraryHasItems(libraryId)
+                        else -> catalogRepository.libraryHasItems(libraryId, requestState.mediaScope)
                     }
                     if (!isCatalogRequestCurrent(requestGeneration, requestIdentity)) return@launch
                     catalogContinuation = result.data.continuation
