@@ -67,7 +67,14 @@ internal fun downloadEntryHidesArtwork(entry: DownloadEntry, prefs: EpisodeSpoil
         is DownloadEntry.Series -> node.seasons.flatMap { it.episodes }.map { it.item }
         is DownloadEntry.Author -> node.books.map { it.item }
     }
-    val source = items(entry).firstOrNull { it.posterUrl == entry.posterUrl } ?: return false
+    // A season row shows the series-wide poster, which may come from another
+    // season's episode, so grouped rows name the download it came from.
+    val declared = when (entry) {
+        is DownloadEntry.Season -> entry.posterSource
+        is DownloadEntry.Series -> entry.posterSource
+        else -> null
+    }
+    val source = declared ?: items(entry).firstOrNull { it.posterUrl == entry.posterUrl } ?: return false
     return downloadItemHidesArtwork(source, prefs)
 }
 

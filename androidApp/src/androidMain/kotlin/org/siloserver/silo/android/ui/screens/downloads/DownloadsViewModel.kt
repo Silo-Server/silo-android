@@ -32,11 +32,16 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -196,6 +201,8 @@ sealed class DownloadEntry {
         val episodes: List<Single>,
         override val posterUrl: String?,
         override val posterThumbhash: String?,
+        /** The download whose artwork [posterUrl] is; it may be in another season. */
+        val posterSource: DownloadItem? = null,
     ) : DownloadEntry() {
         override val id = "season:$seriesKey:$seasonNumber"
         override val title = "Season $seasonNumber"
@@ -215,6 +222,8 @@ sealed class DownloadEntry {
         val seasons: List<Season>,
         override val posterUrl: String?,
         override val posterThumbhash: String?,
+        /** The download whose artwork [posterUrl] is. */
+        val posterSource: DownloadItem? = null,
     ) : DownloadEntry() {
         override val id = "series:$seriesKey"
         override val title = seriesTitle
@@ -312,6 +321,7 @@ class DownloadsViewModel(
     private val userItemStatePort: UserItemStatePort,
     private val playerSettingsStore: PlayerSettingsStore,
     private val catalogRepository: CatalogRepository,
+    private val episodeSpoilerStore: org.siloserver.silo.common.settings.EpisodeSpoilerStore,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DownloadsUiState(isLoading = true))
@@ -328,6 +338,9 @@ class DownloadsViewModel(
 
     // All publication tokens are owned by the main-thread ViewModel scope.
     private var sectionsGeneration = 0L
+    // One section build at a time, so a build never starts from a sidecar map
+    // that an in-flight reload is about to replace and then wins publication.
+    private val sectionsLock = Mutex()
     private val watchRefreshLock = Mutex()
     private data class EpisodeWatchSnapshot(val userData: LeafItemUserData, val requestedAtMs: Long)
     private data class ServerEpisodeWatchState(
@@ -338,6 +351,12 @@ class DownloadsViewModel(
     init {
         playerSettingsStore.keepWatchedDownloadsFlow.onEach { keepWatched ->
             _uiState.update { it.copy(keepWatchedDownloads = keepWatched) }
+        }.launchIn(viewModelScope)
+
+        // Episode watch state only feeds image protection; fetch it once the
+        // profile turns protection on.
+        episodeSpoilerStore.state.map { it.prefs.hideImages }.distinctUntilChanged().drop(1).onEach { hidden ->
+            if (hidden) refreshLocalUserState()
         }.launchIn(viewModelScope)
 
         viewModelScope.launch {
@@ -365,7 +384,7 @@ class DownloadsViewModel(
                 )
             }
 
-            repository.records.collect { records ->
+            repository.records.collect { records -> sectionsLock.withLock {
                 val generation = ++sectionsGeneration
                 // Room is the source of truth for what's downloaded locally; the
                 // tab is built from the Room sidecars (which always carry
@@ -404,25 +423,35 @@ class DownloadsViewModel(
                         totalBytesUsed = bytesUsed,
                     )
                 }
-            }
+            } }
         }
     }
 
     fun refreshLocalUserState() {
-        val generation = ++sectionsGeneration
         viewModelScope.launch {
-            val sections = withContext(Dispatchers.IO) {
-                buildSections(repository.records.value.associateBy { it.id })
-            }
-            if (generation == sectionsGeneration) {
-                _uiState.update { it.copy(sections = sections, isLoading = false,
-                    totalBytesUsed = sections.sumOf { section -> section.totalBytesUsed }) }
+            // Before the first load the sidecars aren't read yet, and
+            // publishing would show the empty state: wait for that load.
+            if (_uiState.value.isLoading) _uiState.first { !it.isLoading }
+            else sectionsLock.withLock {
+                val generation = ++sectionsGeneration
+                val sections = withContext(Dispatchers.IO) {
+                    buildSections(repository.records.value.associateBy { it.id })
+                }
+                if (generation == sectionsGeneration) {
+                    _uiState.update { it.copy(sections = sections, isLoading = false,
+                        totalBytesUsed = sections.sumOf { section -> section.totalBytesUsed }) }
+                }
             }
             refreshEpisodeWatchState()
         }
     }
 
+    /** Episode watch state is read only for image protection. */
+    private fun protectsEpisodeArtwork(): Boolean = episodeSpoilerStore.state.value.prefs.hideImages
+
     private suspend fun refreshEpisodeWatchState() {
+        // One read per downloaded episode: skip it unless it can change a tile.
+        if (!protectsEpisodeArtwork()) return
         // Entry and ON_RESUME can arrive together; share the in-flight refresh.
         if (!watchRefreshLock.tryLock()) return
         try {
@@ -445,12 +474,14 @@ class DownloadsViewModel(
             if (activeDownloadScope() != scope || !catalogRepository.isWatchAuthorityCurrent(owner)) return
             serverEpisodeWatchState = ServerEpisodeWatchState(scope,
                 serverEpisodeWatchState?.takeIf { it.scope == scope }?.snapshots.orEmpty() + snapshots)
-            val generation = ++sectionsGeneration
-            val sections = withContext(Dispatchers.IO) { buildSections(repository.records.value.associateBy { it.id }) }
-            if (activeDownloadScope() == scope && catalogRepository.isWatchAuthorityCurrent(owner) &&
-                generation == sectionsGeneration) {
-                _uiState.update { it.copy(sections = sections, isLoading = false,
-                    totalBytesUsed = sections.sumOf { section -> section.totalBytesUsed }) }
+            sectionsLock.withLock {
+                val generation = ++sectionsGeneration
+                val sections = withContext(Dispatchers.IO) { buildSections(repository.records.value.associateBy { it.id }) }
+                if (activeDownloadScope() == scope && catalogRepository.isWatchAuthorityCurrent(owner) &&
+                    generation == sectionsGeneration) {
+                    _uiState.update { it.copy(sections = sections, isLoading = false,
+                        totalBytesUsed = sections.sumOf { section -> section.totalBytesUsed }) }
+                }
             }
         } finally {
             watchRefreshLock.unlock()
@@ -461,7 +492,7 @@ class DownloadsViewModel(
         viewModelScope.launch {
             reloadSidecarMetadata()
             refreshSubscriptionsInternal()
-            refreshEpisodeWatchState()
+            launch { refreshEpisodeWatchState() }
             val keep = metadataByRecordId.keys
             val (serverId, profileId) = activeDownloadScope()
             when (val r = repository.refresh(keepIdsAbsentFromServer = keep, serverId = serverId, profileId = profileId)) {
@@ -843,9 +874,8 @@ class DownloadsViewModel(
      * Top-level: build per-mediaType sections from the Room sidecars (source of
      * truth), in stable display order. [liveById] overlays in-flight progress.
      */
-    private suspend fun buildSections(liveById: Map<String, DownloadRecord>): List<DownloadTypeSection> {
-        val sidecars = metadataByRecordId.values.toList()
-        if (sidecars.isEmpty()) return emptyList()
+    /** Each episode download's current user data: saved, server, and local state merged. */
+    private suspend fun currentEpisodeUserData(sidecars: List<DownloadSidecar>): Map<String, LeafItemUserData> {
         val episodes = sidecars.filter { it.resolveSidecarMediaType() == DownloadMediaType.TvShow }
         val ids = episodes.map { it.record.episodeId ?: it.record.contentId }
         val states = userItemStatePort.localContentStates(ids)
@@ -854,12 +884,21 @@ class DownloadsViewModel(
         val localOverrides = serverState.entries.groupBy { it.value.requestedAtMs }.flatMap { (startedAt, snapshots) ->
             userItemStatePort.contentIdsWithPendingOrNewerUserState(snapshots.map { it.key }, startedAt)
         }.toSet()
-        val episodeUserDataByRecordId = episodes.associate { sidecar ->
+        return episodes.associate { sidecar ->
             val id = sidecar.record.episodeId ?: sidecar.record.contentId
             val data = resolveDownloadEpisodeUserData(sidecar.episodeUserData, serverState[id]?.userData,
                 states[id], positions[id], id in localOverrides)
             sidecar.record.id to data
         }
+    }
+
+    private suspend fun buildSections(liveById: Map<String, DownloadRecord>): List<DownloadTypeSection> {
+        val sidecars = metadataByRecordId.values.toList()
+        if (sidecars.isEmpty()) return emptyList()
+        // Watch state only decides image protection: with it off, skip the
+        // Room reads that would otherwise run on every progress tick.
+        val episodeUserDataByRecordId =
+            if (protectsEpisodeArtwork()) currentEpisodeUserData(sidecars) else emptyMap()
         val byType = sidecars.map { sidecar ->
             if (sidecar.record.id in episodeUserDataByRecordId) {
                 sidecar.copy(episodeUserData = episodeUserDataByRecordId[sidecar.record.id])
@@ -906,7 +945,9 @@ class DownloadsViewModel(
         }
         val seriesEntries = bySeries.map { (seriesKey, group) ->
             val seriesTitle = group.firstNotNullOfOrNull { it.seriesTitle?.takeIf { t -> t.isNotBlank() } } ?: "Series"
-            val poster = group.firstNotNullOfOrNull { it.posterUrl }
+            val posterSidecar = group.firstOrNull { it.posterUrl != null }
+            val poster = posterSidecar?.posterUrl
+            val posterSource = posterSidecar?.toDownloadItem(liveById[posterSidecar.record.id])
             val thumb = group.firstNotNullOfOrNull { it.posterThumbhash }
             val bySeason = LinkedHashMap<Int, MutableList<DownloadSidecar>>()
             for (sc in group) bySeason.getOrPut(sc.seasonNumber ?: -1) { mutableListOf() } += sc
@@ -921,6 +962,7 @@ class DownloadsViewModel(
                     episodes = episodes,
                     posterUrl = poster,
                     posterThumbhash = thumb,
+                    posterSource = posterSource,
                 )
             }
             DownloadEntry.Series(
@@ -929,6 +971,7 @@ class DownloadsViewModel(
                 seasons = seasons,
                 posterUrl = poster,
                 posterThumbhash = thumb,
+                posterSource = posterSource,
             )
         }
         return seriesEntries + orphans.map { DownloadEntry.Single(it.toDownloadItem(liveById[it.record.id])) }

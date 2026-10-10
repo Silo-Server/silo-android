@@ -74,5 +74,11 @@ class DownloadArtworkTest {
             DownloadEntry.Single(episode.copy(id = "legacy", posterIsEpisodeStill = null)),
         ))
         assertFalse(downloadEntryHidesArtwork(safeFirst, prefs))
+        val otherSeason = season.copy(
+            seasonNumber = 2,
+            episodes = listOf(DownloadEntry.Single(episode.copy(id = "s2", posterUrl = "other-still"))),
+            posterSource = episode,
+        )
+        assertTrue(downloadEntryHidesArtwork(otherSeason, prefs))
     }
 }
