@@ -55,6 +55,8 @@ private data class TvMediaRowItemModel(
     val contentType: String,
     /** Spoiler protection: blur this card's still (an unstarted episode). */
     val hidesArtwork: Boolean,
+    /** The same for the poster layout, which shows the item's own poster. */
+    val hidesPoster: Boolean,
 )
 
 /**
@@ -153,6 +155,8 @@ fun TvMediaRow(
         // can legitimately overlap, so this is a property of the row, not a
         // bug to fix upstream of it.
         items.distinctBy { it.contentId }.map { item ->
+            val unwatchedEpisode = item.type.equals("episode", ignoreCase = true) &&
+                (unwatchedById?.get(item.contentId) ?: EpisodeSpoilers.isUnwatched(item))
             TvMediaRowItemModel(
                 item = item,
                 progress = if (showProgress) item.progressFraction() else null,
@@ -164,10 +168,8 @@ fun TvMediaRow(
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
                 // Protect the selected still while preserving series fallback art.
-                hidesArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(
-                    unwatchedById?.get(item.contentId) ?: EpisodeSpoilers.isUnwatched(item),
-                    EpisodeSpoilers.selectedImageIsStill(item),
-                ),
+                hidesArtwork = spoilerPrefs.hidesImage(unwatchedEpisode, EpisodeSpoilers.selectedImageIsStill(item)),
+                hidesPoster = spoilerPrefs.hidesImage(unwatchedEpisode, item.posterIsEpisodeStill),
             )
         }
     }
@@ -394,7 +396,7 @@ fun TvMediaRow(
                             onLongClick = itemLongClick,
                         )
                         TvRowStyle.Poster -> TvMediaCard(
-                            hideArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), item.posterIsEpisodeStill),
+                            hideArtwork = rowItem.hidesPoster,
                             title = item.title,
                             posterUrl = item.posterUrl,
                             posterThumbhash = item.posterThumbhash,

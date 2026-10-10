@@ -29,7 +29,8 @@ internal suspend fun syncWatchNextHome(
     val owner = sections.captureHomeAuthority() ?: return true
     var prefs: EpisodeSpoilerPrefs? = null
     suspend fun authority(): Boolean {
-        val valid = sections.isHomeAuthorityCurrent(owner) && !borrowedIdentity()
+        // The suspending identity lookup first, so the owner is validated last.
+        val valid = !borrowedIdentity() && sections.isHomeAuthorityCurrent(owner)
         currentCoroutineContext().ensureActive()
         return valid && !stopped() && (prefs?.let(preferencesCurrent) ?: true)
     }
