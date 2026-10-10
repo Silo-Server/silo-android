@@ -5,6 +5,8 @@ import org.siloserver.silo.model.section.ResolvedSection
 /** One On Deck card on the Up Next overlay (tvOS `nextUpCarouselItems` parity). */
 data class TvOnDeckItem(
     val contentId: String,
+    /** The section item's type, so a pick opens the right player (audiobooks too). */
+    val type: String,
     val title: String,
     val subtitle: String?,
     val artUrl: String?,
@@ -36,6 +38,7 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
             }
             TvOnDeckItem(
                 contentId = item.contentId,
+                type = item.type,
                 title = item.seriesTitle ?: item.title,
                 subtitle = when {
                     item.seasonNumber != null && item.episodeNumber != null ->

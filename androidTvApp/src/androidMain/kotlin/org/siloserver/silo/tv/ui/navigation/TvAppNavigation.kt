@@ -1574,9 +1574,13 @@ fun TvAppNavigation(
                 // Up Next On Deck pick: replace this player with the pick's.
                 // No resume override: the On Deck snapshot dates from when
                 // this item started, so the player reads the saved position.
-                onPlayOnDeckItem = { pickContentId ->
+                onPlayOnDeckItem = { pickContentId, pickType ->
                     navController.navigateToTvPlayback(
-                        destination = TvRoute.Player(contentId = pickContentId).route,
+                        destination = tvPlayDestinationFor(
+                            itemType = pickType,
+                            contentId = pickContentId,
+                            fileId = null,
+                        ),
                         contentId = pickContentId,
                         lastPlaybackNavigation = lastPlaybackNavigation,
                     )

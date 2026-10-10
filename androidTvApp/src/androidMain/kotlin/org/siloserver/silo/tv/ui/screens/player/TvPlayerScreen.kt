@@ -36,7 +36,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Shuffle
@@ -271,7 +273,7 @@ fun TvPlayerScreen(
     // the hub explains why and offers Rejoin.
     onWatchPartyEnded: () -> Unit = onExit,
     // Up Next On Deck pick: replace this player with one for that item.
-    onPlayOnDeckItem: (contentId: String) -> Unit = {},
+    onPlayOnDeckItem: (contentId: String, itemType: String) -> Unit = { _, _ -> },
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
@@ -2506,7 +2508,7 @@ fun TvPlayerScreen(
                 // Leave like Back (the session finishes and saves its
                 // position), then open the pick in a fresh player.
                 viewModel.onOnDeckItemChosen()
-                exitPlayer(true) { latestOnPlayOnDeckItem(item.contentId) }
+                exitPlayer(true) { latestOnPlayOnDeckItem(item.contentId, item.type) }
             },
             qualityOfferLabel = lowerQuality?.label?.takeIf { qualityOfferVisible },
         )
@@ -3154,6 +3156,7 @@ private fun TvRoomIndicator(
  * surface; the pass-out gate now manifests as the overlay appearing WITHOUT a
  * countdown ring (the user must explicitly choose).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TvPlayerNextUpOverlay(
     nextEpisode: NextEpisodeState?,
@@ -3221,7 +3224,10 @@ private fun TvPlayerNextUpOverlay(
             },
         )
         // One fixed screen, never scrolled: the video is a separate surface
-        // placed at the pane's bounds, and it cannot follow a scroll.
+        // placed at the pane's bounds, and it cannot follow a scroll. Only the
+        // panel may scroll, and only when a focused control is off screen (TV's
+        // default focus pivot would scroll it on every move).
+        CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
         Column(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
@@ -3255,9 +3261,13 @@ private fun TvPlayerNextUpOverlay(
                             ),
                     )
 
-                    // Next-episode panel.
+                    // Next-episode panel. It scrolls on its own when its content
+                    // outgrows the space above On Deck (large font sizes, a
+                    // shuffle's extra rows); the video pane beside it stays put.
                     Column(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         shuffle?.scopeLabel?.let { scope ->
@@ -3477,6 +3487,7 @@ private fun TvPlayerNextUpOverlay(
                     onPlay = onPlayOnDeckItem,
                 )
             }
+        }
         }
     }
 }
