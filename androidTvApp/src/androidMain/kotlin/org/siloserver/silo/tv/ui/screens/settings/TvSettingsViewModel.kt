@@ -142,7 +142,7 @@ class TvSettingsViewModel(
         val cardPresentation: CardPresentation = CardPresentation.DEFAULT,
         val cardPresentationSource: CardPresentationSource = CardPresentationSource.Unknown,
         val cardPresentationSupport: CardPresentationSupport = CardPresentationSupport.Unknown,
-        // Spoiler protection for unwatched episodes (revision 15), mirrored
+        // Spoiler protection for unwatched episodes, mirrored
         // from EpisodeSpoilerStore. The group is hidden unless supported.
         val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
         val navAction: NavAction? = null,

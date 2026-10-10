@@ -1213,7 +1213,7 @@ private fun TvPlaybackSettingsPane(
         }
         if (state.episodeSpoilers.isSupported) {
             item {
-                // Spoiler protection (settings revision 15). Profile-wide, so
+                // Spoiler protection (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Profile-wide, so
                 // the footer says it follows the profile to other devices.
                 // Hidden on servers that do not know the keys.
                 SettingsGroup(title = "Spoilers") {

@@ -72,6 +72,22 @@ class EpisodeSpoilerStoreTest {
     }
 
     @Test
+    fun `a server at the revision without the keys is unsupported`() = runTest {
+        val api = FakeSpoilerSettingsApi(
+            effectiveError = ApiResult.Error(404, "unknown_setting", "No setting named catalog.hide_unwatched_episode_images"),
+        )
+        val store = storeFor(api)
+
+        store.refresh()
+        store.set(EpisodeSpoilerSetting.Images, true)
+        runCurrent()
+
+        assertEquals(EpisodeSpoilerSupport.Unsupported, store.state.value.support)
+        assertEquals(EpisodeSpoilerPrefs.NONE, store.state.value.prefs)
+        assertTrue(api.puts.isEmpty())
+    }
+
+    @Test
     fun `nothing is written or hidden while support is unknown`() = runTest {
         val api = FakeSpoilerSettingsApi(capabilities = ApiResult.NetworkError(RuntimeException("offline")))
         val store = storeFor(api)
@@ -268,6 +284,7 @@ private class FakeSpoilerSettingsApi(
     var capabilities: ApiResult<SettingsContractCapabilities> = capabilitiesAt(revision),
     private var values: Map<String, JsonElement> = emptyMap(),
     private val failPuts: Boolean = false,
+    private val effectiveError: ApiResult.Error? = null,
 ) : SettingsApi(
     org.siloserver.silo.network.apiv2.SettingsV2Api(
         HttpClient(),
@@ -298,6 +315,7 @@ private class FakeSpoilerSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         effectiveReads += keys
+        effectiveError?.let { return it }
         return ApiResult.Success(
             EffectiveSettingValuesResponse(
                 settings = keys.map { key ->

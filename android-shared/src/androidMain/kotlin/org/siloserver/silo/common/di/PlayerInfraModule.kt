@@ -200,7 +200,7 @@ val playerInfraModule = module {
         )
     }
 
-    // Spoiler protection for unwatched episodes (settings revision 15). Both
+    // Spoiler protection for unwatched episodes (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Both
     // keys are profile-scope only, so the store writes the profile row itself
     // rather than going through the profile_device flusher. Resets and
     // re-resolves on a server or profile change, like SeekIntervalStore:

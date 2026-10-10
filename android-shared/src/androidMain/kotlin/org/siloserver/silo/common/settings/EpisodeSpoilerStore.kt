@@ -215,7 +215,13 @@ class DefaultEpisodeSpoilerStore private constructor(
                     hideImages = decode(result.data, EpisodeSpoilerSetting.Images),
                     hideOverviews = decode(result.data, EpisodeSpoilerSetting.Overviews),
                 )
-                is ApiResult.Error -> return commitError(result.message, startGeneration)
+                // A server can reach the revision without these keys when
+                // another setting took that revision number; it refuses them
+                // as unknown_setting (404). That is unsupported, not a
+                // transient failure to retry forever.
+                is ApiResult.Error ->
+                    if (result.code == 404) EpisodeSpoilerState(support = EpisodeSpoilerSupport.Unsupported)
+                    else return commitError(result.message, startGeneration)
                 is ApiResult.NetworkError ->
                     return commitError(result.exception.message, startGeneration)
             }

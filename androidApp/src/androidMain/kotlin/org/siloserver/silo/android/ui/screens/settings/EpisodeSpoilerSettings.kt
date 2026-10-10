@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 
 /**
- * Spoiler protection for unwatched episodes (settings revision 15). Both
+ * Spoiler protection for unwatched episodes (see EpisodeSpoilers.MIN_CONTRACT_REVISION). Both
  * switches are profile-wide, so the section says they follow the profile to
  * every device. Shown only when the server supports the keys.
  */
