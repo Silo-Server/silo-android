@@ -340,6 +340,7 @@ fun AppNavigation(
                         activeProfileStore.reset()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        episodeSpoilerStore.clear()
                         titleArtStore.clear()
                     }
                 }

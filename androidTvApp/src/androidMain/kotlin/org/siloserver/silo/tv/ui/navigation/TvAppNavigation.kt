@@ -820,6 +820,7 @@ fun TvAppNavigation(
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        episodeSpoilerStore.clear()
                         titleArtStore.clear()
                         watchNextSeeder.clear()
                     }

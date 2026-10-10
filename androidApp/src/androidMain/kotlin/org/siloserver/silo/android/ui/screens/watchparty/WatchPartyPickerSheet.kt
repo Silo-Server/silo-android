@@ -526,6 +526,7 @@ private fun PickerSearchField(query: String, onQuery: (String) -> Unit, modifier
 
 @Composable
 private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Home's row heading: 20sp, with the resume row's play glyph.
         Row(
@@ -560,6 +561,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
                         },
                         userState = item.userState,
                         onClick = { onOpen(item) },
+                        hideArtwork = WatchPartySpoilers.of(item).hidesBackdrop(spoilerPrefs, item.backdropUrl),
                     )
                 } else {
                     MediaCard(
@@ -572,6 +574,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
                         userState = item.userState,
                         progress = shelf.progress[item.contentId],
                         onClick = { onOpen(item) },
+                        hideArtwork = WatchPartySpoilers.of(item).hidesPoster(spoilerPrefs),
                     )
                 }
             }
@@ -581,6 +584,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
 
 @Composable
 private fun PickerSearchResults(state: WatchPartyPickerViewModel.PickerState, onOpen: (SectionItem) -> Unit) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     when {
         state.results.isNotEmpty() -> LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -599,6 +603,7 @@ private fun PickerSearchResults(state: WatchPartyPickerViewModel.PickerState, on
                     type = item.type,
                     userState = item.userState,
                     onClick = { onOpen(item) },
+                    hideArtwork = WatchPartySpoilers.of(item).hidesPoster(spoilerPrefs),
                     modifier = Modifier.fillMaxWidth(),
                     width = androidx.compose.ui.unit.Dp.Unspecified,
                 )
