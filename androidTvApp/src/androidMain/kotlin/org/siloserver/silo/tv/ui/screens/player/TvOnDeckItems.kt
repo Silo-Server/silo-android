@@ -1,6 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.player
 
 import org.siloserver.silo.model.section.ResolvedSection
+import org.siloserver.silo.tv.ui.util.visibleOnTv
 
 /** One On Deck card on the Up Next overlay (tvOS `nextUpCarouselItems` parity). */
 data class TvOnDeckItem(
@@ -17,10 +18,11 @@ data class TvOnDeckItem(
 /**
  * The phone's On Deck projection: home continue-watching pools minus the
  * current item and its series, deduped, capped at 12, and only items with
- * 16:9 art.
+ * 16:9 art. Items TV hides (see visibleOnTv) are dropped first, as on TV Home.
  */
 internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: String?): List<TvOnDeckItem> {
     return this
+        .visibleOnTv()
         .filter { it.sectionType in setOf("continue_watching", "in_progress", "next_up") }
         .flatMap { it.items }
         .filter { item ->
