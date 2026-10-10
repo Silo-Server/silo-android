@@ -3,6 +3,7 @@ package org.siloserver.silo.android.ui.screens.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.android.auth.SignOutTeardown
 import org.siloserver.silo.common.settings.CardPresentationSource
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.CardPresentationUiState
@@ -18,6 +19,7 @@ import org.siloserver.silo.common.player.AudiobookSettingsStore
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.domain.settings.ProfileSettingsController
 import org.siloserver.silo.model.auth.User
+import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.effectiveDefault
 import org.siloserver.silo.model.download.labelFor
@@ -29,6 +31,7 @@ import org.siloserver.silo.model.settings.CardPresentation
 import org.siloserver.silo.model.settings.CardPresentationPreset
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.NotificationsRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -59,6 +62,10 @@ data class SettingsUiState(
     // Account
     val user: User? = null,
     val serverUrl: String = "",
+    // The account card shows the active profile's name and avatar, and the
+    // Server row the server's display name, as the Apple apps do.
+    val activeProfile: Profile? = null,
+    val serverName: String = "",
     val isLoadingUser: Boolean = false,
     val loggedOut: Boolean = false,
 
@@ -82,10 +89,17 @@ data class SettingsUiState(
     val autoSkipCredits: Boolean = false,
     val pictureInPictureEnabled: Boolean = true,
     val dolbyVisionEnabled: Boolean = true,
-    val dvProfile7HDR10Fallback: Boolean = true,
+    val dvProfile7HDR10Fallback: Boolean = false,
     val subtitleMatchesDevice: Boolean = false,
     val showAudiobooks: Boolean = false,
     val subtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
+        org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
+    /**
+     * What playback draws: [subtitleAppearance], or the device caption style
+     * while Use Device Settings is on. The preview shows this; the editors
+     * edit [subtitleAppearance].
+     */
+    val effectiveSubtitleAppearance: org.siloserver.silo.model.settings.SubtitleAppearance =
         org.siloserver.silo.model.settings.SubtitleAppearance.DEFAULT,
     /** False when the server is known to discard subtitle text opacity. */
     val subtitleTextOpacitySupported: Boolean = true,
@@ -93,6 +107,17 @@ data class SettingsUiState(
     // many seconds before the end to surface the card (0 = only at end).
     val autoPlayNext: Boolean = true,
     val nextUpPromptSeconds: Int = 30,
+    /**
+     * Keys this device holds its own value for. A profile-layered control
+     * whose key is absent shows "Use profile setting" as its choice.
+     */
+    val deviceOverrides: Set<String> = emptySet(),
+    /**
+     * Outcome of the last "Use Profile Settings", until the screen has told the
+     * user: true when the server confirmed every clear, false when it
+     * couldn't (offline, refused, or interrupted).
+     */
+    val playbackOverridesReset: Boolean? = null,
     // Seconds to skip back on resume (0 = off); consecutive auto-advances
     // before the "Still watching?" prompt (0 = off).
     val resumeRewindSeconds: Int = 7,
@@ -136,16 +161,16 @@ data class SettingsUiState(
 class SettingsViewModel(
     private val authRepository: AuthRepository,
     private val playerSettingsStore: PlayerSettingsStore,
-    private val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore,
-    private val overlayPrefsStore: OverlayPrefsStore,
     private val activeProfileStore: ActiveProfileStore,
     private val notificationsRepository: NotificationsRepository,
     private val profileSettings: ProfileSettingsController,
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
     private val episodeSpoilerStore: EpisodeSpoilerStore,
+    private val signOutTeardown: SignOutTeardown,
     audiobookSettingsStore: AudiobookSettingsStore,
     private val downloadsRepository: DownloadsRepository? = null,
+    private val serverRegistry: ServerRegistry? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -163,6 +188,7 @@ class SettingsViewModel(
 
     init {
         loadUserInfo()
+        observeAccountCard()
         observePlayerSettings()
         observePlaybackBehaviorSettings()
         observeNotifications()
@@ -170,6 +196,17 @@ class SettingsViewModel(
         observeEpisodeSpoilers()
         // Opening Settings is a refresh edge for the seek-interval support probe.
         seekIntervals.refresh()
+    }
+
+    private fun observeAccountCard() {
+        activeProfileStore.activeProfile.onEach { profile ->
+            _uiState.update { it.copy(activeProfile = profile) }
+        }.launchIn(viewModelScope)
+        serverRegistry?.activeEntry?.onEach { entry ->
+            _uiState.update { it.copy(serverName = entry?.displayName.orEmpty()) }
+        }?.launchIn(viewModelScope)
+        // Cached after the first fetch, so this is cheap on every later visit.
+        viewModelScope.launch { activeProfileStore.refresh() }
     }
 
     private fun loadUserInfo() {
@@ -289,9 +326,16 @@ class SettingsViewModel(
         playerSettingsStore.subtitleAppearanceFlow.onEach { appearance ->
             _uiState.update { it.copy(subtitleAppearance = appearance) }
         }.launchIn(viewModelScope)
+        playerSettingsStore.effectiveSubtitleAppearanceFlow.onEach { appearance ->
+            _uiState.update { it.copy(effectiveSubtitleAppearance = appearance) }
+        }.launchIn(viewModelScope)
         playerSettingsStore.subtitleTextOpacitySupportedFlow.onEach { supported ->
             _uiState.update { it.copy(subtitleTextOpacitySupported = supported) }
-        }.launchIn(viewModelScope)    }
+        }.launchIn(viewModelScope)
+        playerSettingsStore.deviceOverrideKeysFlow.onEach { keys ->
+            _uiState.update { it.copy(deviceOverrides = keys) }
+        }.launchIn(viewModelScope)
+    }
 
     fun setDownloadsWifiOnly(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setDownloadsWifiOnly(value) }
@@ -485,17 +529,9 @@ class SettingsViewModel(
 
     fun logout() {
         viewModelScope.launch {
-            // Push any in-flight settings before tearing down the session.
-            playerSettingsStore.flushPendingDeviceSettings()
-            authRepository.logout()
-            // Drop per-profile cached prefs so the next user doesn't see
-            // stale rows flash before the fresh fetch lands.
-            libraryPlaybackPrefsStore.clear()
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
-            episodeSpoilerStore.clear()
+            // Pushes in-flight settings, then drops per-profile cached prefs so
+            // the next user doesn't see stale rows flash before the fresh fetch.
+            signOutTeardown.signOut()
             _uiState.update { it.copy(loggedOut = true) }
         }
     }
@@ -569,8 +605,21 @@ class SettingsViewModel(
         }
     }
 
+    /** "Use Profile Settings": clears every setting this device holds its own value for. */
     fun resetPlaybackOverrides() {
-        viewModelScope.launch { playerSettingsStore.resetAllDeviceSettings() }
+        viewModelScope.launch {
+            val landed = playerSettingsStore.resetAllDeviceSettings()
+            _uiState.update { it.copy(playbackOverridesReset = landed) }
+        }
+    }
+
+    fun onPlaybackOverridesResetShown() {
+        _uiState.update { it.copy(playbackOverridesReset = null) }
+    }
+
+    /** Goes back to the profile's value for one setting's control on this device. */
+    fun useProfileSetting(key: String) {
+        viewModelScope.launch { playerSettingsStore.resetDeviceSetting(key) }
     }
 
     /** Lifecycle hook — call from ON_STOP so debounced writes survive. */

@@ -661,36 +661,6 @@
       "notes": "Profile scope because the reader is a household parent deciding what a child may watch, and they browse on their own profile. Default false: the advisory is extra chrome most viewers do not want, and only the profiles that ask for it should carry it. This setting only controls whether the badge is shown: turning it on or off never changes what a profile is allowed to watch. Restricting a profile by advisory age is a separate access field, the profile's max_advisory_age, which a household manager sets on the profile itself. Coverage is partial by nature: the provider that supplies the advisory is rate limited per day, so on a large library some titles carry one and others do not."
     },
     {
-      "key": "catalog.hide_unwatched_episode_images",
-      "introduced_in": 16,
-      "persistence": "remote",
-      "allowed_scopes": ["profile"],
-      "resolution_order": ["profile", "default"],
-      "value_schema": { "type": "boolean" },
-      "default_value": false,
-      "platforms": ["web", "ios", "tvos", "macos", "android", "android_tv"],
-      "category": "catalog",
-      "label": "Blur unwatched episode images",
-      "description": "Blur an episode's thumbnail until you start watching it, so the image does not give away the story.",
-      "recommended_control": "switch",
-      "notes": "Clients apply this; the server never changes catalog responses, so cached catalog data stays shared across profiles. An episode counts as unwatched while it is neither played nor in progress (user_data.played is false and it has no saved position). Covers episode stills wherever a client shows one for a specific episode: season episode lists, other-episodes rows, Next Up and Continue Watching cards, and the next-episode screen in the player. Series and season artwork is not affected. Profile scope so the choice follows the viewer across devices; default false because most viewers expect to see episode stills."
-    },
-    {
-      "key": "catalog.hide_unwatched_episode_overviews",
-      "introduced_in": 16,
-      "persistence": "remote",
-      "allowed_scopes": ["profile"],
-      "resolution_order": ["profile", "default"],
-      "value_schema": { "type": "boolean" },
-      "default_value": false,
-      "platforms": ["web", "ios", "tvos", "macos", "android", "android_tv"],
-      "category": "catalog",
-      "label": "Hide unwatched episode descriptions",
-      "description": "Hide an episode's description until you start watching it.",
-      "recommended_control": "switch",
-      "notes": "Clients apply this with the same unwatched rule as catalog.hide_unwatched_episode_images: neither played nor in progress. Covers episode overviews in episode lists, on episode detail, and on the next-episode screen in the player. Series and season overviews are not affected. Separate from the image setting because some viewers want to hide only one of the two."
-    },
-    {
       "key": "player.hdr_enabled",
       "introduced_in": 1,
       "persistence": "remote",
@@ -1481,6 +1451,21 @@
       "description": "When you add a title that is not in the library to your watchlist, also request it.",
       "recommended_control": "switch",
       "notes": "Profile scope because each household member decides whether their own watchlist adds become requests. It applies only while the server-wide watchlist_requests request setting is on and the profile may request at all; a client shows it only then (GET /api/v2/requests/status reports the effective value as watchlist_requests). Request limits, approval and routing apply exactly as for the Request button. Turning it off never cancels an existing request."
+    },
+    {
+      "key": "ui.title_art",
+      "introduced_in": 16,
+      "persistence": "remote",
+      "allowed_scopes": ["profile", "profile_device"],
+      "resolution_order": ["profile", "profile_device", "default"],
+      "value_schema": { "type": "boolean" },
+      "default_value": true,
+      "platforms": ["web", "ios", "tvos", "macos", "android", "android_tv"],
+      "category": "appearance",
+      "label": "Show title art",
+      "description": "Use a title's logo artwork as its name on detail pages when one is available. When off, the name is always shown as text.",
+      "recommended_control": "switch",
+      "notes": "The profile scope deliberately resolves before profile_device: a profile value is the profile's \"apply to all devices\" choice and wins on every device, while with no profile value each device follows its own profile_device value. Clients show a second \"Apply to all devices\" switch whose state is the effective source being profile. Turning it on writes the current value at profile scope; while on, the main switch writes profile scope. Turning it off writes the current value at profile_device for the device doing it and then clears the profile value, so that device keeps its look and every other device returns to its own value or the default. Device values written earlier are kept while the profile value is set and apply again once it is cleared. Covers every surface that names a title with its logo (detail heroes, TV marquees); a client that turns it off also has no reason to prefetch logos."
     }
   ]
 }

@@ -55,27 +55,89 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontFamily
+import org.siloserver.silo.android.R
+import org.siloserver.silo.model.auth.DeviceCodeFormat
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.navigation.LocalBottomChromeInset
+import org.siloserver.silo.android.ui.screens.auth.tvSignInLine
 import org.siloserver.silo.common.pairing.CompanionPairingApproval
 import org.siloserver.silo.common.pairing.CompanionPairingServer
 import org.siloserver.silo.common.pairing.CompanionPairingStatus
 import org.siloserver.silo.common.pairing.CompanionPairingTarget
 
+/**
+ * App-wide host for the nearby-TV offer (iOS shows its card app-wide too).
+ * Shown only where the user is signed in and not in the middle of playback;
+ * [enabled] is decided by the navigation host.
+ */
+@Composable
+fun CompanionPairingHost(
+    enabled: Boolean,
+    viewModel: CompanionPairingViewModel = org.koin.compose.viewmodel.koinViewModel(),
+) {
+    LaunchedEffect(enabled) { viewModel.setActive(enabled) }
+    val offers by viewModel.offers.collectAsState()
+    val status by viewModel.status.collectAsState()
+    val approval by viewModel.pendingApproval.collectAsState()
+    val serverChoices by viewModel.serverChoices.collectAsState()
+    var presented by remember { mutableStateOf<CompanionOffer?>(null) }
+    LaunchedEffect(offers, status, enabled) {
+        // A route that hides the offer hides it mid-pairing too; the view
+        // model cancels that pairing (setActive).
+        if (!enabled) {
+            presented = null
+            return@LaunchedEffect
+        }
+        if (status !is CompanionPairingStatus.Idle) return@LaunchedEffect
+        val current = presented
+        presented = if (current == null) {
+            offers.firstOrNull()
+        } else {
+            // Android NSD can resolve the same TV again with a new listener
+            // port after its screen restarts. Keep the visible card, but pair
+            // with the freshest endpoint.
+            offers.firstOrNull { it.target.deviceId == current.target.deviceId } ?: offers.firstOrNull()
+        }
+    }
+    CompanionPairingBottomOverlay(
+        target = presented?.target,
+        signInServerName = presented?.signInServer?.displayName,
+        status = status,
+        approval = approval,
+        serverChoices = serverChoices,
+        onPair = { presented?.let(viewModel::pair) },
+        onServersSelected = viewModel::continueWithServers,
+        onApprove = viewModel::approveMatchCode,
+        onDecline = viewModel::cancelMatchCode,
+        onDismiss = {
+            // Every close hides this TV's session, or the card would come
+            // straight back once the status returns to Idle.
+            val offer = presented
+            if (offer != null) viewModel.dismiss(offer.target) else viewModel.dismissPairing()
+            presented = null
+        },
+    )
+}
+
 /** Bottom-anchored companion setup card matching the iOS presentation. */
 @Composable
 fun CompanionPairingBottomOverlay(
     target: CompanionPairingTarget?,
+    signInServerName: String? = null,
     status: CompanionPairingStatus,
     approval: CompanionPairingApproval?,
     serverChoices: List<CompanionPairingServer>?,
-    onPair: (CompanionPairingTarget) -> Unit,
+    onPair: () -> Unit,
     onServersSelected: (Set<String>) -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
@@ -127,10 +189,11 @@ fun CompanionPairingBottomOverlay(
             retainedTarget?.let { rememberedTarget ->
                 PairingCard(
                     target = rememberedTarget,
+                    signInServerName = signInServerName,
                     status = status,
                     approval = approval,
                     serverChoices = serverChoices,
-                    onPair = { onPair(rememberedTarget) },
+                    onPair = onPair,
                     onServersSelected = onServersSelected,
                     onApprove = onApprove,
                     onDecline = onDecline,
@@ -144,6 +207,7 @@ fun CompanionPairingBottomOverlay(
 @Composable
 private fun PairingCard(
     target: CompanionPairingTarget,
+    signInServerName: String?,
     status: CompanionPairingStatus,
     approval: CompanionPairingApproval?,
     serverChoices: List<CompanionPairingServer>?,
@@ -158,6 +222,11 @@ private fun PairingCard(
         WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
     )
 
+    // A signed-out TV (`st=login`) is being signed in, not set up; the
+    // progress and result copy says so.
+    val signIn = signInServerName != null
+    val paneTitle = stringResource(R.string.companion_pane_title)
+
     Card(
         modifier = Modifier
             .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
@@ -170,7 +239,7 @@ private fun PairingCard(
             .widthIn(max = 640.dp)
             .fillMaxWidth()
             .animateContentSize()
-            .semantics { paneTitle = "TV setup" },
+            .semantics { this.paneTitle = paneTitle },
         shape = RoundedCornerShape(30.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 24.dp),
@@ -207,27 +276,40 @@ private fun PairingCard(
                 )
                 status is CompanionPairingStatus.Idle -> DiscoveryStep(
                     target = target,
+                    signInServerName = signInServerName,
                     onPair = onPair,
                     onDismiss = onDismiss,
                 )
                 status is CompanionPairingStatus.Completed -> TerminalStep(
                     successful = true,
-                    title = status.serverNames.takeIf { it.isNotEmpty() }
-                        ?.joinToString(prefix = "Set up ")
-                        ?: "TV setup complete",
-                    message = "${status.targetName} is ready.",
-                    primaryLabel = "Done",
+                    title = if (signIn) {
+                        stringResource(R.string.companion_signin_done_title, status.targetName)
+                    } else {
+                        status.serverNames.takeIf { it.isNotEmpty() }
+                            ?.let { stringResource(R.string.companion_setup_done_title, it.joinToString()) }
+                            ?: stringResource(R.string.companion_setup_done_title_generic)
+                    },
+                    message = if (signIn) {
+                        stringResource(R.string.companion_signin_done_body, signInServerName.orEmpty())
+                    } else {
+                        stringResource(R.string.companion_setup_done_body, status.targetName)
+                    },
+                    primaryLabel = stringResource(R.string.companion_done),
                     onPrimary = onDismiss,
                 )
                 status is CompanionPairingStatus.Failed -> TerminalStep(
                     successful = false,
-                    title = "TV setup needs attention",
+                    title = if (signIn) {
+                        stringResource(R.string.companion_signin_failed_title)
+                    } else {
+                        stringResource(R.string.companion_setup_failed_title)
+                    },
                     message = status.message,
-                    primaryLabel = "Try Again",
+                    primaryLabel = stringResource(R.string.companion_try_again),
                     onPrimary = onPair,
                     onSecondary = onDismiss,
                 )
-                else -> ProgressStep(status = status, onCancel = onDismiss)
+                else -> ProgressStep(status = status, signIn = signIn, onCancel = onDismiss)
             }
         }
     }
@@ -240,7 +322,10 @@ private fun ServerPicker(
     onContinue: (Set<String>) -> Unit,
     onCancel: () -> Unit,
 ) {
-    var selectedIds by remember(servers) { mutableStateOf(emptySet<String>()) }
+    // The phone's active server is preselected (the usual answer).
+    var selectedIds by remember(servers) {
+        mutableStateOf(servers.filter { it.isActive }.map { it.id }.toSet())
+    }
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -255,9 +340,9 @@ private fun ServerPicker(
                 modifier = Modifier.size(40.dp),
             )
             Column(modifier = Modifier.padding(start = 12.dp)) {
-                Text("Choose servers", style = MaterialTheme.typography.titleLarge)
+                Text(stringResource(R.string.companion_choose_servers_title), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    text = "Sign $targetName in to…",
+                    text = stringResource(R.string.companion_choose_servers_body, targetName),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -317,10 +402,10 @@ private fun ServerPicker(
                 .height(48.dp)
                 .padding(top = 6.dp),
         ) {
-            Text("Continue", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.companion_continue), style = MaterialTheme.typography.titleMedium)
         }
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text("Cancel")
+            Text(stringResource(R.string.companion_cancel))
         }
     }
 }
@@ -345,9 +430,13 @@ internal fun companionServerAddressLabel(url: String): String? {
 @Composable
 private fun DiscoveryStep(
     target: CompanionPairingTarget,
+    signInServerName: String?,
     onPair: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // A signed-out TV wants one server this phone holds: "Sign in <TV>?".
+    // A first-run TV gets the setup offer and the server chooser.
+    val signIn = signInServerName != null
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -358,19 +447,33 @@ private fun DiscoveryStep(
             modifier = Modifier.size(72.dp),
         )
         Text(
-            text = "Set Up ${target.name}",
+            text = if (signIn) {
+                stringResource(R.string.companion_offer_signin_title, target.name, signInServerName.orEmpty())
+            } else {
+                stringResource(R.string.companion_offer_setup_title, target.name)
+            },
             style = MaterialTheme.typography.headlineSmall,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "Sign ${target.name} in to your servers from this phone.",
+            text = if (signInServerName != null) {
+                stringResource(R.string.companion_offer_signin_body, target.name)
+            } else {
+                stringResource(R.string.companion_offer_setup_body, target.name)
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        PrimaryAction(label = "Set Up", onClick = onPair, modifier = Modifier.padding(top = 14.dp))
+        PrimaryAction(
+            label = stringResource(
+                if (signIn) R.string.companion_offer_signin_action else R.string.companion_offer_setup_action,
+            ),
+            onClick = onPair,
+            modifier = Modifier.padding(top = 14.dp),
+        )
         TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-            Text("Not Now")
+            Text(stringResource(R.string.companion_offer_not_now))
         }
     }
 }
@@ -385,48 +488,91 @@ private fun MatchConfirmation(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // People compare the TV's sign-in code, the one it shows on screen;
+        // the match words are checked in code and never shown.
         Text(
-            text = "Make sure ${approval.targetName} shows",
+            text = stringResource(R.string.companion_confirm_check, approval.targetName),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        val spoken = DeviceCodeFormat.spoken(approval.userCode)
+        Text(
+            text = DeviceCodeFormat.display(approval.userCode),
+            style = MaterialTheme.typography.headlineLarge.copy(fontFamily = FontFamily.Monospace),
+            letterSpacing = 4.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = spoken },
+        )
+        // TV apps released before user codes show only the match words.
+        // Remove this line together with the web /activate card's
+        // "Older TV apps show ..." line.
+        approval.serverMatchCode.trim().takeIf { it.isNotEmpty() }?.let { words ->
+            Text(
+                text = stringResource(R.string.companion_confirm_older_tv, words.uppercase()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        // The same content model as "Sign in a TV", the web /activate card
+        // and the iPhone app: which server and account, what approving
+        // grants, and the warning.
+        Text(
+            text = companionSignInLine(approval),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Text(
+            text = stringResource(R.string.sign_in_tv_profiles_note),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = approval.serverMatchCode.uppercase(),
-            style = MaterialTheme.typography.headlineLarge,
-            letterSpacing = 8.sp,
-            textAlign = TextAlign.Center,
-        )
-        Text(
-            text = "for ${approval.serverName}",
+            text = stringResource(R.string.sign_in_tv_warning),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
         )
         PrimaryAction(
-            label = "Yes, this matches",
+            label = stringResource(R.string.companion_confirm_yes),
             onClick = onApprove,
             modifier = Modifier.padding(top = 14.dp),
         )
         TextButton(onClick = onDecline, modifier = Modifier.fillMaxWidth()) {
-            Text("Doesn't match")
+            Text(stringResource(R.string.companion_confirm_no))
         }
     }
 }
 
+/** The same line as the code-entry approval ([tvSignInLine]). */
 @Composable
-private fun ProgressStep(status: CompanionPairingStatus, onCancel: () -> Unit) {
+private fun companionSignInLine(approval: CompanionPairingApproval): String =
+    tvSignInLine(approval.serverName, approval.serverHost, approval.accountName) ?: approval.serverName
+
+@Composable
+private fun ProgressStep(status: CompanionPairingStatus, signIn: Boolean, onCancel: () -> Unit) {
+    val working = stringResource(
+        if (signIn) R.string.companion_signin_progress_title else R.string.companion_setup_progress_title,
+    )
+    val connecting = stringResource(R.string.companion_connecting)
     val (title, message) = when (status) {
-        is CompanionPairingStatus.Connecting -> "Connecting…" to status.targetName
-        is CompanionPairingStatus.PickServers -> "Connecting…" to status.targetName
-        is CompanionPairingStatus.PushingServer ->
-            "Setting up…" to "Continue on ${status.targetName} — allow this phone to set it up."
+        is CompanionPairingStatus.Connecting -> connecting to status.targetName
+        is CompanionPairingStatus.PickServers -> connecting to status.targetName
+        is CompanionPairingStatus.PushingServer -> working to if (signIn) {
+            stringResource(R.string.companion_signin_progress_allow, status.targetName)
+        } else {
+            stringResource(R.string.companion_setup_progress_allow, status.targetName)
+        }
         is CompanionPairingStatus.AwaitingMatchConfirmation ->
-            "Setting up…" to "Waiting for the match code."
+            working to stringResource(R.string.companion_progress_waiting_code, status.approval.targetName)
         is CompanionPairingStatus.Approving ->
-            "Setting up…" to "Approving ${status.serverName} on ${status.targetName}."
+            working to stringResource(R.string.companion_progress_approving, status.serverName, status.targetName)
         is CompanionPairingStatus.SignedIn ->
-            "Setting up…" to "${status.serverName} signed in."
-        else -> "Setting up…" to "Please wait."
+            working to stringResource(R.string.companion_progress_signed_in, status.serverName)
+        else -> working to stringResource(R.string.companion_progress_wait)
     }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -447,7 +593,7 @@ private fun ProgressStep(status: CompanionPairingStatus, onCancel: () -> Unit) {
             strokeWidth = 3.dp,
         )
         TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text("Cancel")
+            Text(stringResource(R.string.companion_cancel))
         }
     }
 }
@@ -482,7 +628,7 @@ private fun TerminalStep(
         PrimaryAction(label = primaryLabel, onClick = onPrimary, modifier = Modifier.padding(top = 8.dp))
         onSecondary?.let { secondary ->
             TextButton(onClick = secondary, modifier = Modifier.fillMaxWidth()) {
-                Text("Close")
+                Text(stringResource(R.string.companion_close))
             }
         }
     }

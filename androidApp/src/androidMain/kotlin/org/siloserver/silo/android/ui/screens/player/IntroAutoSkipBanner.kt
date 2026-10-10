@@ -190,3 +190,9 @@ private fun IntroPromptPill(
         }
     }
 }
+
+/** Manual recap/credits action uses the intro pill's existing visual treatment. */
+@Composable
+fun MarkerSkipPill(label: String, onClick: () -> Unit) {
+    IntroPromptPill(label = label, icon = Icons.Filled.SkipNext, progress = 0f, onClick = onClick)
+}

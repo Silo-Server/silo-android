@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.libraries
 
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -11,7 +12,10 @@ import org.siloserver.silo.tv.ui.components.TvCatalogEmptyState
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
 import org.siloserver.silo.tv.ui.screens.library.TvLibraryDetailScreen
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 
 @Composable
 fun TvLibrariesScreen(
@@ -26,11 +30,19 @@ fun TvLibrariesScreen(
     // route to the user-collection detail rather than the library one (#69).
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit = {},
+    /** Plays a shuffle the library page started, bound to that library. */
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit,
     viewModel: TvLibrariesViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.load() }
     val selectedLibrary = state.libraries.firstOrNull { it.id == state.selectedLibraryId }
         ?: state.libraries.firstOrNull()
+    // A library hidden or shown on another device, picked up on foreground.
+    val hiddenLibrariesRevision by viewModel.hiddenLibrariesRevision.collectAsState()
+    LaunchedEffect(viewModel, hiddenLibrariesRevision) {
+        viewModel.onHiddenLibrariesRevision(hiddenLibrariesRevision)
+    }
 
     when {
         state.isLoading && state.libraries.isEmpty() -> TvLoadingScreen(
@@ -65,6 +77,7 @@ fun TvLibrariesScreen(
                         }
                     },
                     onInitialContentFocus = onInitialContentFocus,
+                    onShuffleStarted = { shuffle -> onPlayShuffle(shuffle, selectedLibrary.id) },
                 )
             }
         }

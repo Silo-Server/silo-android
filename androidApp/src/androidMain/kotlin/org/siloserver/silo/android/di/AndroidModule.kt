@@ -110,6 +110,21 @@ val androidModule = module {
     // passes on cold start.
     single<SharedPreferences> { createSecureSharedPrefs(androidContext()) }
 
+    // External sign-in (OIDC): the one native flow the phone may have in
+    // flight. Its own scope, so redeeming a code outlives the activity that
+    // received the redirect.
+    single<org.siloserver.silo.android.auth.PendingNativeSignInStore> {
+        org.siloserver.silo.android.auth.SharedPrefsPendingNativeSignInStore(get())
+    }
+    single {
+        org.siloserver.silo.android.auth.NativeSignInCoordinator(
+            store = get(),
+            completer = org.siloserver.silo.android.auth.RepositoryNativeSignInCompleter(get(), get(), get()),
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO),
+            accountChoices = org.siloserver.silo.android.auth.SharedPrefsAccountChoiceStore(get()),
+        )
+    }
+
     // Multi-server registry. Loaded synchronously in init so MainActivity's
     // `runBlocking { resolveStartDestination() }` reads consistent state.
     single<ServerRegistry> { AndroidServerRegistry(get(), get()) }
@@ -187,6 +202,20 @@ val androidModule = module {
     // every collaborator that reports client identity (headers, playback
     // context, diagnostics) resolves this rather than deriving its own answer.
     single { SiloClientBuildIdentity(BuildConfig.BUILD_NUMBER, BuildConfig.RELEASE_CHANNEL) }
+    // Settings → Experimental → Watch Party: on by default only in debug builds.
+    single {
+        org.siloserver.silo.common.watchparty.WatchPartyExperiment(
+            prefs = androidContext().getSharedPreferences(
+                org.siloserver.silo.common.watchparty.WatchPartyExperiment.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+            defaultEnabled = BuildConfig.DEBUG,
+            onDisabled = { get<org.siloserver.silo.watchtogether.RoomSession>().depart() },
+        )
+    }
+    single<org.siloserver.silo.model.feature.WatchPartyExposure> {
+        get<org.siloserver.silo.common.watchparty.WatchPartyExperiment>()
+    }
     single<org.siloserver.silo.network.DeviceMetadataProvider> {
         AndroidDeviceMetadataProvider(
             androidContext(),
@@ -197,13 +226,30 @@ val androidModule = module {
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }
     single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get()) }
-    single<CompanionDeviceLoginApprover> { RepositoryCompanionDeviceLoginApprover(get(), get()) }
+    single<CompanionDeviceLoginApprover> {
+        val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
+        // The nearby approval card names the account approving signs the TV in as.
+        RepositoryCompanionDeviceLoginApprover(get(), get(), accountNameOf = { scope -> accountNameOn(authRepository, scope) })
+    }
     single<CompanionPairingTransportFactory> {
         CompanionPairingTransportFactory { target ->
             TlsPskPairingClientTransport.connect(target.host, target.port)
         }
     }
-    single { CompanionPairingCoordinator(get(), get(), get()) }
+    single {
+        CompanionPairingCoordinator(
+            serverStore = get(),
+            deviceLoginApprover = get(),
+            transportFactory = get(),
+            // serverIdentity + endpoints in pushServer, and st=login matching.
+            identitySource = org.siloserver.silo.common.pairing.RegistryCompanionServerIdentitySource(
+                registry = get(),
+                identities = get(),
+                identityApi = get(),
+                identityTransitions = get(),
+            ),
+        )
+    }
     single<SiloCastLastTargetStore> { SharedPrefsSiloCastLastTargetStore(androidContext()) }
     single {
         SiloCastController(
@@ -211,6 +257,7 @@ val androidModule = module {
             serverRegistry = get(),
             tokenManager = get(),
             deviceLoginApi = get(),
+            catalogRepository = get(),
             lastTargetStore = get(),
             deviceNameProvider = {
                 android.os.Build.MODEL?.trim()?.ifBlank { null } ?: "Android Phone"
@@ -352,6 +399,18 @@ val androidModule = module {
             profileRepository = get(),
         )
     }
+    worker {
+        org.siloserver.silo.common.downloads.OfflineSubtitleRefreshWorker(
+            appContext = androidContext(),
+            params = get(),
+            metadataStore = get(),
+            storage = get(),
+            httpClient = get(),
+            authorities = get(),
+            transitions = get(),
+            gate = get(),
+        )
+    }
     // Kept for consistency, but DEAD AT RUNTIME: Koin's WorkManager factory
     // returns null on WM 2.10 + Koin 4.1.0, so AppWorkerFactory does the real
     // injection (see AppWorkerFactory). Update both if SyncWorker's deps change.
@@ -387,6 +446,7 @@ val androidModule = module {
             castPlaybackPreparer = get(),
             seekIntervalStore = get(),
             activeProfileStore = get(),
+            shuffleFeatureStore = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
@@ -396,13 +456,13 @@ val androidModule = module {
             get(), get(), get(),
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             get(),
-            get<org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore>(),
+            get<org.siloserver.silo.common.settings.BrowsePrefsStore>(),
         )
     }
     viewModel { RecommendationsViewModel(get()) }
     viewModel { SearchViewModel(get()) }
     single {
-        org.siloserver.silo.android.ui.screens.browse.BrowsePrefsStore(
+        org.siloserver.silo.common.settings.BrowsePrefsStore(
             context = get(),
             serverRegistry = get(),
         )
@@ -442,9 +502,12 @@ val androidModule = module {
     viewModel { HistoryViewModel(get(), get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
-    viewModel { RequestsViewModel(get()) }
+    viewModel { RequestsViewModel(get(), get()) }
     viewModel { RequestSearchViewModel(get()) }
     viewModel { MyRequestsViewModel(get()) }
+    viewModel { params ->
+        org.siloserver.silo.viewmodel.RequestApprovalsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
+    }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {
@@ -461,28 +524,55 @@ val androidModule = module {
             repository = get(),
             mediaType = args.first,
             tmdbId = args.second,
+            featureStore = get(),
         )
+    }
+    single {
+        org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    single {
+        org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get(), get())
     }
     viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
     viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get()) }
-    viewModel { ServerSetupViewModel(get(), get()) }
-    viewModel { LoginViewModel(get()) }
+    viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get(), get()) }
+    viewModel {
+        val tokens = get<org.siloserver.silo.network.TokenManager>()
+        ServerSetupViewModel(get(), get(), hasSession = { !tokens.getAccessToken().isNullOrBlank() })
+    }
+    viewModel { LoginViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel {
+        org.siloserver.silo.android.ui.screens.settings.SignInSettingsViewModel(get(), get(), get(), get(), get())
+    }
     viewModel { SetupViewModel(get()) }
     viewModel { SignupViewModel(get()) }
     viewModel { InviteClaimViewModel(get(), get()) }
     viewModel { OnboardingTourViewModel(get(), get(), get(), get(), get()) }
-    viewModel { ProfileSelectionViewModel(get(), get()) }
+    viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
     viewModel { ServerListViewModel(get(), get(), get()) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
+        val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
         DevicePairingViewModel(
             repository = get(),
             initialToken = args.first,
             initialCode = args.second,
+            // "Sign in a TV" approves on a chosen saved server (active one
+            // preselected) through that server's own account scope.
+            servers = org.siloserver.silo.viewmodel.RegistryDeviceApprovalServers(
+                registry = get(),
+                tokenManager = get(),
+                identityTransitions = get(),
+                // Each server's account, read through that server's own scope
+                // (renewing its access token first when it is expiring).
+                accountNameOf = { scope -> accountNameOn(authRepository, scope) },
+            ),
+            initialServerId = params.getOrNull<String>(),
+            // A link named the server: approve there without switching.
+            lockServer = params.getOrNull<Boolean>() ?: false,
         )
     }
 
@@ -532,13 +622,71 @@ val androidModule = module {
             savedStateHandle = get(),
         )
     }
-    viewModel { org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherEntryViewModel(get()) }
-    viewModel { org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel(get()) }
+    // Watch Party (phone). The shared ViewModels own the state; the handoff
+    // carries invitations and detail-page items to the hub in memory.
+    single { org.siloserver.silo.android.ui.screens.watchparty.WatchPartyHandoff() }
+    viewModel {
+        val registry = get<org.siloserver.silo.network.ServerRegistry>()
+        org.siloserver.silo.viewmodel.WatchPartyHubViewModel(
+            repository = get(),
+            roomSession = get(),
+            availability = get(),
+            recents = get(),
+            isCurrentServer = { url ->
+                org.siloserver.silo.common.watchparty.watchPartyServerMatches(
+                    linkServerUrl = url,
+                    activeServerUrl = registry.activeEntry.value?.url,
+                )
+            },
+        )
+    }
     viewModel { params ->
-        org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherLobbyViewModel(
+        org.siloserver.silo.viewmodel.WatchPartyLobbyViewModel(
             roomId = params.get(),
             repository = get(),
             roomSession = get(),
+            availability = get(),
         )
     }
+    viewModel {
+        val catalog = get<org.siloserver.silo.repository.CatalogRepository>()
+        org.siloserver.silo.viewmodel.WatchPartyPickerViewModel(
+            repository = get(),
+            availability = get(),
+            search = { query ->
+                when (val result = catalog.browse(query = query, limit = 30)) {
+                    is org.siloserver.silo.network.ApiResult.Success ->
+                        org.siloserver.silo.network.ApiResult.Success(result.data.items)
+                    is org.siloserver.silo.network.ApiResult.Error -> result
+                    is org.siloserver.silo.network.ApiResult.NetworkError -> result
+                }
+            },
+        )
+    }
+    viewModel {
+        org.siloserver.silo.android.ui.screens.watchparty.WatchPartyDetailViewModel(
+            repository = get(),
+            handoff = get(),
+        )
+    }
+}
+
+/**
+ * The account signed in on [scope]'s server, read with that server's own
+ * credentials (renewing its access token first when it is expiring). Null
+ * when it can't be read; throws when the provider couldn't re-check the
+ * session, so a card that can say so does.
+ */
+private suspend fun accountNameOn(
+    authRepository: org.siloserver.silo.repository.AuthRepository,
+    scope: org.siloserver.silo.network.AuthScopeSnapshot,
+): String? = when (val me = authRepository.getCurrentUser(scope)) {
+    is org.siloserver.silo.network.ApiResult.Success -> me.data.username
+    is org.siloserver.silo.network.ApiResult.NetworkError ->
+        if (org.siloserver.silo.network.SiloAuthUnavailableException.isProviderUnavailable(me.exception)) {
+            throw me.exception
+        } else {
+            null
+        }
+    is org.siloserver.silo.network.ApiResult.Error -> null
 }

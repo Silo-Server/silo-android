@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.snapshotFlow
+import org.siloserver.silo.common.requests.rememberRequestRouter
 import org.siloserver.silo.tv.ui.focus.TvReturnTarget
 import org.siloserver.silo.tv.ui.focus.TvReturnTargetSaver
 import org.siloserver.silo.tv.ui.focus.TvReturnRelocation
@@ -86,7 +87,6 @@ import org.siloserver.silo.tv.ui.components.TvFilterChip
 import org.siloserver.silo.tv.ui.components.TvSectionHeader
 import org.siloserver.silo.tv.ui.components.tvOutlinedTextFieldColors
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestCard
-import org.siloserver.silo.tv.ui.screens.requests.canOpenLibraryDetail
 import org.siloserver.silo.tv.ui.screens.requests.filterTvRequestResults
 import org.siloserver.silo.tv.ui.shell.TvTopMenuLayout
 import org.siloserver.silo.tv.ui.theme.ElevatedSurface
@@ -94,6 +94,8 @@ import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.viewmodel.RequestSearchViewModel
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 import org.koin.compose.viewmodel.koinViewModel
 
 internal fun shouldFocusSearchField(
@@ -116,6 +118,7 @@ fun TvSearchScreen(
     requestSearchViewModel: RequestSearchViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshForAccessChange() }
     val requestState by requestSearchViewModel.uiState.collectAsState()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
@@ -802,6 +805,7 @@ private fun TvRequestSearchSection(
     onOpenRequestDetail: (mediaType: String, tmdbId: Int) -> Unit,
     onOpenLibraryItem: (contentId: String) -> Unit,
 ) {
+    val router = rememberRequestRouter(org.koin.compose.koinInject(), onOpenLibraryItem, onOpenRequestDetail)
     if (!requestsEnabled || query.trim().length < 2 || !shouldShow) return
 
     // This section is a full-span footer item inside TvCatalogGrid, so the
@@ -846,11 +850,7 @@ private fun TvRequestSearchSection(
                             result = item,
                             onClick = {
                                 onItemClicked(item, index)
-                                if (item.canOpenLibraryDetail()) {
-                                    onOpenLibraryItem(item.libraryContentId.orEmpty())
-                                } else {
-                                    onOpenRequestDetail(item.mediaType, item.tmdbId)
-                                }
+                                router.openResult(item)
                             },
                             // The restore target wins the slot when it is this
                             // card: index zero can be both, and two requesters

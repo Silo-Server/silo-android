@@ -5,6 +5,7 @@ import org.siloserver.silo.network.PlaybackRealtimeEvent
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
 
 /**
  * Parsed `markers_updated` server event: the server recomputed marker ranges
@@ -12,13 +13,16 @@ import kotlinx.serialization.json.doubleOrNull
  * the fresh values so skip-intro, the credits-based auto-advance, and the
  * timeline marker bands use them. All four marker kinds are surfaced; only
  * [intro] drives auto-skip and only [credits] drives auto-advance. A `null`
- * range means "no such marker" (the server clears it).
+ * range means "no such marker" (the server clears it). [fileId] names the file
+ * the ranges belong to; the server also sends a file's update to sessions that
+ * requested it but are playing another file, so players must check it.
  */
 data class PlaybackMarkersUpdate(
     val intro: TimeRange?,
     val credits: TimeRange?,
     val recap: TimeRange?,
     val preview: TimeRange?,
+    val fileId: Int? = null,
 )
 
 /**
@@ -41,6 +45,7 @@ fun decodeMarkersUpdate(payload: JsonObject): PlaybackMarkersUpdate {
         credits = range("credits"),
         recap = range("recap"),
         preview = range("preview"),
+        fileId = (payload["file_id"] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull?.takeIf { it > 0 },
     )
 }
 

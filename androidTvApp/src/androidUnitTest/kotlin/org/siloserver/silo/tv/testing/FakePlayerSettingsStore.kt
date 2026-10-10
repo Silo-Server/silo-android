@@ -142,7 +142,7 @@ internal class FakePlayerSettingsStore : PlayerSettingsStore {
     override suspend fun refreshFromServer() {}
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) {}
     override suspend fun resetDeviceSetting(key: String) {}
-    override suspend fun resetAllDeviceSettings() {}
+    override suspend fun resetAllDeviceSettings(): Boolean = true
     var importSucceeds = true
     override suspend fun importLegacyDeviceSettings(
         authority: org.siloserver.silo.network.AuthScopeSnapshot,

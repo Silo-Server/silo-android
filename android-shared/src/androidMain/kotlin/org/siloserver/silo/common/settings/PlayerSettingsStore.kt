@@ -75,6 +75,13 @@ interface PlayerSettingsStore {
     val letterboxExpansionFlow: Flow<String>
         get() = flowOf(LetterboxExpansion.Default)
 
+    /**
+     * See [org.siloserver.silo.model.settings.PlaybackSettingsKeys.TrueBlackBars].
+     * Defaulted for the same reason as [letterboxExpansionFlow].
+     */
+    val trueBlackBarsFlow: Flow<Boolean>
+        get() = flowOf(false)
+
     /** Per-profile preference for restricting downloads to unmetered (Wi-Fi)
      *  networks. Default true. Consumed by [DownloadEnqueuer] at enqueue
      *  time to set the WorkManager NetworkType constraint. */
@@ -126,6 +133,14 @@ interface PlayerSettingsStore {
     val subtitleMatchesDeviceFlow: Flow<Boolean>
     /** iOS AppNavPreferences.showAudiobooks parity — audiobook surfaces are opt-in. */
     val showAudiobooksFlow: Flow<Boolean>
+
+    /**
+     * The server-stored keys this device holds its own value for, in the
+     * active profile. A control whose key is absent follows the profile (or
+     * the default); see [PlaybackSettingsKeys.hasDeviceOverride][org.siloserver.silo.model.settings.PlaybackSettingsKeys.hasDeviceOverride].
+     */
+    val deviceOverrideKeysFlow: Flow<Set<String>>
+        get() = flowOf(emptySet())
     /** [subtitleAppearanceFlow] with the match-device override applied. */
     val effectiveSubtitleAppearanceFlow: Flow<org.siloserver.silo.model.settings.SubtitleAppearance>
 
@@ -157,6 +172,7 @@ interface PlayerSettingsStore {
     suspend fun setPictureInPictureEnabled(value: Boolean)
     suspend fun setForceHdrPassthrough(value: Boolean)
     suspend fun setLetterboxExpansion(value: String) = Unit
+    suspend fun setTrueBlackBars(value: Boolean) = Unit
     suspend fun setDownloadsWifiOnly(value: Boolean)
     suspend fun setKeepWatchedDownloads(value: Boolean)
     suspend fun setDefaultDownloadQuality(value: String)
@@ -239,20 +255,23 @@ interface PlayerSettingsStore {
     suspend fun setShowAudiobooks(enabled: Boolean)
 
     /**
-     * Clear the server-side device override for one key. Local DataStore
-     * is repopulated from the cascade (user → global → default) on the
-     * next refresh.
+     * Go back to the profile's value for one setting on this device: clears
+     * the device-scoped value for [key] (and any key its control writes with
+     * it), then refreshes so the profile's value, or the default, applies.
      */
     suspend fun resetDeviceSetting(key: String)
 
     /**
-     * Return this device's playback settings to their defaults — the user's
-     * "Reset playback settings" action. Clears every server-side device
-     * override (as iOS `PlayerSettings.resetAllDeviceSettings()` does) and the
-     * local-only playback keys that have no server row to clear, since those
-     * would otherwise survive an action whose whole promise is the defaults.
+     * The user's "Use Profile Settings" action. Clears every server-side
+     * device override (as iOS `PlayerSettings.resetAllDeviceSettings()` does)
+     * and resets the local-only playback keys, which have no profile value, to
+     * their defaults.
+     *
+     * Returns true when every clear reached the server and the server's
+     * answer no longer resolves any setting from this device; false when some
+     * are still queued (offline) or the server could not confirm it.
      */
-    suspend fun resetAllDeviceSettings()
+    suspend fun resetAllDeviceSettings(): Boolean
 
     /**
      * Cancel any in-flight debounce, drain pending writes, and suspend

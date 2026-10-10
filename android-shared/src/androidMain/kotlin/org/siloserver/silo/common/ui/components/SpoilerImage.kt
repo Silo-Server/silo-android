@@ -39,6 +39,7 @@ fun SpoilerImage(
     onSuccess: (() -> Unit)? = null,
     onError: (() -> Unit)? = null,
     colorFilter: ColorFilter? = null,
+    defaultArtwork: DefaultArtworkKind? = null,
 ) {
     if (!hidden) {
         ThumbhashImage(
@@ -52,6 +53,7 @@ fun SpoilerImage(
             onSuccess = onSuccess,
             onError = onError,
             colorFilter = colorFilter,
+            defaultArtwork = defaultArtwork,
         )
         return
     }
@@ -63,6 +65,7 @@ fun SpoilerImage(
             modifier = modifier,
             contentScale = contentScale,
             colorFilter = colorFilter,
+            defaultArtwork = defaultArtwork,
         )
         return
     }
@@ -79,6 +82,7 @@ fun SpoilerImage(
             onSuccess = onSuccess,
             onError = onError,
             colorFilter = colorFilter,
+            defaultArtwork = defaultArtwork,
             modifier = Modifier
                 .fillMaxSize()
                 // Scaled past the edges so the blur samples real pixels

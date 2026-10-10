@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,8 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -55,6 +55,8 @@ import org.siloserver.silo.android.ui.util.formatCardDate
 import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import kotlin.math.abs
@@ -207,6 +209,8 @@ private fun EpisodeRailCard(
                 hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
                 contentDescription = episode.title,
                 modifier = Modifier.fillMaxSize(),
+                // The play button covers the centre, so no mark under it.
+                defaultArtwork = if (onPlayClick != null) DefaultArtworkKind.GlowOnly else DefaultArtworkKind.Tv,
             )
 
             if (episode.userData?.played == true) {
@@ -331,11 +335,11 @@ private fun EpisodeRailCard(
                 }
             }
         }
-        DropdownMenu(
+        SiloDropdownMenu(
             expanded = menuExpanded,
             onDismissRequest = { menuExpanded = false },
         ) {
-            DropdownMenuItem(
+            SiloDropdownMenuItem(
                 text = { Text(if (isWatched) "Mark as Unwatched" else "Mark as Watched") },
                 onClick = {
                     menuExpanded = false

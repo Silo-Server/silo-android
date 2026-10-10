@@ -1,5 +1,8 @@
 package org.siloserver.silo.android.ui.screens.detail
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,15 +37,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.SettingsRemote
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -66,7 +65,11 @@ import org.siloserver.silo.android.ui.theme.SiloNavPillBorder
 import org.siloserver.silo.android.cast.SiloCastController
 import org.siloserver.silo.android.ui.screens.cast.SiloCastTargetPickerSheet
 import org.siloserver.silo.android.ui.screens.downloads.openDownloadTargetInExternalApp
-import org.siloserver.silo.android.ui.screens.watchtogether.SuggestToRoomViewModel
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartyDetailActions
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
+import org.siloserver.silo.model.watchtogether.RoomSnapshot
+import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadOpenTarget
@@ -80,11 +83,11 @@ import org.siloserver.silo.model.ebook.isInAppReadableEbookVersion
 import org.siloserver.silo.model.ebook.isSupportedEbookVersion
 import org.siloserver.silo.model.download.DownloadQuality
 import org.siloserver.silo.model.download.labelFor
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.network.ServerRegistry
 import org.koin.compose.koinInject
-import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.metadata.MetadataAiOnView
@@ -127,14 +130,22 @@ fun ItemDetailScreen(
     onSeriesDetailReplace: (String, Int, String?) -> Unit,
     onAudiobookPlayClick: (contentId: String, fileId: Int?, fromStart: Boolean, startPosition: Double?) -> Unit = { _, _, _, _ -> },
     onBookReadClick: (String, Int?) -> Unit = { _, _ -> },
-    onWatchTogether: (String, Int?) -> Unit = { _, _ -> },
+    /** The route's library, staged with a Watch Party item. */
+    libraryId: Int? = null,
+    /** Host a Watch Party with this item (opens the hub). */
+    onWatchParty: (WatchPartyItem) -> Unit = {},
+    /** The host switched a playing party to an item from this page. */
+    onPartySelected: (RoomSnapshot) -> Unit = {},
     // Auto-presents the cast remote after "Play on device" launches, mirroring
     // Apple's playOnTV: the connect/handoff handshake renders in the remote.
     onOpenCastRemote: () -> Unit = {},
+    // Plays the first pick of a shuffle started from the series overflow menu.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: ItemDetailViewModel,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
     val seriesRedirect = remember(state.detail) { state.detail?.let(::seriesDetailRedirect) }
     var seriesRedirectFailed by rememberSaveable(state.detail?.contentId) { mutableStateOf(false) }
     LaunchedEffect(seriesRedirect) {
@@ -155,18 +166,20 @@ fun ItemDetailScreen(
     LaunchedEffect(state.selectedEpisodeContentId) {
         if (state.selectedEpisodeContentId != null) viewModel.ensureSelectedEpisodeDetailLoaded()
     }
-    val suggestViewModel: SuggestToRoomViewModel = koinViewModel()
-    val suggestRoom by suggestViewModel.room.collectAsState()
-    val suggestState by suggestViewModel.uiState.collectAsState()
     val context = LocalContext.current
-    LaunchedEffect(suggestState.notice, suggestState.error) {
-        val message = suggestState.notice ?: suggestState.error
-        if (message != null) {
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            suggestViewModel.consumeNotice()
-            suggestViewModel.clearError()
-        }
+    // D5: while this device is in a Watch Party, detail Play, extras, and
+    // audiobook play ask to leave the party first (the player is shared).
+    val soloGuard = rememberWatchPartySoloGuard()
+    val guardedPlay: (String, Int?, Int?, Int?, Double?) -> Unit = { contentId, fileId, audio, subtitle, resume ->
+        soloGuard.run { onPlayClick(contentId, fileId, audio, subtitle, resume) }
     }
+    val guardedAudiobookPlay: (String, Int?, Boolean, Double?) -> Unit = { contentId, fileId, fromStart, start ->
+        soloGuard.run { onAudiobookPlayClick(contentId, fileId, fromStart, start) }
+    }
+    val (partyActions, partyDialogs) = rememberWatchPartyDetailActions(
+        onHost = onWatchParty,
+        onSelectedWhilePlaying = onPartySelected,
+    )
 
     // Refresh on return (e.g. backing out of the player): the ViewModel loads
     // once in init, so without this the Play button keeps the resume label
@@ -175,6 +188,10 @@ fun ItemDetailScreen(
     // effect-local "skip the first" flag would reset and swallow exactly the
     // resume we care about. refreshOnReturn() no-ops while detail is still
     // null, which covers the initial load.
+    // The same quiet refresh when the server reports an access change, so
+    // availability, versions, and quality limits follow the new policy; a
+    // title the viewer can no longer see shows the unavailable state.
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
@@ -204,6 +221,11 @@ fun ItemDetailScreen(
             } else {
                 hapticView.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
             }
+        }
+    }
+    LaunchedEffect(Unit) {
+        viewModel.downloadFailureMessages.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -450,18 +472,18 @@ fun ItemDetailScreen(
                             // Resume/Play: no fileId — the player VM resolves
                             // the part from the stored whole-book position.
                             onPlayClick = {
-                                onAudiobookPlayClick(detail.contentId, null, false, null)
+                                guardedAudiobookPlay(detail.contentId, null, false, null)
                             },
                             onPlayFromStartClick = {
-                                onAudiobookPlayClick(detail.contentId, null, true, null)
+                                guardedAudiobookPlay(detail.contentId, null, true, null)
                             },
                             // Parts play from a whole-book (global) offset.
                             onPlayFromPositionClick = { startPosition ->
-                                onAudiobookPlayClick(detail.contentId, null, false, startPosition)
+                                guardedAudiobookPlay(detail.contentId, null, false, startPosition)
                             },
                             // Chapters jump to their global start offset.
                             onChapterClick = { chapter ->
-                                onAudiobookPlayClick(detail.contentId, null, false, chapter.startSeconds)
+                                guardedAudiobookPlay(detail.contentId, null, false, chapter.startSeconds)
                             },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
@@ -684,7 +706,7 @@ fun ItemDetailScreen(
                             },
                             onPlayClick = {
                                 selectedEpisode?.let {
-                                    onPlayClick(
+                                    guardedPlay(
                                         it.contentId,
                                         selectedEpisodeFileId,
                                         state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
@@ -692,8 +714,8 @@ fun ItemDetailScreen(
                                         selectedEpisodeResume,
                                     )
                                 } ?: nextEpisode?.let {
-                                    onPlayClick(it.contentId, null, null, null, playbackResumePosition(it))
-                                } ?: onPlayClick(
+                                    guardedPlay(it.contentId, null, null, null, playbackResumePosition(it))
+                                } ?: guardedPlay(
                                     detail.contentId,
                                     null,
                                     null,
@@ -704,7 +726,7 @@ fun ItemDetailScreen(
                             onPlayFromBeginning = activeSeriesResume?.let {
                                 {
                                     selectedEpisode?.let { ep ->
-                                        onPlayClick(
+                                        guardedPlay(
                                             ep.contentId,
                                             selectedEpisodeFileId,
                                             state.selectedAudioIndex.takeIf { state.hasExplicitAudioSelection },
@@ -712,26 +734,53 @@ fun ItemDetailScreen(
                                             0.0,
                                         )
                                     } ?: nextEpisode?.let { ep ->
-                                        onPlayClick(ep.contentId, null, null, null, 0.0)
-                                    } ?: onPlayClick(detail.contentId, null, null, null, 0.0)
+                                        guardedPlay(ep.contentId, null, null, null, 0.0)
+                                    } ?: guardedPlay(detail.contentId, null, null, null, 0.0)
                                 }
                             },
                             resumeStoppedAtLabel = activeSeriesResume?.let { formatResumeStoppedAt(it) },
                             onEpisodePlayClick = { contentId, resumePositionSeconds ->
-                                onPlayClick(contentId, null, null, null, resumePositionSeconds)
+                                guardedPlay(contentId, null, null, null, resumePositionSeconds)
                             },
                             onEpisodeDetailClick = { viewModel.selectSeriesEpisode(it) },
                             onEpisodeWatchedChange = { episodeContentId, watched ->
                                 viewModel.setEpisodeWatched(episodeContentId, watched)
                             },
                             onSeasonSelected = { viewModel.selectSeason(it) },
+                            onSeasonWatchedChange = { season, watched ->
+                                viewModel.setSeasonWatched(season, watched)
+                            },
+                            onShuffleSeries = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES)
+                            ) {
+                                {
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SERIES,
+                                        detail.contentId,
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            onShuffleSeason = if (
+                                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON)
+                            ) {
+                                { season ->
+                                    shuffleLauncher.start(
+                                        org.siloserver.silo.model.shuffle.ShuffleScopeKind.SEASON,
+                                        season.contentId,
+                                    )
+                                }
+                            } else {
+                                null
+                            },
                             onFavoriteClick = { viewModel.toggleFavorite() },
                             onWatchlistClick = { viewModel.toggleWatchlist() },
                             onToggleWatched = { viewModel.toggleWatched() },
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
                             onPlayExtra = { extra ->
-                                onPlayClick(extra.contentId, extra.fileId, null, null, 0.0)
+                                guardedPlay(extra.contentId, extra.fileId, null, null, 0.0)
                             },
                             onSeriesDownloadClick = {
                                 // Series/season batches are Original-only server-side
@@ -775,28 +824,23 @@ fun ItemDetailScreen(
                                     }
                                 }
                             },
-                            onSuggestToRoom = if (
-                                CLIENT_WATCH_TOGETHER_SURFACE_ENABLED &&
-                                suggestRoom != null &&
-                                nextEpisode != null
-                            ) {
-                                {
-                                    suggestViewModel.suggest(
-                                        contentId = nextEpisode.contentId,
+                            // A series enters a party through the episode Play
+                            // would start: the selected one, else next up.
+                            partyAction = partyActions.actionFor(
+                                (selectedEpisode ?: nextEpisode)?.let { episode ->
+                                    WatchPartyItem(
+                                        contentId = episode.contentId,
                                         contentType = "episode",
-                                        title = nextEpisode.title ?: detail.title,
-                                        subtitle = detail.title,
-                                        posterUrl = nextEpisode.stillUrl ?: detail.posterUrl,
+                                        title = episode.title?.takeIf { it.isNotBlank() }
+                                            ?: "Episode ${episode.episodeNumber}",
+                                        subtitle = "${detail.title} · S${episode.seasonNumber}·E${episode.episodeNumber}",
+                                        posterUrl = detail.posterUrl,
+                                        fileId = selectedEpisodeVersion?.fileId
+                                            ?.takeIf { episode.contentId == selectedEpisode?.contentId },
+                                        libraryId = libraryId,
                                     )
-                                }
-                            } else {
-                                null
-                            },
-                            onWatchTogether = if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
-                                { onWatchTogether(nextEpisode?.contentId ?: detail.contentId, null) }
-                            } else {
-                                null
-                            },
+                                },
+                            ),
                         )
                     }
 
@@ -818,6 +862,7 @@ fun ItemDetailScreen(
                                     state.episodeSeriesPosterThumbhash
                                 },
                                 reserveSpace = true,
+                                isResolved = seasonPosterUrl != null || state.episodeSeriesPosterResolved,
                             )
                         } else {
                             DetailPortraitArtwork(
@@ -866,7 +911,7 @@ fun ItemDetailScreen(
                             selectedAudioIndex = explicitAudioIndex,
                             selectedSubtitleIndex = explicitSubtitleIndex,
                             onPlayClick = {
-                                onPlayClick(
+                                guardedPlay(
                                     detail.contentId,
                                     playbackFileId,
                                     explicitAudioIndex,
@@ -876,7 +921,7 @@ fun ItemDetailScreen(
                             },
                             onPlayFromBeginning = movieResume?.let {
                                 {
-                                    onPlayClick(
+                                    guardedPlay(
                                         detail.contentId,
                                         playbackFileId,
                                         explicitAudioIndex,
@@ -901,7 +946,7 @@ fun ItemDetailScreen(
                             onPersonClick = onPersonClick,
                             onItemDetailClick = onItemDetailClick,
                             onPlayExtra = { extra ->
-                                onPlayClick(extra.contentId, extra.fileId, null, null, 0.0)
+                                guardedPlay(extra.contentId, extra.fileId, null, null, 0.0)
                             },
                             onSeriesClick = seriesId?.let { resolvedSeriesId ->
                                 { onSeriesClick(resolvedSeriesId) }
@@ -942,26 +987,29 @@ fun ItemDetailScreen(
                                     )
                                 }
                             },
-                            onSuggestToRoom = if (
-                                CLIENT_WATCH_TOGETHER_SURFACE_ENABLED && suggestRoom != null
-                            ) {
-                                {
-                                    suggestViewModel.suggest(
+                            // Movies and episodes stage the displayed edition.
+                            partyAction = partyActions.actionFor(
+                                detail.takeIf { it.type == "movie" || it.type == "episode" }?.let {
+                                    WatchPartyItem(
                                         contentId = detail.contentId,
                                         contentType = detail.type,
                                         title = detail.title,
-                                        subtitle = detail.seriesTitle?.takeIf { value -> value.isNotBlank() },
-                                        posterUrl = detail.posterUrl,
+                                        subtitle = if (detail.type == "episode") {
+                                            listOfNotNull(
+                                                detail.seriesTitle?.takeIf { value -> value.isNotBlank() },
+                                                detail.seasonNumber?.let { season ->
+                                                    detail.episodeNumber?.let { episode -> "S$season·E$episode" }
+                                                },
+                                            ).joinToString(" · ").ifBlank { null }
+                                        } else {
+                                            detail.year.takeIf { year -> year > 0 }?.toString()
+                                        },
+                                        posterUrl = portraitArtwork.url ?: detail.posterUrl,
+                                        fileId = selectedVersion?.fileId,
+                                        libraryId = libraryId,
                                     )
-                                }
-                            } else {
-                                null
-                            },
-                            onWatchTogether = if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
-                                { onWatchTogether(detail.contentId, explicitFileId) }
-                            } else {
-                                null
-                            },
+                                },
+                            ),
                         )
                     }
                 }
@@ -993,6 +1041,9 @@ fun ItemDetailScreen(
             )
         }
 
+        WatchPartySoloGuardDialog(soloGuard)
+        partyDialogs()
+
         if (showRemoteTargetPicker) {
             SiloCastTargetPickerSheet(
                 onDismiss = { showRemoteTargetPicker = false },
@@ -1001,177 +1052,85 @@ fun ItemDetailScreen(
         }
 
         pendingCancelDownloadAction?.let { confirmAction ->
-            AlertDialog(
-                onDismissRequest = { pendingCancelDownloadAction = null },
-                title = { Text("Cancel download?") },
-                text = { Text("The partially downloaded data will be discarded.") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            pendingCancelDownloadAction = null
-                            confirmAction()
-                        },
-                    ) {
-                        Text("Discard Download")
-                    }
+            SiloConfirmDialog(
+                title = "Cancel download?",
+                body = "The partially downloaded data will be discarded.",
+                confirmLabel = "Discard Download",
+                dismissLabel = "Keep Download",
+                onConfirm = {
+                    pendingCancelDownloadAction = null
+                    confirmAction()
                 },
-                dismissButton = {
-                    TextButton(onClick = { pendingCancelDownloadAction = null }) {
-                        Text("Keep Download")
-                    }
-                },
+                onDismiss = { pendingCancelDownloadAction = null },
             )
         }
 
         }
         }
 
-        // Pinned header. The strip fades in first so the controls gain a
-        // backing as the artwork leaves, then the title arrives once the hero
-        // is mostly gone — the two ranges and the smoothstep are iOS's.
-        val headerTitle = state.detail?.title.orEmpty()
-        val barAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderBarFadeFromDp,
-            HeaderBarFadeToDp,
-        )
-        val titleAlpha = detailHeaderProgress(
-            detailScroll.offsetDp,
-            HeaderTitleFadeFromDp,
-            HeaderTitleFadeToDp,
-        )
-        if (barAlpha > 0f) {
-            // Runs from the very top of the window, not from below the status
-            // bar: the page is edge to edge, so insetting the strip left the
-            // status-bar band uncovered above it.
-            val statusBarHeight = WindowInsets.statusBars
-                .asPaddingValues()
-                .calculateTopPadding()
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(statusBarHeight + DetailHeaderBarHeight)
-                    .graphicsLayer { alpha = barAlpha }
-                    .background(SiloPageBackground)
-                    .drawBehind {
-                        drawRect(
-                            color = Color.White.copy(alpha = 0.10f),
-                            topLeft = Offset(0f, size.height - 1f),
-                            size = Size(size.width, 1f),
-                        )
-                    },
-            )
-        }
-        if (titleAlpha > 0f && headerTitle.isNotBlank()) {
-            Text(
-                text = headerTitle,
-                color = Color.White,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .statusBarsPadding()
-                    .height(DetailHeaderBarHeight)
-                    .fillMaxWidth()
-                    // Clear of the back and remote controls on either side,
-                    // and centred on them: both sit in the same strip.
-                    .padding(horizontal = 72.dp)
-                    .wrapContentHeight(Alignment.CenterVertically)
-                    .graphicsLayer { alpha = titleAlpha },
-            )
-        }
-
-        // These two glyphs sit on hero artwork that can be any colour, so they
-        // keep a disc — the bottom-nav pill, made translucent. A dark disc
-        // holds a white glyph over a pale poster and still lets the artwork
-        // through, which the previous white-tinted wash could not.
-        IconButton(
-            onClick = onBackClick,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                // Same geometry as the Home header's actions: a 40dp target
-                // 16dp from the edge, sitting directly below the status bar,
-                // so the controls do not jump when moving between the two.
-                .padding(horizontal = 16.dp)
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(SiloOverlayPillSurface)
-                .border(1.dp, SiloNavPillBorder, CircleShape),
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                contentDescription = "Back",
-                tint = Color.White,
-            )
-        }
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp),
-        ) {
-            IconButton(
-                onClick = {
-                    if (siloCastState.hasActiveSession) {
-                        remoteMenuExpanded = true
-                    } else {
-                        showRemoteTargetPicker = true
-                    }
-                },
-                // Solid pill while a cast session is live, translucent at
-                // rest, so the fill still reports state.
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(
+        DetailTopChrome(
+            title = state.detail?.title.orEmpty(),
+            scroll = detailScroll,
+            onBackClick = onBackClick,
+            trailing = {
+                IconButton(
+                    onClick = {
                         if (siloCastState.hasActiveSession) {
-                            SiloNavPillSurface
+                            remoteMenuExpanded = true
                         } else {
-                            SiloOverlayPillSurface
+                            showRemoteTargetPicker = true
+                        }
+                    },
+                    // Solid pill while a cast session is live, translucent at
+                    // rest, so the fill still reports state.
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (siloCastState.hasActiveSession) {
+                                SiloNavPillSurface
+                            } else {
+                                SiloOverlayPillSurface
+                            },
+                        )
+                        .border(1.dp, SiloNavPillBorder, CircleShape),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.SettingsRemote,
+                        contentDescription = "Remote Control",
+                        tint = Color.White,
+                    )
+                }
+                SiloDropdownMenu(
+                    expanded = remoteMenuExpanded,
+                    onDismissRequest = { remoteMenuExpanded = false },
+                ) {
+                    SiloDropdownMenuItem(
+                        text = { Text("Remote Control") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            onOpenCastRemote()
                         },
                     )
-                    .border(1.dp, SiloNavPillBorder, CircleShape),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.SettingsRemote,
-                    contentDescription = "Remote Control",
-                    tint = Color.White,
-                )
-            }
-            DropdownMenu(
-                expanded = remoteMenuExpanded,
-                onDismissRequest = { remoteMenuExpanded = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Remote Control") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        onOpenCastRemote()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Choose TV") },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        showRemoteTargetPicker = true
-                    },
-                )
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = {
-                        Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
-                    },
-                    onClick = {
-                        remoteMenuExpanded = false
-                        siloCastController.disconnect()
-                    },
-                )
-            }
-        }
+                    SiloDropdownMenuItem(
+                        text = { Text("Choose TV") },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            showRemoteTargetPicker = true
+                        },
+                    )
+                    HorizontalDivider()
+                    SiloDropdownMenuItem(
+                        text = {
+                            Text("Turn Off Control Mode", color = MaterialTheme.colorScheme.error)
+                        },
+                        onClick = {
+                            remoteMenuExpanded = false
+                            siloCastController.disconnect()
+                        },
+                    )
+                }
+            },
+        )
     }
 }

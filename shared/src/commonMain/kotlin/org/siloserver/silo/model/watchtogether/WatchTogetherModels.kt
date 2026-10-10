@@ -125,10 +125,32 @@ object TransportActionSerializer : KSerializer<TransportAction> by EnumWireSeria
 // ---- Core payloads --------------------------------------------------------
 
 /**
+ * One connected member of a v2 snapshot (server `MemberSummary`). HTTP v2
+ * sends `user_id` as a string and the room socket sends it as a number; the
+ * lenient decoder reads both into [userId]. The readiness booleans are
+ * omitted when false, which means false only when the server advertises
+ * `watch_party_coordinator_v1`.
+ */
+@Serializable
+data class RoomMember(
+    @SerialName("user_id") val userId: String = "",
+    @SerialName("profile_id") val profileId: String = "",
+    @SerialName("display_name") val displayName: String = "",
+    @SerialName("is_host") val isHost: Boolean = false,
+    @SerialName("is_self") val isSelf: Boolean = false,
+    val connected: Boolean = false,
+    @SerialName("lobby_ready") val lobbyReady: Boolean = false,
+    @SerialName("is_ready") val isReady: Boolean = false,
+    @SerialName("is_buffering") val isBuffering: Boolean = false,
+    @SerialName("is_syncing") val isSyncing: Boolean = false,
+)
+
+/**
  * Universal room payload (server `Snapshot`). Several fields are per-recipient
  * (`self_*`, `invite_path` is host-only). `selection_revision` and
  * `generation` are Longs; `anchor_position_seconds` is a Double; timestamps are
- * RFC3339 strings.
+ * RFC3339 strings. [anchorPositionSeconds] is already projected to the time
+ * the server sent the snapshot; never add the time since [anchorUpdatedAt].
  */
 @Serializable
 data class RoomSnapshot(
@@ -154,7 +176,21 @@ data class RoomSnapshot(
     @SerialName("self_ignore_wait") val selfIgnoreWait: Boolean = false,
     @SerialName("attached_session_id") val attachedSessionId: String? = null,
     @SerialName("invite_path") val invitePath: String? = null,
-)
+    val members: List<RoomMember> = emptyList(),
+) {
+    /** This viewer's own member entry, when the server listed one. */
+    val selfMember: RoomMember? get() = members.firstOrNull { it.isSelf }
+
+    /**
+     * The room kept going without this viewer: its waiting deadline passed, or
+     * the room no longer waits for this viewer's stalls. The viewer must send
+     * `ready` once its media is playable again.
+     */
+    val selfCatchingUp: Boolean
+        get() = phase == RoomPhase.Playing &&
+            (playbackState == RoomPlaybackState.Playing || playbackState == RoomPlaybackState.Paused) &&
+            (selfIgnoreWait || selfMember?.isBuffering == true)
+}
 
 /** A content suggestion (vote-mode room). In WS broadcasts [votedByMe] is forced false. */
 @Serializable
@@ -193,10 +229,15 @@ data class TransportCommand(
 
 // ---- REST request models --------------------------------------------------
 
-/** POST /rooms. */
+/**
+ * POST /rooms. [roomId] is the caller-selected identity: the logical action
+ * keeps it so an explicit retry after an uncertain outcome replays the same
+ * room instead of creating a second one.
+ */
 @Serializable
 data class CreateRoomRequest(
-    @SerialName("selection_mode") val selectionMode: String? = null,
+    @SerialName("room_id") val roomId: String,
+    @SerialName("selection_mode") val selectionMode: String = RoomSelectionMode.HostPick.wire,
 )
 
 /** POST /join — one of [code]/[joinToken] required; token wins. */
@@ -206,12 +247,44 @@ data class JoinRoomRequest(
     @SerialName("join_token") val joinToken: String? = null,
 )
 
-/** PUT /rooms/{id}/selection (host-only). */
+/** PUT /rooms/{id}/selection and PUT /rooms/{id}/staged-selection (host-only). */
 @Serializable
 data class SetSelectionRequest(
     @SerialName("content_id") val contentId: String,
     @SerialName("file_id") val fileId: Int? = null,
     @SerialName("library_id") val libraryId: Int? = null,
+)
+
+/** PATCH /rooms/{id}/selection-mode (host-only, lobby only). */
+@Serializable
+data class SelectionModeRequest(
+    @SerialName("selection_mode") val selectionMode: String,
+)
+
+/** The playback refusals that may move the whole room to another source file. */
+enum class SourceFallbackReason(val wire: String) {
+    NoAlternateVersion("no_alternate_version"),
+    HdrTranscodeUnsupported("hdr_transcode_unsupported"),
+    SubtitleConversionUnsupported("subtitle_conversion_unsupported"),
+    TranscodingDisabled("transcoding_disabled");
+
+    companion object {
+        fun fromWire(w: String?): SourceFallbackReason? = entries.firstOrNull { it.wire == w }
+    }
+}
+
+/** POST /rooms/{id}/source-fallback, fenced by the failed file and selection revision. */
+@Serializable
+data class SourceFallbackRequest(
+    @SerialName("selection_revision") val selectionRevision: Long,
+    @SerialName("failed_file_id") val failedFileId: String,
+    val reason: String,
+)
+
+/** POST /rooms/{id}/member-state. */
+@Serializable
+data class MemberStateRequest(
+    @SerialName("content_ids") val contentIds: List<String>,
 )
 
 /** PATCH /rooms/{id}/policy (host-only). */
@@ -220,9 +293,13 @@ data class UpdatePolicyRequest(
     @SerialName("guest_control_policy") val guestControlPolicy: String,
 )
 
-/** POST /rooms/{id}/suggestions. */
+/**
+ * POST /rooms/{id}/suggestions. [suggestionId] is the caller-selected identity,
+ * kept by the logical action so an explicit retry replays the same suggestion.
+ */
 @Serializable
 data class AddSuggestionRequest(
+    @SerialName("suggestion_id") val suggestionId: String,
     @SerialName("content_id") val contentId: String,
     @SerialName("content_type") val contentType: String,
     val title: String,
@@ -246,10 +323,23 @@ data class RoomResponse(
     @SerialName("room_access_token") val roomAccessToken: String = "",
 )
 
-/** `{suggestions:[…]}` — all suggestion list/mutation responses. */
+/** One page of GET /rooms/{id}/suggestions, in creation order. */
 @Serializable
 data class SuggestionsResponse(
     @SerialName("items") val suggestions: List<Suggestion> = emptyList(),
+    val page: SuggestionPageInfo? = null,
+)
+
+@Serializable
+data class SuggestionPageInfo(
+    @SerialName("has_more") val hasMore: Boolean = false,
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+/** POST /rooms/{id}/suggestions receipt (HTTP 201). */
+@Serializable
+data class SuggestionReceipt(
+    @SerialName("suggestion_id") val suggestionId: String,
 )
 
 // ---- Client→server WS frames ----------------------------------------------
@@ -268,20 +358,36 @@ data class WsTransportRequest(
     @SerialName("is_paused") val isPaused: Boolean,
 )
 
+/**
+ * Periodic position report. While the room waits, [commandId] with
+ * [isReady] = true acknowledges that command exactly like a `ready` frame, so a
+ * lost acknowledgement heals on the next report.
+ */
 @Serializable
 data class WsStateReport(
     val type: String = "state_report",
     @SerialName("session_id") val sessionId: String,
     @SerialName("position_seconds") val positionSeconds: Double,
     @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("command_id") val commandId: String? = null,
+    @SerialName("is_ready") val isReady: Boolean? = null,
 )
 
+/** Readiness acknowledgement for the command named by [commandId]. */
 @Serializable
 data class WsReady(
     val type: String = "ready",
     @SerialName("session_id") val sessionId: String,
     @SerialName("position_seconds") val positionSeconds: Double,
     @SerialName("is_paused") val isPaused: Boolean,
+    @SerialName("command_id") val commandId: String? = null,
+)
+
+/** Advisory lobby "I'm ready"; distinct from playback readiness. */
+@Serializable
+data class WsLobbyReady(
+    val type: String = "lobby_ready",
+    val ready: Boolean,
 )
 
 @Serializable

@@ -155,6 +155,14 @@ class DownloadStorage(
     fun offlineSubtitleDirectory(serverId: String, profileId: String, fileId: Int): File? =
         containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), SUBTITLES_DIR)
 
+    /**
+     * Private directory for the artwork saved with one download. Separate from
+     * [offlineSubtitleDirectory], which the track capture clears on every run,
+     * and removed with the download by [delete].
+     */
+    fun offlineArtworkDirectory(serverId: String, profileId: String, fileId: Int): File? =
+        containedSafeChild(offlineAssetsRoot, serverId, profileId, fileId.toString(), ARTWORK_DIR)
+
     private val offlineAssetsRoot: File get() = File(baseDir, OFFLINE_ASSETS_DIR)
 
     /** Sum of bytes across every downloaded file under this storage. */
@@ -190,6 +198,7 @@ class DownloadStorage(
     private companion object {
         const val OFFLINE_ASSETS_DIR = "download-assets"
         const val SUBTITLES_DIR = "subtitles"
+        const val ARTWORK_DIR = "artwork"
     }
 }
 

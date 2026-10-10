@@ -1,0 +1,23 @@
+{
+  "full": {
+    "changes": {"result": "success", "outputs": {"schema": "1", "mode": "full", "unit_tests": "true", "lint": "true", "release_readiness": "true", "ffmpeg_aar": "false"}},
+    "unit-tests": {"result": "success"},
+    "lint": {"result": "success"},
+    "release-readiness": {"result": "success"},
+    "ffmpeg-aar": {"result": "skipped"}
+  },
+  "docs": {
+    "changes": {"result": "success", "outputs": {"schema": "1", "mode": "docs", "unit_tests": "false", "lint": "false", "release_readiness": "false", "ffmpeg_aar": "false"}},
+    "unit-tests": {"result": "skipped"},
+    "lint": {"result": "skipped"},
+    "release-readiness": {"result": "skipped"},
+    "ffmpeg-aar": {"result": "skipped"}
+  },
+  "ffmpeg": {
+    "changes": {"result": "success", "outputs": {"schema": "1", "mode": "ffmpeg", "unit_tests": "false", "lint": "false", "release_readiness": "false", "ffmpeg_aar": "true"}},
+    "unit-tests": {"result": "skipped"},
+    "lint": {"result": "skipped"},
+    "release-readiness": {"result": "skipped"},
+    "ffmpeg-aar": {"result": "success"}
+  }
+}

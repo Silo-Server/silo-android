@@ -29,7 +29,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -68,6 +67,8 @@ import androidx.tv.material3.Text
 import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
@@ -433,25 +434,15 @@ private fun TvDetailEpisodeCard(
                     },
                 ),
         ) {
-            if (!episode.stillUrl.isNullOrBlank()) {
-                SpoilerImage(
-                    url = episode.stillUrl,
-                    thumbhash = episode.stillThumbhash,
-                    hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
-                    contentDescription = episode.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.Movie,
-                    contentDescription = null,
-                    tint = SiloSecondaryText,
-                    modifier = Modifier
-                        .size(24.dp)
-                        .align(Alignment.Center),
-                )
-            }
+            SpoilerImage(
+                url = episode.stillUrl,
+                thumbhash = episode.stillThumbhash,
+                hidden = spoilers.hidesImage(unwatched, episode.stillIsEpisodeStill),
+                contentDescription = episode.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+                defaultArtwork = DefaultArtworkKind.Tv,
+            )
 
             if (episode.userData?.played == true) {
                 Box(

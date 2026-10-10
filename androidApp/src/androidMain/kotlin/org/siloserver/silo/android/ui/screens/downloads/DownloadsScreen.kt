@@ -1,5 +1,9 @@
 package org.siloserver.silo.android.ui.screens.downloads
 
+import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
+import org.siloserver.silo.android.ui.components.SiloDialogAction
+import org.siloserver.silo.android.ui.components.SiloDialog
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
 import org.siloserver.silo.android.ui.util.formatBytes
 import android.content.Context
 import androidx.lifecycle.Lifecycle
@@ -28,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.DownloadForOffline
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -284,60 +287,41 @@ fun DownloadsScreen(
     }
 
     pendingBulkDelete?.let { (ids, _) ->
-        AlertDialog(
-            onDismissRequest = { pendingBulkDelete = null },
-            title = { Text("Delete downloaded files?") },
-            text = {
-                Text(
-                    "This removes the downloaded cop${if (ids.size == 1) "y" else "ies"} from this device. " +
-                        "Nothing is deleted from the server library.",
-                )
+        SiloConfirmDialog(
+            title = "Delete downloaded files?",
+            body = "This removes the downloaded cop${if (ids.size == 1) "y" else "ies"} from this device. " +
+                "Nothing is deleted from the server library.",
+            confirmLabel = if (ids.size == 1) "Delete Download" else "Delete ${ids.size} Downloads",
+            onConfirm = {
+                viewModel.removeDownloadIds(ids)
+                pendingBulkDelete = null
+                exitSelectMode()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.removeDownloadIds(ids)
-                        pendingBulkDelete = null
-                        exitSelectMode()
-                    },
-                ) {
-                    Text(
-                        text = if (ids.size == 1) "Delete Download" else "Delete ${ids.size} Downloads",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingBulkDelete = null }) { Text("Cancel") }
-            },
+            onDismiss = { pendingBulkDelete = null },
         )
     }
 
     state.reclaimPlan?.let { plan ->
-        AlertDialog(
+        SiloDialog(
+            title = "Reclaim Watched",
+            message = if (plan.count == 0) {
+                "No watched downloads are ready to reclaim."
+            } else {
+                "Delete ${plan.count} watched download${if (plan.count == 1) "" else "s"} and free ${formatBytes(plan.totalBytes)}?"
+            },
             onDismissRequest = viewModel::clearReclaimPlan,
-            title = { Text("Reclaim Watched") },
-            text = {
-                Text(
-                    if (plan.count == 0) {
-                        "No watched downloads are ready to reclaim."
-                    } else {
-                        "Delete ${plan.count} watched download${if (plan.count == 1) "" else "s"} and free ${formatBytes(plan.totalBytes)}?"
-                    },
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = plan.count > 0 && !state.isReclaiming,
-                    onClick = viewModel::reclaimWatched,
-                ) {
-                    Text("Reclaim")
+            actions = buildList {
+                if (plan.count > 0) {
+                    add(
+                        SiloDialogAction(
+                            label = "Reclaim",
+                            onClick = viewModel::reclaimWatched,
+                            style = SiloDialogActionStyle.Destructive,
+                            enabled = !state.isReclaiming,
+                        ),
+                    )
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = viewModel::clearReclaimPlan) {
-                    Text(if (plan.count == 0) "Close" else "Cancel")
-                }
+                add(SiloDialogAction(if (plan.count == 0) "Close" else "Cancel", viewModel::clearReclaimPlan))
             },
         )
     }

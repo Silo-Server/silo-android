@@ -1,50 +1,36 @@
 package org.siloserver.silo.android.ui.screens.auth
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.ConfirmationNumber
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.components.aurora.AuroraEyebrow
-import org.siloserver.silo.android.ui.components.aurora.AuroraErrorLabel
-import org.siloserver.silo.android.ui.components.aurora.AuroraGhostButton
-import org.siloserver.silo.android.ui.components.aurora.AuroraPrimaryButton
-import org.siloserver.silo.android.ui.components.aurora.AuroraScreen
-import org.siloserver.silo.android.ui.components.aurora.AuroraScrim
-import org.siloserver.silo.android.ui.components.aurora.AuroraTextField
-import org.siloserver.silo.android.ui.components.aurora.AuroraVariant
-import org.siloserver.silo.android.ui.components.aurora.auroraGlass
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
+import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorHaptic
+import org.siloserver.silo.android.ui.components.marquee.MarqueeErrorText
+import org.siloserver.silo.android.ui.components.marquee.MarqueeFieldGroup
+import org.siloserver.silo.android.ui.components.marquee.MarqueeHeadline
+import org.siloserver.silo.android.ui.components.marquee.MarqueeIconButton
+import org.siloserver.silo.android.ui.components.marquee.MarqueeSeparator
+import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
+import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
+import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
 
 /**
- * Account registration. Mirrors silo-apple iOS phone `SignupView` (Aurora):
- * wordmark, "Create account" eyebrow + "Create your account", glass card with
- * Username / Email / Password / Invite code, cream "Create account" button, and
- * a "Back to sign in" ghost. (Android VM has no confirm-password field, so it
- * is omitted rather than adding VM state.)
+ * Account registration with an invite code, laid out like the other
+ * first-run screens: Username, Email, Password and Invite code as one grouped
+ * block and "Create account". Back returns to sign-in.
  */
 @Composable
 fun SignupScreen(
@@ -53,7 +39,6 @@ fun SignupScreen(
     viewModel: SignupViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    var showPassword by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.signupSuccess) {
         if (state.signupSuccess) {
@@ -61,88 +46,58 @@ fun SignupScreen(
             onNavigateToProfiles()
         }
     }
+    MarqueeErrorHaptic(state.error)
 
-    AuroraScreen(variant = AuroraVariant.SignIn, scrim = AuroraScrim.Soft) {
-        SiloLogo()
-
-        Spacer(Modifier.height(30.dp))
-        AuroraEyebrow(text = "Create account", centered = true)
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = "Create your account",
-            fontSize = 30.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFFF3EFE9),
-        )
-        Spacer(Modifier.height(24.dp))
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .auroraGlass(cornerRadius = 24.dp, emphasized = true)
-                .padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            AuroraTextField(
-                label = "Username",
+    MarqueeStage(
+        scrim = MarqueeScrimStyle.BottomDeep,
+        frostStart = 0.40f,
+        onBack = onNavigateToLogin,
+        blockBack = state.isLoading,
+        topBar = {
+            MarqueeIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back to sign in", onNavigateToLogin, enabled = !state.isLoading)
+        },
+    ) {
+        MarqueeHeadline(title = "Create your\naccount", lead = "You'll need an invite code from the server's admin.")
+        MarqueeFieldGroup(isError = state.error != null, modifier = Modifier.padding(top = 24.dp)) {
+            MarqueeTextField(
                 value = state.username,
                 onValueChange = viewModel::onUsernameChanged,
-                placeholder = "yourname",
-                imeAction = ImeAction.Next,
+                icon = Icons.Outlined.Person,
+                placeholder = "Username",
             )
-            AuroraTextField(
-                label = "Email",
+            MarqueeSeparator()
+            MarqueeTextField(
                 value = state.email,
                 onValueChange = viewModel::onEmailChanged,
-                placeholder = "you@example.com",
+                icon = Icons.Outlined.Email,
+                placeholder = "Email",
                 keyboardType = KeyboardType.Email,
-                imeAction = ImeAction.Next,
             )
-            AuroraTextField(
-                label = "Password",
+            MarqueeSeparator()
+            MarqueeTextField(
                 value = state.password,
                 onValueChange = viewModel::onPasswordChanged,
-                placeholder = "••••••",
-                keyboardType = KeyboardType.Password,
-                imeAction = ImeAction.Next,
-                visualTransformation = if (showPassword) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
-                trailing = {
-                    IconButton(onClick = { showPassword = !showPassword }) {
-                        Icon(
-                            imageVector = if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                            contentDescription = if (showPassword) "Hide password" else "Show password",
-                            tint = Color.White.copy(alpha = 0.62f),
-                        )
-                    }
-                },
+                icon = Icons.Outlined.Lock,
+                placeholder = "Password",
+                isSecure = true,
             )
-            AuroraTextField(
-                label = "Invite code",
+            MarqueeSeparator()
+            MarqueeTextField(
                 value = state.inviteCode,
                 onValueChange = viewModel::onInviteCodeChanged,
-                placeholder = "ABCD-1234",
+                icon = Icons.Outlined.ConfirmationNumber,
+                placeholder = "Invite code",
                 imeAction = ImeAction.Go,
                 onImeAction = viewModel::onSignupClick,
             )
-
-            state.error?.let { AuroraErrorLabel(it) }
-
-            AuroraPrimaryButton(
-                label = if (state.isLoading) "Creating…" else "Create account",
-                onClick = viewModel::onSignupClick,
-                isLoading = state.isLoading,
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            AuroraGhostButton(
-                label = "Back to sign in",
-                onClick = onNavigateToLogin,
-                fillMaxWidth = true,
-            )
         }
+        state.error?.let { MarqueeErrorText(it, Modifier.padding(top = 10.dp)) }
+        MarqueeButton(
+            text = if (state.isLoading) "Creating…" else "Create account",
+            onClick = viewModel::onSignupClick,
+            isLoading = state.isLoading,
+            enabled = !state.isLoading,
+            modifier = Modifier.padding(top = 14.dp),
+        )
     }
 }

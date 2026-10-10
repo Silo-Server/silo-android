@@ -35,6 +35,22 @@ import org.siloserver.silo.tv.ui.theme.tvPresetGridColumns
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
 
+/**
+ * A mixed library opens personal collections here too, so the shuffle scope
+ * follows the collection's source: a personal collection id means nothing to
+ * the library-collection namespace. A Movies- or Series-scoped view offers no
+ * shuffle, since a shuffle request carries no media type or library and would
+ * draw from the whole collection.
+ */
+internal fun collectionShuffleKind(
+    collectionSource: String,
+    mediaScope: String?,
+): org.siloserver.silo.model.shuffle.ShuffleScopeKind? = when {
+    mediaScope != null -> null
+    collectionSource == "user_collection" -> org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION
+    else -> org.siloserver.silo.model.shuffle.ShuffleScopeKind.LIBRARY_COLLECTION
+}
+
 /** Which overlay panel is open over the collection grid (mirrors Browse). */
 private enum class TvCollectionPanel { Sort, Filter }
 
@@ -44,14 +60,34 @@ fun TvLibraryCollectionDetailScreen(
     collectionId: String,
     title: String,
     libraryType: String,
+    collectionSource: String = "library_collection",
+    mediaScope: String? = null,
     onItemClick: (contentId: String) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the header.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvLibraryCollectionDetailViewModel = koinViewModel(
-        key = "library-collection-$libraryId-$collectionId",
-        parameters = { parametersOf(libraryId, collectionId, title) },
+        key = "library-collection-$libraryId-$collectionId-$libraryType-$collectionSource-${mediaScope.orEmpty()}",
+        parameters = { parametersOf(libraryId, collectionId, title, mediaScope, collectionSource) },
     ),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
+    val shuffleKind = collectionShuffleKind(collectionSource, mediaScope)
+    val onShuffle = if (
+        shuffleKind != null &&
+        state.items.isNotEmpty() &&
+        shuffleLauncher.supports(shuffleKind)
+    ) {
+        {
+            shuffleLauncher.start(shuffleKind, collectionId)
+        }
+    } else {
+        null
+    }
 
     BackHandler(onBack = onBack)
 
@@ -125,6 +161,7 @@ fun TvLibraryCollectionDetailScreen(
                     onSort = { openPanel = TvCollectionPanel.Sort },
                     onFilter = { openPanel = TvCollectionPanel.Filter },
                     onClearFilters = viewModel::clearFilters,
+                    onShuffle = onShuffle,
                 )
             },
             emptyState = {
@@ -174,6 +211,7 @@ private fun CollectionHeader(
     onSort: () -> Unit,
     onFilter: () -> Unit,
     onClearFilters: () -> Unit,
+    onShuffle: (() -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -195,6 +233,7 @@ private fun CollectionHeader(
                 onSort = onSort,
                 onFilter = onFilter,
                 onClearFilters = onClearFilters,
+                onShuffle = onShuffle,
             )
             Spacer(modifier = Modifier.weight(1f))
             itemCountLabel(state)?.let { label ->

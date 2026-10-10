@@ -23,6 +23,8 @@ class TvLibraryCollectionDetailViewModel(
     private val libraryId: Int,
     private val collectionId: String,
     val title: String,
+    private val mediaScope: String? = null,
+    private val collectionSource: String = "library_collection",
 ) : ViewModel() {
 
     data class UiState(
@@ -99,7 +101,7 @@ class TvLibraryCollectionDetailViewModel(
         viewModelScope.launch {
             val result = catalogRepository.getFilters(
                 includeTechnical = true,
-                source = "library_collection",
+                source = collectionSource,
                 collectionId = collectionId,
             )
             if (result is ApiResult.Success) {
@@ -177,6 +179,9 @@ class TvLibraryCollectionDetailViewModel(
                 collectionId,
                 continuation = cursor,
                 limit = PAGE_SIZE,
+                mediaType = mediaScope,
+                libraryId = libraryId.takeIf { mediaScope != null },
+                source = collectionSource,
                 sort = state.sort.ifBlank { null },
                 order = state.order,
                 queryGroups = facetGroups,

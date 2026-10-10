@@ -232,3 +232,8 @@ private fun TvIntroPromptPill(
         }
     }
 }
+
+@Composable
+fun TvMarkerSkipPill(label: String, onSelect: () -> Unit) {
+    TvIntroPromptPill(label = label, progress = 0f, onSelect = onSelect, autoFocus = false)
+}

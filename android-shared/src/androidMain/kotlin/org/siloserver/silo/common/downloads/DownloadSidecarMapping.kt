@@ -63,6 +63,9 @@ fun DownloadSidecar.toEntity(serverId: String, profileId: String): DownloadEntit
         effectiveQuality = record.effectiveQuality,
         revision = record.revision,
         offlineTracksJson = offlineTracks?.let { mappingJson.encodeToString(it) },
+        offlinePosterPath = offlinePosterPath,
+        offlineSeriesPosterPath = offlineSeriesPosterPath,
+        seriesPosterThumbhash = seriesPosterThumbhash,
     )
 
 fun DownloadEntity.toSidecar(): DownloadSidecar =
@@ -109,5 +112,8 @@ fun DownloadEntity.toSidecar(): DownloadSidecar =
         offlineTracks = offlineTracksJson?.let {
             runCatching { mappingJson.decodeFromString<OfflineTrackInfo>(it) }.getOrNull()
         },
+        offlinePosterPath = offlinePosterPath,
+        offlineSeriesPosterPath = offlineSeriesPosterPath,
+        seriesPosterThumbhash = seriesPosterThumbhash,
         updatedAtMs = updatedAtMs,
     )

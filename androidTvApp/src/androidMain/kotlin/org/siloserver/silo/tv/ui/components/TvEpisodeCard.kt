@@ -1,6 +1,8 @@
 package org.siloserver.silo.tv.ui.components
 
 import org.siloserver.silo.common.ui.components.SpoilerImage
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -70,6 +72,8 @@ fun TvEpisodeCard(
     year: Int? = null,
     seasonNumber: Int? = null,
     episodeNumber: Int? = null,
+    /** Catalog item type; picks the mark on the default artwork. */
+    mediaType: String? = null,
     progress: Float? = null,
     width: Dp = tvEpisodeCardWidth(),
     focusRequester: FocusRequester? = null,
@@ -122,6 +126,7 @@ fun TvEpisodeCard(
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = DefaultArtworkKind.forItemType(mediaType),
                 )
 
                 Box(

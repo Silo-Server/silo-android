@@ -117,6 +117,7 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.compose.viewmodel)
             implementation(libs.coil.compose)
+            implementation(libs.zxing.core)
             implementation(libs.haze)
             implementation(libs.coil.network.okhttp)
             // Ktor client (download worker wiring). Previously satisfied
@@ -132,6 +133,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.androidx.work.runtime.ktx)
             implementation(libs.androidx.webkit)
+            implementation(libs.androidx.browser)
+            implementation(libs.coil.svg)
             implementation(libs.koin.androidx.workmanager)
             implementation(libs.firebase.messaging)
             // Google Cast (Chromecast) — phone app only. TV app must not depend

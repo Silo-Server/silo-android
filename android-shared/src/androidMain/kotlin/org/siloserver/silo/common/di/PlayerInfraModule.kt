@@ -24,9 +24,12 @@ import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.ServerDrivenConfigRefresher
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.settings.SettingsContractRevision
+import org.siloserver.silo.common.settings.DefaultTitleArtStore
+import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.settings.ServerSettingsFlusher
 import org.siloserver.silo.domain.player.IntroAutoSkipController
 import org.siloserver.silo.domain.settings.SeekIntervalController
+import org.siloserver.silo.domain.settings.TitleArtController
 import org.siloserver.silo.network.DeviceMetadataProvider
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
@@ -220,6 +223,24 @@ val playerInfraModule = module {
         )
     }
 
+    // "Show title art" (settings revision 16) for this device. Every title
+    // surface and both settings screens read this one instance, so a change
+    // reaches an open detail page without a restart.
+    single<TitleArtStore> {
+        val registry = get<ServerRegistry>()
+        val identityChanges = registry.activeEntry
+            .map { it?.url to it?.profileId }
+            .distinctUntilChanged()
+            .map { Unit }
+        DefaultTitleArtStore(
+            context = androidContext(),
+            controller = TitleArtController(get<SettingsRepository>()),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            getAuthScope = { get<TokenManager>().snapshotCurrentScope() },
+            identityChanges = identityChanges,
+        )
+    }
+
     single {
         ServerDrivenConfigRefresher(
             overlayPrefsStore = get(),
@@ -228,6 +249,8 @@ val playerInfraModule = module {
             playerSettingsStore = get(),
             seekIntervalStore = get(),
             episodeSpoilerStore = get(),
+            titleArtStore = get(),
+            hiddenLibrariesStore = get(),
             hasAuthenticatedProfile = {
                 !get<ProfileRepository>().getActiveProfileId().isNullOrBlank()
             },

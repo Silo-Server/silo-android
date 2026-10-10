@@ -7,7 +7,9 @@ and the server ledger `contracts/api/v2/migration.json` (silo-server `origin/api
 | Endpoint family | v2 paths | Status |
 | --- | --- | --- |
 | Auth | `/api/v2/auth/{login,setup,signup,logout,refresh}`, `/api/v2/system/setup`, `/api/v2/account/me`, `/api/v2/system/info` | migrated |
-| Device sign-in | `/api/v2/auth/device`, `/api/v2/auth/device/{start,poll,capability,approve,approve-handoff,deny}` | migrated |
+| Device sign-in | `/api/v2/auth/device`, `/api/v2/auth/device/{start,poll,cancel,capability,approve,approve-handoff,deny}` | migrated |
+| Server identity | `/api/v2/system/identity`, `/api/v2/system/connections` | migrated |
+| External sign-in | `/api/v2/auth/providers`, `/api/v2/auth/oauth/capabilities`, `/api/v2/auth/oauth/{install_id}/native/start` (browser), `/api/v2/auth/oauth/complete`, `/api/v2/auth/external-sign-in/capabilities`, `/api/v2/account/identities`, `/api/v2/account/identities/{id}`, `/api/v2/account/identities/{link-ticket,link-complete,link-credentials}` | migrated |
 | Invitations | `/api/v2/invitations/capabilities`, `/api/v2/invitations/{token}`, `/api/v2/invitations/{token}/accept` | migrated |
 | Onboarding | `/api/v2/onboarding/{flow,state,progress}` | migrated |
 | Profiles | `/api/v2/profiles`, `/api/v2/profiles/{id}`, `/api/v2/profiles/{id}/verify-pin` | migrated |
@@ -21,6 +23,7 @@ and the server ledger `contracts/api/v2/migration.json` (silo-server `origin/api
 | Calendar | `/api/v2/calendar` | migrated |
 | Requests | `/api/v2/requests`, `/api/v2/requests/{id}`, `/api/v2/requests/{id}/cancel`, `/api/v2/requests/{mine,status,search,discover}`, `/api/v2/requests/discover/{section}`, `/api/v2/requests/detail/{media_type}/{tmdb_id}` | migrated (server-gated by `requests_enabled`) |
 | Playback | `/api/v2/playback/capabilities`, `/api/v2/playback/start`, `/api/v2/playback/route-events`, `/api/v2/playback/sessions/{id}/control/ws-ticket`, `/api/v2/playback/sessions/{id}/control/ws` | migrated (start was redesigned server-side; the client uses the v2 `PlaybackDecision` shape) |
+| Shuffle | `/api/v2/shuffles`, `/api/v2/shuffles/capabilities`, `/api/v2/shuffles/{id}`, `/api/v2/shuffles/{id}/{advance,skip}` | v2 only (server-gated by the capability; see [shuffle](../shuffle-api-v2.md)) |
 | Subtitles | `/api/v2/subtitles/{media_file_id}`, `/api/v2/subtitles/{search,download}`, `/api/v2/subtitles/ai/{status,quota,translate,jobs}`, `/api/v2/subtitles/ai/jobs/{id}`, `/api/v2/subtitles/ai/jobs/{id}/cancel` | migrated |
 | Settings | `/api/v2/settings/contract/capabilities`, `/api/v2/settings/values/effective`, `/api/v2/settings/values/{key}`, `/api/v2/settings/overlay-config` | migrated |
 | Downloads | `/api/v2/downloads`, `/api/v2/downloads/{id}`, `/api/v2/capabilities/downloads` | migrated |

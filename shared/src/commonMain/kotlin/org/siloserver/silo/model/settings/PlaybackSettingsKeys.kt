@@ -151,6 +151,21 @@ object PlaybackSettingsKeys {
      */
     const val ForceHdrPassthrough = "player.force_hdr_passthrough"
 
+    /**
+     * Local-only per-profile TV setting, off by default. Clears the bars
+     * around a picture that doesn't fill the screen to transparent instead of
+     * painting them opaque black.
+     *
+     * Some devices composite the app window's SDR black above reference black
+     * while HDR or Dolby Vision is on, so painted bars glow grey (Onn 4K Pro,
+     * Sony TVs). Others do the reverse and lift the transparent area (Fire TV,
+     * Google TV Streamer). Neither the chip vendor nor any platform signal
+     * tells them apart (silo-android#475), so the user picks what looks right
+     * on their device. It describes this device's compositor, not a playback
+     * preference, so this never enters [DeviceSettings].
+     */
+    const val TrueBlackBars = "player.true_black_bars"
+
     val DeviceSettings = listOf(
         PreferredQuality,
         MaxBitrateKbps,
@@ -182,6 +197,42 @@ object PlaybackSettingsKeys {
         SubtitleTextOutlineColor,
         SubtitlePosition,
     )
+
+    /**
+     * The device settings that also have a profile layer (`profile` is among
+     * their allowed scopes), so clearing this device's value falls back to the
+     * profile's rather than straight to the contract default. These are the
+     * ones that offer "Use profile setting". Pinned to the manifest by
+     * `PlaybackSettingsKeysContractTest`.
+     */
+    val ProfileLayeredDeviceSettings: Set<String> = setOf(
+        PreferredQuality,
+        MaxBitrateKbps,
+        AudioLanguage,
+        AutoSkipIntro,
+        IntroSkipMode,
+        AutoSkipCredits,
+        AutoPlayNext,
+        NextUpPromptSeconds,
+        SubtitleAppearance,
+    )
+
+    /**
+     * The keys one control writes together, so going back to the profile's
+     * value has to clear them together. Quality is one picker over two axes,
+     * and the intro-skip enum has the deprecated boolean the server mirrors
+     * beside it; clearing only one of a pair would leave half a device choice
+     * behind.
+     */
+    fun deviceOverrideGroup(key: String): List<String> = when (key) {
+        PreferredQuality, MaxBitrateKbps -> listOf(PreferredQuality, MaxBitrateKbps)
+        IntroSkipMode, AutoSkipIntro -> listOf(IntroSkipMode, AutoSkipIntro)
+        else -> listOf(key)
+    }
+
+    /** Whether this device holds its own value for [key]'s control. */
+    fun hasDeviceOverride(overrides: Set<String>, key: String): Boolean =
+        deviceOverrideGroup(key).any { it in overrides }
 
     /**
      * `old local slot -> current key`, for the two keys the settings cutover

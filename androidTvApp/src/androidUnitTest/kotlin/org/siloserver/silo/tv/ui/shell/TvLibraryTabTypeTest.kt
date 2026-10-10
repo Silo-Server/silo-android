@@ -13,6 +13,17 @@ import kotlin.test.assertTrue
  */
 class TvLibraryTabTypeTest {
 
+    @Test
+    fun `mixed libraries are reachable from both video tabs only`() {
+        for (value in listOf("mixed", " Mixed ")) {
+            val mixed = library(value)
+            assertTrue(TvLibraryTabType.Movies.matches(mixed))
+            assertTrue(TvLibraryTabType.Series.matches(mixed))
+            assertFalse(TvLibraryTabType.Music.matches(mixed))
+            assertFalse(TvLibraryTabType.Audiobooks.matches(mixed))
+        }
+    }
+
     private fun library(type: String) = UserLibrary(id = 1, name = type, type = type)
 
     @Test

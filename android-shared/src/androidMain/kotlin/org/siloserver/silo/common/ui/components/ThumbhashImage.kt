@@ -89,8 +89,9 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *
  * Decodes [thumbhash] (a tiny base64-encoded ThumbHash) into a small bitmap and
  * shows it immediately, crossfading to the full network image as it loads — so
- * posters/backdrops blur up instead of popping in from a flat color. Falls back
- * to a neutral placeholder when no thumbhash is supplied or decoding fails.
+ * posters/backdrops blur up instead of popping in from a flat color. The
+ * ThumbHash stays up when the image fails to load. Falls back to a neutral
+ * placeholder when no thumbhash is supplied or decoding fails.
  *
  * @param url The remote image URL to load.
  * @param thumbhash Base64-encoded ThumbHash for the instant blurred preview.
@@ -111,6 +112,10 @@ private fun decodeThumbhashPainter(hash: String): BitmapPainter? =
  *   by the URL would miss the cache every time. Must still be unique per image.
  * @param onError Optional signal that the fetch or decode failed, so the caller
  *   can retire the URL and fall back rather than leave an empty box.
+ * @param defaultArtwork For posters, covers and stills: when the image is
+ *   missing or fails to load and there is no ThumbHash, show [DefaultArtwork]
+ *   with this kind's mark instead of the flat placeholder. Null keeps the
+ *   flat placeholder.
  */
 @Composable
 fun ThumbhashImage(
@@ -129,6 +134,7 @@ fun ThumbhashImage(
     onError: (() -> Unit)? = null,
     /** Applied to the loaded image only — used by the blurred page backdrop. */
     colorFilter: ColorFilter? = null,
+    defaultArtwork: DefaultArtworkKind? = null,
 ) {
     val context = LocalContext.current
     val deferPresentationWhile = LocalImagePresentationDeferral.current
@@ -139,6 +145,9 @@ fun ThumbhashImage(
     val cachedPlaceholder = remember(thumbhash) {
         thumbhash?.takeIf { it.isNotBlank() }?.let { ThumbhashPainterCache.get(it) }
     }
+    // Set when a nonblank ThumbHash fails to decode, so the image can fall back
+    // to the default artwork rather than wait on a placeholder that never comes.
+    var thumbhashUnusable by remember(thumbhash) { mutableStateOf(false) }
     // Plain `val` (not `by`) so the null-checked `placeholder` smart-casts below.
     val placeholder = produceState(initialValue = cachedPlaceholder, thumbhash, cachedPlaceholder) {
         if (cachedPlaceholder != null) return@produceState
@@ -147,9 +156,10 @@ fun ThumbhashImage(
             return@produceState
         }
         val decoded = withContext(Dispatchers.Default) { decodeThumbhashPainter(hash) }
-        if (decoded != null) ThumbhashPainterCache.put(hash, decoded)
+        if (decoded != null) ThumbhashPainterCache.put(hash, decoded) else thumbhashUnusable = true
         value = decoded
     }.value
+    val hasUsableThumbhash = !thumbhash.isNullOrBlank() && !thumbhashUnusable
 
     if (url.isNullOrBlank()) {
         when {
@@ -159,10 +169,19 @@ fun ThumbhashImage(
                 contentScale = contentScale,
                 modifier = modifier,
             )
+            // Waits on a ThumbHash still decoding, so it doesn't flash the
+            // default artwork first.
+            defaultArtwork != null && !hasUsableThumbhash ->
+                DefaultArtwork(defaultArtwork, modifier = modifier, contentDescription = contentDescription)
             !transparent -> Box(modifier = modifier.background(DefaultPlaceholderColor))
         }
         return
     }
+
+    // A failed load keeps the ThumbHash; only without one does a poster fall
+    // back to the default artwork.
+    var failed by remember(url) { mutableStateOf(false) }
+    val failedArtwork = defaultArtwork?.takeIf { failed && !hasUsableThumbhash }
 
     val model = remember(url, decodeSizePx, crossfadeMillis, cacheKey) {
         ImageRequest.Builder(context)
@@ -181,15 +200,25 @@ fun ThumbhashImage(
     }
 
     if (deferPresentationWhile == null) {
+        if (failedArtwork != null) {
+            DefaultArtwork(failedArtwork, modifier = modifier, contentDescription = contentDescription)
+            return
+        }
         AsyncImage(
             model = model,
             contentDescription = contentDescription,
             contentScale = contentScale,
             alignment = alignment,
             placeholder = placeholder,
+            // A failed load (offline, expired URL) keeps the blur-up rather
+            // than dropping to an empty box.
+            error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { onSuccess?.invoke() },
-            onError = { onError?.invoke() },
+            onError = {
+                failed = true
+                onError?.invoke()
+            },
             modifier = when {
                 transparent || placeholder != null -> modifier
                 else -> modifier.background(DefaultPlaceholderColor)
@@ -239,6 +268,7 @@ fun ThumbhashImage(
                     contentScale = contentScale,
                     modifier = Modifier.fillMaxSize(),
                 )
+                failedArtwork != null -> DefaultArtwork(failedArtwork, modifier = Modifier.fillMaxSize())
                 !transparent -> Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -255,6 +285,7 @@ fun ThumbhashImage(
             // Matches the cover above, so the swap at the gate is pixel-identical
             // when a thumbhash exists.
             placeholder = placeholder,
+            error = placeholder,
             colorFilter = colorFilter,
             onSuccess = { state ->
                 fullImageReady = true
@@ -265,7 +296,10 @@ fun ThumbhashImage(
                     presentFullImage()
                 }
             },
-            onError = { onError?.invoke() },
+            onError = {
+                failed = true
+                onError?.invoke()
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .drawWithContent {

@@ -90,4 +90,27 @@ class PassthroughSuppressionRegistryTest {
         assertEquals(AudioSink.SINK_FORMAT_UNSUPPORTED, sink.getFormatSupport(trueHdEightChannel))
         assertFalse(sink.supportsFormat(trueHdEightChannel))
     }
+
+    @Test
+    fun forceDecodeMarksOnlyMatchingEncodedFormatUnsupported() {
+        val delegate = Proxy.newProxyInstance(
+            AudioSink::class.java.classLoader,
+            arrayOf(AudioSink::class.java),
+        ) { _, method, _ ->
+            when (method.name) {
+                "getFormatSupport" -> AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
+                else -> error("Unexpected delegate call: ${method.name}")
+            }
+        } as AudioSink
+        val sink = PassthroughSuppressingAudioSink(delegate) { format ->
+            format.sampleMimeType == MimeTypes.AUDIO_DTS_HD
+        }
+        val dtsHd = Format.Builder().setSampleMimeType(MimeTypes.AUDIO_DTS_HD).setChannelCount(8).build()
+        val pcm = Format.Builder().setSampleMimeType(MimeTypes.AUDIO_RAW).setChannelCount(8).build()
+
+        PassthroughSuppressionRegistry.beginAttempt("force-decode-attempt")
+        assertEquals(AudioSink.SINK_FORMAT_UNSUPPORTED, sink.getFormatSupport(dtsHd))
+        assertEquals(AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY, sink.getFormatSupport(pcm))
+        assertTrue(sink.supportsFormat(pcm))
+    }
 }

@@ -52,4 +52,10 @@ class PlaybackMarkersUpdateTest {
         val m = decodeMarkersUpdate(payload("""{"credits":{"start":"10","end":"20"}}"""))
         assertNull(m.credits)
     }
+
+    @Test fun keepsTheFileTheRangesBelongTo() {
+        assertEquals(7, decodeMarkersUpdate(payload("""{"file_id":7}""")).fileId)
+        assertNull(decodeMarkersUpdate(payload("""{"intro":null}""")).fileId)
+        assertNull(decodeMarkersUpdate(payload("""{"file_id":"7"}""")).fileId)
+    }
 }

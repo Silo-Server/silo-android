@@ -5,11 +5,12 @@ A detailed inventory of what the Android **phone** and **TV** clients do today. 
 - ✅ implemented
 - 🟡 partial / basic ("bones-level") — works but slated for improvement
 - 🚧 planned (design/plan exists, not built)
+- 🧪 experimental — built, behind Settings → Experimental
 - ➖ not present on this platform (by design or not yet built)
 
 File pointers are repository-relative.
 
-> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v1/requests/status`), and reached from the profile menu and search — matching the Apple clients. The admin stats dashboard is live for acting admins via Settings. The richer admin screens (users/sessions/logs/scans) and Watch Together remain inaccessible.
+> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and from a top-bar tab and search on TV — matching the Apple clients. Admins who can moderate approve, decline, and retry requests there. The richer admin screens (users/sessions/logs/scans) remain inaccessible. Watch Party is experimental, behind Settings → Experimental → Watch Party.
 
 ---
 
@@ -33,10 +34,12 @@ File pointers are repository-relative.
 | HDMI EDID-driven display mode | ➖ | ✅ | `HdrDisplayController` |
 | Subtitle selection + styling (font/bg/position) | ✅ | ✅ | Media3 `SubtitleManager`; server plans render, convert, or burn-in fidelity |
 | Subtitle sync offset (±10s) / audio sync (±5s) | ✅ | ✅ | Per-profile |
+| Server subtitle sync to audio (stored and sidecar subtitles) | ✅ | ✅ | Server-gated; per-track status, progress card, reset; retimed tracks reload in place; phone offline copies refresh. `SubtitleSyncController` |
 | Subtitle provider search + download | ✅ | ✅ | |
 | AI subtitle transcription / translation (quota-tracked) | ✅ | ✅ | TV: `TvAiTranslateDialog` |
 | AI description translation (on-view, server-gated) | ✅ | ✅ | `DescriptionTranslationController`; gated by `/api/v1/metadata/ai/status`; metadata-language setting in Settings |
 | Intro auto-skip (+ manual skip banner) | ✅ | ✅ | |
+| Shuffle (library, series, season, collection) | ✅ | ✅ | Server-picked random movies and episodes, gated by `/api/v2/shuffles/capabilities`. Picks play from the start; the up-next screen offers Pick Another and Stop shuffling. TV has no mixed-library screen, so mixed libraries shuffle on phone only. [docs](docs/shuffle-api-v2.md) |
 | Chapters | ✅ | ✅ | Server-extracted; TV scrubber markers |
 | Sleep timer | ✅ | ✅ | Configurable default |
 | Playback speed | ✅ | ✅ | |
@@ -46,15 +49,18 @@ File pointers are repository-relative.
 | Landscape-on-play (auto-rotate aware) | 🚧 | ➖ | Implemented then reverted; pending re-apply |
 | Picture-in-Picture | ✅ | ✅ | `SiloPictureInPictureCoordinator`; enters on home-press during playback |
 
-## Watch Together (not exposed)
+## Watch Party (experimental)
+
+Shown only while Settings → Experimental → Watch Party is on (default on in debug builds, off in release builds) and the server advertises Watch Party.
 
 | Feature | Phone | TV | Notes |
 |---|:---:|:---:|---|
-| Create / join / leave room | 🚧 | 🚧 | Code/design artifacts exist, but users cannot access this flow |
-| Clock sync (NTP-style) + drift correction | 🚧 | 🚧 | Shared infrastructure exists but is not a live feature |
-| Host vs guest transport gating | 🚧 | 🚧 | Not reachable from production navigation |
-| Room snapshots / member list / suggestions / voting | 🚧 | 🚧 | Not reachable from production navigation |
-| Graceful reconnect + host-closed auto-exit | 🚧 | 🚧 | Not reachable from production navigation |
+| Hub: host, join by code, Return to Party, Rejoin | 🧪 | 🧪 | Profile menu; detail page party action |
+| Lobby: staged title, Host Picks or voting, lobby Ready, suggestions | 🧪 | 🧪 | Only the room's phase opens the player |
+| Invitations | 🧪 | 🧪 | Phone: share/copy link, `silo://watch-party`; TV: code and QR |
+| Synced playback (server clock, rate convergence, catch-up) | 🧪 | 🧪 | Shared `RoomPlaybackBinding` |
+| Party panel on Back: Leave, Return everyone to lobby, End | 🧪 | 🧪 | Host-only actions per role |
+| Reconnect, socket rotation, same-profile replacement | 🧪 | 🧪 | Room socket owned by `RoomSession` |
 
 ## Offline & Downloads
 
@@ -82,7 +88,7 @@ File pointers are repository-relative.
 | Release calendar | ✅ | ✅ | Top-level mobile tab and TV top-menu tab |
 | Live home refresh (events websocket) | ✅ | ✅ | `HomeRealtimeCoordinator`: user_state/catalog channels, 2s debounce; TV also refreshes on resume |
 | System "Watch Next" row integration | ➖ | ✅ | `WatchNextRepository` (tvprovider) |
-| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; profile menu + search entry points |
+| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; admin approve/decline/retry |
 
 ## Reading (ebooks)
 
@@ -123,12 +129,13 @@ File pointers are repository-relative.
 |---|:---:|:---:|---|
 | Household profiles (multiple per account) | ✅ | ✅ | `ProfileRepository` |
 | PIN-protected & child profiles, content-rating limits | ✅ | ✅ | |
+| Profile Selection at launch (Automatic, Every Time, After 1 Hour, After 12 Hours) | ➖ | ✅ | TV: Settings → General; device-local; tvOS parity, including hiding Watch Next |
 | Per-profile language / subtitle / playback prefs | ✅ | ✅ | |
 | Library access restrictions per profile | ✅ | ✅ | |
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |
 | Ratings | ✅ | ✅ | |
 | Watch history | ✅ | ✅ | |
-| Content requests (browse/search TMDB, status tracking) | 🚧 | 🚧 | Not currently accessible in either Android app |
+| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests, admin approvals; see Requests above |
 | Release calendar | ✅ | ✅ | |
 | Notifications inbox (paginated, realtime updates, mark-read) | ✅ | ✅ | REST + WebSocket |
 
@@ -153,6 +160,6 @@ File pointers are repository-relative.
 
 **TV** is a 10-foot, D-pad client focused on browsing and playback, including audiobooks, calendar, the subtitle suite, person detail, and system Watch Next integration. It intentionally omits ebooks/reading and downloads management.
 
-**Not currently exposed on either Android surface:** full admin management (users/sessions/logs/scans) and Watch Together. The admin **stats dashboard** is exposed (Settings → Admin, acting admins only).
+**Not currently exposed on either Android surface:** the admin stats dashboard and full admin management (users/sessions/logs/scans). **Experimental:** Watch Party, behind Settings → Experimental. Request moderation (approve, decline, retry) is the one admin action the Requests screens offer.
 
 Both apps share the same networking, auth, repositories, most ViewModels, and the entire Media3 playback/capability stack.

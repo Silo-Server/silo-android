@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.MaterialTheme
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
+import org.siloserver.silo.common.settings.LocalShowTitleArt
 import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.tv.ui.focus.TvReturnResolution
@@ -430,7 +431,8 @@ fun TvSkylineSectionFeed(
             ?.let { row -> focusedContentId?.let { contentId -> "${row.id}#$contentId" } },
         settledMarqueeId = marquee.content?.id,
     )
-    LaunchedEffect(rows, settledFocus, fetchDetail) {
+    val prefetchLogos = LocalShowTitleArt.current
+    LaunchedEffect(rows, settledFocus, fetchDetail, prefetchLogos) {
         val focus = settledFocus ?: return@LaunchedEffect
         val row = rows.getOrNull(focus.rowIndex) ?: return@LaunchedEffect
         val window = settledPrefetchItems(
@@ -455,7 +457,8 @@ fun TvSkylineSectionFeed(
                                         .build(),
                                 )
                             }
-                            item.logoUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                            // No logo is drawn with title art off; don't fetch one.
+                            item.logoUrl?.takeIf { prefetchLogos && it.isNotBlank() }?.let { url ->
                                 add(
                                     ImageRequest.Builder(context)
                                         .data(url)
@@ -1031,16 +1034,16 @@ private const val HeroLogoPreloadHeightPx = 200
 private const val HeroFocusPrefetchRadius = 2
 
 /** tvOS MediaRow cardSpacing 40pt maps to 20dp. */
-private val TvSkylineItemSpacing = 20.dp
+internal val TvSkylineItemSpacing = 20.dp
 
 /** A little breathing room between adjacent Home sections. */
-private val TvSkylineRowPreviewSpacing = 14.dp
+internal val TvSkylineRowPreviewSpacing = 14.dp
 
 /** tvOS rowBandCardVerticalPadding 14pt maps to 7dp. */
-private val TvSkylineRowCardVerticalPadding = 7.dp
+internal val TvSkylineRowCardVerticalPadding = 7.dp
 
 /** tvOS rowBandBottomInset 20pt maps to 10dp. */
-private val TvSkylineRowBandBottomInset = 10.dp
+internal val TvSkylineRowBandBottomInset = 10.dp
 
 // The band is sized from what its first row actually needs — section header,
 // card at the scaled dense-poster height, and whichever caption lines the
@@ -1055,9 +1058,9 @@ private val TvSkylineCaptionMetadataHeight = 18.dp // TvMediaCard: 18sp year lin
 private val TvSkylineRowPreviewPeek = 24.dp // sliver of the next section's header
 
 /** The band never pushes the marquee below ~40% of the screen. */
-private const val TvSkylineRowBandMaxFraction = 0.58f
+internal const val TvSkylineRowBandMaxFraction = 0.58f
 
-private fun tvSkylineRowBandHeight(presentation: CardPresentation): Dp {
+internal fun tvSkylineRowBandHeight(presentation: CardPresentation): Dp {
     val cardHeight = RowDimens.DensePosterWidth * presentation.posterSize.posterScale * 3f / 2f
     val captionHeight = when {
         !presentation.caption.showsTitle -> 0.dp
@@ -1071,13 +1074,13 @@ private fun tvSkylineRowBandHeight(presentation: CardPresentation): Dp {
 }
 
 /** Gap between the marquee block and the top of the row band. */
-private val TvSkylineMarqueeBottomGap = 4.dp
+internal val TvSkylineMarqueeBottomGap = 4.dp
 
 // Row-band relocation requests are close to row-sized; horizontal card rails
 // have much wider viewports and must still use the smooth scroll distance.
 private const val TvSkylineVerticalContainerRatio = 3f
 
-private val TvSkylineBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
+internal val TvSkylineBringIntoViewSpec: BringIntoViewSpec = object : BringIntoViewSpec {
     override val scrollAnimationSpec: AnimationSpec<Float> = tween(
         durationMillis = 520,
         easing = FastOutSlowInEasing,

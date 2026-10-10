@@ -104,6 +104,14 @@ class HomeViewModel(
     private var realtimeRefreshInFlight = false
 
     /**
+     * A realtime signal arrived while a fetch was running. That fetch may have
+     * been answered before the event behind the signal (an access change made
+     * after the request went out), so one more realtime refresh runs when it
+     * finishes.
+     */
+    private var realtimeRefreshPending = false
+
+    /**
      * Bumped by every fetch, checked before any of them publishes.
      *
      * loadSections(), refresh() and refreshFromRealtime() can all be in flight
@@ -117,12 +125,13 @@ class HomeViewModel(
     private var fetchGeneration = 0
 
     /**
-     * Debounced realtime refetch: quiet (no spinner) and single-flight —
-     * an in-flight realtime or manual refresh already delivers the fresh
-     * sections, so overlapping signals are dropped rather than raced.
+     * Debounced realtime refetch: quiet (no spinner) and single-flight.
+     * Signals that arrive while a realtime or manual refresh is running are
+     * not raced against it; they collapse into one follow-up refresh after it.
      */
     fun refreshFromRealtime() {
         if (realtimeRefreshInFlight || _uiState.value.isRefreshing) {
+            realtimeRefreshPending = true
             diagnostics.completed(
                 HomeLoadObservation(
                     trigger = HomeLoadTrigger.REALTIME,
@@ -143,7 +152,14 @@ class HomeViewModel(
             } finally {
                 realtimeRefreshInFlight = false
             }
+            runPendingRealtimeRefresh()
         }
+    }
+
+    private fun runPendingRealtimeRefresh() {
+        if (!realtimeRefreshPending) return
+        realtimeRefreshPending = false
+        refreshFromRealtime()
     }
 
     fun loadSections() {
@@ -213,6 +229,7 @@ class HomeViewModel(
             // it fires a redundant request.
             if (generation == fetchGeneration) {
                 _uiState.update { it.copy(isRefreshing = false) }
+                runPendingRealtimeRefresh()
             }
         }
     }

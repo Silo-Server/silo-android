@@ -6,6 +6,8 @@ import org.siloserver.silo.model.personal.Collection
 import org.siloserver.silo.model.personal.CollectionGroup
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CollectionRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,25 +71,32 @@ internal fun buildCollectionSections(
 class CollectionsViewModel(
     private val collectionRepository: CollectionRepository,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     private val _uiState = MutableStateFlow(CollectionsUiState())
     val uiState: StateFlow<CollectionsUiState> = _uiState.asStateFlow()
+
+    // The newest load is the only one that publishes: a refresh after an
+    // access change replaces a load still waiting on the older policy.
+    // Declared before init, which starts the first load.
+    private var loadJob: Job? = null
 
     init {
         loadCollections()
     }
 
-    fun loadCollections() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
-            applyResult(collectionRepository.listCollections(), refreshing = false)
-        }
-    }
+    fun loadCollections() = load(refreshing = false)
 
-    fun refresh() {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isRefreshing = true) }
-            applyResult(collectionRepository.listCollections(), refreshing = true)
+    fun refresh() = load(refreshing = true)
+
+    private fun load(refreshing: Boolean) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            _uiState.update { if (refreshing) it.copy(isRefreshing = true) else it.copy(isLoading = true, error = null) }
+            val result = collectionRepository.listCollections()
+            ensureActive()
+            applyResult(result, refreshing)
         }
     }
 

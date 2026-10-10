@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.library
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.settings.BrowsePrefsStore
 import org.siloserver.silo.model.catalog.AudiobookGroup
 import org.siloserver.silo.model.catalog.BrowseItem
 import org.siloserver.silo.model.catalog.CatalogQueryGroup
@@ -15,14 +16,18 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.ui.util.tvCatalogMediaTypeFor
 import org.siloserver.silo.tv.ui.util.visibleOnTv
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 /**
  * Library content sections committed by the Skyline cascade. The extra browse
@@ -80,9 +85,8 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
     ListOrder("Recently Saved", "__list_order"),
     Title("Title", "title"),
     DateAdded("Date Added", "added_at"),
-    // Server expects "year" for release-date sort (matches phone); the old
-    // "release_date" value was unsupported.
-    ReleaseDate("Year", "year"),
+    ReleaseDate("Release Date", "release_date"),
+    Year("Year", "year"),
     Rating("Rating", "rating_imdb"),
     Runtime("Runtime", "runtime"),
     Resolution("Resolution", "resolution"),
@@ -101,7 +105,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
         // No direction to report — the order is whatever the source defines.
         CollectionOrder, ListOrder -> "Default"
         Title, Author, Narrator, SeriesName -> if (order == "asc") "A–Z" else "Z–A"
-        ReleaseDate, DateAdded -> if (order == "asc") "Oldest" else "Newest"
+        ReleaseDate, Year, DateAdded -> if (order == "asc") "Oldest" else "Newest"
         Runtime -> if (order == "asc") "Shortest" else "Longest"
         Rating, Resolution -> if (order == "asc") "Lowest" else "Highest"
     }
@@ -115,7 +119,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
             if (org.siloserver.silo.model.navigation.isAudiobookLikeLibraryType(libraryType)) {
                 listOf(Title, Author, Narrator, SeriesName, DateAdded, Runtime)
             } else {
-                listOf(Title, DateAdded, ReleaseDate, Rating, Runtime, Resolution)
+                listOf(Title, DateAdded, ReleaseDate, Year, Rating, Runtime, Resolution)
             }
 
         /**
@@ -135,7 +139,7 @@ enum class TvLibrarySortOption(val label: String, val wireValue: String) {
          * `added_at` by for these sources.
          */
         fun availableForPersonalList(): List<TvLibrarySortOption> =
-            listOf(ListOrder, Title, DateAdded, ReleaseDate, Rating, Runtime)
+            listOf(ListOrder, Title, DateAdded, Year, Rating, Runtime)
     }
 }
 
@@ -159,7 +163,11 @@ class TvLibraryDetailViewModel(
     private val libraryId: Int,
     private val libraryTitle: String,
     private val libraryType: String,
+    private val mediaScope: String? = null,
+    private val browsePrefs: BrowsePrefsStore? = null,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val title: String,
@@ -174,6 +182,8 @@ class TvLibraryDetailViewModel(
         val filtersLoading: Boolean = true,
         val browseItems: List<BrowseItem> = emptyList(),
         val browseHasMore: Boolean = false,
+        /** For an empty grid: false when the library itself is empty, true when filters hid everything, null when unknown (#451). */
+        val browseLibraryHasItems: Boolean? = null,
         val browseLoading: Boolean = false,
         val browseLoadingMore: Boolean = false,
         val browseError: String? = null,
@@ -188,12 +198,15 @@ class TvLibraryDetailViewModel(
         val collectionSections: List<TvCollectionSection> = emptyList(),
         val collectionsLoading: Boolean = false,
         val collectionsError: String? = null,
+        /** "Preserve sort & filters" for this library's Browse grid (default ON). */
+        val preserveFilters: Boolean = true,
     )
 
     private val _uiState = MutableStateFlow(
         UiState(
             title = libraryTitle,
             libraryType = libraryType,
+            preserveFilters = browsePrefs?.preserveEnabled(libraryId, mediaScope) ?: true,
         ),
     )
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
@@ -216,6 +229,13 @@ class TvLibraryDetailViewModel(
     private var browseRawLoaded = 0
     private var loadedAudiobookGroupBy: String? = null
     private var audiobookGroupsGeneration = 0
+    // Declared before init, which starts the first Recommended load: an
+    // initializer below it would reset this generation and drop that load's
+    // job afterward, so a reload could neither cancel nor outrank it.
+    private var recommendedGeneration = 0L
+    private var filtersJob: Job? = null
+    private var collectionsJob: Job? = null
+    private var recommendedJob: Job? = null
 
     init {
         // Only the default Recommended tab loads eagerly. Filters (the genre
@@ -227,9 +247,6 @@ class TvLibraryDetailViewModel(
 
     fun onTabSelected(tab: TvLibraryTab) {
         val state = _uiState.value
-        val nextFilter = state.browseFilter.forTab(tab)
-        val filterChanged = nextFilter != state.browseFilter
-        val audiobookGroupBy = tab.audiobookGroupBy
         // Re-selecting the section that is already active is a no-op. The
         // screen re-issues the committed section every time it re-enters
         // composition — backing out of item detail / the player returns to a
@@ -238,6 +255,9 @@ class TvLibraryDetailViewModel(
         // and facets back to the tab's defaults (Title A–Z). Only a genuine
         // tab CHANGE applies the new tab's defaults.
         if (state.selectedTab == tab) return
+        val nextFilter = state.browseFilter.forTab(tab)
+        val filterChanged = nextFilter != state.browseFilter
+        val audiobookGroupBy = tab.audiobookGroupBy
         _uiState.update {
             it.copy(
                 selectedTab = tab,
@@ -372,6 +392,11 @@ class TvLibraryDetailViewModel(
                 browseFilter = it.browseFilter.forTab(it.selectedTab),
             )
         }
+        // The group list went stale while a group was open (an access change).
+        val groupBy = _uiState.value.selectedTab.audiobookGroupBy
+        if (groupBy != null && loadedAudiobookGroupBy != groupBy) {
+            loadAudiobookGroups(groupBy = groupBy, reset = true)
+        }
     }
 
     fun retryRecommended() {
@@ -391,20 +416,80 @@ class TvLibraryDetailViewModel(
         loadAudiobookGroups(groupBy = groupBy, reset = true)
     }
 
+    /**
+     * The server reported an access change: titles, sections, facets, and
+     * collections in this library may differ under the new policy. Reload the
+     * visible tab now and let the others reload when next opened, instead of
+     * trusting their one-time loaded flags.
+     */
+    fun refreshAfterAccessChange() {
+        loadedRecommended = false
+        loadedBrowse = false
+        loadedCollections = false
+        loadedFilters = false
+        loadedAudiobookGroupBy = null
+        val state = _uiState.value
+        when (state.selectedTab) {
+            TvLibraryTab.Recommended -> loadRecommended()
+            TvLibraryTab.Browse,
+            TvLibraryTab.Genres,
+            TvLibraryTab.Alphabet,
+            TvLibraryTab.RecentlyAdded -> {
+                loadFilters()
+                loadBrowse(reset = true)
+            }
+            TvLibraryTab.Authors,
+            TvLibraryTab.Series -> {
+                val groupBy = state.selectedTab.audiobookGroupBy ?: return
+                // A selected author or series shows its titles; keep the
+                // selection and reload those. The group list reloads when the
+                // selection is cleared (onAudiobookGroupCleared).
+                if (state.selectedAudiobookGroup != null) {
+                    loadBrowse(reset = true)
+                } else {
+                    loadAudiobookGroups(groupBy = groupBy, reset = true)
+                }
+            }
+            TvLibraryTab.Collections -> loadCollections()
+        }
+    }
+
+    /**
+     * Turning preserve off clears the saved state; turning it on saves the
+     * current Browse sort and filters at once (tvOS `setPreserveEnabled`).
+     */
+    fun onPreserveFiltersChanged(enabled: Boolean) {
+        browsePrefs?.setPreserveEnabled(libraryId, enabled, mediaScope)
+        _uiState.update { it.copy(preserveFilters = enabled) }
+        if (enabled) saveBrowseFilter(_uiState.value)
+    }
+
     private fun updateBrowseFilter(filter: TvLibraryBrowseFilter) {
-        if (_uiState.value.browseFilter == filter) return
+        val previous = _uiState.value.browseFilter
+        if (previous == filter) return
         _uiState.update { it.copy(browseFilter = filter) }
+        if (previous.sort != filter.sort || previous.order != filter.order || previous.facetSelection != filter.facetSelection) {
+            saveBrowseFilter(_uiState.value)
+        }
         if (_uiState.value.selectedTab == TvLibraryTab.Browse || loadedBrowse) {
             loadBrowse(reset = true)
         }
     }
 
-    private var recommendedGeneration = 0L
+    // Only the Browse grid's own sort and filters persist; the other grid
+    // sections are fixed presets.
+    private fun saveBrowseFilter(state: UiState) {
+        if (state.selectedTab != TvLibraryTab.Browse) return
+        browsePrefs?.saveState(libraryId, state.browseFilter.toSavedState(), mediaScope)
+    }
 
     private fun loadRecommended() {
         val run = ++recommendedGeneration
         loadedRecommended = true
-        viewModelScope.launch {
+        // A retry supersedes the running load; cancel it so its refill
+        // cursor chains stop instead of paging until the final publish check.
+        recommendedJob?.cancel()
+        recommendedJob = viewModelScope.launch {
             _uiState.update { it.copy(recommendedLoading = true, recommendedError = null) }
 
             val owner = sectionRepository.captureLibrarySectionAuthority()
@@ -480,12 +565,26 @@ class TvLibraryDetailViewModel(
                 sections.map { section -> resolvedById[section.id] ?: section }
             }
 
+            // Independent shelves can overlap, but keep each cursor chain sequential.
+            val refillPermits = Semaphore(3)
+            val scoped = resolved.filterNot { it.featured }.map { section ->
+                async {
+                    refillPermits.withPermit {
+                        scopeTvLibrarySection(section, mediaScope) { cursor ->
+                            // Each page request also rechecks the auth identity.
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            sectionRepository.getLibrarySectionCatalogItems(libraryId, section.id, owner, cursor)
+                        }
+                    }
+                }
+            }.awaitAll()
             if (!mayPublish()) return@launch
             _uiState.update {
                 it.copy(
-                    sections = resolved.visibleOnTv(),
+                    sections = scoped.map { it.section }.visibleOnTv(),
                     recommendedLoading = false,
-                    recommendedError = null,
+                    recommendedError = if (scoped.any { it.incomplete })
+                        "Some shelves could not be fully loaded for this media type. Retry or open Browse." else null,
                 )
             }
         }
@@ -493,12 +592,17 @@ class TvLibraryDetailViewModel(
 
     private fun loadFilters() {
         loadedFilters = true
-        viewModelScope.launch {
+        // A reload after an access change replaces an unfinished load, so the
+        // older answer cannot land after it.
+        filtersJob?.cancel()
+        filtersJob = viewModelScope.launch {
             _uiState.update { it.copy(filtersLoading = true) }
             // include_technical adds the resolution / audio-language /
             // subtitle-language vocabularies the filter panel offers (tvOS
             // FacetLoader always requests them).
-            when (val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)) {
+            val filters = catalogRepository.getFilters(libraryId, includeTechnical = true)
+            ensureActive()
+            when (filters) {
                 is ApiResult.Success -> _uiState.update {
                     it.copy(
                         genres = filters.data.genres.sorted(),
@@ -546,9 +650,10 @@ class TvLibraryDetailViewModel(
             }
 
             val facetGroups = filter.facetSelection.toQueryGroups()
+            val browseMediaType = mediaScope ?: mediaTypeFor(libraryType)
             val result = catalogRepository.browse(
                 source = "query",
-                mediaType = mediaTypeFor(libraryType),
+                mediaType = browseMediaType,
                 libraryId = libraryId,
                 genre = filter.genre,
                 sort = filter.sort,
@@ -571,6 +676,21 @@ class TvLibraryDetailViewModel(
             when (result) {
                 is ApiResult.Success -> {
                     val response = result.data
+                    val visibleItems = response.items.visibleOnTv()
+                    // An empty first page only says this view matched nothing (#451):
+                    // with nothing narrowing it, the page was the whole library;
+                    // otherwise one unfiltered item decides, within the Movies/Series
+                    // scope of a mixed library as Apple does. Loading stays up
+                    // meanwhile, so the wrong message never flashes.
+                    val libraryHasItems = when {
+                        !reset || visibleItems.isNotEmpty() -> null
+                        // Titles the TV does not show (isTvHiddenMediaType) still
+                        // mean the library is not empty.
+                        response.items.isNotEmpty() -> true
+                        filter == TvLibraryBrowseFilter(sort = filter.sort, order = filter.order) -> false
+                        else -> catalogRepository.libraryHasItems(libraryId, browseMediaType)
+                    }
+                    if (generation != browseGeneration) return@launch
                     browseContinuation = response.continuation
                     if (browseSnapshot == null) {
                         browseSnapshot = response.snapshot
@@ -581,7 +701,6 @@ class TvLibraryDetailViewModel(
                         browseRawLoaded + response.items.size
                     }
                     _uiState.update {
-                        val visibleItems = response.items.visibleOnTv()
                         it.copy(
                             // distinctBy contentId is a belt-and-suspenders guard
                             // against duplicate keys crashing LazyVerticalGrid if a
@@ -592,6 +711,7 @@ class TvLibraryDetailViewModel(
                                 (it.browseItems + visibleItems).distinctBy { item -> item.contentId }
                             },
                             browseHasMore = response.hasMore,
+                            browseLibraryHasItems = if (reset) libraryHasItems else it.browseLibraryHasItems,
                             browseLoading = false,
                             browseLoadingMore = false,
                             browseError = null,
@@ -702,9 +822,13 @@ class TvLibraryDetailViewModel(
 
     private fun loadCollections() {
         loadedCollections = true
-        viewModelScope.launch {
+        // As in loadFilters: the newest load is the only one that publishes.
+        collectionsJob?.cancel()
+        collectionsJob = viewModelScope.launch {
             _uiState.update { it.copy(collectionsLoading = true, collectionsError = null) }
-            when (val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)) {
+            val result = sectionRepository.getLibraryCollectionsGrouped(libraryId)
+            ensureActive()
+            when (result) {
                 is ApiResult.Success -> {
                     val sections = buildCollectionSections(result.data)
                     _uiState.update {
@@ -782,8 +906,9 @@ class TvLibraryDetailViewModel(
         when (tab) {
             TvLibraryTab.Recommended,
             TvLibraryTab.Collections -> this
-            // Browse lands on the tvOS default view: Title A–Z, no facets.
-            TvLibraryTab.Browse -> copy(
+            // Browse restores the saved sort and filters, else lands on the
+            // tvOS default view: Title A–Z, no facets.
+            TvLibraryTab.Browse -> browsePrefs?.savedState(libraryId, mediaScope)?.toTvBrowseFilter() ?: copy(
                 genre = null,
                 namePrefix = null,
                 sort = TvLibrarySortOption.Title.wireValue,
@@ -859,6 +984,7 @@ internal val TvLibrarySortOption.defaultOrder: String
         TvLibrarySortOption.SeriesName -> "asc"
         TvLibrarySortOption.DateAdded,
         TvLibrarySortOption.ReleaseDate,
+        TvLibrarySortOption.Year,
         TvLibrarySortOption.Rating,
         TvLibrarySortOption.Runtime,
         TvLibrarySortOption.Resolution -> "desc"

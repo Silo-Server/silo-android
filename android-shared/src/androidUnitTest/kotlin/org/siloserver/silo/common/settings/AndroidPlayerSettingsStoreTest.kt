@@ -144,6 +144,10 @@ class AndroidPlayerSettingsStoreTest {
             assertEquals("720p",store.preferredQualityFlow.first())
             assertEquals(2000,store.maxBitrateKbpsFlow.first())
             assertFalse(store.autoPlayNextFlow.first())
+            assertEquals(
+                setOf(PlaybackSettingsKeys.PreferredQuality, PlaybackSettingsKeys.MaxBitrateKbps, PlaybackSettingsKeys.AutoPlayNext),
+                store.deviceOverrideKeysFlow.first(),
+            )
             assertTrue(fakeFlusher.calls.isEmpty())
         } finally { client.close() }
     }
@@ -465,12 +469,40 @@ class AndroidPlayerSettingsStoreTest {
         )
 
     @Test
-    fun `setPlaybackSpeed clamps out-of-range values`() = runTest {
+    fun `setPlaybackSpeed clamps to the contract range and step`() = runTest {
         val store = newStore()
         store.setPlaybackSpeed(10.0)
-        assertEquals(4.0, store.playbackSpeedFlow.first(), 0.0)
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
+        store.setPlaybackSpeed(3.5)
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
         store.setPlaybackSpeed(0.01)
         assertEquals(0.25, store.playbackSpeedFlow.first(), 0.0)
+        // Off the 0.05 grid: the server would refuse it and the write would
+        // be dropped, so it is snapped before it is stored or sent.
+        store.setPlaybackSpeed(1.33)
+        assertEquals(1.35, store.playbackSpeedFlow.first(), 0.0)
+        assertEquals(
+            listOf("3.0", "3.0", "0.25", "1.35"),
+            fakeFlusher.calls.filter { it.key == PlaybackSettingsKeys.PlaybackSpeed }.map { it.value },
+        )
+    }
+
+    @Test
+    fun `a playback speed stored by an older build is normalized on read`() = runTest {
+        // Older builds clamped to 4.0, so a stored speed can sit outside the
+        // contract range until the next server refresh, or forever offline.
+        val store = newStoreSeededWith { prefs ->
+            prefs[stringPreferencesKey(PlaybackSettingsKeys.PlaybackSpeed)] = "3.5"
+        }
+        assertEquals(3.0, store.playbackSpeedFlow.first(), 0.0)
+    }
+
+    @Test
+    fun `Profile 7 HDR10 fallback defaults off before the first refresh`() = runTest {
+        // The contract default is false; reading true before hydration (or
+        // offline) sent Profile 7 sources down the HDR10 path.
+        assertFalse(newStore().dvProfile7HDR10FallbackFlow.first())
+        assertFalse(newStore(profileId = null).dvProfile7HDR10FallbackFlow.first())
     }
 
     @Test
@@ -774,6 +806,183 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `using the profile setting deletes the device value through the scoped queue`() = runTest {
+        val api = FakeSettingsApi()
+        val store = newStore(repository = SettingsRepository(api), deviceId = "device")
+        store.setAutoSkipCredits(true)
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+
+        // The server now resolves the profile's value.
+        api.effective = mapOf(
+            stored(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(false), scope = SettingScope.PROFILE.wire),
+        )
+        val flushesBefore = fakeFlusher.flushNowCount
+        store.resetDeviceSetting(PlaybackSettingsKeys.AutoSkipCredits)
+
+        val delete = fakeFlusher.calls.last()
+        assertTrue(delete.isDelete)
+        assertEquals(PlaybackSettingsKeys.AutoSkipCredits, delete.key)
+        // Stamped with the profile and server it was made under, like a set,
+        // so a profile or server switch before it lands drops it rather than
+        // clearing someone else's value.
+        assertEquals(activeProfileId, delete.profileId)
+        assertEquals(serverUrl, delete.serverUrl)
+        assertTrue(fakeFlusher.flushNowCount > flushesBefore, "the clear is pushed right away")
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+        assertFalse(store.autoSkipCreditsFlow.first())
+    }
+
+    @Test
+    fun `using the profile setting clears every key the control writes`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setQuality("1080p", 8000)
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
+
+        store.resetDeviceSetting(PlaybackSettingsKeys.PreferredQuality)
+        store.resetDeviceSetting(PlaybackSettingsKeys.IntroSkipMode)
+
+        val deleted = fakeFlusher.calls.filter { it.isDelete }.map { it.key }.toSet()
+        assertEquals(
+            setOf(
+                PlaybackSettingsKeys.PreferredQuality,
+                PlaybackSettingsKeys.MaxBitrateKbps,
+                PlaybackSettingsKeys.IntroSkipMode,
+                PlaybackSettingsKeys.AutoSkipIntro,
+            ),
+            deleted,
+        )
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `no audio language preference clears the device value instead of storing null`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setAudioLanguage("ja")
+        assertTrue(PlaybackSettingsKeys.AudioLanguage in store.deviceOverrideKeysFlow.first())
+
+        store.setAudioLanguage("")
+
+        val audio = fakeFlusher.calls.filter { it.key == PlaybackSettingsKeys.AudioLanguage }
+        assertEquals(listOf(false, true), audio.map { it.isDelete }, "a PUT for ja, then a DELETE")
+        assertFalse(PlaybackSettingsKeys.AudioLanguage in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `a refresh records which values this device holds itself`() = runTest {
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                stored(PlaybackSettingsKeys.AutoPlayNext, JsonPrimitive(false)),
+                stored(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(true), scope = SettingScope.PROFILE.wire),
+                defaulted(PlaybackSettingsKeys.IntroSkipMode, JsonPrimitive("ask")),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setIntroSkipMode(IntroSkipMode.NEVER)
+        store.refreshFromServer()
+        // Answered from the device scope only for auto-play; the intro-skip
+        // write has landed (nothing pending), so the server's answer wins.
+        assertEquals(setOf(PlaybackSettingsKeys.AutoPlayNext), store.deviceOverrideKeysFlow.first())
+
+        // A write still queued keeps its marker: the response predates it.
+        store.setAutoSkipCredits(false)
+        fakeFlusher.pending = setOf(PlaybackSettingsKeys.AutoSkipCredits)
+        store.refreshFromServer()
+        assertEquals(
+            setOf(PlaybackSettingsKeys.AutoPlayNext, PlaybackSettingsKeys.AutoSkipCredits),
+            store.deviceOverrideKeysFlow.first(),
+        )
+    }
+
+    @Test
+    fun `device values are tracked per profile`() = runTest {
+        var profile = "profile-a"
+        val stores = mutableMapOf<String, DataStore<Preferences>>()
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(), legacyCache = fakeLegacyCache,
+            getActiveProfileId = { profile }, getServerUrl = { serverUrl },
+            getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
+            dataStoreFactory = { id -> stores.getOrPut(id) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { File(tempFolder.root, "overrides_$id.preferences_pb") },
+                )
+            } },
+        )
+        store.setAutoSkipCredits(true)
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+        profile = "profile-b"
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+        store.resetDeviceSetting(PlaybackSettingsKeys.AutoSkipCredits)
+        assertEquals("profile-b", fakeFlusher.calls.last().profileId)
+        profile = "profile-a"
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `resetAllDeviceSettings clears the markers and reports whether the clears landed`() = runTest {
+        val store = newStore(repository = SettingsRepository(FakeSettingsApi()))
+        store.setAutoSkipCredits(true)
+        assertTrue(store.resetAllDeviceSettings())
+        assertEquals(emptySet(), store.deviceOverrideKeysFlow.first())
+
+        // Offline: the deletes stay queued, and the caller must not claim the
+        // profile's settings already apply.
+        fakeFlusher.pending = setOf(PlaybackSettingsKeys.AutoSkipCredits)
+        assertFalse(store.resetAllDeviceSettings())
+    }
+
+    @Test
+    fun `resetAllDeviceSettings does not report success when the server still has a device value`() = runTest {
+        // The flusher drops a delete it cannot retry (a 401/403, a replaced
+        // owner), so the queue comes back empty while the row survives.
+        val api = FakeSettingsApi(
+            effective = mapOf(
+                PlaybackSettingsKeys.AutoSkipCredits to EffectiveSettingValue(
+                    key = PlaybackSettingsKeys.AutoSkipCredits,
+                    value = JsonPrimitive(true),
+                    source = SettingScope.PROFILE_DEVICE.wire,
+                    scope = SettingScope.PROFILE_DEVICE.wire,
+                ),
+            ),
+        )
+        val store = newStore(repository = SettingsRepository(api))
+        store.setAutoSkipCredits(true)
+        assertFalse(store.resetAllDeviceSettings())
+        assertEquals(setOf(PlaybackSettingsKeys.AutoSkipCredits), store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `resetAllDeviceSettings does not confirm a reset for a profile switched away from mid-reset`() = runTest {
+        val ownerA = org.siloserver.silo.network.AuthScopeSnapshot("server", "profile-a", serverUrl, "token-a", credentialEpoch = 1)
+        var owner = ownerA
+        val stores = mutableMapOf<String, DataStore<Preferences>>()
+        // Profile B's answer: every device row is gone, which would confirm
+        // the reset if it were read as profile A's.
+        val api = FakeSettingsApi(
+            effective = mapOf(defaulted(PlaybackSettingsKeys.AutoSkipCredits, JsonPrimitive(false))),
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(), legacyCache = fakeLegacyCache,
+            getActiveProfileId = { owner.profileId }, getServerUrl = { serverUrl },
+            getDeviceId = { "device" }, serverSettingsFlusher = fakeFlusher,
+            settingsRepository = SettingsRepository(api), getAuthScope = { owner },
+            dataStoreFactory = { id -> stores.getOrPut(id) {
+                PreferenceDataStoreFactory.create(
+                    produceFile = { File(tempFolder.root, "reset_switch_$id.preferences_pb") },
+                )
+            } },
+        )
+        store.setAutoSkipCredits(true)
+        // The user switches to profile B while the reset's refresh is in flight.
+        api.onEffective = { owner = ownerA.copy(profileId = "profile-b", profileToken = "token-b") }
+
+        assertFalse(store.resetAllDeviceSettings())
+        assertEquals(listOf<org.siloserver.silo.network.AuthScopeSnapshot?>(ownerA), api.requestedAuthorities)
+        // Profile A's store did not take profile B's answer either.
+        owner = ownerA
+        assertTrue(store.autoSkipCreditsFlow.first())
+    }
+
+    @Test
     fun `setSubtitleDeviceOverrideEnabled false enqueues delete and clears local flag`() = runTest {
         val repo = SettingsRepository(FakeSettingsApi())
         val store = newStore(repository = repo)
@@ -1021,6 +1230,10 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
     override suspend fun flushNow() {
         flushNowCount++
     }
+
+    /** Keys whose write is still queued after a flush, as offline would leave them. */
+    var pending: Set<String> = emptySet()
+    override fun pendingKeys(profileId: String): Set<String> = pending
 }
 
 /**
@@ -1074,6 +1287,10 @@ private class FakeSettingsApi(
     // up a second DataStore over the same file.
     var effective: Map<String, EffectiveSettingValue> = effective
     var requestedKeys: List<String> = emptyList()
+    val requestedAuthorities = mutableListOf<org.siloserver.silo.network.AuthScopeSnapshot?>()
+
+    /** Runs while a request is in flight, before it is answered. */
+    var onEffective: () -> Unit = {}
 
     override suspend fun getEffectiveValues(
         keys: List<String>,
@@ -1082,6 +1299,8 @@ private class FakeSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<EffectiveSettingValuesResponse> {
         requestedKeys = keys
+        requestedAuthorities += authority
+        onEffective()
         // Like the server: answer only the keys this contract knows.
         val entries = keys.mapNotNull { effective[it] }
         return ApiResult.Success(EffectiveSettingValuesResponse(settings = entries, revision = 1))

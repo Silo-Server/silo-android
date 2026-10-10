@@ -162,6 +162,8 @@ object SettingKeys {
     const val UI_THEME_MUSIC_LOOP = "ui.theme_music_loop"
     /** Time format */
     const val UI_TIME_FORMAT = "ui.time_format"
+    /** Show title art */
+    const val UI_TITLE_ART = "ui.title_art"
 
     /** Every key the server stores. Safe to flush. */
     val REMOTE: List<String> = listOf(
@@ -225,6 +227,7 @@ object SettingKeys {
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
         UI_TIME_FORMAT,
+        UI_TITLE_ART,
     )
 
     /** Contract-known keys that never leave the device. */
@@ -272,6 +275,7 @@ object SettingKeys {
         UI_REMEMBER_LIBRARY_PAGE_STATE,
         UI_THEME_MUSIC_ENABLED,
         UI_THEME_MUSIC_LOOP,
+        UI_TITLE_ART,
     )
 
     val INT_KEYS: Set<String> = setOf(

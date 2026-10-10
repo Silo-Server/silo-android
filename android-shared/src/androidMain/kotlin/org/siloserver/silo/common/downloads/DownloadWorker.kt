@@ -42,6 +42,7 @@ import io.ktor.utils.io.jvm.javaio.toInputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.URLDecoder
@@ -478,9 +479,10 @@ class DownloadWorker(
     }
 
     /**
-     * Fetches the offline manifest's audio tracks and subtitle sidecars for a
-     * published video download and stores them on its metadata row. Best
-     * effort: every failure leaves the download playable the legacy way.
+     * Fetches the offline manifest's audio tracks, subtitle sidecars and
+     * artwork for a published video download and stores them on its metadata
+     * row. Best effort: every failure leaves the download playable the legacy
+     * way, and a failed artwork fetch only leaves that image's path empty.
      */
     private suspend fun captureOfflineTracks(
         downloadId: String,
@@ -492,21 +494,43 @@ class DownloadWorker(
         if (!OfflineTrackAssetFetcher.appliesTo(mediaType)) return
         try {
             requireOwner()
-            val tracks = offlineTrackFetcher.fetch(downloadId, serverId, profileId, fileId) {
-                transferAuthority?.let { managedDownloadAuth(it.scope) }
-            } ?: return
-            ownedWrite {
-                val existing = metadataStore.readSidecar(serverId, profileId, fileId)
-                    ?.takeIf { it.record.id == downloadId }
-                if (existing != null) {
-                    metadataStore.writeSidecar(
-                        serverId, profileId,
-                        existing.copy(offlineTracks = tracks, updatedAtMs = System.currentTimeMillis()),
-                    )
+            // Held until the new tracks are on the row, so a subtitle refresh
+            // never publishes over the sidecars this capture writes.
+            DownloadSlotLocks.of(serverId, profileId, fileId).withLock {
+                val assets = offlineTrackFetcher.fetch(downloadId, serverId, profileId, fileId) {
+                    transferAuthority?.let { managedDownloadAuth(it.scope) }
+                } ?: return
+                val tracks = assets.tracks
+                val artwork = assets.artwork
+                ownedWrite {
+                    val existing = metadataStore.readSidecar(serverId, profileId, fileId)
+                        ?.takeIf { it.record.id == downloadId }
+                    if (existing != null) {
+                        metadataStore.writeSidecar(
+                            serverId, profileId,
+                            existing.copy(
+                                offlineTracks = tracks,
+                                offlinePosterPath = artwork.posterPath,
+                                offlineSeriesPosterPath = artwork.seriesPosterPath,
+                                // A movie queued without a thumbhash takes the
+                                // manifest's. An episode's poster_thumbhash hashes
+                                // its 16:9 still, not the series poster its tile shows.
+                                posterThumbhash = existing.posterThumbhash
+                                    ?: artwork.posterThumbhash.takeUnless { existing.isEpisodeDownload() },
+                                seriesPosterThumbhash = artwork.seriesPosterThumbhash ?: existing.seriesPosterThumbhash,
+                                updatedAtMs = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                    true
                 }
-                true
+                Log.i(
+                    TAG,
+                    "offline tracks captured id=$downloadId audio=${tracks.audioTracks.size} " +
+                        "subtitles=${tracks.subtitles.size} poster=${artwork.posterPath != null} " +
+                        "seriesPoster=${artwork.seriesPosterPath != null}",
+                )
             }
-            Log.i(TAG, "offline tracks captured id=$downloadId audio=${tracks.audioTracks.size} subtitles=${tracks.subtitles.size}")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

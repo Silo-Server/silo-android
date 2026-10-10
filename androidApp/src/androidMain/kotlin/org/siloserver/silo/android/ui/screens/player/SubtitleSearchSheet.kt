@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,9 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -41,7 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.siloserver.silo.android.ui.util.LanguageNames
+import org.siloserver.silo.common.ui.LanguageNames
 import org.siloserver.silo.model.subtitles.SubtitleResult
 
 // Web-parity palette (SubtitleSearchModal.tsx providerInfo / scoreColor).
@@ -89,35 +90,18 @@ fun SubtitleSearchSheet(
     // On successful download return to the tracks sheet (via onBack) so the
     // freshly added track is visible, rather than dropping onto bare player
     // controls. One-shot flag in VM.
+    val controller = rememberPlayerMenuController(onDismiss)
+    val back = onBack?.let { parent -> { controller.dismiss(then = parent) } }
+
     LaunchedEffect(tools.downloadCompleted) {
-        if (tools.downloadCompleted) (onBack ?: onDismiss)()
+        if (tools.downloadCompleted) (back ?: { controller.dismiss() })()
     }
 
-    PlayerModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        tabletopPaneHeight = tabletopPaneHeight,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                // Cap below the top edge + keep content flings from
-                // dismissing the sheet — see PlayerSheetSupport.
-                .playerSheetContent(tabletopPaneHeight)
-                .nestedScroll(PlayerSheetFlingGuard)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.95f),
-                            Color.Black.copy(alpha = 0.92f),
-                        ),
-                    ),
-                ),
-        ) {
+    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
             PlayerSheetHeader(
-                title = "Search Subtitles",
-                onBack = onBack,
-                onDismiss = onDismiss,
+                title = "Find subtitles",
+                onBack = back,
+                onDismiss = { controller.dismiss() },
             )
 
             Row(
@@ -131,7 +115,7 @@ fun SubtitleSearchSheet(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                            .background(PlayerChrome.Raised, RoundedCornerShape(12.dp))
                             .clickable { languageMenuExpanded = true }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -147,13 +131,13 @@ fun SubtitleSearchSheet(
                             tint = Color.White.copy(alpha = 0.7f),
                         )
                     }
-                    DropdownMenu(
+                    SiloDropdownMenu(
                         expanded = languageMenuExpanded,
                         onDismissRequest = { languageMenuExpanded = false },
                         modifier = Modifier.heightIn(max = 320.dp),
                     ) {
                         LanguageNames.dropdownOptions.forEach { (code, label) ->
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text(label) },
                                 onClick = {
                                     selectedLanguage = code
@@ -166,12 +150,16 @@ fun SubtitleSearchSheet(
                 Button(
                     onClick = { onSearch(selectedLanguage) },
                     enabled = !tools.searchLoading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = PlayerChrome.Paper,
+                        contentColor = PlayerChrome.Ink,
+                    ),
                 ) {
                     if (tools.searchLoading) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             strokeWidth = 2.dp,
-                            color = Color.White,
+                            color = PlayerChrome.Ink,
                         )
                     } else {
                         Text("Search")
@@ -209,13 +197,7 @@ fun SubtitleSearchSheet(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .then(
-                        if (tabletopPaneHeight == null) {
-                            Modifier.heightIn(max = 420.dp)
-                        } else {
-                            Modifier.weight(1f)
-                        },
-                    ),
+                    .weight(1f, fill = false),
             ) {
                 items(tools.searchResults, key = { "${it.provider}:${it.id}" }) { result ->
                     val key = "${result.provider}:${result.id}"
@@ -228,8 +210,7 @@ fun SubtitleSearchSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-        }
+            Spacer(modifier = Modifier.height(12.dp))
     }
 }
 

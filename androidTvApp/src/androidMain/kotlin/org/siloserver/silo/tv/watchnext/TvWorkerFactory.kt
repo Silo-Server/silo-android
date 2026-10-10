@@ -13,6 +13,7 @@ import org.siloserver.silo.common.diagnostics.HostedDiagnosticsDeletionWorker
 import org.siloserver.silo.common.diagnostics.HostedDiagnosticsReportDeleter
 import org.siloserver.silo.common.diagnostics.PendingReportStore
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
 import org.koin.core.context.GlobalContext
 
 /**
@@ -49,6 +50,7 @@ class TvWorkerFactory : WorkerFactory() {
                     repository = koin.get<WatchNextRepository>(),
                     spoilerStore = koin.get(),
                     catalogRepository = koin.get(),
+                    allowsWatchNext = koin.get<TvProfileLaunchPreferences>()::allowsWatchNext,
                 )
             }
             SyncWorker::class.java.name -> {

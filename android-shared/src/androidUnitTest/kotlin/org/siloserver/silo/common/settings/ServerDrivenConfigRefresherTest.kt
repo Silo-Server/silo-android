@@ -262,6 +262,6 @@ private class FakePlayerSettingsStore : PlayerSettingsStore {
     }
     override suspend fun setSubtitleDeviceOverrideEnabled(enabled: Boolean) = Unit
     override suspend fun resetDeviceSetting(key: String) = Unit
-    override suspend fun resetAllDeviceSettings() = Unit
+    override suspend fun resetAllDeviceSettings() = true
     override suspend fun flushPendingDeviceSettings() = Unit
 }

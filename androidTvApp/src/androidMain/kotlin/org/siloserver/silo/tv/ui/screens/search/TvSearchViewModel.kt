@@ -20,6 +20,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -52,6 +53,8 @@ class TvSearchViewModel(
     private val personalDataRepository: PersonalDataRepository,
     private val libraryScopeStore: TvLibraryScopeStore,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
 
     data class UiState(
         val query: String = "",
@@ -78,6 +81,9 @@ class TvSearchViewModel(
     private val _uiState = MutableStateFlow(UiState())
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
+    // Declared before init, which starts the first load and stores its job here.
+    private var mediaTypesJob: Job? = null
+
     init { loadAvailableMediaTypes() }
 
     /**
@@ -87,13 +93,17 @@ class TvSearchViewModel(
      * unavailable it falls back to All.
      */
     private fun loadAvailableMediaTypes() {
-        viewModelScope.launch {
+        // A reload after an access change replaces an unfinished one, so the
+        // older library list cannot land after it.
+        mediaTypesJob?.cancel()
+        mediaTypesJob = viewModelScope.launch {
             val libraries = when (val result = personalDataRepository.listUserLibraries()) {
                 is ApiResult.Success -> result.data
                 else -> return@launch
             }
             val caps = libraries.tvMediaModeCapabilities()
             val showAudiobooks = libraryScopeStore.getShowAudiobooksTab()
+            ensureActive()
             // The "Audiobooks" chip sends type=audiobook, so gate it on an
             // actual audiobook-like library — hasAudio also covers music, which
             // wouldn't match the audiobook filter.
@@ -182,6 +192,15 @@ class TvSearchViewModel(
         if (_uiState.value.query.isNotBlank()) {
             searchJob = viewModelScope.launch { runSearchInternal(reset = true) }
         }
+    }
+
+    /**
+     * The server reported an access change: libraries (and so the media-type
+     * chips) and the titles a query can match may differ under the new policy.
+     */
+    fun refreshForAccessChange() {
+        loadAvailableMediaTypes()
+        if (_uiState.value.query.isNotBlank()) submitSearch()
     }
 
     fun submitSearch() {

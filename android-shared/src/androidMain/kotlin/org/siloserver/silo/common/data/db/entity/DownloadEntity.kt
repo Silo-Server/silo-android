@@ -86,6 +86,13 @@ data class DownloadEntity(
      *  downloaded file's audio tracks and the local subtitle sidecars. Null for
      *  downloads completed before offline track data was captured. */
     val offlineTracksJson: String? = null,
+    /** Local path of the saved item poster (episode image for episodes); null
+     *  for downloads completed before artwork was saved, or when none was. */
+    val offlinePosterPath: String? = null,
+    /** Local path of the saved parent series poster (episode downloads only). */
+    val offlineSeriesPosterPath: String? = null,
+    /** ThumbHash of the parent series poster (episode downloads only). */
+    val seriesPosterThumbhash: String? = null,
     val posterIsEpisodeStill: Boolean? = null,
     val episodeUserDataJson: String? = null,
 )

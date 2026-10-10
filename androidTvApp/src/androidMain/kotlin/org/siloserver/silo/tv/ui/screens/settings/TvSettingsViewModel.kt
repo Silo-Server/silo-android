@@ -26,12 +26,17 @@ import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
+import org.siloserver.silo.common.ui.components.ProfileAvatarRef
+import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.tv.data.preferences.LegacyTvPrefsMigration
+import org.siloserver.silo.tv.data.preferences.ProfileLaunchBehavior
 import org.siloserver.silo.tv.data.preferences.SubtitleMode
 import org.siloserver.silo.tv.data.preferences.SubtitleSize
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
+import org.siloserver.silo.tv.watchnext.WatchNextSeeder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +73,8 @@ class TvSettingsViewModel(
     private val seekIntervalStore: SeekIntervalStore? = null,
     private val episodeSpoilerStore: EpisodeSpoilerStore? = null,
     audiobookSettingsStore: AudiobookSettingsStore? = null,
+    private val profileLaunchPreferences: TvProfileLaunchPreferences? = null,
+    private val watchNextSeeder: WatchNextSeeder? = null,
 ) : ViewModel() {
 
     /**
@@ -90,7 +97,7 @@ class TvSettingsViewModel(
         val userError: String? = null,
         // Active profile identity for the tappable account header row.
         val profileName: String? = null,
-        val profileAvatar: String? = null,
+        val profileAvatar: ProfileAvatarRef = ProfileAvatarRef.None,
         val serverUrl: String = "",
         val serverName: String = "",
         // Whether the canonical settings probe succeeded; playback is
@@ -125,9 +132,12 @@ class TvSettingsViewModel(
         val matchContentFrameRate: Boolean = false,
         val dolbyVisionEnabled: Boolean = true,
         val showAudiobooksTab: Boolean = false,
+        // Profile Selection (tvOS General → PROFILE AT LAUNCH), device-wide.
+        val profileLaunchBehavior: ProfileLaunchBehavior = ProfileLaunchBehavior.Automatic,
         val subtitleMatchesDevice: Boolean = false,
-        val dvProfile7HDR10Fallback: Boolean = true,
+        val dvProfile7HDR10Fallback: Boolean = false,
         val forceHdrPassthrough: Boolean = false,
+        val trueBlackBars: Boolean = false,
         val autoSkipCredits: Boolean = false,
         // Seconds to skip back on resume (0 = off); consecutive auto-advances
         // before the "Still watching?" prompt (0 = off).
@@ -136,6 +146,17 @@ class TvSettingsViewModel(
         // Seconds before the end of an episode to surface the Up-Next prompt
         // (0 = at the very end). Mirrors tvOS `nextUpPromptSeconds`.
         val nextUpPromptSeconds: Int = 10,
+        /**
+         * Keys this device holds its own value for. A profile-layered control
+         * whose key is absent shows "Use profile setting" as its choice.
+         */
+        val deviceOverrides: Set<String> = emptySet(),
+        /**
+         * Outcome of the last "Use Profile Settings", until the screen has told
+         * the user: true when the server confirmed every clear, false when it
+         * couldn't (offline, refused, or interrupted).
+         */
+        val playbackOverridesReset: Boolean? = null,
         // Cards & Posters (`ui.card_presentation`), mirrored from
         // CardPresentationStore. Source drives the "Only This Device" toggle
         // and the "Use Profile Default" action; support gates the whole group.
@@ -157,6 +178,16 @@ class TvSettingsViewModel(
         observePlayerSettings()
         observeCardPresentation()
         observeEpisodeSpoilers()
+        observeProfileLaunch()
+    }
+
+    private fun observeProfileLaunch() {
+        val preferences = profileLaunchPreferences ?: return
+        viewModelScope.launch {
+            preferences.state.collect { launch ->
+                _uiState.update { it.copy(profileLaunchBehavior = launch.behavior) }
+            }
+        }
     }
 
     /**
@@ -193,7 +224,7 @@ class TvSettingsViewModel(
                                 userLoading = false,
                                 userError = null,
                                 profileName = profile?.name,
-                                profileAvatar = profile?.avatar,
+                                profileAvatar = profile?.avatarRef() ?: ProfileAvatarRef.None,
                             )
                         }
                         return@launch
@@ -376,6 +407,11 @@ class TvSettingsViewModel(
             }
         }
         viewModelScope.launch {
+            playerSettingsStore.deviceOverrideKeysFlow.collect { keys ->
+                _uiState.update { it.copy(deviceOverrides = keys) }
+            }
+        }
+        viewModelScope.launch {
             playerSettingsStore.matchContentFrameRateFlow.collect { value ->
                 _uiState.update { it.copy(matchContentFrameRate = value) }
             }
@@ -399,6 +435,11 @@ class TvSettingsViewModel(
         viewModelScope.launch {
             playerSettingsStore.forceHdrPassthroughFlow.collect { value ->
                 _uiState.update { it.copy(forceHdrPassthrough = value) }
+            }
+        }
+        viewModelScope.launch {
+            playerSettingsStore.trueBlackBarsFlow.collect { value ->
+                _uiState.update { it.copy(trueBlackBars = value) }
             }
         }
         viewModelScope.launch {
@@ -669,6 +710,31 @@ class TvSettingsViewModel(
         }
     }
 
+    /**
+     * Profile Selection takes effect the next time Silo starts or returns; it
+     * never ejects the current session (silo-apple design §4.5). Every Time
+     * empties the launcher's Watch Next row, and leaving it refills the row.
+     */
+    fun onProfileLaunchBehaviorChanged(behavior: ProfileLaunchBehavior) {
+        val preferences = profileLaunchPreferences ?: return
+        val previous = preferences.state.value.behavior
+        if (previous == behavior) return
+        preferences.setBehavior(behavior)
+        val seeder = watchNextSeeder ?: return
+        if (behavior == ProfileLaunchBehavior.EveryTime) {
+            seeder.clear()
+        } else if (previous == ProfileLaunchBehavior.EveryTime) {
+            viewModelScope.launch {
+                if (tokenManager.getProfileId().isNullOrBlank()) return@launch
+                // A later choice may have gone back to Every Time (which
+                // cleared the row) while this read was in flight.
+                if (preferences.state.value.behavior == ProfileLaunchBehavior.EveryTime) return@launch
+                seeder.seedNow()
+                seeder.enqueuePeriodic()
+            }
+        }
+    }
+
     fun onSubtitleMatchesDeviceChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setSubtitleMatchesDevice(value) }
     }
@@ -683,6 +749,10 @@ class TvSettingsViewModel(
 
     fun onForceHdrPassthroughChanged(value: Boolean) {
         viewModelScope.launch { playerSettingsStore.setForceHdrPassthrough(value) }
+    }
+
+    fun onTrueBlackBarsChanged(value: Boolean) {
+        viewModelScope.launch { playerSettingsStore.setTrueBlackBars(value) }
     }
 
     fun onIntroSkipModeChanged(value: IntroSkipMode) {
@@ -706,11 +776,24 @@ class TvSettingsViewModel(
     }
 
     /**
-     * Clear every server-side device override for this device. Mirrors
-     * iOS tvOS "Reset Playback Overrides" (TVSettingsView.swift:137).
+     * "Use Profile Settings": clears every setting this device holds its own
+     * value for. Mirrors iOS tvOS "Reset Playback Overrides"
+     * (TVSettingsView.swift:137).
      */
     fun resetPlaybackOverrides() {
-        viewModelScope.launch { playerSettingsStore.resetAllDeviceSettings() }
+        viewModelScope.launch {
+            val landed = playerSettingsStore.resetAllDeviceSettings()
+            _uiState.update { it.copy(playbackOverridesReset = landed) }
+        }
+    }
+
+    fun onPlaybackOverridesResetShown() {
+        _uiState.update { it.copy(playbackOverridesReset = null) }
+    }
+
+    /** Goes back to the profile's value for one setting's control on this device. */
+    fun onUseProfileSetting(key: String) {
+        viewModelScope.launch { playerSettingsStore.resetDeviceSetting(key) }
     }
 
     /** Lifecycle hook — call from MainTvActivity.onStop. */

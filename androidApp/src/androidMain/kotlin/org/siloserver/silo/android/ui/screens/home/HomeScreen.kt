@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.home
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,8 +27,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.SettingsRemote
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -69,8 +69,6 @@ import org.siloserver.silo.android.ui.components.ErrorView
 import org.siloserver.silo.android.ui.components.MediaRowSkeleton
 import org.siloserver.silo.android.ui.components.ProfileMenu
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
-import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel
-import org.siloserver.silo.android.ui.screens.pairing.CompanionPairingBottomOverlay
 import org.siloserver.silo.android.ui.screens.profiles.ProfileAvatar
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeContentState
 import org.siloserver.silo.common.diagnostics.DiagnosticsHomeLogger
@@ -78,8 +76,6 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsHomeScrollRegion
 import org.siloserver.silo.common.diagnostics.DiagnosticsListLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSnapshot
 import org.siloserver.silo.common.diagnostics.DiagnosticsListSurface
-import org.siloserver.silo.common.pairing.CompanionPairingStatus
-import org.siloserver.silo.common.pairing.CompanionPairingTarget
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.model.catalog.isAudiobookItemType
@@ -131,7 +127,7 @@ fun HomeScreen(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -144,13 +140,6 @@ fun HomeScreen(
     val serverRegistry: ServerRegistry = koinInject()
     val activeServerId by serverRegistry.activeServerId.collectAsState()
     val activeEntry by serverRegistry.activeEntry.collectAsState()
-    val companionPairingViewModel = koinViewModel<CompanionPairingViewModel>()
-    val companionTargets by companionPairingViewModel.targets.collectAsState()
-    val companionStatus by companionPairingViewModel.status.collectAsState()
-    val companionApproval by companionPairingViewModel.pendingApproval.collectAsState()
-    val companionServerChoices by companionPairingViewModel.serverChoices.collectAsState()
-    var presentedPairingTarget by remember { mutableStateOf<CompanionPairingTarget?>(null) }
-    var dismissedPairingSessions by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val sections = state.sections
     val profileScopeId = activeEntry?.profileId ?: activeProfile?.id
     val populatedServerSections = remember(sections) { sections.filter { it.items.isNotEmpty() } }
@@ -319,23 +308,6 @@ fun HomeScreen(
                 )
             }
     }
-    LaunchedEffect(companionTargets, companionStatus, dismissedPairingSessions) {
-        if (companionStatus is CompanionPairingStatus.Idle) {
-            val presented = presentedPairingTarget
-            if (presented == null) {
-                presentedPairingTarget = companionTargets.firstOrNull {
-                    it.dismissalKey !in dismissedPairingSessions
-                }
-            } else {
-                // Android NSD can resolve the same TV again with a new listener port after
-                // its setup screen restarts. Keep the visible card, but always pair with the
-                // freshest endpoint instead of the target object originally latched by UI.
-                presentedPairingTarget = companionTargets
-                    .firstOrNull { it.deviceId == presented.deviceId }
-                    ?: companionTargets.firstOrNull { it.dismissalKey !in dismissedPairingSessions }
-            }
-        }
-    }
     // Home can show the same item in several rows at once. Each poster placement
     // now carries a unique hero key (see MediaCard) so duplicates never collide
     // in the shared-transition layout — no per-screen claim registry needed.
@@ -490,35 +462,15 @@ fun HomeScreen(
             onRemoteDisconnectClick = onRemoteDisconnectClick,
             isRemoteControlActive = isRemoteControlActive,
             onRequestsClick = onRequestsClick,
-            onWatchTogetherClick = onWatchTogetherClick,
+            onWatchPartyClick = onWatchPartyClick,
             onSettingsClick = onSettingsClick,
             onSwitchProfileClick = onSwitchProfileClick,
             onSwitchServerClick = onSwitchServerClick,
             onSignOutClick = onSignOutClick,
         )
 
-        CompanionPairingBottomOverlay(
-            target = presentedPairingTarget,
-            status = companionStatus,
-            approval = companionApproval,
-            serverChoices = companionServerChoices,
-            onPair = companionPairingViewModel::pair,
-            onServersSelected = companionPairingViewModel::continueWithServers,
-            onApprove = companionPairingViewModel::approveMatchCode,
-            onDecline = companionPairingViewModel::cancelMatchCode,
-            onDismiss = {
-                presentedPairingTarget?.let { target ->
-                    dismissedPairingSessions = dismissedPairingSessions + target.dismissalKey
-                }
-                companionPairingViewModel.dismissPairing()
-                presentedPairingTarget = null
-            },
-        )
     }
 }
-
-private val CompanionPairingTarget.dismissalKey: String
-    get() = "$deviceId:${sessionId ?: serviceName}"
 
 @Composable
 private fun HomeLoadingSkeleton() {
@@ -547,7 +499,7 @@ private fun HomeFloatingChrome(
     onRemoteDisconnectClick: () -> Unit,
     isRemoteControlActive: Boolean,
     onRequestsClick: (() -> Unit)?,
-    onWatchTogetherClick: (() -> Unit)?,
+    onWatchPartyClick: (() -> Unit)?,
     onSettingsClick: () -> Unit,
     onSwitchProfileClick: () -> Unit,
     onSwitchServerClick: () -> Unit,
@@ -567,7 +519,7 @@ private fun HomeFloatingChrome(
                 activeProfile = activeProfile,
                 onSearchClick = onSearchClick,
                 onRequestsClick = onRequestsClick,
-                onWatchTogetherClick = onWatchTogetherClick,
+                onWatchPartyClick = onWatchPartyClick,
                 onSettingsClick = onSettingsClick,
                 onSwitchProfileClick = onSwitchProfileClick,
                 onSwitchServerClick = onSwitchServerClick,
@@ -593,18 +545,18 @@ private fun HomeFloatingChrome(
                                 contentDescription = "Remote Control",
                             )
                         }
-                        DropdownMenu(
+                        SiloDropdownMenu(
                             expanded = remoteMenuExpanded,
                             onDismissRequest = { remoteMenuExpanded = false },
                         ) {
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Remote Control") },
                                 onClick = {
                                     remoteMenuExpanded = false
                                     onRemoteControlClick()
                                 },
                             )
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = { Text("Choose TV") },
                                 onClick = {
                                     remoteMenuExpanded = false
@@ -612,7 +564,7 @@ private fun HomeFloatingChrome(
                                 },
                             )
                             HorizontalDivider()
-                            DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = {
                                     Text(
                                         "Turn Off Control Mode",

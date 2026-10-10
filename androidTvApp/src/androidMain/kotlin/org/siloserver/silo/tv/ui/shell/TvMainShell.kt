@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Favorite
@@ -116,10 +115,9 @@ import org.siloserver.silo.common.ui.components.avatarRef
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.common.ui.components.rememberProfileServerUrl
 import org.siloserver.silo.model.catalog.BrowseItem
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
+import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.personal.UserLibrary
-import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.repository.AuthRepository
@@ -148,18 +146,16 @@ import org.siloserver.silo.tv.ui.screens.recommendations.TvRecommendationsScreen
 import org.siloserver.silo.tv.ui.screens.recommendations.SavedListSelection
 import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequest
 import org.siloserver.silo.tv.ui.screens.recommendations.TvForYouEntryRequestSaver
-import org.siloserver.silo.tv.ui.screens.requests.TvMyRequestsScreen
 import org.siloserver.silo.tv.ui.screens.requests.TvRequestDetailScreen
-import org.siloserver.silo.tv.ui.screens.requests.TvRequestsScreen
+import org.siloserver.silo.tv.ui.screens.requests.TvRequestsPage
 import org.siloserver.silo.tv.ui.screens.search.TvSearchScreen
 import org.siloserver.silo.tv.ui.screens.settings.TvSettingsScreen
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvJoinCodeDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherMenuEntryDialog
-import org.siloserver.silo.tv.ui.screens.watchtogether.TvWatchTogetherViewModel
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
 import org.siloserver.silo.viewmodel.HomeViewModel
@@ -202,6 +198,8 @@ fun TvMainShell(
         collectionId: String,
         title: String,
         libraryType: String,
+        collectionSource: String,
+        mediaScope: String?,
     ) -> Unit,
     onOpenCollectionDetail: (collectionId: String, title: String) -> Unit,
     onSignedOut: () -> Unit,
@@ -209,7 +207,10 @@ fun TvMainShell(
     onSwitchServer: () -> Unit,
     onPairDevice: () -> Unit,
     onPlayItem: (contentId: String, type: String?, resumePositionSeconds: Double?) -> Unit,
-    onOpenWatchTogether: (RoomSnapshot) -> Unit,
+    /** Open the Watch Party hub. */
+    onOpenWatchParty: () -> Unit,
+    // Plays the first pick of a shuffle started from a library screen.
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
     onOpenPersonDetail: (personId: Long) -> Unit,
 ) {
     val nestedNav = rememberNavController()
@@ -222,9 +223,11 @@ fun TvMainShell(
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: org.siloserver.silo.model.feature.MetadataAiFeatureStore = koinInject()
+    val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
+    val requestsResolved by requestsFeatureStore.isResolved.collectAsState()
     val activeServerEntry by serverRegistry.activeEntry.collectAsState()
     val tvLibraryScopeStore: TvLibraryScopeStore = koinInject()
     // One shell-scoped Home owner feeds both the Home screen and General's
@@ -232,19 +235,9 @@ fun TvMainShell(
     // while the already-visible Home instance held the populated rows.
     val homeViewModel: HomeViewModel = koinViewModel(key = "tv-main-home")
     val serverUrl = rememberProfileServerUrl()
-    val watchTogetherViewModel = koinViewModel<TvWatchTogetherViewModel>()
-    val watchTogetherState by watchTogetherViewModel.uiState.collectAsState()
-    val currentWatchTogetherRoom by watchTogetherViewModel.currentRoom.collectAsState()
-    var watchTogetherEntryOpen by rememberSaveable { mutableStateOf(false) }
-    var watchTogetherJoinOpen by rememberSaveable { mutableStateOf(false) }
-
-    LaunchedEffect(watchTogetherState.result) {
-        val room = watchTogetherState.result ?: return@LaunchedEffect
-        watchTogetherViewModel.consumeResult()
-        watchTogetherEntryOpen = false
-        watchTogetherJoinOpen = false
-        onOpenWatchTogether(room)
-    }
+    // Settings → Experimental → Watch Party decides whether the entry shows.
+    val watchPartyExposure: WatchPartyExposure = koinInject()
+    val watchPartyEnabled by watchPartyExposure.enabled.collectAsState()
 
     // The raw list of libraries visible to this profile on TV, sorted by the
     // server's sort order (ebook-like libraries filtered out by visibleOnTv).
@@ -253,15 +246,48 @@ fun TvMainShell(
     // `visibleRoots` is only Home + Calendar, so a restored/deep-linked
     // `main/movies` route must NOT be treated as "type has no libraries" yet.
     var librariesLoaded by remember { mutableStateOf(false) }
+    // An access change can add or remove whole libraries, so the tab set is
+    // re-derived under the new policy (the previous list stays until then).
+    val viewerAccessKey = rememberViewerAccessKey(koinInject<AccessChangeSignals>())
+    // The list leaves out libraries the profile hid; hiding or showing one
+    // on another device re-loads it.
+    val hiddenLibrariesRevision by personalDataRepository.hiddenLibrariesRevision.collectAsState()
+    // A failed load is retried on the next reachable probe: the revision that
+    // asked for it won't come again, and a library shown again on another
+    // device can only come back from the server.
+    var librariesReloadPending by remember { mutableStateOf(false) }
+    var librariesRetry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(reachabilityState.status, reachabilityState.lastCheckedAtMs) {
+        if (librariesReloadPending && reachabilityState.status == ServerReachabilityStatus.Reachable) librariesRetry++
+    }
     val libraries by produceState(
         initialValue = emptyList<UserLibrary>(),
         personalDataRepository,
+        hiddenLibrariesRevision,
+        librariesRetry,
+        viewerAccessKey,
     ) {
-        when (val result = personalDataRepository.listUserLibraries()) {
-            is ApiResult.Success ->
+        // Pending means the last load failed and none is running, so a probe
+        // never cancels a load still in flight.
+        librariesReloadPending = false
+        // Only the first load may fall back to the offline cache. A later one
+        // re-checks, so a failure stays a failure and stays pending, rather
+        // than a cached list that misses a library shown again since.
+        val result = if (librariesLoaded) {
+            personalDataRepository.recheckUserLibraries(value.mapTo(mutableSetOf()) { it.id })
+        } else {
+            personalDataRepository.listUserLibraries()
+        }
+        when (result) {
+            is ApiResult.Success -> {
                 value = result.data.visibleOnTv().sortedBy { it.sortOrder }
+            }
+            // Keep what's shown, minus a library hidden since.
             is ApiResult.Error,
-            is ApiResult.NetworkError -> Unit
+            is ApiResult.NetworkError -> {
+                value = personalDataRepository.withoutHidden(value)
+                librariesReloadPending = true
+            }
         }
         // Mark loaded even on error (we've attempted) so the redirect can run;
         // an empty list then legitimately means "no libraries for this profile".
@@ -285,8 +311,8 @@ fun TvMainShell(
         showAudiobooksTab = runCatching { tvLibraryScopeStore.getShowAudiobooksTab() }.getOrDefault(false)
         showAudiobooksTabResolved = true
     }
-    val visibleRoots = remember(libraries, showAudiobooksTab) {
-        visibleTvRoots(libraries, showAudiobooks = showAudiobooksTab)
+    val visibleRoots = remember(libraries, showAudiobooksTab, requestsEnabled) {
+        visibleTvRoots(libraries, showAudiobooks = showAudiobooksTab, requestsEnabled = requestsEnabled)
     }
 
     // In-session scope/pill selections per library type. Scope selections are
@@ -344,12 +370,20 @@ fun TvMainShell(
             calendarFocusHandoffPending = false
         }
     }
+    // Requests owns its entry focus the way Calendar does: the page claims its
+    // first card (or the card it opened a detail from) and the bar stays out of
+    // focus search until it has.
+    var requestsFocusHandoffPending by remember(currentRoute) {
+        mutableStateOf(currentRoute == TvMainRoute.Requests.route)
+    }
 
     LaunchedEffect(activeServerEntry?.id, activeServerEntry?.profileId) {
         requestsFeatureStore.reset()
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
+        shuffleFeatureStore.reset()
+        shuffleFeatureStore.refresh()
     }
 
     val focusManager = LocalFocusManager.current
@@ -495,8 +529,13 @@ fun TvMainShell(
         { libraryId, collectionId, title, libraryType ->
             restoreContentAfterDetail = true
             detailReturnRoot = null
-            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType)
+            onOpenLibraryCollectionDetail(libraryId, collectionId, title, libraryType, "library_collection", null)
         }
+    val openScopedCollection: (Int, String, String, String, Boolean) -> Unit = { libraryId, id, title, scope, isUser ->
+        restoreContentAfterDetail = true
+        detailReturnRoot = null
+        onOpenLibraryCollectionDetail(libraryId, id, title, "mixed", if (isUser) "user_collection" else "library_collection", scope)
+    }
     val openCollectionDetail: (String, String) -> Unit = { collectionId, title ->
         restoreContentAfterDetail = true
         detailReturnRoot = null
@@ -547,6 +586,10 @@ fun TvMainShell(
     // top), while ordinary content re-entry keeps the focusRestorer()'s
     // last-focused card.
     var contentFocusRequest by remember { mutableIntStateOf(0) }
+    // Bumped only when the Requests tab is selected from the bar. Saveable, so
+    // a return to the shell from an outer route (a library title opened from
+    // Requests) restores the last card instead of reading as a fresh entry.
+    var requestsEntryRequest by rememberSaveable { mutableIntStateOf(0) }
     // Saveable, because the For You screen guards against replaying an entry
     // request with a SAVED "last applied sequence". A shell recreated with a
     // plain remember restarted the counter at 0 while the screen still held
@@ -628,11 +671,21 @@ fun TvMainShell(
     // (QA 2026-07-08: Movies → Collections → black 'No collections' page).
     // null = unknown (still loading) → pill stays visible.
     var librariesWithCollections by remember { mutableStateOf<Set<Int>?>(null) }
-    LaunchedEffect(libraries) {
+    // Keyed on the access key too: an access change can alter which libraries
+    // have collections while the library list itself stays equal.
+    LaunchedEffect(libraries, viewerAccessKey) {
         if (libraries.isEmpty()) return@LaunchedEffect
         val ids = mutableSetOf<Int>()
         libraries.forEach { lib ->
-            val result = runCatching { sectionRepository.getLibraryCollections(lib.id) }.getOrNull()
+            // Rethrow cancellation: a restarted probe must stop here, not
+            // finish the loop and publish a partial set.
+            val result = try {
+                sectionRepository.getLibraryCollections(lib.id)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
             if (result is ApiResult.Success && result.data.isNotEmpty()) ids += lib.id
         }
         librariesWithCollections = ids
@@ -665,7 +718,7 @@ fun TvMainShell(
     }
 
     // Secondary routes (reached FROM another screen — Settings -> Favorites/
-    // Watchlist/History/Collections/Requests, Requests -> MyRequests) push onto
+    // Watchlist/History/Collections, Requests -> request detail) push onto
     // the current route instead of flattening to the tab root,
     // so Back returns to the parent screen (e.g. Settings) rather than Home.
     val navigateToSecondary: (String) -> Unit = { route ->
@@ -675,6 +728,14 @@ fun TvMainShell(
                 restoreState = true
             }
         }
+    }
+
+    // Request detail can open another request detail ("More like this"). A
+    // single-top push would reuse the current entry, its view model and its
+    // back stack slot, so the new title would show the old one's state and
+    // Back would skip it. Each title gets its own entry.
+    val openRequestDetail: (String, Int) -> Unit = { mediaType, tmdbId ->
+        nestedNav.navigate(TvMainRoute.RequestDetail(mediaType, tmdbId).route)
     }
 
     // True when a requester actually took focus. `requestFocus()` throws rather
@@ -785,6 +846,10 @@ fun TvMainShell(
         if (dest == TvRootDestination.Calendar) {
             calendarFocusHandoffPending = true
         }
+        if (dest == TvRootDestination.Requests) {
+            requestsFocusHandoffPending = true
+            requestsEntryRequest++
+        }
         // A dwell preview can still be open when Center commits For You (or a
         // library root). Close it without returning focus to the bar before the
         // content handoff, otherwise the overlay lingers and races page focus.
@@ -815,6 +880,9 @@ fun TvMainShell(
             // handoff and restores Home's last descendant during the route
             // transition. Leave focus on the Calendar tab until its screen is
             // composed, then let TvCalendarScreen target the filter directly.
+            focusState.closeProfileMenuForContent()
+        } else if (dest == TvRootDestination.Requests) {
+            // The Requests page claims its first card from the shell token.
             focusState.closeProfileMenuForContent()
         } else if (dest == TvRootDestination.Home) {
             // Home's contentFocusRequest targets row 0 / card 0 directly.
@@ -900,7 +968,7 @@ fun TvMainShell(
         }
     }
 
-    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved) {
+    LaunchedEffect(currentRoute, visibleRoots, librariesLoaded, showAudiobooksTabResolved, requestsResolved) {
         // Wait until libraries have actually loaded — before that `visibleRoots`
         // is just Home + Calendar, and a restored/deep-linked `main/movies` route
         // would be wrongly ejected even though that type exists. Likewise wait for
@@ -908,6 +976,10 @@ fun TvMainShell(
         // omits Audiobooks, so a restored `main/audiobooks` route would be ejected
         // to Home before the DataStore read completes.
         if (!librariesLoaded || !showAudiobooksTabResolved) return@LaunchedEffect
+        // Likewise the Requests tab appears only once the server's requests
+        // status has been read; a restored Requests route (or a return from
+        // a title opened there) must not be ejected while that read runs.
+        if (currentRoute == TvMainRoute.Requests.route && !requestsResolved) return@LaunchedEffect
         // Only media-root tabs are eligible for the "tab no longer visible"
         // redirect. Non-tab routes (Settings, Favorites, Search, …) map
         // to null and must be left alone — otherwise navigating to Settings
@@ -1204,9 +1276,7 @@ fun TvMainShell(
                                 onOpenPersonDetail = onOpenPersonDetail,
                             )
                         },
-                        onOpenRequestDetail = { mediaType, tmdbId ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mediaType, tmdbId).route)
-                        },
+                        onOpenRequestDetail = openRequestDetail,
                         onOpenLibraryItem = onOpenItemDetail,
                         onOpenPersonDetail = onOpenPersonDetail,
                         searchFieldFocusRequester = searchInputFocusRequester,
@@ -1224,6 +1294,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Libraries.route) {
@@ -1232,6 +1303,7 @@ fun TvMainShell(
                         onLibraryCollectionClick = openLibraryCollectionDetail,
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 // Content-type tabs (Skyline §3.1). Each renders the library
@@ -1242,6 +1314,7 @@ fun TvMainShell(
                 shellComposable(TvMainRoute.Movies.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Movies,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Movies),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Movies.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Movies] ?: TvLibraryPill.Recommended,
@@ -1253,11 +1326,13 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Series.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Series,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Series),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Series.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Series] ?: TvLibraryPill.Recommended,
@@ -1269,11 +1344,13 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Music.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Music,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Music),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Music.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Music] ?: TvLibraryPill.Recommended,
@@ -1285,11 +1362,13 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.Audiobooks.route) {
                     TvLibraryTypeContent(
                         type = TvLibraryTabType.Audiobooks,
+                        onScopedCollectionClick = openScopedCollection,
                         library = activeLibrary(TvLibraryTabType.Audiobooks),
                         emptyConfirmed = librariesLoaded && libraries.none { TvLibraryTabType.Audiobooks.matches(it) },
                         selectedPill = pillSelections[TvLibraryTabType.Audiobooks] ?: TvLibraryPill.Recommended,
@@ -1301,6 +1380,7 @@ fun TvMainShell(
                         onUserCollectionClick = openCollectionDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                         onContentUpFallbackChanged = onContentUpFallback,
+                        onPlayShuffle = onPlayShuffle,
                     )
                 }
                 shellComposable(TvMainRoute.ForYou.route) {
@@ -1318,22 +1398,21 @@ fun TvMainShell(
                     )
                 }
                 shellComposable(TvMainRoute.Requests.route) {
-                    TvRequestsScreen(
+                    TvRequestsPage(
                         onOpenLibraryItem = onOpenItemDetail,
-                        onOpenMyRequests = { navigateToSecondary(TvMainRoute.MyRequests.route) },
-                        onOpenRequestDetail = { mt, id ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mt, id).route)
+                        onOpenRequestDetail = openRequestDetail,
+                        onInitialContentFocus = {
+                            focusState.closeProfileMenuForContent()
+                            requestsFocusHandoffPending = false
                         },
-                        onInitialContentFocus = { focusState.closeProfileMenuForContent() },
-                    )
-                }
-                shellComposable(TvMainRoute.MyRequests.route) {
-                    TvMyRequestsScreen(
-                        onOpenLibraryItem = onOpenItemDetail,
-                        onOpenRequestDetail = { mt, id ->
-                            navigateToSecondary(TvMainRoute.RequestDetail(mt, id).route)
+                        onFocusHandoffFailed = {
+                            requestsFocusHandoffPending = false
+                            focusState.requestMenuFocus(
+                                target = TvTopMenuPanel.Root(TvRootDestination.Requests),
+                                suppressDwellPreview = true,
+                            )
                         },
-                        onInitialContentFocus = { focusState.closeProfileMenuForContent() },
+                        focusRequest = requestsEntryRequest,
                     )
                 }
                 shellComposable(
@@ -1347,6 +1426,8 @@ fun TvMainShell(
                         mediaType = entry.arguments?.getString(TvMainRoute.RequestDetail.ARG_MEDIA_TYPE).orEmpty(),
                         tmdbId = entry.arguments?.getInt(TvMainRoute.RequestDetail.ARG_TMDB_ID) ?: 0,
                         onBack = { if (nestedNav.previousBackStackEntry != null) nestedNav.popBackStack() },
+                        onOpenLibraryItem = onOpenItemDetail,
+                        onOpenRequestDetail = openRequestDetail,
                         // Back closes an open panel or profile menu first, as
                         // on every other screen; the shell's handler does that.
                         backEnabled = focusState.openPanel == null && !focusState.profileMenuOpen,
@@ -1413,6 +1494,16 @@ fun TvMainShell(
                         onOpenItemDetail = openContentItemDetail,
                         onInitialContentFocus = { focusState.closeProfileMenuForContent() },
                     )
+                }
+                // My Requests became the Requests tab's "Your requests" row; a
+                // saved back stack naming it lands on the tab.
+                composable(route = "main/requests/mine") {
+                    LaunchedEffect(Unit) {
+                        nestedNav.navigate(TvMainRoute.Requests.route) {
+                            popUpTo("main/requests/mine") { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
                 }
                 // ---- Removed route aliases (defensive) ---- see
                 // [TvRemovedMainRoutes]. Registered, never rendered: each one
@@ -1483,7 +1574,9 @@ fun TvMainShell(
             // still pops the route via DelegateToNav.
             isFocusSuppressed = focusState.isMenuFocusSuppressed ||
                 calendarFocusHandoffPending ||
-                currentRoute == TvMainRoute.Settings.route,
+                requestsFocusHandoffPending ||
+                currentRoute == TvMainRoute.Settings.route ||
+                currentRoute == TvMainRoute.RequestDetail.ROUTE,
             focusRequest = focusState.menuFocusRequest,
             focusRequestTarget = focusState.menuFocusTarget,
             focusRequestSuppressesDwell = focusState.menuFocusSuppressesDwell,
@@ -1492,7 +1585,13 @@ fun TvMainShell(
             onInstallAnchorFocus = { hook -> focusState.focusBarAnchorNow = hook },
             profileFocusRequest = focusState.profileFocusRequest,
             isSearchActive = currentRoute == TvMainRoute.Search.route,
-            visibility = if (currentRoute == TvMainRoute.Settings.route) 0f else menuVisibility.value,
+            // Request detail is a full detail page like a library title's,
+            // which has no bar either (tvOS pushes it over the tab).
+            visibility = if (currentRoute == TvMainRoute.Settings.route || currentRoute == TvMainRoute.RequestDetail.ROUTE) {
+                0f
+            } else {
+                menuVisibility.value
+            },
             openPanel = focusState.openPanel,
             onDwell = focusState::previewPanel,
             onEnterPanel = focusState::enterPanel,
@@ -1627,17 +1726,8 @@ fun TvMainShell(
                     navigateToSecondary(TvMainRoute.History.route)
                     moveFocusToContent(TvMainRoute.History.route)
                 },
-                showRequests = requestsEnabled,
-                onRequests = closeMenuAnd {
-                    navigateToSecondary(TvMainRoute.Requests.route)
-                    moveFocusToContent(TvMainRoute.Requests.route)
-                },
-                showWatchTogether = CLIENT_WATCH_TOGETHER_SURFACE_ENABLED,
-                onWatchTogether = {
-                    focusState.closeProfileMenuForContent()
-                    watchTogetherViewModel.clearError()
-                    watchTogetherEntryOpen = true
-                },
+                showWatchParty = watchPartyEnabled,
+                onWatchParty = closeMenuAnd(onOpenWatchParty),
                 onSettings = {
                     // Keep focus on the dropdown row through the route fade.
                     // TvSettingsScreen closes the menu only after its General
@@ -1659,38 +1749,6 @@ fun TvMainShell(
                     .zIndex(2f),
             )
         }
-
-        if (watchTogetherEntryOpen) {
-            if (watchTogetherJoinOpen) {
-                TvJoinCodeDialog(
-                    isBusy = watchTogetherState.isBusy,
-                    error = watchTogetherState.error,
-                    onJoin = watchTogetherViewModel::joinRoom,
-                    onDismiss = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherJoinOpen = false
-                    },
-                )
-            } else {
-                TvWatchTogetherMenuEntryDialog(
-                    canResume = currentWatchTogetherRoom != null,
-                    isBusy = watchTogetherState.isBusy,
-                    error = watchTogetherState.error,
-                    onResume = { watchTogetherViewModel.resumeCurrentRoom() },
-                    onHost = { watchTogetherViewModel.createEmptyVoteRoom() },
-                    onJoin = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherJoinOpen = true
-                    },
-                    onDismiss = {
-                        watchTogetherViewModel.clearError()
-                        watchTogetherEntryOpen = false
-                        watchTogetherJoinOpen = false
-                        focusState.dismissProfileMenu()
-                    },
-                )
-            }
-        }
     }
 }
 
@@ -1705,6 +1763,7 @@ fun TvMainShell(
 @Composable
 private fun TvLibraryTypeContent(
     type: TvLibraryTabType,
+    onScopedCollectionClick: (Int, String, String, String, Boolean) -> Unit,
     library: UserLibrary?,
     emptyConfirmed: Boolean,
     selectedPill: TvLibraryPill,
@@ -1719,6 +1778,7 @@ private fun TvLibraryTypeContent(
     onUserCollectionClick: (collectionId: String, title: String) -> Unit,
     onInitialContentFocus: () -> Unit,
     onContentUpFallbackChanged: ((((Boolean) -> Boolean)?) -> Unit)? = null,
+    onPlayShuffle: (shuffle: org.siloserver.silo.model.shuffle.Shuffle, libraryId: Int?) -> Unit = { _, _ -> },
 ) {
     if (library == null) {
         // Only assert "no libraries" once loading has settled AND this type
@@ -1750,9 +1810,13 @@ private fun TvLibraryTypeContent(
             libraryId = library.id,
             libraryTitle = library.name,
             libraryType = library.type,
+            mediaScope = type.mediaScope(library),
             onItemClick = onItemClick,
             onCollectionClick = { collectionId, title, isUserCollection ->
-                if (isUserCollection) {
+                val scope = type.mediaScope(library)
+                if (scope != null) {
+                    onScopedCollectionClick(library.id, collectionId, title, scope, isUserCollection)
+                } else if (isUserCollection) {
                     onUserCollectionClick(collectionId, title)
                 } else {
                     onLibraryCollectionClick(library.id, collectionId, title, library.type)
@@ -1762,6 +1826,7 @@ private fun TvLibraryTypeContent(
             initialSection = selectedPill.toLibraryTab(),
             sectionRequestNonce = sectionRequestNonce,
             onContentUpFallbackChanged = onContentUpFallbackChanged,
+            onShuffleStarted = { shuffle -> onPlayShuffle(shuffle, library.id) },
         )
     }
 }
@@ -1799,8 +1864,9 @@ private fun mapRouteToRoot(route: String): TvRootDestination? = when (route) {
     TvMainRoute.Audiobooks.route -> TvRootDestination.LibraryType(TvLibraryTabType.Audiobooks)
     TvMainRoute.Calendar.route -> TvRootDestination.Calendar
     TvMainRoute.ForYou.route -> TvRootDestination.ForYou
+    TvMainRoute.Requests.route -> TvRootDestination.Requests
     // Search maps to null so no top tab is highlighted (trailing icon).
-    // Requests/MyRequests/Settings/Audio/Libraries are likewise non-tab.
+    // Request detail/Settings/Audio/Libraries are likewise non-tab.
     else -> null
 }
 
@@ -1815,6 +1881,7 @@ private fun TvRootDestination.toRoute(): String = when (this) {
     TvRootDestination.Home -> TvMainRoute.Home.route
     TvRootDestination.ForYou -> TvMainRoute.ForYou.route
     TvRootDestination.Calendar -> TvMainRoute.Calendar.route
+    TvRootDestination.Requests -> TvMainRoute.Requests.route
     is TvRootDestination.LibraryType -> when (type) {
         TvLibraryTabType.Movies -> TvMainRoute.Movies.route
         TvLibraryTabType.Series -> TvMainRoute.Series.route
@@ -1874,8 +1941,8 @@ private fun cascadePanelOffset(
  * returns focus to the avatar via [onDismiss].
  *
  * Row set + order mirrors tvOS: Switch Profile · Watchlist · Favorites ·
- * History · Requests (server-gated) · Watch Together (client-policy-gated) ·
- * Settings · Switch Server · Sign Out. Calendar is a top-level tab.
+ * History · Watch Party (Settings → Experimental) · Settings · Switch Server ·
+ * Sign Out. Calendar and Requests are top-level tabs.
  */
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -1887,10 +1954,8 @@ private fun TvProfileDropdown(
     onWatchlist: () -> Unit,
     onFavorites: () -> Unit,
     onHistory: () -> Unit,
-    showRequests: Boolean,
-    onRequests: () -> Unit,
-    showWatchTogether: Boolean,
-    onWatchTogether: () -> Unit,
+    showWatchParty: Boolean,
+    onWatchParty: () -> Unit,
     onSettings: () -> Unit,
     onSwitchServer: () -> Unit,
     onSignOut: () -> Unit,
@@ -1936,18 +2001,11 @@ private fun TvProfileDropdown(
         ProfileDropdownRow(label = "Watchlist", icon = Icons.Filled.Bookmark, onClick = onWatchlist)
         ProfileDropdownRow(label = "Favorites", icon = Icons.Filled.Favorite, onClick = onFavorites)
         ProfileDropdownRow(label = "History", icon = Icons.Filled.History, onClick = onHistory)
-        if (showRequests) {
+        if (showWatchParty) {
             ProfileDropdownRow(
-                label = "Requests",
-                icon = Icons.Filled.AutoAwesome,
-                onClick = onRequests,
-            )
-        }
-        if (showWatchTogether) {
-            ProfileDropdownRow(
-                label = "Watch Together",
+                label = "Watch Party",
                 icon = Icons.Filled.People,
-                onClick = onWatchTogether,
+                onClick = onWatchParty,
             )
         }
 

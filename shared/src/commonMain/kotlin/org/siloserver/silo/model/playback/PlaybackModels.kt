@@ -72,6 +72,8 @@ data class PlayerSubtitleInfo(
     @SerialName("server_delivery") val serverDelivery: String? = null,
     /** Exact original-container track ID selected by a v3 embedded decision. */
     @SerialName("native_container_track_id") val nativeContainerTrackId: String? = null,
+    /** The inventory's `sync_key`: present when the server can sync this track to the audio. */
+    @SerialName("sync_key") val syncKey: String? = null,
 )
 
 /**
@@ -247,6 +249,11 @@ data class PlaybackExecutionPlan(
     @SerialName("decision_trace") val decisionTrace: List<String> = emptyList(),
     @SerialName("requested_media_file_id") val requestedMediaFileId: Int? = null,
     @SerialName("effective_media_file_id") val effectiveMediaFileId: Int? = null,
+    /**
+     * What the plan delivers (resolution, bitrate). The Quality menu reads it
+     * to mark the entry a stored resolution preference actually landed on.
+     */
+    @SerialName("effective_recipe") val effectiveRecipe: PlaybackEffectiveRecipeV3? = null,
 )
 
 /**
@@ -468,10 +475,4 @@ data class DeliverySubtitleCapabilities(
     @SerialName("embedded_bitmap") val embeddedBitmap: Boolean = false,
     @SerialName("sidecar_bitmap") val sidecarBitmap: Boolean = false,
     @SerialName("font_attachments") val fontAttachments: Boolean = false,
-)
-
-@Serializable
-data class ProgressRequest(
-    val position: Double,
-    @SerialName("is_paused") val isPaused: Boolean
 )

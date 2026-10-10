@@ -12,6 +12,7 @@ import org.siloserver.silo.common.downloads.DownloadSubscriptionEvaluatorFactory
 import org.siloserver.silo.common.downloads.DownloadSubscriptionWorker
 import org.siloserver.silo.common.downloads.DownloadStatusWorker
 import org.siloserver.silo.common.downloads.DownloadWorker
+import org.siloserver.silo.common.downloads.OfflineSubtitleRefreshWorker
 import org.siloserver.silo.common.diagnostics.DiagnosticsCoordinator
 import org.siloserver.silo.common.diagnostics.DiagnosticsUploadWorker
 import org.siloserver.silo.common.diagnostics.HostedDiagnosticsDeletionWorker
@@ -74,6 +75,19 @@ class AppWorkerFactory : WorkerFactory() {
                     repository = koin.get<DownloadsRepository>(),
                     authorities = koin.get(),
                     devices = koin.get(),
+                )
+            }
+            OfflineSubtitleRefreshWorker::class.java.name -> {
+                Log.i(TAG, "Building OfflineSubtitleRefreshWorker via Koin")
+                OfflineSubtitleRefreshWorker(
+                    appContext = appContext,
+                    params = workerParameters,
+                    metadataStore = koin.get<org.siloserver.silo.common.downloads.DownloadMetadataStore>(),
+                    storage = koin.get<DownloadStorage>(),
+                    httpClient = koin.get<HttpClient>(),
+                    authorities = koin.get(),
+                    transitions = koin.get(),
+                    gate = koin.get(),
                 )
             }
             DownloadSubscriptionWorker::class.java.name -> {

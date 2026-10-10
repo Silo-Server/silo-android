@@ -185,6 +185,30 @@ class CatalogRepositoryDetailCacheTest {
     }
 
     @Test
+    fun accessChangeReloadDoesNotJoinAnActiveWarmup() = runTest {
+        var calls = 0
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val repository = gatedRepository(
+            requestDispatcher = StandardTestDispatcher(testScheduler),
+            requestEntered = entered,
+            releaseResponse = release,
+            onRequest = { calls += 1 },
+        )
+
+        // The warm-up went out before the access change; the reload after it
+        // must send its own request.
+        val warmup = async { repository.warmItemDetail("c1") }
+        entered.await()
+        val reload = async { repository.getItemDetail("c1", joinWarmup = false) }
+        repeat(10) { yield() }
+        release.complete(Unit)
+        listOf(warmup, reload).awaitAll()
+
+        assertEquals(2, calls)
+    }
+
+    @Test
     fun cancelingHomePrefetchDoesNotCancelDestinationDetailRequest() = runTest {
         var calls = 0
         val entered = CompletableDeferred<Unit>()

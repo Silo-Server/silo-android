@@ -19,13 +19,13 @@ import org.siloserver.silo.repository.PlaybackRepository
 import org.siloserver.silo.repository.ProfileRepository
 import org.siloserver.silo.repository.PushRegistrationRepository
 import org.siloserver.silo.repository.RecommendationRepository
+import org.siloserver.silo.repository.RequestDetailCache
 import org.siloserver.silo.repository.RequestsRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.repository.SettingsRepository
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.watchtogether.RoomSession
-import org.siloserver.silo.watchtogether.WatchTogetherEntryGateway
 import org.koin.dsl.module
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +61,8 @@ val repositoryModule = module {
     }
     single { OnboardingRepository(get()) }
     single { DeviceLoginRepository(get()) }
+    single { org.siloserver.silo.repository.ServerIdentityRepository(get(), get()) }
+    single { org.siloserver.silo.repository.ExternalSignInRepository(get()) }
     single {
         CatalogRepository(
             catalogApi = get(),
@@ -82,9 +84,25 @@ val repositoryModule = module {
                 ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             catalogCache = getOrNull<org.siloserver.silo.repository.port.CatalogCachePort>()
                 ?: org.siloserver.silo.repository.port.NoOpCatalogCachePort,
+            hiddenLibraries = get(),
         )
     }
+    single { org.siloserver.silo.repository.HiddenLibrariesStore(get(), get()) }
     single { ProfileRepository(get(), get(), getOrNull(), get(), get(), get()) }
+    // Resolved by each Application right after startKoin (guarded there, like
+    // the other starters) so a stale-profile refusal from background work
+    // (downloads, outbox replay) is handled before any screen exists. Clears
+    // only the stale profile selection; navigation acts on its pending prompt.
+    single {
+        org.siloserver.silo.repository.ProfileVerificationRecovery(
+            signals = get(),
+            tokenManager = get(),
+            profileRepository = get(),
+            identityTransitions = get(),
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        )
+    }
+    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get()) }
     single { CollectionRepository(get()) }
     single {
         SectionRepository(
@@ -94,12 +112,22 @@ val repositoryModule = module {
         )
     }
     single { RecommendationRepository(get()) }
-    single { RequestsRepository(get()) }
+    single {
+        RequestsRepository(
+            api = get(),
+            cache = RequestDetailCache(
+                prefetchScope = kotlinx.coroutines.CoroutineScope(
+                    kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate,
+                ),
+            ),
+        )
+    }
     single { RequestsFeatureStore(get()) }
     single { ActiveProfileStore(get()) }
     single { org.siloserver.silo.repository.MetadataAiRepository(get()) }
     single { org.siloserver.silo.model.feature.MetadataAiFeatureStore(get()) }
-    single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get()) }
+    single { org.siloserver.silo.model.feature.ShuffleFeatureStore(get()) }
+    single { org.siloserver.silo.repository.HomeRealtimeCoordinator(get(), get(), getOrNull()) }
     single { SettingsRepository(get()) }
     // Profile-scoped canonical settings, shared by the phone and TV screens so
     // one platform cannot grow a behavior the other lacks.
@@ -107,7 +135,7 @@ val repositoryModule = module {
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
     single { EbookReaderRepository(get(), get()) }
-    single { SubtitlesRepository(get(), get()) }
+    single { SubtitlesRepository(get(), get(), get()) }
     single { PushRegistrationRepository(get()) }
 
     // REST-backed inbox state plus a realtime factory that builds the default
@@ -143,7 +171,6 @@ val repositoryModule = module {
             },
         )
     }
-    single<WatchTogetherEntryGateway> { get<WatchTogetherRepository>() }
     // Eager so the identity-transition privacy gate is installed before any
     // profile/server/token mutation can occur. This process-lifetime scope,
     // rather than a screen scope, owns connection replacement and teardown.

@@ -5,12 +5,18 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 
 /**
- * Maps scanned/opened device-login URLs into the in-app pairing route.
+ * Maps scanned/opened device-login URLs into the in-app "Sign in a TV" route.
  *
- * TV QR sessions may surface either app-scheme links (`silo://device?...`)
- * or server HTTPS links (`/device`, `/auth/device`).
- * Android App Links for arbitrary self-hosted server domains are best-effort,
- * but whenever the OS delivers a URI to us this parser keeps routing identical.
+ * TV sign-in links arrive as:
+ *  - the web approval page's app link,
+ *    `silo://device?server=<server_id>&url=<base>&code=<code>`: the server is
+ *    named by its deployment identity, matched against saved servers by
+ *    verified identity rather than URL spelling. Without `server` the link
+ *    is scoped by `url`'s origin, like an HTTPS link;
+ *  - older app links, `silo://device?token=|code=`, which name no server;
+ *  - server HTTPS links (`/activate`, `/device`, `/auth/device`), named by
+ *    their origin. Android App Links for arbitrary self-hosted domains are
+ *    best-effort, but whenever the OS delivers one this keeps routing identical.
  */
 internal fun deviceLoginPairRouteOrNull(rawUri: String?): String? {
     val uri = rawUri
@@ -33,12 +39,36 @@ internal fun deviceLoginPairRouteOrNull(rawUri: String?): String? {
     val code = params["code"]?.takeIf { it.isNotBlank() }
     if (token == null && code == null) return null
 
+    // The app link names its server by identity, plus the base URL to add it
+    // from when this phone doesn't have it yet. A `url` that isn't a readable
+    // http(s) origin is dropped rather than trusted.
+    val unscoped = scope as? DeviceLoginScope.Unscoped
+    val serverId = unscoped?.let { params["server"]?.trim()?.takeIf { it.isNotEmpty() } }
+    val linkBase = unscoped?.let { params["url"] }
+        ?.let { runCatching { URI(it.trim()) }.getOrNull() }
+        ?.takeIf { it.scheme?.lowercase() in setOf("http", "https") }
+    // The web page leaves `server` out when it doesn't know the identity; the
+    // link is then scoped by `url`'s origin, as an http(s) link is, instead of
+    // approving on whichever server is active.
+    val serverOrigin = (scope as? DeviceLoginScope.Origin)?.origin
+        ?: linkBase?.takeIf { serverId == null }?.normalizedOrigin()
+    val serverUrl = linkBase?.takeIf { serverId != null }?.let { base ->
+        // Keep a reverse-proxy path prefix: it is part of the server's address.
+        base.normalizedOrigin()?.let { origin -> origin + base.path.orEmpty().trimEnd('/') }
+    }
+
     return buildPairDeviceRoute(
         token = token,
         code = if (token == null) code else null,
-        serverOrigin = (scope as? DeviceLoginScope.Origin)?.origin,
+        serverOrigin = serverOrigin,
+        serverId = serverId,
+        serverUrl = serverUrl,
     )
 }
+
+/** `scheme://host[:port]` of [url], or null when it can't be read. */
+internal fun deviceLoginOriginOf(url: String?): String? =
+    url?.takeIf { it.isNotBlank() }?.let { runCatching { URI(it.trim()) }.getOrNull() }?.normalizedOrigin()
 
 /**
  * What server, if any, a device link names.
@@ -112,7 +142,7 @@ private fun URI.isDeviceLoginUri(): Boolean {
     val scheme = scheme?.lowercase()
     return when (scheme) {
         "silo" -> host.equals("device", ignoreCase = true)
-        "http", "https" -> normalizedPath.endsWith("/device")
+        "http", "https" -> normalizedPath.endsWith("/device") || normalizedPath.endsWith("/activate")
         else -> false
     }
 }
@@ -140,12 +170,16 @@ private fun buildPairDeviceRoute(
     token: String?,
     code: String?,
     serverOrigin: String?,
+    serverId: String? = null,
+    serverUrl: String? = null,
 ): String = buildString {
     append("pair_device")
     val params = listOfNotNull(
         token?.takeIf { it.isNotBlank() }?.let { "token=${it.routeEncode()}" },
         code?.takeIf { it.isNotBlank() }?.let { "code=${it.routeEncode()}" },
         serverOrigin?.takeIf { it.isNotBlank() }?.let { "serverOrigin=${it.routeEncode()}" },
+        serverId?.takeIf { it.isNotBlank() }?.let { "serverId=${it.routeEncode()}" },
+        serverUrl?.takeIf { it.isNotBlank() }?.let { "serverUrl=${it.routeEncode()}" },
     )
     if (params.isNotEmpty()) {
         append("?")

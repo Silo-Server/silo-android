@@ -99,9 +99,13 @@ class TvStartupMetadataOwnerTest {
             fun field(name: String): Any? = PlaybackSessionLifecycle::class.java.getDeclaredField(name).let {
                 it.isAccessible = true; it.get(lifecycle)
             }
+            val startupCoroutine = CoroutineName("tv-startup-metadata-owner-test")
             var held = false
             tokens.beforeSnapshot = {
-                if (stage in listOf("final", "cancel", "newer", "predecessor") && !held && field("lastAdoptedSessionId") == "allocated") {
+                // Route telemetry also snapshots tokens; pause only the startup transaction.
+                if (currentCoroutineContext()[CoroutineName] === startupCoroutine &&
+                    stage in listOf("final", "cancel", "newer", "predecessor") &&
+                    !held && field("lastAdoptedSessionId") == "allocated") {
                     held = true; entered.complete(Unit); release.await()
                 }
             }
@@ -130,7 +134,7 @@ class TvStartupMetadataOwnerTest {
                 FakePlayerSettingsStore(), lifecycle,
                 ServerReachabilityMonitor(ApiV2Probe(client)::probeFresh, backgroundScope, { null }), localState,
             )
-            val start = async { starter.start(VideoPlaybackStartRequest(contentId = "item", preferredFileId = 41, roomId = null, resumePositionOverride = null)) }
+            val start = async(startupCoroutine) { starter.start(VideoPlaybackStartRequest(contentId = "item", preferredFileId = 41, roomId = null, resumePositionOverride = null)) }
             if (stage in listOf("final", "cancel", "newer", "predecessor")) {
                 entered.await()
                 val active = lifecycle.state.value as SessionState.Active

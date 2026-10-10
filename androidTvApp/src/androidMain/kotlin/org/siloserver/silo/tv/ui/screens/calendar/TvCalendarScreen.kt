@@ -89,6 +89,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.calendar.localDisplayAirTime
 import org.siloserver.silo.common.cards.LocalCardPresentation
+import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.calendar.CalendarBadge
 import org.siloserver.silo.model.calendar.CalendarFilter
@@ -1453,6 +1454,7 @@ private fun CalendarEventCard(
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    defaultArtwork = DefaultArtworkKind.forItemType(item.type),
                 )
 
                 // Badge pills (top-leading) — tvOS CalendarBadgePill.

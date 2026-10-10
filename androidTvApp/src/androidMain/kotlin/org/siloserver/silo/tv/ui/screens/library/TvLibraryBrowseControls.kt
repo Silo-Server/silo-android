@@ -22,11 +22,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.Cancel
@@ -106,6 +109,8 @@ fun TvBrowseControlRow(
      * grid below has no card to give it to (an empty or fully-filtered list).
      */
     sortPillFocusRequester: FocusRequester? = null,
+    /** Starts a shuffle of what the grid browses; null where nothing can shuffle. */
+    onShuffle: (() -> Unit)? = null,
 ) {
     // Clearing removes the Clear pill from composition; focus must hop to the
     // Filter pill first or it would snap away to the nearest surviving scope.
@@ -214,6 +219,28 @@ fun TvBrowseControlRow(
                 )
             }
         }
+
+        if (onShuffle != null) TvShufflePill(onClick = onShuffle)
+    }
+}
+
+/** A Shuffle action drawn like the browse control pills beside it. */
+@Composable
+fun TvShufflePill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    BrowseControlPill(onClick = onClick, modifier = modifier) { foreground ->
+        Icon(
+            imageVector = Icons.Filled.Shuffle,
+            contentDescription = null,
+            tint = foreground,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = "Shuffle",
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = 14.sp, lineHeight = 18.sp),
+            color = foreground,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 
@@ -357,6 +384,12 @@ fun TvBrowseSortPanel(
 // Filter panel (list → values)
 // ============================================================================
 
+/** The library Browse "Preserve sort & filters" value and its change handler. */
+data class TvBrowsePreserveToggle(
+    val enabled: Boolean,
+    val onChange: (Boolean) -> Unit,
+)
+
 @Composable
 fun TvBrowseFilterPanel(
     libraryType: String,
@@ -364,6 +397,8 @@ fun TvBrowseFilterPanel(
     initial: TvCatalogFacetSelection,
     onApply: (TvCatalogFacetSelection) -> Unit,
     onClose: () -> Unit,
+    /** Shows the "Preserve sort & filters" row; null hides it (non-library grids). */
+    preserve: TvBrowsePreserveToggle? = null,
 ) {
     var draft by remember { mutableStateOf(initial) }
     // null = top-level facet list; non-null = that facet's value list.
@@ -457,6 +492,7 @@ fun TvBrowseFilterPanel(
                         firstRowFocusRequester = screenFocusRequester,
                         onOpenFacet = { openFacet = it },
                         onDraftChanged = { draft = it },
+                        preserve = preserve,
                         onDone = commitAndClose,
                     )
                     else -> FacetValuesScreen(
@@ -481,6 +517,7 @@ private fun FilterListScreen(
     firstRowFocusRequester: FocusRequester,
     onOpenFacet: (TvCatalogFacet) -> Unit,
     onDraftChanged: (TvCatalogFacetSelection) -> Unit,
+    preserve: TvBrowsePreserveToggle?,
     onDone: () -> Unit,
 ) {
     if (availableFacets.isEmpty()) {
@@ -539,6 +576,25 @@ private fun FilterListScreen(
         text = "OPTIONS",
         modifier = Modifier.padding(start = 12.dp, top = 14.dp, bottom = 4.dp),
     )
+    if (preserve != null) {
+        // The toggle takes effect at once rather than on Done (tvOS `preserveRow`).
+        BrowsePanelRow(
+            onClick = { preserve.onChange(!preserve.enabled) },
+        ) { foreground ->
+            Icon(
+                imageVector = if (preserve.enabled) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
+                contentDescription = null,
+                tint = foreground,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = "Preserve sort & filters",
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 17.sp),
+                color = foreground,
+                maxLines = 1,
+            )
+        }
+    }
     BrowsePanelRow(
         onClick = {
             if (draft.canReset) onDraftChanged(TvCatalogFacetSelection())

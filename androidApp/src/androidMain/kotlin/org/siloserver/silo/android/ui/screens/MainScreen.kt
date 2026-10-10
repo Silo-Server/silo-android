@@ -34,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
-import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.android.ui.components.MainAppHeaderBodyHeight
 import org.siloserver.silo.android.ui.components.MainAppTopBar
 import org.siloserver.silo.android.ui.components.TabTopBarActions
@@ -65,9 +64,10 @@ import org.siloserver.silo.android.ui.screens.recommendations.ForYouList
 import org.siloserver.silo.android.ui.screens.recommendations.RecommendationsScreen
 import org.siloserver.silo.viewmodel.RecommendationsViewModel
 import org.siloserver.silo.android.ui.screens.recommendations.headerTitle
-import org.siloserver.silo.android.ui.screens.watchtogether.WatchTogetherMenuEntrySheet
+import org.siloserver.silo.android.ui.screens.watchparty.WatchPartySoloGuardDialog
+import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.cast.SiloCastPlaybackRequest
-import org.siloserver.silo.model.feature.CLIENT_WATCH_TOGETHER_SURFACE_ENABLED
+import org.siloserver.silo.model.feature.WatchPartyExposure
 import org.siloserver.silo.model.navigation.MediaMode
 import org.siloserver.silo.model.navigation.MediaModeCapabilities
 import org.siloserver.silo.model.navigation.mobileMediaModeCapabilities
@@ -75,17 +75,17 @@ import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.common.network.ServerReachabilityMonitor
 import org.siloserver.silo.common.network.ServerReachabilityStatus
-import org.siloserver.silo.common.settings.CardPresentationStore
-import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
-import org.siloserver.silo.repository.AuthRepository
 import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.viewmodel.HomeViewModel
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.common.ui.rememberViewerAccessKey
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * Main scaffold that hosts the bottom navigation bar and tab content.
@@ -102,9 +102,12 @@ fun MainScreen(
     val siloCastController: SiloCastController = koinInject()
     val siloCastState by siloCastController.state.collectAsState()
     var showSiloCastTargetPicker by rememberSaveable { mutableStateOf(false) }
-    var showWatchTogetherEntry by rememberSaveable { mutableStateOf(false) }
+    val watchPartyExposure: WatchPartyExposure = koinInject()
+    val watchPartyEnabled by watchPartyExposure.enabled.collectAsState()
+    // D5: quick play from these tabs asks to leave a Watch Party first.
+    val soloGuard = rememberWatchPartySoloGuard()
 
-    fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) {
+    fun startVideo(contentId: String, fileId: Int?, resumePositionSeconds: Double?) {
         val launchedRemotely = siloCastController.launchOnConnectedTarget(
             SiloCastPlaybackRequest(
                 contentId = contentId,
@@ -125,6 +128,10 @@ fun MainScreen(
             )
         }
     }
+
+    fun playVideo(contentId: String, fileId: Int? = null, resumePositionSeconds: Double? = null) =
+        soloGuard.run { startVideo(contentId, fileId, resumePositionSeconds) }
+
     val librariesViewModel = if (currentTab == Tab.Libraries) {
         koinViewModel<LibrariesViewModel>()
     } else {
@@ -153,15 +160,12 @@ fun MainScreen(
     val downloadsRepository: org.siloserver.silo.repository.DownloadsRepository = koinInject()
     val downloadStorage: org.siloserver.silo.common.downloads.DownloadStorage = koinInject()
     val serverRegistry: ServerRegistry = koinInject()
-    val authRepository: AuthRepository = koinInject()
     val reachabilityMonitor: ServerReachabilityMonitor = koinInject()
     val requestsFeatureStore: RequestsFeatureStore = koinInject()
     val metadataAiFeatureStore: MetadataAiFeatureStore = koinInject()
-    val overlayPrefsStore: OverlayPrefsStore = koinInject()
-    val activeProfileStore: ActiveProfileStore = koinInject()
-    val cardPresentationStore: CardPresentationStore = koinInject()
-    val episodeSpoilerStore: org.siloserver.silo.common.settings.EpisodeSpoilerStore = koinInject()
-    val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
+    val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore = koinInject()
+    val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
+    val switchProfile = org.siloserver.silo.android.ui.navigation.LocalProfileSwitch.current
     val reachabilityState by reachabilityMonitor.state.collectAsState()
     val requestsEnabled by requestsFeatureStore.isEnabled.collectAsState()
     val reachabilityScope = rememberCoroutineScope()
@@ -172,6 +176,15 @@ fun MainScreen(
     LaunchedEffect(activeEntry?.id, activeEntry?.profileId) {
         headerViewModel.refresh()
     }
+    // An access change can add or remove whole libraries: re-derive the tabs
+    // and reload the Libraries hub under the new policy. The hub's ViewModel
+    // outlives tab switches and pushed routes, so its cursor catches up on a
+    // change reported while another tab or route was showing.
+    val accessChangeSignals: AccessChangeSignals = koinInject()
+    val viewerAccessKey = rememberViewerAccessKey(accessChangeSignals)
+    librariesViewModel?.let { viewModel ->
+        OnViewerAccessChanged(accessChangeSignals, viewModel.accessChanges) { viewModel.refreshAfterAccessChange() }
+    }
     val mediaCapabilities by produceState(
         initialValue = MediaModeCapabilities(
             listOf(
@@ -181,6 +194,7 @@ fun MainScreen(
             ),
         ),
         personalDataRepository,
+        viewerAccessKey,
     ) {
         value = when (val result = personalDataRepository.listUserLibraries()) {
             is ApiResult.Success -> result.data.mobileMediaModeCapabilities()
@@ -277,21 +291,16 @@ fun MainScreen(
         requestsFeatureStore.refresh()
         metadataAiFeatureStore.reset()
         metadataAiFeatureStore.refresh()
+        shuffleFeatureStore.reset()
+        shuffleFeatureStore.refresh()
     }
 
     fun signOutFromProfileMenu() {
         reachabilityScope.launch {
-            authRepository.logout()
-            requestsFeatureStore.reset()
-            metadataAiFeatureStore.reset()
-            // Per-profile card caches, same teardown the Settings sign-out
-            // does — otherwise the next user's shell renders (and can write
-            // back) the previous profile's overlays and card presentation.
-            overlayPrefsStore.clear()
-            activeProfileStore.reset()
-            cardPresentationStore.clear()
-            seekIntervalStore.clear()
-            episodeSpoilerStore.clear()
+            // Same teardown as the Settings sign-out: otherwise the next
+            // user's shell renders (and can write back) the previous
+            // profile's overlays and card presentation.
+            signOutTeardown.signOut()
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true
@@ -300,29 +309,20 @@ fun MainScreen(
     }
 
     /**
-     * Profile-menu "Switch Profile". Overlays and card presentation are cached
-     * per profile and the app never backgrounds during an in-app switch, so
-     * drop them here or the next profile keeps rendering — and writing back —
-     * the previous one's values. Navigate first: clearing while the shell is
-     * still composed repaints it with default cards behind the picker (the
-     * TV shell's switch-profile path takes the same order).
+     * Profile-menu "Switch Profile": pushes pending settings while this
+     * profile is still active, then leaves the shell and drops the per-profile
+     * caches (see [org.siloserver.silo.android.auth.ProfileSwitchTeardown]).
+     * Runs in the navigation host's scope ([org.siloserver.silo.android.ui.navigation.LocalProfileSwitch]).
      */
-    fun switchProfileFromMenu() {
-        navController.navigate(Route.ProfileSelection.route)
-        overlayPrefsStore.clear()
-        activeProfileStore.reset()
-        cardPresentationStore.clear()
-        seekIntervalStore.clear()
-        episodeSpoilerStore.clear()
-    }
+    fun switchProfileFromMenu() = switchProfile()
     val requestsMenuAction: (() -> Unit)? = if (requestsEnabled) {
         { navController.navigate(Route.Requests.route) }
     } else {
         null
     }
-    val watchTogetherMenuAction: (() -> Unit)? =
-        if (CLIENT_WATCH_TOGETHER_SURFACE_ENABLED) {
-            { showWatchTogetherEntry = true }
+    val watchPartyMenuAction: (() -> Unit)? =
+        if (watchPartyEnabled) {
+            { navController.navigate(Route.WatchPartyHub().route) { launchSingleTop = true } }
         } else {
             null
         }
@@ -431,7 +431,7 @@ fun MainScreen(
                             onRemoteDisconnectClick = { siloCastController.disconnect() },
                             isRemoteControlActive = siloCastState.hasActiveSession,
                             onRequestsClick = requestsMenuAction,
-                            onWatchTogetherClick = watchTogetherMenuAction,
+                            onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
@@ -441,13 +441,22 @@ fun MainScreen(
                         )
                     }
                     Tab.Libraries -> {
+                        val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher { shuffle ->
+                            navController.navigate(
+                                org.siloserver.silo.android.ui.screens.shuffle.shufflePlayerRoute(
+                                    shuffle,
+                                    libraryId = shuffle.scope.id.toIntOrNull(),
+                                ),
+                            )
+                        }
                         LibrariesScreen(
+                            shuffleLauncher = shuffleLauncher,
                             onItemClick = { contentId, libraryId ->
                                 navController.navigate(Route.ItemDetail(contentId, libraryId = libraryId).route)
                             },
-                            onCollectionClick = { collection, libraryId ->
+                            onCollectionClick = { collection, libraryId, mediaScope ->
                                 navController.navigate(
-                                    libraryCollectionDetailRoute(collection, libraryId),
+                                    libraryCollectionDetailRoute(collection, libraryId, mediaScope),
                                 )
                             },
                             viewModel = requireNotNull(librariesViewModel),
@@ -455,7 +464,7 @@ fun MainScreen(
                             onLibrarySelectorClick = { showLibrarySelector = true },
                             onSearchClick = { navController.navigate(Route.Search().route) },
                             onRequestsClick = requestsMenuAction,
-                            onWatchTogetherClick = watchTogetherMenuAction,
+                            onWatchPartyClick = watchPartyMenuAction,
                             onSettingsClick = { navController.navigate(Route.Settings.route) },
                             onSwitchProfileClick = ::switchProfileFromMenu,
                             onSwitchServerClick = {
@@ -488,7 +497,7 @@ fun MainScreen(
                                     activeProfile = headerState.activeProfile,
                                     onSearchClick = { navController.navigate(Route.Search().route) },
                                     onRequestsClick = requestsMenuAction,
-                                    onWatchTogetherClick = watchTogetherMenuAction,
+                                    onWatchPartyClick = watchPartyMenuAction,
                                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                                     onSwitchProfileClick = ::switchProfileFromMenu,
                                     onSwitchServerClick = {
@@ -508,19 +517,21 @@ fun MainScreen(
                             // audiobook UI + offline resume; everything else uses
                             // the video player's offline-first tryLocalPlayback.
                             onItemClick = { item ->
-                                if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
-                                    navController.navigate(
-                                        Route.AudiobookPlayer(item.contentId, item.fileId).route,
-                                    )
-                                } else {
-                                    // Downloads are explicitly local/offline;
-                                    // bypass playVideo's active-cast redirect.
-                                    navController.navigate(
-                                        Route.Player(
-                                            contentId = item.contentId,
-                                            fileId = item.fileId,
-                                        ).route,
-                                    )
+                                soloGuard.run {
+                                    if (item.mediaType == org.siloserver.silo.model.download.DownloadMediaType.Audiobook) {
+                                        navController.navigate(
+                                            Route.AudiobookPlayer(item.contentId, item.fileId).route,
+                                        )
+                                    } else {
+                                        // Downloads are explicitly local/offline;
+                                        // bypass playVideo's active-cast redirect.
+                                        navController.navigate(
+                                            Route.Player(
+                                                contentId = item.contentId,
+                                                fileId = item.fileId,
+                                            ).route,
+                                        )
+                                    }
                                 }
                             },
                             onReadEbook = { contentId, fileId ->
@@ -547,7 +558,7 @@ fun MainScreen(
                     hazeState = hazeState,
                     onSearchClick = { navController.navigate(Route.Search().route) },
                     onRequestsClick = requestsMenuAction,
-                    onWatchTogetherClick = watchTogetherMenuAction,
+                    onWatchPartyClick = watchPartyMenuAction,
                     onSettingsClick = { navController.navigate(Route.Settings.route) },
                     onSwitchProfileClick = ::switchProfileFromMenu,
                     onSwitchServerClick = {
@@ -601,16 +612,7 @@ fun MainScreen(
                 )
             }
 
-            if (showWatchTogetherEntry) {
-                WatchTogetherMenuEntrySheet(
-                    onNavigate = { route ->
-                        navController.navigate(route) {
-                            launchSingleTop = true
-                        }
-                    },
-                    onDismiss = { showWatchTogetherEntry = false },
-                )
-            }
+            WatchPartySoloGuardDialog(soloGuard)
         }
     }
     }

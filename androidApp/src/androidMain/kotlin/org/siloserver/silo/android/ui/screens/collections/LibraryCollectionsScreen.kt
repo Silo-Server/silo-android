@@ -56,7 +56,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.ui.OnViewerAccessChanged
+import org.siloserver.silo.network.AccessChangeSignals
 
 /**
  * One named or anonymous section as it should appear on screen, in the
@@ -81,9 +84,16 @@ class LibraryCollectionsViewModel(
     private val sectionRepository: SectionRepository,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+    /** Access changes this ViewModel has applied, kept while its screen is away. */
+    val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
+
     private val libraryId: Int? = savedStateHandle.get<String>("libraryId")?.toIntOrNull()
     private val _uiState = MutableStateFlow(LibraryCollectionsUiState())
     val uiState: StateFlow<LibraryCollectionsUiState> = _uiState.asStateFlow()
+
+    // A newer load or refresh supersedes an unfinished one, so an answer from
+    // before an access change can't land after the refresh it triggered.
+    private var loadJob: kotlinx.coroutines.Job? = null
 
     init {
         loadCollections()
@@ -101,7 +111,8 @@ class LibraryCollectionsViewModel(
             return
         }
 
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     isLoading = true,
@@ -115,7 +126,8 @@ class LibraryCollectionsViewModel(
 
     fun refresh() {
         val currentLibraryId = libraryId ?: return
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.update { it.copy(isRefreshing = true, error = null) }
             applyResult(sectionRepository.getLibraryCollectionsGrouped(currentLibraryId))
         }
@@ -199,6 +211,7 @@ fun LibraryCollectionsScreen(
     viewModel: LibraryCollectionsViewModel = koinViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    OnViewerAccessChanged(koinInject<AccessChangeSignals>(), viewModel.accessChanges) { viewModel.refresh() }
 
     androidx.compose.material3.Scaffold(
         topBar = {

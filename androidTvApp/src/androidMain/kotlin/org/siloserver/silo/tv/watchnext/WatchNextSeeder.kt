@@ -1,6 +1,9 @@
 package org.siloserver.silo.tv.watchnext
 
+import android.app.AlarmManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -9,6 +12,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.workDataOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,8 +68,13 @@ class WatchNextSeeder(
 
     fun seedNow() {
         val pending = clearJob
+        // A clear() after this call supersedes it: clear() invalidates the
+        // write generation first, so a seed still waiting on an older wipe
+        // must not enqueue after that clear()'s cancellation.
+        val generation = repository.writeGate.capture()
         scope.launch {
             pending?.join()
+            if (!repository.writeGate.current(generation)) return@launch
             val request = OneTimeWorkRequestBuilder<WatchNextSyncWorker>()
                 .setConstraints(networkConstraints)
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
@@ -91,7 +100,50 @@ class WatchNextSeeder(
         )
     }
 
-    fun clear() {
+    /**
+     * Re-checks Profile Selection when a timed away interval runs out at
+     * [expiresAtMs] (wall clock, like the policy), so the launcher stops
+     * showing this profile's titles then rather than at the next hourly
+     * refresh. Needs no network: it only wipes the row, or does nothing if
+     * Silo was opened in time.
+     *
+     * A wake-up alarm does the timely check, since WorkManager's delay is
+     * only a minimum and JobScheduler never wakes a TV in standby.
+     * [WatchNextProfileExpiryReceiver] re-arms it after a reboot or a clock
+     * change. The WorkManager job stays as a backstop.
+     */
+    fun scheduleProfileExpiryCheck(expiresAtMs: Long) {
+        context.getSystemService(AlarmManager::class.java)?.setWindow(
+            AlarmManager.RTC_WAKEUP,
+            expiresAtMs,
+            EXPIRY_ALARM_WINDOW_MS,
+            PendingIntent.getBroadcast(
+                context,
+                0,
+                Intent(context, WatchNextProfileExpiryReceiver::class.java)
+                    .setAction(WatchNextProfileExpiryReceiver.ACTION_PROFILE_EXPIRY),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            ),
+        )
+        val delayMs = (expiresAtMs - System.currentTimeMillis()).coerceAtLeast(0L)
+        val request = OneTimeWorkRequestBuilder<WatchNextSyncWorker>()
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(WatchNextSyncWorker.KEY_POLICY_CHECK_ONLY to true))
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            WatchNextSyncWorker.UNIQUE_NAME_PROFILE_EXPIRY,
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
+    /**
+     * Returns the provider wipe, which runs after this returns. [keepRefresh]
+     * leaves the hourly refresh in place for a wipe that only Profile
+     * Selection asked for: each run re-checks the setting, so the row comes
+     * back if the same profile may show it again.
+     */
+    fun clear(keepRefresh: Boolean = false): Job {
         repository.invalidate()
         // Cancel FIRST, then wipe. Cancel BOTH the periodic refresh and any
         // in-flight one-shot seed — without cancelling before the wipe, a
@@ -102,16 +154,22 @@ class WatchNextSeeder(
         // cancellation. The repository orders the wipe after any dispatched
         // write, and rejects old writers waiting behind that wipe.
         WorkManager.getInstance(context).apply {
-            cancelUniqueWork(WatchNextSyncWorker.UNIQUE_NAME_PERIODIC)
+            if (!keepRefresh) cancelUniqueWork(WatchNextSyncWorker.UNIQUE_NAME_PERIODIC)
             cancelUniqueWork(WatchNextSyncWorker.UNIQUE_NAME_ONESHOT)
         }
         // Cross-process ContentResolver deletes are binder I/O: run them off
         // the caller's (main) thread so clear() stays cheap for call sites.
         // Track the wipe so [seedNow] can join it before enqueuing a seed.
-        clearJob = scope.launch { repository.clearAll() }
+        return scope.launch { repository.clearAll() }.also { clearJob = it }
     }
 
     private val networkConstraints = Constraints.Builder()
         .setRequiredNetworkType(NetworkType.CONNECTED)
         .build()
+
+    private companion object {
+        // The shortest window an inexact alarm gets from Android 12 on; an
+        // exact alarm would need the SCHEDULE_EXACT_ALARM permission.
+        const val EXPIRY_ALARM_WINDOW_MS = 10 * 60 * 1000L
+    }
 }

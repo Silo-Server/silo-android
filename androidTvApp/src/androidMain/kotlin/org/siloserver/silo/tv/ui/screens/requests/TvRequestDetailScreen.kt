@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.screens.requests
 
+import org.siloserver.silo.common.requests.rememberRequestRouter
+import org.siloserver.silo.model.request.RequestMediaResult
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -8,15 +11,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,54 +38,71 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Button
+import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.koin.compose.koinInject
+import org.koin.compose.viewmodel.koinViewModel
+import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.common.requests.RequestRowCopy
+import org.siloserver.silo.common.requests.RequestStageTrack
+import org.siloserver.silo.model.catalog.ExternalRatings
+import org.siloserver.silo.model.request.AdminRequestAction
+import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaDetail
-import org.siloserver.silo.model.request.RequestState
-import org.siloserver.silo.model.request.reasonMessage
+import org.siloserver.silo.model.request.RequestMediaType
+import org.siloserver.silo.model.request.RequestProgress
+import org.siloserver.silo.model.request.RequestStep
+import org.siloserver.silo.model.request.RequestTargetSummary
 import org.siloserver.silo.model.request.requestBackdropUrl
-import org.siloserver.silo.model.request.requestDisplayLabel
 import org.siloserver.silo.model.request.requestPosterUrl
+import org.siloserver.silo.repository.RequestsRepository
+import org.siloserver.silo.tv.ui.components.PillKind
+import org.siloserver.silo.tv.ui.components.SquaredPillSurface
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
+import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.components.rememberAmbientBackdropTintState
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvObservedFocusResult
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
-import org.siloserver.silo.tv.ui.theme.RowDimens
-import org.siloserver.silo.tv.ui.theme.SiloBlue
-import org.siloserver.silo.tv.ui.theme.cardScaled
-import org.siloserver.silo.tv.ui.theme.sectionEyebrow
+import org.siloserver.silo.tv.ui.screens.detail.TvDetailHero
+import org.siloserver.silo.tv.ui.screens.detail.TvDetailHorizontalInset
+import org.siloserver.silo.tv.ui.screens.detail.TvDetailSectionHeader
+import org.siloserver.silo.tv.ui.screens.detail.tvDetailPageSurfaceColor
+import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
+import org.siloserver.silo.tv.ui.theme.SiloOnSurface
+import org.siloserver.silo.viewmodel.RequestDetailUiState
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
-import org.koin.compose.viewmodel.koinViewModel
-import org.koin.core.parameter.parametersOf
+import org.siloserver.silo.viewmodel.RequestPrimaryAction
 
 /**
- * TV request detail — the 10-foot counterpart to the phone RequestDetailScreen.
- * Reuses the shared [RequestDetailViewModel] (load + submitRequest) keyed by
- * (mediaType, tmdbId). Shows title/metadata/genres/overview and one primary
- * action: Request when the title is requestable, otherwise the request status.
+ * TV request detail on the same page surface and hero as a library title
+ * (`TvDetailHero`), like tvOS `RequestDetailView`: a STATUS / REQUESTED /
+ * QUALITY summary with a labeled stage track, one primary action that morphs
+ * in place, admin decisions, Cancel, and a "More like this" row.
+ *
+ * Focus: the primary action is one stable node whose label and look follow
+ * [RequestPrimaryAction], so focus stays put across request → requesting →
+ * pending.
  */
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvRequestDetailScreen(
     mediaType: String,
     tmdbId: Int,
     onBack: () -> Unit,
+    onOpenLibraryItem: (contentId: String) -> Unit = {},
+    onOpenRequestDetail: (mediaType: String, tmdbId: Int) -> Unit = { _, _ -> },
     /**
      * False while the shell has an overlay (a cascade panel or the profile
      * menu) that Back should close first. This handler registers after the
@@ -84,22 +112,25 @@ fun TvRequestDetailScreen(
     backEnabled: Boolean = true,
     onInitialContentFocus: () -> Unit = {},
     viewModel: RequestDetailViewModel = koinViewModel { parametersOf(mediaType, tmdbId) },
+    repository: RequestsRepository = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val router = rememberRequestRouter(repository, onOpenLibraryItem, onOpenRequestDetail)
     val loadingFocusRequester = remember { FocusRequester() }
     val primaryActionFocusRequester = remember { FocusRequester() }
     var pageHasFocus by remember { mutableStateOf(false) }
     var pageHadFocus by remember { mutableStateOf(false) }
-    val showsLoading = state.isLoading && state.detail == null
-    // The title, not the loaded detail: the refresh after a submit replaces the
+    var primaryHasFocus by remember { mutableStateOf(false) }
+    var confirmingDecline by remember { mutableStateOf(false) }
+    val showsLoading = state.detail == null && state.error == null
+    // The title, not the loaded detail: refreshes after an action replace the
     // detail and must not re-run the claim below.
     val detailKey = state.detail?.let { "${it.mediaType}:${it.tmdbId}" }
     val detailArrived by rememberUpdatedState(detailKey != null)
 
     // Nothing here is focusable until the detail loads, and the row that opened
-    // the page is about to be disposed, so Compose would re-home focus onto the
-    // top bar's Search button. Hold it on the loading indicator instead: focus
-    // stays in the page, and a move to the bar while this loads is the viewer's.
+    // the page is about to be disposed. Hold focus on the loading indicator so
+    // it stays in the page.
     LaunchedEffect(showsLoading) {
         if (!showsLoading) return@LaunchedEffect
         requestFocusUntilObserved(
@@ -110,11 +141,10 @@ fun TvRequestDetailScreen(
         )
     }
 
-    // Hand focus to the primary action when the detail arrives, but only if it
-    // is still in the page (or never got here). A viewer who went up to the bar
-    // or into the profile menu while this loaded keeps their place. Read in the
-    // composition that swaps the indicator for the content, so it is the focus
-    // from before the swap.
+    // Hand focus to the primary action when the detail arrives, but only if
+    // focus is still in the page (or never got here). Observed on the action
+    // itself: the synopsis above it is focusable too, and focus entering the
+    // page first lands there.
     val claimOnArrival = remember(detailKey) { pageHasFocus || !pageHadFocus }
     LaunchedEffect(detailKey) {
         if (detailKey == null || !claimOnArrival) return@LaunchedEffect
@@ -122,44 +152,77 @@ fun TvRequestDetailScreen(
             maxAttempts = TvContentInitialFocusMaxAttempts,
             awaitAttempt = { withFrameNanos { } },
             requestFocus = primaryActionFocusRequester::requestFocus,
-            isFocused = { pageHasFocus },
+            isFocused = { primaryHasFocus },
         )
         if (result == TvObservedFocusResult.Focused) onInitialContentFocus()
     }
 
     BackHandler(enabled = backEnabled) { onBack() }
 
-    Column(
+    if (confirmingDecline) {
+        AlertDialog(
+            onDismissRequest = { confirmingDecline = false },
+            containerColor = DarkSurfaceElevated,
+            titleContentColor = SiloOnSurface,
+            textContentColor = SiloOnSurface.copy(alpha = 0.76f),
+            title = { Text("Decline this request?", color = SiloOnSurface) },
+            text = { Text("The person who asked for it will see it as declined.", color = SiloOnSurface.copy(alpha = 0.76f)) },
+            confirmButton = {
+                // Keep first, so a stray press doesn't decide on someone's request.
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { confirmingDecline = false }) { Text("Keep") }
+                    Button(onClick = {
+                        confirmingDecline = false
+                        viewModel.moderate(AdminRequestAction.Decline)
+                    }) { Text("Decline") }
+                }
+            },
+        )
+    }
+
+    val backdropUrl = state.detail?.let { requestBackdropUrl(it.backdropPath) ?: requestPosterUrl(it.posterPath) }
+    val pageTint = rememberAmbientBackdropTintState()
+    LaunchedEffect(backdropUrl) { pageTint.set(item = null, url = backdropUrl) }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .onFocusChanged {
                 pageHasFocus = it.hasFocus
                 if (it.hasFocus) pageHadFocus = true
             }
-            .background(MaterialTheme.colorScheme.background),
+            .background(tvDetailPageSurfaceColor(pageTint.accent)),
     ) {
+        val detail = state.detail
         when {
-            showsLoading -> RequestDetailLoading(focusRequester = loadingFocusRequester)
-            state.error != null && state.detail == null -> TvErrorScreen(
-                message = state.error ?: "Failed to load this title.",
-                onRetry = viewModel::load,
-            )
-            state.detail != null -> RequestDetailContent(
-                detail = state.detail!!,
-                isSubmitting = state.isSubmitting,
-                notice = state.notice,
-                error = state.error,
-                onRequest = viewModel::submitRequest,
+            detail != null -> RequestDetailContent(
+                detail = detail,
+                state = state,
+                backdropUrl = backdropUrl,
                 primaryActionFocusRequester = primaryActionFocusRequester,
+                onPrimaryFocusChanged = { primaryHasFocus = it },
+                onPrimary = {
+                    when (val action = state.primaryAction) {
+                        RequestPrimaryAction.Request -> viewModel.submitRequest()
+                        is RequestPrimaryAction.OpenInLibrary -> onOpenLibraryItem(action.contentId)
+                        else -> Unit
+                    }
+                },
+                onModerate = { action ->
+                    if (action == AdminRequestAction.Decline) confirmingDecline = true else viewModel.moderate(action)
+                },
+                onCancel = viewModel::cancel,
+                onOpenRecommendation = router::openResult,
             )
+            state.error != null -> TvErrorScreen(message = state.error.orEmpty(), onRetry = viewModel::load)
+            else -> RequestDetailLoading(focusRequester = loadingFocusRequester)
         }
     }
 }
 
 /**
  * The loading indicator plus a spinner-sized focus target over it, so focus
- * can wait inside the page. Kept small and centred: D-pad Up from it has to
- * find the top bar by geometry, which a full-screen target would not.
+ * can wait inside the page.
  */
 @Composable
 private fun RequestDetailLoading(focusRequester: FocusRequester) {
@@ -174,177 +237,86 @@ private fun RequestDetailLoading(focusRequester: FocusRequester) {
     }
 }
 
-/**
- * Content starts below the shell's top navigation, which is a `TopStart`
- * overlay drawn over every screen rather than something that reserves space.
- * Without this the title rendered *through* the nav row and the eyebrow was
- * clipped off the top edge entirely.
- */
-private val ShellNavInset = 96.dp
-
-/** TV-safe horizontal margin; the outer ~5% of a panel is not reliably visible. */
-private val SafeHorizontal = 48.dp
-
-/**
- * The overview is a full TMDB synopsis — often several hundred words, which on
- * a 10-foot display filled the screen and pushed the Request action off the
- * bottom. Clamped to a readable teaser; the point of this screen is deciding
- * whether to request, not reading the whole plot.
- */
-private const val OverviewMaxLines = 4
-
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun RequestDetailContent(
     detail: RequestMediaDetail,
-    isSubmitting: Boolean,
-    notice: String?,
-    error: String?,
-    onRequest: () -> Unit,
+    state: RequestDetailUiState,
+    backdropUrl: String?,
     primaryActionFocusRequester: FocusRequester,
+    onPrimaryFocusChanged: (Boolean) -> Unit,
+    onPrimary: () -> Unit,
+    onModerate: (AdminRequestAction) -> Unit,
+    onCancel: () -> Unit,
+    onOpenRecommendation: (RequestMediaResult) -> Unit,
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Backdrop, scrimmed hard enough that body copy stays legible over the
-        // busiest frame. Absent artwork simply leaves the background colour.
-        requestBackdropUrl(detail.backdropPath)?.let { url ->
-            ThumbhashImage(
-                url = url,
-                thumbhash = null,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+    val progress = state.progress?.takeIf { state.showsStatus }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 70.dp),
+    ) {
+        item(key = "hero", contentType = "detail-hero") {
+            TvDetailHero(
+                title = detail.title,
+                seriesTitle = null,
+                logoUrl = null,
+                backdropUrl = backdropUrl,
+                backdropThumbhash = null,
+                sourceTokens = detail.genres.take(3),
+                ratingChip = detail.contentRating.takeIf { it.isNotBlank() },
+                overview = detail.overview.takeIf { it.isNotBlank() },
+                tagline = detail.tagline.takeIf { it.isNotBlank() },
+                factsLine = detail.factTokens(),
+                directorText = detail.creditText(),
+                extraHeight = if (progress != null) StatusStripHeight else 0.dp,
+                playbackSummary = progress?.let { { RequestStatusStrip(progress = it, state = state) } },
+                actions = {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RequestPrimaryActionPill(
+                            state = state,
+                            focusRequester = primaryActionFocusRequester,
+                            onClick = onPrimary,
+                            modifier = Modifier.onFocusChanged { onPrimaryFocusChanged(it.hasFocus) },
+                        )
+                        state.moderationActions.forEach { action ->
+                            val (icon, title) = when (action) {
+                                AdminRequestAction.Approve -> Icons.Filled.Check to "Approve"
+                                AdminRequestAction.Decline -> Icons.Filled.Close to "Decline"
+                                AdminRequestAction.Retry -> Icons.Filled.Refresh to "Retry"
+                            }
+                            RequestActionPill(icon = icon, title = title, onClick = { onModerate(action) })
+                        }
+                        if (state.canCancel) {
+                            RequestActionPill(icon = Icons.Filled.Close, title = "Cancel Request", onClick = onCancel)
+                        }
+                        state.actionErrorMessage?.let { message ->
+                            Text(
+                                text = message,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp),
+                                color = SiloOnSurface.copy(alpha = 0.72f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
             )
         }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        0f to MaterialTheme.colorScheme.background,
-                        0.55f to MaterialTheme.colorScheme.background.copy(alpha = 0.94f),
-                        1f to Color.Transparent,
-                    ),
-                ),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to MaterialTheme.colorScheme.background.copy(alpha = 0.86f),
-                        0.4f to Color.Transparent,
-                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                    ),
-                ),
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(
-                    PaddingValues(
-                        start = SafeHorizontal,
-                        end = SafeHorizontal,
-                        top = ShellNavInset,
-                        bottom = 48.dp,
-                    ),
-                ),
-            horizontalArrangement = Arrangement.spacedBy(32.dp),
-        ) {
-            requestPosterUrl(detail.posterPath)?.let { url ->
-                ThumbhashImage(
-                    url = url,
-                    thumbhash = null,
-                    contentDescription = detail.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(RowDimens.PosterWidth.cardScaled(), RowDimens.PosterHeight.cardScaled())
-                        .clip(RoundedCornerShape(10.dp)),
-                )
-            }
-
-            Column(
-                // Held to the scrimmed side so the backdrop stays visible on the
-                // right rather than sitting behind the text.
-                modifier = Modifier.widthIn(max = 900.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = "REQUEST",
-                    style = sectionEyebrow,
-                    color = SiloBlue.copy(alpha = 0.92f),
-                )
-                Text(
-                    text = detail.title,
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                val meta = buildList {
-                    detail.year?.takeIf { it > 0 }?.let { add(it.toString()) }
-                    detail.runtime?.takeIf { it > 0 }?.let { add("${it} min") }
-                    detail.contentRating.takeIf { it.isNotBlank() }?.let { add(it) }
-                    detail.voteAverage?.takeIf { it > 0 }?.let { add("★ ${"%.1f".format(it)}") }
-                    detail.genres.take(3).takeIf { it.isNotEmpty() }?.let { add(it.joinToString(" · ")) }
-                }.joinToString("  ·  ")
-                if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                if (detail.tagline.isNotBlank()) {
-                    Text(
-                        text = detail.tagline,
-                        style = MaterialTheme.typography.titleMedium.copy(fontStyle = FontStyle.Italic),
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.86f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                if (detail.overview.isNotBlank()) {
-                    Text(
-                        text = detail.overview,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
-                        maxLines = OverviewMaxLines,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-
-                // One pill in every state, never swapped for another node. The
-                // status used to be plain text, which left the page with nothing
-                // to focus, and replacing Request with it after a submit dropped
-                // the focused node the same way. Only Request is enabled; the
-                // status or reason renders disabled so it reads as not
-                // actionable. A disabled TV Surface still takes focus (its
-                // clickable is focusable regardless of enabled), so the page
-                // keeps a focus target in every state, like tvOS
-                // RequestDetailView's single primary action.
-                val request = detail.request
-                TvRequestActionPill(
-                    label = request.primaryActionLabel(isSubmitting),
-                    icon = Icons.Filled.Add.takeIf { request.requestable },
-                    onClick = onRequest,
-                    enabled = request.requestable && !isSubmitting,
-                    modifier = Modifier
-                        .padding(top = 12.dp)
-                        .focusRequester(primaryActionFocusRequester),
-                )
-
-                notice?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
-                }
-                error?.let {
-                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+        val recommendations = state.recommendations
+        if (recommendations.isNotEmpty()) {
+            item(key = "more-like-this", contentType = "rail") {
+                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    TvDetailSectionHeader(title = "More like this", modifier = Modifier.padding(horizontal = TvDetailHorizontalInset))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                        contentPadding = PaddingValues(horizontal = TvDetailHorizontalInset, vertical = 8.dp),
+                    ) {
+                        items(recommendations, key = { "${it.mediaType}:${it.tmdbId}" }) { result ->
+                            TvRequestCard(result = result, onClick = { onOpenRecommendation(result) })
+                        }
+                    }
                 }
             }
         }
@@ -352,16 +324,153 @@ private fun RequestDetailContent(
 }
 
 /**
- * Label for the detail's primary action: Request while the title is
- * requestable, otherwise the existing request's status, otherwise the reason
- * it cannot be requested. Status tokens use [requestDisplayLabel]; reasons use
- * the shared [reasonMessage] policy for readable sentences and unknown codes.
+ * The page's one primary action: a white Request / Open in Library pill, or
+ * the request's status with its dot. Never disabled and never swapped for
+ * another node, so a submit can't drop focus mid-morph; presses on a status
+ * do nothing.
  */
-private fun RequestState.primaryActionLabel(isSubmitting: Boolean): String {
-    if (requestable) return if (isSubmitting) "Requesting…" else "Request"
-    val status = status?.takeIf { it.isNotBlank() }
-    return when {
-        status != null -> "Request status: ${status.requestDisplayLabel()}"
-        else -> reasonMessage() ?: "Unavailable"
+@Composable
+private fun RequestPrimaryActionPill(
+    state: RequestDetailUiState,
+    focusRequester: FocusRequester,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val action = state.primaryAction
+    SquaredPillSurface(
+        kind = PillKind.Primary,
+        onClick = { if (action.isInteractive) onClick() },
+        modifier = modifier.height(38.dp),
+        focusRequester = focusRequester,
+        capsule = true,
+        stableHero = true,
+        contentPadding = PaddingValues(horizontal = 20.dp),
+    ) { foreground ->
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            when (action) {
+                RequestPrimaryAction.Request -> Icon(Icons.Filled.Add, contentDescription = null, tint = foreground, modifier = Modifier.size(18.dp))
+                RequestPrimaryAction.Submitting -> CircularProgressIndicator(color = foreground, strokeWidth = 2.dp, modifier = Modifier.size(14.dp))
+                is RequestPrimaryAction.OpenInLibrary ->
+                    Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+                is RequestPrimaryAction.Status ->
+                    Box(modifier = Modifier.size(9.dp).background(action.state.tint.tvColor(), CircleShape))
+                RequestPrimaryAction.Loading -> Unit
+            }
+            Text(
+                text = state.primaryActionTitle,
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp),
+                color = foreground,
+                maxLines = 1,
+            )
+        }
     }
 }
+
+/**
+ * A secondary action in the hero row (Approve, Decline, Retry, Cancel), in the
+ * row's 38dp capsule so every control in it shares one height.
+ */
+@Composable
+private fun RequestActionPill(icon: ImageVector, title: String, onClick: () -> Unit) {
+    SquaredPillSurface(
+        kind = PillKind.Secondary,
+        onClick = onClick,
+        modifier = Modifier.height(38.dp),
+        focusRequester = null,
+        capsule = true,
+        stableHero = true,
+        contentPadding = PaddingValues(horizontal = 18.dp),
+    ) { foreground ->
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge.copy(fontSize = 14.sp),
+                color = foreground,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** Extra hero height for the status strip and labeled track. */
+private val StatusStripHeight = 64.dp
+
+/**
+ * The labeled summary under the synopsis, in the playback summary's grammar,
+ * plus the stage track with its step names.
+ */
+@Composable
+private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUiState) {
+    val record = state.displayedRecord
+    Column(modifier = Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            SummaryField(label = "STATUS", value = progress.longLabel, dot = progress.tint.tvColor())
+            if (record != null) {
+                RequestRowCopy.day(record.createdAt)?.let { SummaryField(label = "REQUESTED", value = it) }
+                (RequestTargetSummary.text(record.targets) ?: RequestTargetSummary.qualities(record.targets))?.let {
+                    SummaryField(label = "QUALITY", value = it)
+                }
+            }
+        }
+        Column(modifier = Modifier.width(420.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            RequestStageTrack(progress = progress, height = 3.dp)
+            Row {
+                RequestStep.entries.forEach { step ->
+                    val color = when {
+                        step == progress.currentStep -> progress.tint.tvColor()
+                        step.ordinal < progress.completedSteps -> SiloOnSurface
+                        else -> SiloOnSurface.copy(alpha = 0.45f)
+                    }
+                    Text(
+                        text = step.title,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                        color = color,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryField(label: String, value: String, dot: Color? = null) {
+    Column(modifier = Modifier.width(150.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.55.sp),
+            color = Color.White.copy(alpha = 0.48f),
+            maxLines = 1,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            if (dot != null) Box(modifier = Modifier.size(6.dp).background(dot, CircleShape))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+                color = Color.White.copy(alpha = 0.9f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** `2026 · 2h 25m · TMDB 7.9`, with genres after it as source tokens. */
+private fun RequestMediaDetail.factTokens(): List<TvHeroFactToken> = buildList {
+    year?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(it.toString())) }
+    if (mediaType == RequestMediaType.Series) {
+        numberOfSeasons?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(if (it == 1) "1 season" else "$it seasons")) }
+    } else {
+        runtime?.takeIf { it > 0 }?.let { add(TvHeroFactToken.TextToken(if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m")) }
+    }
+    ExternalRatings.tmdb(voteAverage)?.let { add(TvHeroFactToken.ExternalRating(it)) }
+}
+
+private fun RequestMediaDetail.creditText(): String? = when {
+    director.isNotBlank() -> "Directed by $director"
+    creators.isNotEmpty() -> "Created by ${creators.take(2).joinToString(", ")}"
+    else -> null
+}
+

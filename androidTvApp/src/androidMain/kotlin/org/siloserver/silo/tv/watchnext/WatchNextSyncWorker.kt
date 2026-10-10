@@ -8,6 +8,7 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.EpisodeSpoilerSupport
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -27,11 +28,16 @@ class WatchNextSyncWorker(
     private val repository: WatchNextRepository,
     private val spoilerStore: EpisodeSpoilerStore,
     private val catalogRepository: CatalogRepository,
+    /** Profile Selection's verdict; see [TvProfileLaunchPreferences.allowsWatchNext]. */
+    private val allowsWatchNext: () -> Boolean = { true },
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
+        if (wipeIfHidden()) return@withContext Result.success()
+        if (inputData.getBoolean(KEY_POLICY_CHECK_ONLY, false)) return@withContext Result.success()
+        val stopped = { isStopped || !allowsWatchNext() }
         val completed = syncWatchNextHome(
-            sectionRepository, repository.writeGate, { isStopped },
+            sectionRepository, repository.writeGate, stopped,
             spoilerPreferences = {
                 spoilerStore.refresh()
                 spoilerStore.state.value.takeUnless { it.support == EpisodeSpoilerSupport.Unknown }?.prefs
@@ -43,11 +49,29 @@ class WatchNextSyncWorker(
         ) { fields, run, authority ->
             repository.diffAndApply(fields, run, authority)
         }
+        // The verdict can flip mid-run (a timed choice expiring); wipe what
+        // this run already wrote instead of leaving it for a retry.
+        if (wipeIfHidden()) return@withContext Result.success()
         if (completed) Result.success() else Result.retry()
+    }
+
+    /**
+     * Profile Selection hides the previous viewer's titles from the launcher
+     * (silo-apple TopShelfProfilePolicy): wipe instead of writing.
+     */
+    private suspend fun wipeIfHidden(): Boolean {
+        if (allowsWatchNext()) return false
+        repository.invalidate()
+        repository.clearAll()
+        return true
     }
 
     companion object {
         const val UNIQUE_NAME_PERIODIC = "watch_next_sync_periodic"
         const val UNIQUE_NAME_ONESHOT = "watch_next_sync_oneshot"
+        const val UNIQUE_NAME_PROFILE_EXPIRY = "watch_next_profile_expiry"
+
+        /** Input flag: only apply Profile Selection's verdict, never sync. */
+        const val KEY_POLICY_CHECK_ONLY = "policy_check_only"
     }
 }

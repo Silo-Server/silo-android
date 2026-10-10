@@ -56,6 +56,20 @@ class CatalogRepository(
     private val episodesInFlight =
         mutableMapOf<EpisodesRequestKey, Deferred<ApiResult<EpisodesResponse>>>()
 
+    /**
+     * Whether a library holds any item at all, whatever the viewer's filters:
+     * one unfiltered item, no total. A screen asks only once its own view came
+     * back empty, to tell an empty library from filters that match nothing
+     * (#451). Read straight from the API so a one-item page never replaces the
+     * cached default page [browse] keeps for offline. Null when the server
+     * could not answer.
+     */
+    suspend fun libraryHasItems(libraryId: Int, mediaType: String? = null): Boolean? =
+        when (val result = catalogApi.getCatalog(libraryId = libraryId, mediaType = mediaType, limit = 1, skipTotal = true)) {
+            is ApiResult.Success -> result.data.items.isNotEmpty()
+            else -> null
+        }
+
     /** Browse the catalog with optional filters, sorting, and pagination. */
     suspend fun browse(
         source: String? = null,
@@ -159,10 +173,19 @@ class CatalogRepository(
     // Keeping them live prevents versions from leaking between browse contexts.
 
     /** Fetches full metadata for a single catalog item (offline: last cached detail). */
-    suspend fun getItemDetail(contentId: String, libraryId: Int? = null): ApiResult<ItemDetail> {
+    /**
+     * Live item detail. By default it joins a Home warm-up already in flight
+     * for the same title; [joinWarmup] = false sends a fresh request instead,
+     * for a reload whose answer must postdate an access change.
+     */
+    suspend fun getItemDetail(
+        contentId: String,
+        libraryId: Int? = null,
+        joinWarmup: Boolean = true,
+    ): ApiResult<ItemDetail> {
         if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
-        val warmRequest = detailRequestMutex.withLock {
+        val warmRequest = if (!joinWarmup) null else detailRequestMutex.withLock {
             itemDetailInFlight[requestIdentityGeneration to contentId]
         }
         return warmRequest?.await() ?: fetchItemDetail(contentId, requestIdentityGeneration)
@@ -199,15 +222,22 @@ class CatalogRepository(
     /** Fetches playback-oriented detail (versions, user progress, intro/credits markers). */
     suspend fun captureWatchAuthority() = catalogApi.captureWatchAuthority()
     suspend fun isWatchAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = catalogApi.isWatchAuthorityCurrent(owner)
-    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId)
+    suspend fun getWatchDetail(contentId: String, owner: org.siloserver.silo.network.AuthScopeSnapshot, libraryId: Int? = null, fileId: Int? = null) = catalogApi.getWatchDetail(contentId, owner, libraryId, fileId)
 
     suspend fun getWatchDetail(contentId: String, libraryId: Int? = null): ApiResult<WatchDetail> =
         catalogApi.getWatchDetail(contentId, libraryId)
 
-    /** Lists seasons for a series (offline: last cached seasons). */
-    suspend fun getSeasons(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> {
+    /**
+     * Lists seasons for a series (offline: last cached seasons).
+     *
+     * [fresh] reads the server only: it neither joins a request already in
+     * flight nor falls back to the cache, both of which can still hold the
+     * state from before a write the caller just made.
+     */
+    suspend fun getSeasons(seriesId: String, libraryId: Int? = null, fresh: Boolean = false): ApiResult<SeasonsResponse> {
         if (libraryId != null) return catalogApi.getSeasons(seriesId, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
+        if (fresh) return fetchSeasons(seriesId, requestIdentityGeneration, serveCacheOnFailure = false)
         val warmRequest = detailRequestMutex.withLock {
             seasonsInFlight[requestIdentityGeneration to seriesId]
         }
@@ -236,10 +266,19 @@ class CatalogRepository(
         return getSeasons(seriesId)
     }
 
-    /** Lists episodes for a specific season of a series (offline: last cached episodes). */
-    suspend fun getEpisodes(seriesId: String, seasonNumber: Int, libraryId: Int? = null): ApiResult<EpisodesResponse> {
+    /**
+     * Lists episodes for a specific season of a series (offline: last cached
+     * episodes). [fresh] behaves as on [getSeasons].
+     */
+    suspend fun getEpisodes(
+        seriesId: String,
+        seasonNumber: Int,
+        libraryId: Int? = null,
+        fresh: Boolean = false,
+    ): ApiResult<EpisodesResponse> {
         if (libraryId != null) return catalogApi.getEpisodes(seriesId, seasonNumber, libraryId)
         val requestIdentityGeneration = identityTransitions.generation.value
+        if (fresh) return fetchEpisodes(seriesId, seasonNumber, requestIdentityGeneration, serveCacheOnFailure = false)
         val requestKey = EpisodesRequestKey(requestIdentityGeneration, seriesId, seasonNumber)
         val warmRequest = detailRequestMutex.withLock { episodesInFlight[requestKey] }
         return warmRequest?.await()
@@ -338,6 +377,7 @@ class CatalogRepository(
     private suspend fun fetchSeasons(
         seriesId: String,
         requestIdentityGeneration: Long,
+        serveCacheOnFailure: Boolean = true,
     ): ApiResult<SeasonsResponse> {
         val result = catalogApi.getSeasons(seriesId)
         if (result is ApiResult.Success) {
@@ -346,7 +386,7 @@ class CatalogRepository(
             }
             return result
         }
-        if (result.canServeCache()) {
+        if (serveCacheOnFailure && result.canServeCache()) {
             catalogCache.getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
         }
         return result
@@ -356,6 +396,7 @@ class CatalogRepository(
         seriesId: String,
         seasonNumber: Int,
         requestIdentityGeneration: Long,
+        serveCacheOnFailure: Boolean = true,
     ): ApiResult<EpisodesResponse> {
         val result = catalogApi.getEpisodes(seriesId, seasonNumber)
         if (result is ApiResult.Success) {
@@ -369,7 +410,7 @@ class CatalogRepository(
             }
             return result
         }
-        if (result.canServeCache()) {
+        if (serveCacheOnFailure && result.canServeCache()) {
             catalogCache.getCachedEpisodes(seriesId, seasonNumber)?.let {
                 return ApiResult.Success(it)
             }

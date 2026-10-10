@@ -74,8 +74,15 @@ data class BrowseItem(
     @SerialName("release_date") val releaseDate: String? = null,
     @SerialName("last_air_date") val lastAirDate: String? = null,
     @SerialName("user_state") val userState: MediaItemUserState? = null,
+    @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null,
+    @SerialName("series_id") val seriesId: String? = null,
+    @SerialName("series_title") val seriesTitle: String? = null,
+    @SerialName("season_number") val seasonNumber: Int? = null,
+    @SerialName("episode_number") val episodeNumber: Int? = null,
+    @SerialName("item_source") val itemSource: String? = null,
     @SerialName("position_seconds") val positionSeconds: Double? = null,
-    @SerialName("overlay_summary") val overlaySummary: OverlaySummary? = null
+    @SerialName("duration_seconds") val durationSeconds: Double? = null,
+    @SerialName("progress_updated_at") val progressUpdatedAt: String? = null,
 )
 
 @Serializable
@@ -179,6 +186,12 @@ data class ItemDetail(
     @SerialName("rating_tmdb") val ratingTmdb: Double? = null,
     @SerialName("rating_rt_critic") val ratingRtCritic: Int? = null,
     @SerialName("rating_rt_audience") val ratingRtAudience: Int? = null,
+    /**
+     * The server's title-page ratings row, in display order. `null` when an
+     * older server omits it; read it through [titleRatings].
+     */
+    @Serializable(with = DisplayRatingListSerializer::class)
+    val ratings: List<DisplayRating>? = null,
     @SerialName("imdb_id") val imdbId: String? = null,
     @SerialName("tmdb_id") val tmdbId: String? = null,
     @SerialName("tvdb_id") val tvdbId: String? = null,
@@ -313,6 +326,10 @@ data class FileVersion(
     @SerialName("presentation_part_total") val presentationPartTotal: Int? = null,
     @SerialName("edition_raw") val editionRaw: String? = null,
     @SerialName("edition_key") val editionKey: String? = null,
+    val intro: TimeRange? = null,
+    val credits: TimeRange? = null,
+    val recap: TimeRange? = null,
+    val preview: TimeRange? = null,
 )
 
 @Serializable

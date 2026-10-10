@@ -21,6 +21,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         continuation: CatalogContinuationV2? = null, limit: Int? = null,
         namePrefix: String? = null, yearMin: Int? = null, yearMax: Int? = null,
         queryGroups: List<CatalogQueryGroup> = emptyList(), match: String? = null,
+        skipTotal: Boolean = false,
     ): ApiResult<CatalogResponse> {
         val groups = queryGroups.toV2Groups().toMutableList()
         val implicit = buildList {
@@ -38,7 +39,8 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
         }
         return v2.browse(CatalogQueryV2(source = source ?: "query", q = query, type = mediaType,
             libraryId = libraryId?.toString(), sort = sort, order = order, limit = limit ?: 50,
-            namePrefix = namePrefix, groups = groups, match = match), continuation).map { it.toCatalogResponse() }
+            namePrefix = namePrefix, groups = groups, match = match, skipTotal = skipTotal), continuation)
+            .map { it.toCatalogResponse() }
     }
 
     suspend fun getAudiobookGroups(libraryId: Int, groupBy: String, sort: String = "name",
@@ -77,7 +79,7 @@ class CatalogApi(client: HttpClient, private val v2: CatalogV2Api = CatalogV2Api
 
     suspend fun captureWatchAuthority() = watchDetail.capture()
     suspend fun isWatchAuthorityCurrent(owner: AuthScopeSnapshot) = watchDetail.current(owner)
-    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot, libraryId: Int? = null) = watchDetail.detail(id, owner, libraryId)
+    suspend fun getWatchDetail(id: String, owner: AuthScopeSnapshot, libraryId: Int? = null, fileId: Int? = null) = watchDetail.detail(id, owner, libraryId, fileId)
 
     /** Captures the current viewer at call time when the caller has no retained owner. */
     suspend fun getWatchDetail(id: String, libraryId: Int? = null): ApiResult<WatchDetail> {

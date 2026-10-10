@@ -18,6 +18,17 @@ sealed class Route(val route: String) {
 
     // --- Auth flow (no bottom nav) ---
     data object ServerSetup : Route("server_setup")
+
+    /**
+     * Server setup with the address field prefilled, for an app link naming a
+     * server this phone hasn't saved. A separate destination so the plain
+     * [ServerSetup] route (a start destination) keeps its exact route string.
+     */
+    data class ServerSetupPrefilled(val url: String) : Route("server_setup_prefilled?url=${Uri.encode(url)}") {
+        companion object {
+            const val ROUTE = "server_setup_prefilled?url={url}"
+        }
+    }
     data object ServerList : Route("server_list")
     data object Login : Route("login")
     data object Setup : Route("setup")
@@ -47,6 +58,10 @@ sealed class Route(val route: String) {
          * than looking the code up against whichever server is active.
          */
         val serverOrigin: String? = null,
+        /** Deployment identity from a `silo://device?server=` link, matched by verified identity. */
+        val serverId: String? = null,
+        /** The link's server origin, to add the server from when it isn't saved. */
+        val serverUrl: String? = null,
     ) : Route(
         buildString {
             append("pair_device")
@@ -55,6 +70,8 @@ sealed class Route(val route: String) {
                 code?.takeIf { it.isNotBlank() }?.let { "code=${Uri.encode(it)}" },
                 serverOrigin?.takeIf { it.isNotBlank() }
                     ?.let { "serverOrigin=${Uri.encode(it)}" },
+                serverId?.takeIf { it.isNotBlank() }?.let { "serverId=${Uri.encode(it)}" },
+                serverUrl?.takeIf { it.isNotBlank() }?.let { "serverUrl=${Uri.encode(it)}" },
             )
             if (params.isNotEmpty()) {
                 append("?")
@@ -63,7 +80,8 @@ sealed class Route(val route: String) {
         },
     ) {
         companion object {
-            const val ROUTE = "pair_device?token={token}&code={code}&serverOrigin={serverOrigin}"
+            const val ROUTE =
+                "pair_device?token={token}&code={code}&serverOrigin={serverOrigin}&serverId={serverId}&serverUrl={serverUrl}"
         }
     }
 
@@ -91,6 +109,14 @@ sealed class Route(val route: String) {
         }
     }
     data object Settings : Route("settings")
+
+    // Settings sub-pages, pushed from the overview as on the Apple apps. They
+    // share the overview's SettingsViewModel through its back-stack entry.
+    data object SettingsInterface : Route("settings/interface")
+    data object SettingsPlayback : Route("settings/playback")
+    data object SettingsSubtitles : Route("settings/subtitles")
+    data object SettingsDownloads : Route("settings/downloads")
+    data object SettingsNotifications : Route("settings/notifications")
     data object Diagnostics : Route("settings/diagnostics")
     data class DiagnosticsReport(val reportId: String) :
         Route("settings/diagnostics/report/${Uri.encode(reportId)}") {
@@ -112,6 +138,7 @@ sealed class Route(val route: String) {
     // --- Requests ---
     data object Requests : Route("requests")
     data object MyRequests : Route("requests/mine")
+    data object RequestApprovals : Route("requests/approvals")
     data class RequestDetail(
         val mediaType: String,
         val tmdbId: Int,
@@ -162,18 +189,20 @@ sealed class Route(val route: String) {
         val collectionId: String,
         val libraryId: Int? = null,
         val source: String? = null,
+        val mediaScope: String? = null,
     ) : Route(
         buildString {
             append("collection/${collectionId.routeEncode()}")
             val parameters = buildList {
                 libraryId?.let { add("libraryId=$it") }
                 source?.takeIf { it.isNotBlank() }?.let { add("source=${it.routeEncode()}") }
+                mediaScope?.let { add("mediaScope=${it.routeEncode()}") }
             }
             if (parameters.isNotEmpty()) append("?${parameters.joinToString("&")}")
         },
     ) {
         companion object {
-            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}&source={source}"
+            const val ROUTE = "collection/{collectionId}?libraryId={libraryId}&source={source}&mediaScope={mediaScope}"
         }
     }
 
@@ -189,6 +218,8 @@ sealed class Route(val route: String) {
         val resumePositionSeconds: Double? = null,
         val roomId: String? = null,
         val libraryId: Int? = null,
+        /** The running shuffle this item is a pick of; picks play from the beginning. */
+        val shuffleId: String? = null,
     ) : Route(
         buildString {
             append("player/${contentId.routeEncode()}")
@@ -203,6 +234,7 @@ sealed class Route(val route: String) {
                 VideoPlayerRouteArgs.encodeResumePosition(resumePositionSeconds)
                     ?.let { "${VideoPlayerRouteArgs.RESUME_POSITION}=$it" },
                 roomId?.takeIf { it.isNotBlank() }?.let { "roomId=${Uri.encode(it)}" },
+                shuffleId?.takeIf { it.isNotBlank() }?.let { "shuffleId=${Uri.encode(it)}" },
             )
             if (queryParams.isNotEmpty()) {
                 append("?")
@@ -212,14 +244,40 @@ sealed class Route(val route: String) {
     ) {
         companion object {
             const val ROUTE =
-                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}"
+                "player/{contentId}?libraryId={libraryId}&fileId={fileId}&quality={quality}&audioTrackIndex={audioTrackIndex}&subtitleTrackIndex={subtitleTrackIndex}&resumePosition={resumePosition}&roomId={roomId}&shuffleId={shuffleId}"
         }
     }
 
-    // --- Watch Together (synchronized playback rooms) ---
-    data class WatchTogetherLobby(val roomId: String) : Route("watch_together/${Uri.encode(roomId)}") {
+    // --- Watch Party (synchronized playback rooms) ---
+
+    /**
+     * The Watch Party hub. [invite] and [host] are opaque handoff ids for a
+     * pending invitation or item held in memory by `WatchPartyHandoff`; the
+     * join token itself never appears in a route.
+     */
+    data class WatchPartyHub(val invite: String? = null, val host: String? = null) : Route(
+        buildString {
+            append("watch_party")
+            val params = listOfNotNull(
+                invite?.takeIf { it.isNotBlank() }?.let { "$ARG_INVITE=${Uri.encode(it)}" },
+                host?.takeIf { it.isNotBlank() }?.let { "$ARG_HOST=${Uri.encode(it)}" },
+            )
+            if (params.isNotEmpty()) {
+                append("?")
+                append(params.joinToString("&"))
+            }
+        },
+    ) {
         companion object {
-            const val ROUTE = "watch_together/{roomId}"
+            const val ARG_INVITE = "invite"
+            const val ARG_HOST = "host"
+            const val ROUTE = "watch_party?$ARG_INVITE={$ARG_INVITE}&$ARG_HOST={$ARG_HOST}"
+        }
+    }
+
+    data class WatchPartyLobby(val roomId: String) : Route("watch_party/lobby/${Uri.encode(roomId)}") {
+        companion object {
+            const val ROUTE = "watch_party/lobby/{roomId}"
             const val ARG_ROOM_ID = "roomId"
         }
     }
@@ -287,9 +345,11 @@ sealed class Route(val route: String) {
 fun libraryCollectionDetailRoute(
     collection: LibraryCollection,
     libraryId: Int,
+    mediaScope: String? = null,
 ): String = Route.CollectionDetail(
     collectionId = collection.id,
     libraryId = libraryId,
+    mediaScope = mediaScope,
     source = if (collection.kind == "user_collections") {
         "user_collection"
     } else {

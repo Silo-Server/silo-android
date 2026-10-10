@@ -20,6 +20,7 @@ import org.siloserver.silo.network.api.PersonalDataApi
 import org.siloserver.silo.repository.port.CatalogCachePort
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PersonalDataRepositoryCacheTest {
@@ -30,6 +31,49 @@ class PersonalDataRepositoryCacheTest {
         override suspend fun cacheLibraries(libraries: List<UserLibrary>) {
             cachedLibraries = libraries
         }
+
+        override suspend fun getCachedLibraries(): List<UserLibrary>? = cachedLibraries
+    }
+
+    private fun librariesClient(vararg ids: Int) = HttpClient(
+        MockEngine {
+            val items = ids.joinToString(",") { """{"id":"$it","name":"Library $it","type":"movie","sort_order":0}""" }
+            respond(
+                """{"items":[$items]}""",
+                HttpStatusCode.OK,
+                headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        },
+    ) {
+        install(ContentNegotiation) { json(SiloJson) }
+    }
+
+    private fun library(id: Int) = UserLibrary(id = id, name = "Library $id", type = "movie")
+
+    @Test
+    fun libraryListChangeIsReportedAgainstTheCachedList() = runTest {
+        val cache = FakeCache().apply { cachedLibraries = listOf(library(1), library(2)) }
+        val repository = PersonalDataRepository(PersonalDataApi(librariesClient(1)), catalogCache = cache)
+
+        assertTrue(repository.libraryListChangedSinceCached())
+        assertEquals(listOf(1), cache.cachedLibraries?.map { it.id })
+        // The fresh list is now the baseline, so the same answer is no change.
+        assertFalse(repository.libraryListChangedSinceCached())
+    }
+
+    @Test
+    fun libraryListWithTheSameLibrariesInAnotherOrderIsNoChange() = runTest {
+        val cache = FakeCache().apply { cachedLibraries = listOf(library(1), library(2)) }
+        val repository = PersonalDataRepository(PersonalDataApi(librariesClient(2, 1)), catalogCache = cache)
+
+        assertFalse(repository.libraryListChangedSinceCached())
+    }
+
+    @Test
+    fun libraryListWithoutACachedListIsNoChange() = runTest {
+        val repository = PersonalDataRepository(PersonalDataApi(librariesClient(1)), catalogCache = FakeCache())
+
+        assertFalse(repository.libraryListChangedSinceCached())
     }
 
     @Test
@@ -62,7 +106,8 @@ class PersonalDataRepositoryCacheTest {
         identityTransitions.changing(IdentityTransitionKind.PROFILE_SWITCH) { }
         releaseResponse.complete(Unit)
 
-        assertTrue(oldProfileRequest.await() is ApiResult.Success)
+        // The old profile's list doesn't come back for the new profile either.
+        assertEquals("identity_changed", (oldProfileRequest.await() as ApiResult.Error).error)
         assertEquals(null, cache.cachedLibraries)
     }
 }

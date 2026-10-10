@@ -44,6 +44,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.components.PosterGridSkeleton
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.rememberShimmerProgress
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.util.formatCardDate
@@ -98,13 +100,13 @@ fun BrowseScreen(
                             contentDescription = "Sort",
                         )
                     }
-                    androidx.compose.material3.DropdownMenu(
+                    SiloDropdownMenu(
                         expanded = sortMenuOpen,
                         onDismissRequest = { sortMenuOpen = false },
                     ) {
                         browseSortOptions(state.mediaType).forEach { (field, label) ->
                             val active = state.filterState.sort == field
-                            androidx.compose.material3.DropdownMenuItem(
+                            SiloDropdownMenuItem(
                                 text = {
                                     Text(
                                         text = if (active) {
@@ -226,13 +228,17 @@ fun BrowseScreen(
                                 modifier = Modifier.size(64.dp),
                             )
                             Text(
-                                text = "No items found",
+                                text = if (state.libraryHasItems == false) "This library is empty" else "No items found",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                             )
                             Text(
-                                text = "Try adjusting your filters",
+                                text = if (state.libraryHasItems == false) {
+                                    "There is nothing in this library yet."
+                                } else {
+                                    "Try adjusting your filters"
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                 textAlign = TextAlign.Center,

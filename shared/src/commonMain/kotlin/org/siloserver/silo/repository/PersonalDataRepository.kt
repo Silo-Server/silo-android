@@ -1,5 +1,9 @@
 package org.siloserver.silo.repository
 
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.siloserver.silo.model.personal.SyncProgressItem
@@ -31,26 +35,104 @@ open class PersonalDataRepository(
     private val catalogCache: CatalogCachePort = NoOpCatalogCachePort,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     membershipPort: org.siloserver.silo.repository.port.MembershipPort? = null,
+    /** The profile's hidden libraries, left out of every library list below. Null lists all. */
+    private val hiddenLibraries: HiddenLibrariesStore? = null,
 ) {
     val memberships = MembershipActions(membershipPort, identityTransitions)
 
     // -- Libraries --
 
-    /** Lists the libraries visible to the current user (offline: last cached list). */
+    /**
+     * Changes when the profile hides or shows a library on another device
+     * (picked up on foreground and reconnect). Screens holding a library list
+     * re-load it then.
+     */
+    val hiddenLibrariesRevision: StateFlow<Int> = hiddenLibraries?.revision ?: MutableStateFlow(0)
+
+    /**
+     * Lists the libraries visible to the current user, minus the ones the
+     * profile hid (offline: last cached list).
+     */
     suspend fun listUserLibraries(): ApiResult<List<UserLibrary>> {
         val requestIdentityGeneration = identityTransitions.generation.value
-        val result = personalDataApi.listUserLibraries()
-        if (result is ApiResult.Success) {
-            writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
-                catalogCache.cacheLibraries(result.data, cacheWriteLease)
-            }
-            return result
-        }
+        val result = fetchUserLibraries(requestIdentityGeneration) { personalDataApi.listUserLibraries() }
+        if (result is ApiResult.Success) return publishLibraries(result.data, requestIdentityGeneration)
         if (result.canServeCache()) {
-            catalogCache.getCachedLibraries()?.let { return ApiResult.Success(it) }
+            catalogCache.getCachedLibraries()?.let { return ApiResult.Success(withoutHidden(it)) }
         }
         return result
     }
+
+    /**
+     * Re-checks the library list after the app returns to the foreground and
+     * says whether the set of visible libraries differs from the cached list,
+     * which is the one the screens last loaded. Goes through
+     * [recheckUserLibraries], so a short response is confirmed before it is
+     * trusted and the cache keeps only the visible libraries. False when there
+     * is no cached list, the request fails, or the identity changed while it ran.
+     */
+    suspend fun libraryListChangedSinceCached(): Boolean {
+        val cachedIds = catalogCache.getCachedLibraries()?.mapTo(HashSet()) { it.id } ?: return false
+        val result = recheckUserLibraries(cachedIds)
+        return result is ApiResult.Success && result.data.mapTo(HashSet()) { it.id } != cachedIds
+    }
+
+    /**
+     * Background re-check of a library list already on screen ([knownIds]).
+     * A list missing any known library is read again before it is trusted,
+     * and only the accepted list is cached, so one transient short response
+     * can't replace the full list on screen or in the offline cache. A failed
+     * read returns the failure rather than the cache — even with nothing on
+     * screen, where the cache may hold a list whose access was since denied —
+     * so the caller keeps what it shows.
+     */
+    suspend fun recheckUserLibraries(knownIds: Set<Int>): ApiResult<List<UserLibrary>> {
+        val requestIdentityGeneration = identityTransitions.generation.value
+        // Known ids are checked against the full list: a library the profile
+        // just hid is a deliberate removal, not a short response.
+        val result = fetchUserLibraries(requestIdentityGeneration) {
+            val first = personalDataApi.listUserLibraries()
+            if (first is ApiResult.Success && !first.data.map { it.id }.containsAll(knownIds)) {
+                personalDataApi.listUserLibraries()
+            } else {
+                first
+            }
+        }
+        if (result is ApiResult.Success) return publishLibraries(result.data, requestIdentityGeneration)
+        return result
+    }
+
+    /**
+     * Runs [fetch] while the profile's hidden libraries load beside it, the
+     * first time only. A switch while either is in flight answers
+     * `identity_changed`, so the old profile's list never comes back.
+     */
+    private suspend fun fetchUserLibraries(
+        requestIdentityGeneration: Long,
+        fetch: suspend () -> ApiResult<List<UserLibrary>>,
+    ): ApiResult<List<UserLibrary>> = coroutineScope {
+        val hiddenRead = launch { hiddenLibraries?.ensureLoaded() }
+        val result = fetch()
+        hiddenRead.join()
+        if (requestIdentityGeneration != identityTransitions.generation.value) identityChanged() else result
+    }
+
+    /** Drops hidden libraries and caches what is shown, unless the profile changed meanwhile. */
+    private suspend fun publishLibraries(
+        libraries: List<UserLibrary>,
+        requestIdentityGeneration: Long,
+    ): ApiResult<List<UserLibrary>> {
+        val visible = withoutHidden(libraries)
+        writeIfIdentityUnchanged(requestIdentityGeneration) { cacheWriteLease ->
+            catalogCache.cacheLibraries(visible, cacheWriteLease)
+        }
+        if (requestIdentityGeneration != identityTransitions.generation.value) return identityChanged()
+        return ApiResult.Success(visible)
+    }
+
+    /** [libraries] minus the ones the profile hid, for a list a screen already holds. */
+    fun withoutHidden(libraries: List<UserLibrary>): List<UserLibrary> =
+        libraries.withoutHidden(hiddenLibraries?.current().orEmpty())
 
     // -- Favorites --
 

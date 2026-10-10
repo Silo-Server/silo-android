@@ -12,6 +12,7 @@ import org.siloserver.silo.model.catalog.VideoTrack
 import org.siloserver.silo.model.catalog.selectedMediaRuntimeMinutes
 import org.siloserver.silo.model.catalog.trailerRailEntries
 import org.siloserver.silo.model.ebook.MediaPerson
+import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals

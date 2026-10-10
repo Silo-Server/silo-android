@@ -36,33 +36,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Icon
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
 import coil3.compose.AsyncImage
+import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.R
-import org.siloserver.silo.tv.ui.theme.SuccessGreen
-
-/**
- * Tokens for the hero facts row, mirroring tvOS `TVHeroFactToken`.
- *
- * - [TextToken] plain text (year / runtime / ★rating); consecutive text
- *   tokens get a "·" divider between them.
- * - [Rating] a maturity/check token: green check icon + label.
- * - [Chip] a playback-format value (4K / HDR / DOLBY VISION / ATMOS / CC).
- *   Detail renders these with the same quiet monospaced treatment as Home's
- *   format line rather than promoting every value to an outlined badge.
- */
-internal sealed class TvHeroFactToken {
-    data class TextToken(val value: String) : TvHeroFactToken()
-    data class Rating(val value: String) : TvHeroFactToken()
-    data class Chip(val value: String) : TvHeroFactToken()
-}
+import org.siloserver.silo.tv.ui.components.TvFactsRow
+import org.siloserver.silo.tv.ui.components.TvHeroFactToken
 
 /**
  * Approved tvOS detail hero, mapped onto Android TV's half-scale layout
@@ -97,11 +82,14 @@ internal fun TvDetailHero(
     // Optional description-translation affordance (Apple tvOS parity),
     // rendered as its own focus stop directly under the synopsis.
     translation: (@Composable () -> Unit)? = null,
+    /** Grows the hero, not the artwork, for a taller summary strip (request
+     *  detail's status and stage track) so the actions stay inside its clip. */
+    extraHeight: Dp = 0.dp,
 ) {
     // tvOS 690pt on a 1080pt canvas. Android TV's 1920×1080 emulator reports
     // a 960×540dp layout canvas, so the same fraction produces 345dp.
     val screenHeight = LocalConfiguration.current.screenHeightDp.dp
-    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION
+    val heroHeight = screenHeight * HERO_HEIGHT_FRACTION + extraHeight
 
     BoxWithConstraints(
         modifier = modifier
@@ -332,15 +320,17 @@ private fun TitleBlock(
     logoUrl: String?,
 ) {
     val seriesContext = seriesTitle?.trim()?.takeIf { it.isNotEmpty() }
+    // "Show title art" off: every title here is text, episodes included.
+    val shownLogoUrl = titleLogoUrl(logoUrl)
 
     when {
         seriesContext != null -> EpisodeHierarchyTitle(
             seriesTitle = seriesContext,
             episodeTitle = title,
-            logoUrl = logoUrl,
+            logoUrl = shownLogoUrl,
         )
-        !logoUrl.isNullOrBlank() -> AsyncImage(
-            model = logoUrl,
+        !shownLogoUrl.isNullOrBlank() -> AsyncImage(
+            model = shownLogoUrl,
             contentDescription = title,
             contentScale = ContentScale.Fit,
             alignment = Alignment.BottomStart,
@@ -467,78 +457,24 @@ private fun MetadataRow(
     ratingChip: String?,
     compactRating: Boolean = false,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
-    ) {
-        ratingChip?.takeIf { it.isNotBlank() }?.let { rating ->
-            RatingChip(text = rating, compact = compactRating)
-        }
-        tokens.forEachIndexed { index, token ->
-            if (index > 0) MetadataDivider()
-            when (token) {
-                is TvHeroFactToken.TextToken -> Text(
-                    text = token.value,
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    lineHeight = 16.sp,
-                    color = Color.White.copy(alpha = 0.88f),
-                    maxLines = 1,
-                )
-                is TvHeroFactToken.Rating -> Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        tint = SuccessGreen.copy(alpha = 0.9f),
-                        modifier = Modifier.height(12.dp),
-                    )
-                    Text(
-                        text = token.value,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 14.sp,
-                        lineHeight = 16.sp,
-                        color = Color.White.copy(alpha = 0.88f),
-                        maxLines = 1,
-                    )
-                }
-                is TvHeroFactToken.Chip -> Text(
-                    text = homeStyleFormatLabel(token.value),
-                    fontWeight = FontWeight.Medium,
-                    fontSize = 14.sp,
-                    lineHeight = 16.sp,
-                    fontFamily = FontFamily.Monospace,
-                    letterSpacing = 0.52.sp,
-                    color = Color.White.copy(alpha = 0.55f),
-                    maxLines = 1,
-                )
-            }
-        }
-        sourceTokens.forEachIndexed { index, token ->
-            if (tokens.isNotEmpty() || index > 0) MetadataDivider()
-            Text(
-                text = token,
+    // Like tvOS: the source tokens (type, genres) give way first, then
+    // ratings from the end of the list, so the other facts and any playback
+    // formats stay visible.
+    TvFactsRow(
+        tokens = tokens + sourceTokens.map { TvHeroFactToken.TextToken(it, givesWayFirst = true) },
+        style = LocalTextStyle.current.merge(
+            TextStyle(
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp,
                 lineHeight = 16.sp,
-                color = Color.White.copy(alpha = 0.90f),
-                maxLines = 1,
-            )
-        }
-
-    }
-}
-
-@Composable
-private fun MetadataDivider() {
-    Text(
-        text = "·",
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 14.sp,
-        lineHeight = 16.sp,
-        color = Color.White.copy(alpha = 0.45f),
+                color = Color.White.copy(alpha = 0.88f),
+            ),
+        ),
+        dividerColor = Color.White.copy(alpha = 0.45f),
+        ratingsDropFirst = true,
+        leading = ratingChip?.takeIf { it.isNotBlank() }?.let { rating ->
+            { RatingChip(text = rating, compact = compactRating) }
+        },
     )
 }
 
@@ -568,12 +504,6 @@ private fun RatingChip(text: String, compact: Boolean) {
             maxLines = 1,
         )
     }
-}
-
-private fun homeStyleFormatLabel(value: String): String = when (value.uppercase()) {
-    "DOLBY VISION" -> "Dolby Vision"
-    "ATMOS" -> "Atmos"
-    else -> value
 }
 
 private fun splitDisplayTitle(raw: String): Pair<String, String?> {

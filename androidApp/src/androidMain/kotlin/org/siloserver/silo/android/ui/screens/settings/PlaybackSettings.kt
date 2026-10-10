@@ -2,12 +2,21 @@ package org.siloserver.silo.android.ui.screens.settings
 
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import org.siloserver.silo.android.R
+import org.siloserver.silo.android.ui.components.SiloConfirmDialog
+import org.siloserver.silo.common.settings.UseProfileSettingsCopy
 import org.siloserver.silo.domain.player.IntroSkipMode
 import org.siloserver.silo.model.settings.LanguageOptions
+import org.siloserver.silo.model.settings.PlaybackSettingsKeys
 import org.siloserver.silo.model.settings.QualityPresets
 import org.siloserver.silo.model.settings.SettingKeys
 
@@ -16,8 +25,8 @@ import org.siloserver.silo.model.settings.SettingKeys
 // uncapped). The preset table is shared with the TV app and mirrors the web
 // client's, so the same choice reads back with the same label everywhere.
 
-// Discrete choices for the two behavior settings (0 = off). Dropdown idiom
-// matches the rest of this section; the label↔value maps below convert.
+// Discrete choices for the two behavior settings (0 = off). The label↔value
+// maps below convert.
 private val resumeRewindOptions = listOf(0, 3, 5, 7, 10, 15, 20, 30)
 private val passOutThresholdOptions = listOf(0, 2, 3, 4, 5)
 // Up-Next prompt timing (seconds before end; 0 = at end). Mirrors TV/tvOS.
@@ -32,137 +41,218 @@ private fun nextUpPromptLabel(seconds: Int): String = when {
 }
 
 /**
- * Playback settings section with quality preference, audio language,
- * and auto-skip toggles.
+ * The menu for a profile-layered picker: "Use profile setting" first, then
+ * [options]. Routes that first option to [onUseProfileSetting] and checks it
+ * while the device has no value of its own.
  */
 @Composable
-fun PlaybackSettings(
+private fun ProfileLayeredDropdownRow(
+    label: String,
+    value: String,
+    options: List<String>,
+    overridden: Boolean,
+    onOptionSelected: (String) -> Unit,
+    onUseProfileSetting: () -> Unit,
+) {
+    SettingsDropdownRow(
+        label = label,
+        value = value,
+        options = listOf(UseProfileSettingsCopy.OPTION) + options,
+        selectedOption = if (overridden) value else UseProfileSettingsCopy.OPTION,
+        onOptionSelected = { option ->
+            if (option == UseProfileSettingsCopy.OPTION) onUseProfileSetting() else onOptionSelected(option)
+        },
+    )
+}
+
+/**
+ * A switch for a setting the profile also holds. A switch has no menu to put
+ * "Use profile setting" in, so while this device holds its own value the
+ * action sits in its own row right under the switch, as Cards & Posters'
+ * "Use Profile Default" does.
+ */
+@Composable
+private fun ProfileLayeredSwitchRow(
+    label: String,
+    checked: Boolean,
+    overridden: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    onUseProfileSetting: () -> Unit,
+) {
+    SettingsSwitchRow(label = label, checked = checked, onCheckedChange = onCheckedChange)
+    if (overridden) {
+        SettingsNavigationRow(
+            label = UseProfileSettingsCopy.ROW,
+            onClick = onUseProfileSetting,
+            showChevron = false,
+            modifier = Modifier.semantics { contentDescription = UseProfileSettingsCopy.rowDescription(label) },
+        )
+    }
+}
+
+/**
+ * Playback → Streaming (Apple `PlaybackSettingsView` "Streaming"): quality,
+ * audio language, Dolby Vision, and — where the Apple list ends with
+ * Background Playback — Android's picture-in-picture. The footer describes the
+ * chosen quality preset.
+ */
+@Composable
+fun PlaybackStreamingSection(
     qualityResolution: String,
     maxBitrateKbps: Int?,
     audioLanguage: String,
-    audioLanguageSuggestions: List<String> = emptyList(),
-    introSkipMode: IntroSkipMode,
-    autoSkipCredits: Boolean,
-    pictureInPictureEnabled: Boolean,
+    audioLanguageSuggestions: List<String>,
     dolbyVisionEnabled: Boolean,
     dvProfile7HDR10Fallback: Boolean,
-    autoPlayNext: Boolean,
-    nextUpPromptSeconds: Int,
-    resumeRewindSeconds: Int,
-    passOutThreshold: Int,
+    pictureInPictureEnabled: Boolean,
+    /** Keys this device holds its own value for. */
+    deviceOverrides: Set<String>,
     /** Receives a [QualityPresets] preset id. */
     onQualityPresetSelected: (String) -> Unit,
     onAudioLanguageChanged: (String) -> Unit,
-    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
-    onAutoSkipCreditsChanged: (Boolean) -> Unit,
-    onPictureInPictureEnabledChanged: (Boolean) -> Unit,
     onDolbyVisionEnabledChanged: (Boolean) -> Unit,
     onDvProfile7HDR10FallbackChanged: (Boolean) -> Unit,
-    onAutoPlayNextChanged: (Boolean) -> Unit,
-    onNextUpPromptSecondsChanged: (Int) -> Unit,
-    onResumeRewindSecondsChanged: (Int) -> Unit,
-    onPassOutThresholdChanged: (Int) -> Unit,
-    onResetPlaybackOverrides: () -> Unit,
+    onPictureInPictureEnabledChanged: (Boolean) -> Unit,
+    /** Receives the key of the control going back to the profile's value. */
+    onUseProfileSetting: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // No "No preference" entry: on a device that means going back to the
+    // profile's language, which "Use profile setting" already says.
     val audioLanguageOptions = remember(audioLanguage, audioLanguageSuggestions) {
-        LanguageOptions.options(
+        LanguageOptions.namedOptions(
             key = SettingKeys.PLAYBACK_AUDIO_LANGUAGE,
             currentValue = audioLanguage,
             runtimeValues = audioLanguageSuggestions,
         )
     }
-    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
-    SettingsSection(title = "Playback", modifier = modifier) {
-        // A pair no preset covers (set through the API, or left by a legacy
-        // compound value) still gets a truthful label rather than a picker
-        // silently showing the wrong entry.
-        SettingsDropdownRow(
-            label = "Preferred quality",
-            description = "The quality Silo requests when playback starts.",
-            value = QualityPresets.describe(qualityResolution, maxBitrateKbps),
+    // A pair no preset covers (set through the API, or left by a legacy
+    // compound value) still gets a truthful label rather than a picker
+    // silently showing the wrong entry.
+    val qualityLabel = QualityPresets.describe(qualityResolution, maxBitrateKbps)
+    val qualityFooter = QualityPresets.presetFor(qualityResolution, maxBitrateKbps)?.description
+        ?: "$qualityLabel."
+    SettingsSection(title = "Streaming", footer = qualityFooter, modifier = modifier) {
+        ProfileLayeredDropdownRow(
+            label = "Quality",
+            value = qualityLabel,
             options = QualityPresets.ALL.map { it.label },
+            overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.PreferredQuality),
             onOptionSelected = { label ->
                 QualityPresets.ALL.firstOrNull { it.label == label }
                     ?.let { onQualityPresetSelected(it.id) }
             },
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.PreferredQuality) },
         )
 
-        SettingsDropdownRow(
-            label = "Audio language",
-            description = "Choose which spoken language Silo should prefer first.",
+        ProfileLayeredDropdownRow(
+            label = "Audio Language",
             value = LanguageOptions.label(audioLanguage, SettingKeys.PLAYBACK_AUDIO_LANGUAGE),
             options = audioLanguageOptions.map { it.second },
+            overridden = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, PlaybackSettingsKeys.AudioLanguage),
             onOptionSelected = { label ->
-                onAudioLanguageChanged(LanguageOptions.wireValue(label, audioLanguageOptions))
+                audioLanguageOptions.firstOrNull { it.second == label }?.let { onAudioLanguageChanged(it.first) }
             },
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AudioLanguage) },
         )
 
-        // Three-way, not a switch: the boolean this replaced could not say
-        // "never". Labels and semantics are fixed by the contract.
-        SettingsDropdownRow(
-            label = stringResource(R.string.settings_intro_skip_title),
-            description = "What happens when a detected intro starts: leave it alone, " +
-                "offer a Skip Intro button, or skip it and offer an undo.",
-            value = stringResource(introSkipModeLabel(introSkipMode)),
-            options = introSkipOptions.map { it.second },
-            onOptionSelected = { label ->
-                introSkipOptions.firstOrNull { it.second == label }?.let { onIntroSkipModeChanged(it.first) }
-            },
-        )
-
-        SettingsSwitchRow(
-            label = "Auto-skip credits",
-            description = "Move through end credits automatically when a skip is available.",
-            checked = autoSkipCredits,
-            onCheckedChange = onAutoSkipCreditsChanged,
-        )
-
-        // iOS PlaybackSettingsView parity: Dolby Vision (off plays the HDR10
-        // base layer) with the Profile 7 fallback nested under it — the P7 row
-        // only shows while Dolby Vision is on.
+        // Dolby Vision (off plays the HDR10 base layer) with the Profile 7
+        // fallback under it — the P7 row only shows while Dolby Vision is on.
         SettingsSwitchRow(
             label = "Dolby Vision",
-            description = "Allow Dolby Vision output on this device.",
             checked = dolbyVisionEnabled,
             onCheckedChange = onDolbyVisionEnabledChanged,
         )
         if (dolbyVisionEnabled) {
             SettingsSwitchRow(
-                label = "Profile 7 HDR10 fallback",
-                description = "Play Profile 7 sources as HDR10 when this device cannot decode them natively.",
+                label = "Profile 7 HDR10 Fallback",
                 checked = dvProfile7HDR10Fallback,
                 onCheckedChange = onDvProfile7HDR10FallbackChanged,
             )
         }
 
         SettingsSwitchRow(
-            label = "Picture-in-picture",
-            description = "Keep playing in a floating window when you leave the player.",
+            label = "Picture-in-Picture",
             checked = pictureInPictureEnabled,
             onCheckedChange = onPictureInPictureEnabledChanged,
         )
+    }
+}
 
-        SettingsSwitchRow(
-            label = "Auto-play next episode",
-            description = "Continue to the next episode automatically.",
+/**
+ * Playback → Episodes (Apple "Episodes"), plus Android's two resume and
+ * auto-play limits at the end, explained in the footer.
+ */
+@Composable
+fun PlaybackEpisodesSection(
+    autoPlayNext: Boolean,
+    nextUpPromptSeconds: Int,
+    introSkipMode: IntroSkipMode,
+    autoSkipCredits: Boolean,
+    resumeRewindSeconds: Int,
+    passOutThreshold: Int,
+    /** Keys this device holds its own value for. */
+    deviceOverrides: Set<String>,
+    onAutoPlayNextChanged: (Boolean) -> Unit,
+    onNextUpPromptSecondsChanged: (Int) -> Unit,
+    onIntroSkipModeChanged: (IntroSkipMode) -> Unit,
+    onAutoSkipCreditsChanged: (Boolean) -> Unit,
+    onResumeRewindSecondsChanged: (Int) -> Unit,
+    onPassOutThresholdChanged: (Int) -> Unit,
+    /** Receives the key of the control going back to the profile's value. */
+    onUseProfileSetting: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    fun overridden(key: String) = PlaybackSettingsKeys.hasDeviceOverride(deviceOverrides, key)
+    val introSkipOptions = IntroSkipMode.entries.map { it to stringResource(introSkipModeLabel(it)) }
+    SettingsSection(
+        title = "Episodes",
+        footer = "Rewind on Resume skips back when you return to a partly watched title. Still Watching " +
+            "Prompt sets how many episodes play in a row before Silo asks whether you're still watching.",
+        modifier = modifier,
+    ) {
+        ProfileLayeredSwitchRow(
+            label = "Auto-Play Next Episode",
             checked = autoPlayNext,
+            overridden = overridden(PlaybackSettingsKeys.AutoPlayNext),
             onCheckedChange = onAutoPlayNextChanged,
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AutoPlayNext) },
         )
 
-        SettingsDropdownRow(
-            label = "Next up prompt",
-            description = "How long before the end of an episode the next-up prompt appears.",
+        ProfileLayeredDropdownRow(
+            label = "Show Next Up",
             value = nextUpPromptLabel(nextUpPromptSeconds),
             options = nextUpPromptOptions.map(::nextUpPromptLabel),
+            overridden = overridden(PlaybackSettingsKeys.NextUpPromptSeconds),
             onOptionSelected = { label ->
-                onNextUpPromptSecondsChanged(nextUpPromptOptions.first { nextUpPromptLabel(it) == label })
+                nextUpPromptOptions.firstOrNull { nextUpPromptLabel(it) == label }?.let(onNextUpPromptSecondsChanged)
             },
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.NextUpPromptSeconds) },
+        )
+
+        // Three-way, not a switch: the boolean this replaced could not say
+        // "never". Option labels and semantics are fixed by the contract.
+        ProfileLayeredDropdownRow(
+            label = "Skip Intros",
+            value = stringResource(introSkipModeLabel(introSkipMode)),
+            options = introSkipOptions.map { it.second },
+            overridden = overridden(PlaybackSettingsKeys.IntroSkipMode),
+            onOptionSelected = { label ->
+                introSkipOptions.firstOrNull { it.second == label }?.let { onIntroSkipModeChanged(it.first) }
+            },
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.IntroSkipMode) },
+        )
+
+        ProfileLayeredSwitchRow(
+            label = "Skip Credits",
+            checked = autoSkipCredits,
+            overridden = overridden(PlaybackSettingsKeys.AutoSkipCredits),
+            onCheckedChange = onAutoSkipCreditsChanged,
+            onUseProfileSetting = { onUseProfileSetting(PlaybackSettingsKeys.AutoSkipCredits) },
         )
 
         SettingsDropdownRow(
-            label = "Rewind on resume",
-            description = "Skip back this far when resuming a partly watched item.",
+            label = "Rewind on Resume",
             value = resumeRewindLabel(resumeRewindSeconds),
             options = resumeRewindOptions.map(::resumeRewindLabel),
             onOptionSelected = { label ->
@@ -171,19 +261,43 @@ fun PlaybackSettings(
         )
 
         SettingsDropdownRow(
-            label = "Still watching prompt",
-            description = "How many episodes auto-play before Silo asks whether you are still watching.",
+            label = "Still Watching Prompt",
             value = passOutThresholdLabel(passOutThreshold),
             options = passOutThresholdOptions.map(::passOutThresholdLabel),
             onOptionSelected = { label ->
                 onPassOutThresholdChanged(passOutThresholdOptions.first { passOutThresholdLabel(it) == label })
             },
         )
+    }
+}
 
+/**
+ * Playback → "Use Profile Settings", the Apple page's last group. Asks first:
+ * it clears every playback setting changed on this device at once.
+ */
+@Composable
+fun PlaybackResetSection(onResetPlaybackOverrides: () -> Unit, modifier: Modifier = Modifier) {
+    var confirming by rememberSaveable { mutableStateOf(false) }
+    SettingsSection(
+        title = null,
+        footer = UseProfileSettingsCopy.FOOTER,
+        modifier = modifier,
+    ) {
         SettingsDestructiveRow(
-            label = "Reset playback settings",
-            description = "Return this device's playback settings to their defaults.",
-            onClick = onResetPlaybackOverrides,
+            label = UseProfileSettingsCopy.RESET_ALL_ROW,
+            onClick = { confirming = true },
+        )
+    }
+    if (confirming) {
+        SiloConfirmDialog(
+            title = UseProfileSettingsCopy.CONFIRM_TITLE,
+            body = UseProfileSettingsCopy.CONFIRM_MESSAGE,
+            confirmLabel = UseProfileSettingsCopy.CONFIRM_BUTTON,
+            onConfirm = {
+                confirming = false
+                onResetPlaybackOverrides()
+            },
+            onDismiss = { confirming = false },
         )
     }
 }

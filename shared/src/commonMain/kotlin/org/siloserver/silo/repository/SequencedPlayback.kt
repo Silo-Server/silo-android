@@ -2,8 +2,6 @@ package org.siloserver.silo.repository
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -59,7 +57,17 @@ class SequencedPlayback(
     private companion object {
         /** Settled attempts retained as tombstones. Bounds the journal's size. */
         const val SETTLED_TOMBSTONE_LIMIT = 8
+
+        /** Login marker for attempts admitted under a temporary remote-playback identity. */
+        const val TEMPORARY_LOGIN_PREFIX = "temporary:"
     }
+
+    /**
+     * Admitted under a phone's temporary remote-playback identity. Those
+     * credentials die with the process, so a restart could never replay the
+     * attempt: it stays in memory, out of the durable journal and recovery.
+     */
+    private val PlaybackJournalEntry.isTemporary: Boolean get() = loginId.startsWith(TEMPORARY_LOGIN_PREFIX)
 
     private val mutex = Mutex()
     private var entries: List<PlaybackJournalEntry>? = null
@@ -70,10 +78,8 @@ class SequencedPlayback(
     @kotlin.concurrent.Volatile private var liveAttempts: Set<String> = emptySet()
     private val auxiliaryHeaders = mutableMapOf<String, ProxyAuxiliaryRequestHeaders>()
     private val scopes = mutableMapOf<String, AuthScopeSnapshot>()
-    private val _pending = MutableStateFlow<List<String>>(emptyList())
-    val pending = _pending.asStateFlow()
-    private val _sessions = MutableStateFlow<Set<String>>(emptySet())
-    fun owns(sessionId: String): Boolean = sessionId in _sessions.value
+    @kotlin.concurrent.Volatile private var sessions: Set<String> = emptySet()
+    fun owns(sessionId: String): Boolean = sessionId in sessions
 
     private suspend fun load(): List<PlaybackJournalEntry> {
         if (entries == null) { entries = store.read(); publish() }
@@ -84,16 +90,29 @@ class SequencedPlayback(
 
     private fun publish() {
         liveAttempts = entries.orEmpty().filter { !it.terminal && it.stop == null }.map { it.attemptId }.toSet()
-        _sessions.value = entries.orEmpty().mapNotNull { it.sessionId }.toSet()
-        _pending.value = entries.orEmpty().filter { it.needsRecovery() }
-            .map { it.attemptId }
+        sessions = entries.orEmpty().mapNotNull { it.sessionId }.toSet()
     }
     private suspend fun save(entry: PlaybackJournalEntry) {
-        val next = compactSettled(load().filterNot { it.attemptId == entry.attemptId } + entry)
-        store.write(next)
-        entries = next
+        val (temporary, durable) = (load().filterNot { it.attemptId == entry.attemptId } + entry).partition { it.isTemporary }
+        // Compacted apart, so titles a phone launched never crowd durable tombstones out.
+        val kept = compactSettled(durable)
+        if (!entry.isTemporary) store.write(kept)
+        // Only the identity that admitted a temporary attempt may act for it, so an ended
+        // identity's attempts can never settle; drop them rather than keep them for the
+        // life of the process, along with the scope and subtitle headers they captured.
+        val liveTemporary = tokens.snapshotCurrentScope()?.credentialGenerationId?.let { TEMPORARY_LOGIN_PREFIX + it }
+        val (current, ended) = temporary.partition { it.loginId == liveTemporary }
+        entries = kept + compactSettled(current)
+        ended.forEach { forget(it.attemptId) }
         if (entry.terminal || entry.stop != null) auxiliaryHeaders.remove(entry.attemptId)
         publish()
+    }
+
+    private fun forget(attemptId: String) {
+        scopes.remove(attemptId)
+        adopted.remove(attemptId)
+        auxiliaryHeaders.remove(attemptId)
+        auxiliaryGenerations = auxiliaryGenerations - attemptId
     }
 
     /**
@@ -129,8 +148,15 @@ class SequencedPlayback(
     private fun failure(code: String, message: String) = ApiResult.Error(0, code, message)
     private fun authorityChanged() = failure("identity_changed", "Playback authority changed.")
     private suspend fun scope(entry: PlaybackJournalEntry): AuthScopeSnapshot? {
-        val live = authorities.snapshotDurableLoginAuthority() ?: return null
         val captured = scopes[entry.attemptId] ?: return null // Restart requires explicit recovery.
+        if (entry.isTemporary) {
+            // Only the temporary identity that admitted the attempt may act for it.
+            return tokens.snapshotCurrentScope()?.takeIf {
+                captured.isSameIdentityAs(it) && it.credentialGenerationId == captured.credentialGenerationId &&
+                    it.serverId == entry.serverId && it.serverUrl == entry.origin && it.profileId == entry.profileId
+            }
+        }
+        val live = authorities.snapshotDurableLoginAuthority() ?: return null
         return live.scope.takeIf {
             live.loginId == entry.loginId && it.serverId == entry.serverId &&
                 it.serverUrl == entry.origin && it.profileId == entry.profileId &&
@@ -161,7 +187,7 @@ class SequencedPlayback(
         withStableIdentity(null, expectedMetadataOwner, request.profileId) { guard ->
             val current = tokens.snapshotCurrentScope()
                 ?: return@withStableIdentity failure("identity_unavailable", "Playback needs an authenticated profile.")
-            // Probe availability before admission; retained intents still fence new attempts.
+            // Probe availability before admission.
             val capabilityResult = api.capabilities(current)
             guard()
             val capability = when (capabilityResult) {
@@ -172,31 +198,18 @@ class SequencedPlayback(
             if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
             val live = authorities.snapshotDurableLoginAuthority()
             guard()
-            suspend fun unresolved() = load().any { it.needsRecovery() && it.loginId == live?.loginId &&
-                it.serverId == current.serverId && it.profileId == current.profileId }
-            guard()
-            if (unresolved()) {
-                // Settle the earlier attempt first (replay an uncertain start, then stop it) so a
-                // crashed or rejected session never needs a manual recovery step before playing again.
-                val settled = try { recoverLocked() }
-                    catch (e: CancellationException) { throw e }
-                    catch (e: IdentityChanged) { throw e }
-                    catch (_: Exception) { failure("playback_storage", "Playback recovery storage is unavailable.") }
-                guard()
-                if (unresolved()) return@withStableIdentity when (settled) {
-                    is ApiResult.Success -> failure("playback_pending", "A previous playback request needs recovery before starting again.")
-                    is ApiResult.Error -> settled
-                    is ApiResult.NetworkError -> settled
-                }
-            }
             if (capability == null) return@withStableIdentity failure("server_update_required", "Update the server to use v2 playback.")
             if (SEQUENCED_PROGRESS_FEATURE !in capability.features) return@withStableIdentity failure("playback_unavailable", "V2 playback is unavailable on this server.")
             if (!capability.allowed || capability.state != PlaybackCapabilityStateV2.AVAILABLE || capability.installationId.isNullOrBlank() ||
                 3 !in capability.protocolVersions)
                 return@withStableIdentity failure("playback_unavailable", "Sequenced playback is unavailable for this profile.")
-            if (live == null || !current.isSameIdentityAs(live.scope) || live.scope.credentialGenerationId != null ||
-                current.profileId != request.profileId)
-                return@withStableIdentity failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
+            val loginId = when {
+                current.profileId != request.profileId -> null
+                // A phone launched this title on the TV under its own profile.
+                current.credentialGenerationId != null -> TEMPORARY_LOGIN_PREFIX + current.credentialGenerationId
+                live != null && current.isSameIdentityAs(live.scope) && live.scope.credentialGenerationId == null -> live.loginId
+                else -> null
+            } ?: return@withStableIdentity failure("identity_unavailable", "Sequenced playback needs a saved login and matching profile.")
             val account = when (val result = api.account(current)) {
                 is ApiResult.Success -> result.data
                 is ApiResult.Error -> return@withStableIdentity result
@@ -204,13 +217,21 @@ class SequencedPlayback(
             }
             guard()
             if (!current.isSameIdentityAs(tokens.snapshotCurrentScope())) throw IdentityChanged()
-            if (load().any { it.attemptId == request.playbackAttemptId })
-                return@withStableIdentity failure("attempt_exists", "This playback attempt is already recorded. Use recovery.")
+            // Stop what earlier attempts left open, but never make this one wait on them: the
+            // server expires a session nobody stops, so a stop that fails now is retried next time.
+            try {
+                if (current.credentialGenerationId != null) settleTemporary(current, loginId)
+                else live?.let { settleDurable(it, account.id, capability.installationId) }
+            } catch (e: CancellationException) { throw e } catch (e: IdentityChanged) { throw e } catch (_: Exception) {}
             guard()
-            val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, live.loginId, account.id,
+            if (load().any { it.attemptId == request.playbackAttemptId })
+                return@withStableIdentity failure("attempt_exists", "This playback attempt is already recorded.")
+            guard()
+            val entry = PlaybackJournalEntry(current.serverId, current.serverUrl, loginId, account.id,
                 request.profileId, capability.installationId, request.playbackAttemptId, request.v2Body(capability.installationId))
             save(entry)
-            scopes[entry.attemptId] = current
+            // Unless save() just pruned it: its temporary identity ended in between.
+            if (load().any { it.attemptId == entry.attemptId }) scopes[entry.attemptId] = current
             // A saved attempt is uncertainty, even if its owner changes before send.
             guard()
             sendStart(entry, current, expectedMetadataOwner = expectedMetadataOwner)
@@ -218,7 +239,7 @@ class SequencedPlayback(
     }
 
     private suspend fun sendStart(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot,
-        adoptForPlayer: Boolean = true, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> =
+        expectedMetadataOwner: AuthScopeSnapshot?): ApiResult<PlaybackDecisionResponseV3> =
         withStableIdentity(entry, expectedMetadataOwner, entry.profileId) { guard ->
             var sentHeaders: Map<String, String> = emptyMap()
             when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
@@ -244,8 +265,8 @@ class SequencedPlayback(
                         // the decision's server_features lists only protocol-v3 plan features.
                         val decision = decodePlaybackDecisionV2(result.data)
                         guard()
-                        val ready = if (adoptForPlayer) withAuxiliaryAuthority(decision, entry, captured, sentHeaders) else decision
-                        if (adoptForPlayer) adopted += entry.attemptId
+                        val ready = withAuxiliaryAuthority(decision, entry, captured, sentHeaders)
+                        adopted += entry.attemptId
                         publish()
                         ApiResult.Success(ready)
                     } catch (e: IdentityChanged) { throw e } catch (e: Exception) { ApiResult.NetworkError(e) }
@@ -273,9 +294,12 @@ class SequencedPlayback(
         require(plan.sessionId == sessionId)
         val ephemeral = ProxyAuxiliaryRequestHeaders(plan.stream.url, sessionId, references, headers) {
             // Lock-free: a playback request in flight under the mutex must not stall subtitle loads.
-            val live = authorities.snapshotDurableLoginAuthority()
-            live?.loginId == entry.loginId && live.scope == captured &&
-                auxiliaryGenerations[entry.attemptId] == generation && entry.attemptId in liveAttempts
+            val current = if (entry.isTemporary) {
+                tokens.snapshotCurrentScope()
+            } else {
+                authorities.snapshotDurableLoginAuthority()?.takeIf { it.loginId == entry.loginId }?.scope
+            }
+            current == captured && auxiliaryGenerations[entry.attemptId] == generation && entry.attemptId in liveAttempts
         }
         auxiliaryHeaders[entry.attemptId] = ephemeral
         return decision.copy(playbackPlan = plan.copy(stream = plan.stream.copy(auxiliaryRequestHeaders = ephemeral)))
@@ -376,7 +400,8 @@ class SequencedPlayback(
         if (entry.progress != null) {
             val retry = sendProgress(entry, captured)
             if (retry !is ApiResult.Success) return@withLock retry
-            entry = load().first { it.attemptId == entry.attemptId }
+            // Gone when the retry's save() pruned it: its temporary identity ended in flight.
+            entry = load().find { it.attemptId == entry.attemptId } ?: return@withLock authorityChanged()
         }
         if (entry.sequence == Long.MAX_VALUE) return@withLock failure("sequence_exhausted", "Playback sample sequence exhausted.")
         val sample = PlaybackProgressV2(entry.installationId, entry.sequence + 1, position, paused)
@@ -405,7 +430,7 @@ class SequencedPlayback(
         val entry = load().find { it.sessionId == sessionId } ?: return@withLock null
         stopEntry(entry)
     }
-    private suspend fun stopEntry(original: PlaybackJournalEntry): ApiResult<Unit> {
+    private suspend fun stopEntry(original: PlaybackJournalEntry, attempts: Int = 3): ApiResult<Unit> {
         if (original.terminal) return ApiResult.Success(Unit)
         var entry = original
         if (entry.stop == null) {
@@ -415,7 +440,7 @@ class SequencedPlayback(
         }
         fun stopPending() = failure("identity_changed", "Playback authority changed; stop remains pending.")
         val captured = scope(entry) ?: return stopPending()
-        repeat(3) { attempt ->
+        repeat(attempts) { attempt ->
             if (scope(entry) == null) return stopPending()
             when (val result = api.stop(captured, requireNotNull(entry.sessionId), requireNotNull(entry.stop))) {
                 is ApiResult.Success -> {
@@ -429,53 +454,55 @@ class SequencedPlayback(
                 } else if (result.code != 503) return result
                 is ApiResult.NetworkError -> Unit
             }
-            if (attempt < 2) delay(250L * (attempt + 1))
+            if (attempt < attempts - 1) delay(250L * (attempt + 1))
         }
-        return failure("stop_pending", "Playback stop is pending. Retry from playback recovery.")
+        return failure("stop_pending", "Playback stop is pending. It is retried before the next playback starts.")
     }
 
-    suspend fun pendingForCurrentViewer(): Int = mutex.withLock {
-        val live = authorities.snapshotDurableLoginAuthority() ?: return@withLock 0
-        load().count { it.needsRecovery() &&
-            it.loginId == live.loginId && it.serverId == live.scope.serverId &&
-            it.origin == live.scope.serverUrl && it.profileId == live.scope.profileId }
-    }
-
-    /** Explicit recovery revalidates installation, canonical account, saved login and profile. Never autoplay. */
-    suspend fun recover(): ApiResult<Unit> = mutex.withLock { recoverLocked() }
-
-    private suspend fun recoverLocked(): ApiResult<Unit> {
-        val live = authorities.snapshotDurableLoginAuthority()
-            ?: return failure("identity_unavailable", "Sign in to recover playback.")
-        val capability = when (val result = api.capabilities(live.scope)) {
-            is ApiResult.Success -> result.data
-            is ApiResult.Error -> return result
-            is ApiResult.NetworkError -> return result
-        }
-        val account = when (val result = api.account(live.scope)) {
-            is ApiResult.Success -> result.data
-            is ApiResult.Error -> return result
-            is ApiResult.NetworkError -> return result
-        }
-        if (live != authorities.snapshotDurableLoginAuthority()) return failure("identity_changed", "The active viewer changed.")
-        for (entry in load().filter { it.needsRecovery() }) {
-            if (entry.loginId != live.loginId || entry.serverId != live.scope.serverId || entry.origin != live.scope.serverUrl ||
-                entry.profileId != live.scope.profileId || entry.accountId != account.id || entry.installationId != capability.installationId) continue
+    /**
+     * Stops what this viewer's earlier attempts left open: a stop that never got through, a
+     * replan whose outcome was lost, or a session from before a restart. Attempts recorded
+     * under another address, account or installation of this server can never be acted on
+     * again, so they are dropped; the server expires their sessions.
+     *
+     * This runs on every start, so it is bounded: each stop gets one attempt, and the first
+     * that fails ends this pass. The rest wait for the next start rather than delay this one.
+     */
+    private suspend fun settleDurable(live: DurableLoginAuthority, accountId: String, installationId: String) {
+        for (entry in load().filter { it.needsRecovery() && it.loginId == live.loginId &&
+            it.serverId == live.scope.serverId && it.profileId == live.scope.profileId }) {
+            if (entry.origin != live.scope.serverUrl || entry.accountId != accountId || entry.installationId != installationId) {
+                save(entry.copy(terminal = true, progress = null))
+                continue
+            }
             // Existing process attempts remain fenced after any identity transition.
             val oldScope = scopes[entry.attemptId]
             if (oldScope != null && !oldScope.isSameIdentityAs(live.scope)) continue
             scopes[entry.attemptId] = live.scope
-            if (entry.sessionId == null) {
-                when (val startResult = sendStart(entry, live.scope, adoptForPlayer = false)) {
-                    is ApiResult.Success -> Unit
-                    is ApiResult.Error -> return startResult
-                    is ApiResult.NetworkError -> return startResult
-                }
-            }
-            val result = stopEntry(load().first { it.attemptId == entry.attemptId })
-            if (result !is ApiResult.Success) return result
+            if (!settle(entry)) return
         }
-        return ApiResult.Success(Unit)
+    }
+
+    /** [settleDurable] for a temporary remote-playback identity: only the attempts it admitted itself. */
+    private suspend fun settleTemporary(current: AuthScopeSnapshot, loginId: String) {
+        for (entry in load().filter { it.needsRecovery() && it.loginId == loginId &&
+            it.serverId == current.serverId && it.profileId == current.profileId }) {
+            if (scope(entry) != null && !settle(entry)) return
+        }
+    }
+
+    /**
+     * Stops [entry]'s session. A start whose reply was lost has no session id to stop, and
+     * replaying it would open a session the server may never have created, so it is dropped
+     * and left for the server to expire. A stop that fails stays journaled for next time.
+     * Returns whether [entry] is settled.
+     */
+    private suspend fun settle(entry: PlaybackJournalEntry): Boolean {
+        if (entry.sessionId == null) {
+            save(entry.copy(terminal = true, progress = null))
+            return true
+        }
+        return stopEntry(entry, attempts = 1) is ApiResult.Success
     }
 }
 

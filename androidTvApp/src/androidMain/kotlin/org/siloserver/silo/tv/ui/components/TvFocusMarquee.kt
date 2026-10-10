@@ -29,11 +29,14 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
@@ -58,6 +61,9 @@ fun TvFocusMarquee(
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
     bottomPadding: androidx.compose.ui.unit.Dp = 0.dp,
     animateTransition: Boolean = true,
+    /** An extra line under the block for pages that preview more than catalog
+     *  items (the Requests page's status and stage track). */
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -98,12 +104,13 @@ fun TvFocusMarquee(
                         TvMarqueeBlock(
                             content = value,
                             detailLine = detailLine.takeIf { value.id == content?.id },
+                            footer = footer,
                         )
                     }
                 }
             }
         } else if (content != null) {
-            TvMarqueeBlock(content = content, detailLine = detailLine)
+            TvMarqueeBlock(content = content, detailLine = detailLine, footer = footer)
         }
     }
 }
@@ -112,12 +119,15 @@ fun TvFocusMarquee(
 private fun TvMarqueeBlock(
     content: TvMarqueeContent,
     detailLine: String?,
+    footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     // tvOS parity (TVFocusMarquee): when the text-fallback title wraps to two
     // lines the synopsis drops to one, keeping the bottom-anchored block's
     // height bounded so it never climbs into the top-menu-bar zone.
     var titleLineCount by remember(content.id) { mutableStateOf(1) }
-    var logoLoaded by remember(content.logoUrl) { mutableStateOf(false) }
+    // "Show title art" off: the marquee always names the title in text.
+    val logoUrl = titleLogoUrl(content.logoUrl)
+    var logoLoaded by remember(logoUrl) { mutableStateOf(false) }
     val logoAlpha by animateFloatAsState(
         targetValue = if (logoLoaded) 1f else 0f,
         animationSpec = tween(TvMarqueeCrossfadeMs, easing = TvMarqueeEasing),
@@ -133,7 +143,7 @@ private fun TvMarqueeBlock(
         // Keep the semantic text title visible until transparent logo artwork
         // has actually decoded. A bad/slow URL therefore never creates a blank
         // title slot; successful artwork fades over the fixed-height fallback.
-        if (!content.logoUrl.isNullOrBlank()) {
+        if (!logoUrl.isNullOrBlank()) {
             Box(
                 modifier = Modifier
                     .height(MarqueeLogoMaxHeight)
@@ -154,7 +164,7 @@ private fun TvMarqueeBlock(
                     )
                 }
                 ThumbhashImage(
-                    url = content.logoUrl,
+                    url = logoUrl,
                     thumbhash = null,
                     contentDescription = content.title,
                     contentScale = ContentScale.Fit,
@@ -192,13 +202,16 @@ private fun TvMarqueeBlock(
             ) {
                 content.badges.forEach { badge -> MarqueeBadge(badge) }
                 if (content.metaParts.isNotEmpty()) {
-                    Text(
-                        text = content.metaParts.joinToString(" · "),
-                        color = SiloSecondaryText,
-                        fontSize = MarqueeMetaSize,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    TvFactsRow(
+                        tokens = content.metaParts,
+                        style = LocalTextStyle.current.merge(
+                            TextStyle(
+                                color = SiloSecondaryText,
+                                fontSize = MarqueeMetaSize,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                        ),
+                        spacing = MarqueeMetaGap,
                     )
                 }
             }
@@ -264,6 +277,8 @@ private fun TvMarqueeBlock(
                     badges.forEach { badge -> MarqueeBadge(badge.uppercase()) }
                 }
             }
+
+        footer?.invoke(content)
     }
 }
 
@@ -302,6 +317,9 @@ private val MarqueeLogoMaxHeight = 84.dp
 private val MarqueeDetailLineHeight = 20.dp
 private val MarqueeTitleSize = 44.sp
 private val MarqueeMetaSize = 14.sp
+
+/** About a space at [MarqueeMetaSize], so `·` spacing matches the joined text. */
+private val MarqueeMetaGap = 4.dp
 private val MarqueeDetailSize = 14.sp
 private val MarqueeSynopsisSize = 16.sp
 private val MarqueeBadgeSize = 10.5.sp

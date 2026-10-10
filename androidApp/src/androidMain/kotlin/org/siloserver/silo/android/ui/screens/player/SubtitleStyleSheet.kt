@@ -1,79 +1,55 @@
 package org.siloserver.silo.android.ui.screens.player
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.siloserver.silo.model.settings.SubtitleAppearance
 import org.siloserver.silo.model.settings.SubtitleBackgroundStylePreset
 import org.siloserver.silo.model.settings.SubtitleFontSizePreset
 import org.siloserver.silo.model.settings.SubtitlePositionPreset
 
 /**
- * Glass-style bottom sheet for editing the user's [SubtitleAppearance]:
- * font size/family/color, background style/color/opacity, optional outline,
- * and on-screen position.
+ * Editor for the user's [SubtitleAppearance]: size, font, colors, background,
+ * outline and position. Docked beside the picture, the cue on screen is the
+ * preview, so there is no sample box of its own.
  *
  * Each control writes back a transform via [onUpdate] rather than a
  * precomputed value built from [appearance]: that parameter is a
  * composable-captured snapshot that can go stale between when a control's
  * closure is built and when it actually runs (e.g. two opacity fields
- * committing independently as the sheet is dismissed), so the caller applies
+ * committing independently as the menu is dismissed), so the caller applies
  * the transform against the freshest value it can read instead. The
  * consuming layer (`PlayerViewModel` / `PlayerSettingsStore`) is responsible
  * for persistence and propagating to [org.siloserver.silo.common.player.SubtitleManager].
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SubtitleStyleSheet(
     isVisible: Boolean,
@@ -83,388 +59,125 @@ fun SubtitleStyleSheet(
     // False when the server is known to discard text opacity; the row is
     // hidden rather than offering a value that will not be kept.
     showTextOpacity: Boolean = true,
-    // Gear-submenu back affordance: dismisses this sheet and reopens the
-    // parent settings sheet (wired in PlayerOverlay).
+    // Back affordance: hands over to the settings menu (wired in PlayerOverlay).
     onBack: (() -> Unit)? = null,
     tabletopPaneHeight: Dp? = null,
 ) {
     if (!isVisible) return
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
-    val scrollState = rememberScrollState()
-    val dismissSheet = { scope.dismissPlayerSheet(sheetState, onDismiss) }
+    val controller = rememberPlayerMenuController(onDismiss)
 
-    LaunchedEffect(isVisible) {
-        if (isVisible) sheetState.show()
-    }
+    PlayerMenu(controller = controller, tabletopPaneHeight = tabletopPaneHeight) {
+        PlayerPanelHeader(
+            title = "Subtitle style",
+            onClose = { controller.dismiss() },
+            onBack = onBack?.let { back -> { controller.dismiss(then = back) } },
+            backDescription = "Back to settings",
+        )
+        PlayerMenuScrollColumn(horizontalPadding = 18.dp) {
+            val sizeIndex = FONT_SIZES.indexOfFirst { it.first == appearance.fontSize }
+            PlayerFieldLabel("Size", FONT_SIZES.getOrNull(sizeIndex)?.third)
+            PlayerChoiceSegments(
+                options = FONT_SIZES.map { it.second },
+                selectedIndex = sizeIndex,
+                onSelect = { index -> onUpdate { it.copy(fontSize = FONT_SIZES[index].first).sanitized() } },
+            )
 
-    PlayerModalBottomSheet(
-        onDismissRequest = dismissSheet,
-        sheetState = sheetState,
-        tabletopPaneHeight = tabletopPaneHeight,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                // Cap below the top edge + keep content flings from
-                // dismissing the sheet — see PlayerSheetSupport.
-                .playerSheetContent(tabletopPaneHeight)
-                .nestedScroll(PlayerSheetFlingGuard)
-                .background(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFF1F2937).copy(alpha = 0.95f),
-                            Color.Black.copy(alpha = 0.92f),
-                        ),
-                    ),
-                ),
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(scrollState),
-            ) {
-                PlayerSheetHeader(
-                    title = "Subtitle Style",
-                    onBack = onBack?.let { back ->
-                        { scope.dismissPlayerSheet(sheetState, back) }
-                    },
-                    onDismiss = dismissSheet,
+            val familyIndex = FONT_FAMILIES.indexOfFirst { it.first == appearance.fontFamily }
+            PlayerFieldLabel("Font", FONT_FAMILIES.getOrNull(familyIndex)?.second)
+            PlayerChoiceSegments(
+                options = FONT_FAMILIES.map { it.second },
+                selectedIndex = familyIndex,
+                onSelect = { index -> onUpdate { it.copy(fontFamily = FONT_FAMILIES[index].first).sanitized() } },
+            )
+
+            val textColorIndex = TEXT_COLORS.indexOfFirst { colorsEqual(it.first, appearance.fontColor) }
+            PlayerFieldLabel("Text color", TEXT_COLORS.getOrNull(textColorIndex)?.second)
+            PlayerSwatchRow(
+                colors = TEXT_COLORS.map { hexToComposeColor(it.first) to it.second },
+                selectedIndex = textColorIndex,
+                onSelect = { index -> onUpdate { it.copy(fontColor = TEXT_COLORS[index].first).sanitized() } },
+            )
+
+            if (showTextOpacity) {
+                PercentField(
+                    label = "Text opacity",
+                    value = appearance.textOpacity,
+                    min = 1,
+                    onChange = { value -> onUpdate { it.copy(textOpacity = value).sanitized() } },
                 )
+            }
 
-                // ---- Text section ------------------------------------------------
-                SectionHeader("Text")
+            val backgroundIndex = BACKGROUND_STYLES.indexOfFirst { it.first == appearance.backgroundStyle }
+            PlayerFieldLabel("Background", BACKGROUND_STYLES.getOrNull(backgroundIndex)?.second)
+            PlayerChoiceSegments(
+                options = BACKGROUND_STYLES.map { it.second },
+                selectedIndex = backgroundIndex,
+                onSelect = { index ->
+                    onUpdate { it.copy(backgroundStyle = BACKGROUND_STYLES[index].first).sanitized() }
+                },
+            )
 
-                FontSizeRow(
-                    selected = appearance.fontSize,
-                    onSelect = { value ->
-                        onUpdate { it.copy(fontSize = value).sanitized() }
-                    },
-                )
+            val backgroundColorIndex = BACKGROUND_COLORS.indexOfFirst {
+                colorsEqual(it.first, appearance.backgroundColor)
+            }
+            PlayerFieldLabel("Background color", BACKGROUND_COLORS.getOrNull(backgroundColorIndex)?.second)
+            PlayerSwatchRow(
+                colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to it.second },
+                selectedIndex = backgroundColorIndex,
+                onSelect = { index ->
+                    onUpdate { it.copy(backgroundColor = BACKGROUND_COLORS[index].first).sanitized() }
+                },
+            )
 
-                FontFamilyRow(
-                    selected = appearance.fontFamily,
-                    onSelect = { value ->
-                        onUpdate { it.copy(fontFamily = value).sanitized() }
-                    },
-                )
+            PercentField(
+                label = "Background opacity",
+                value = appearance.backgroundOpacity,
+                min = 0,
+                onChange = { value -> onUpdate { it.copy(backgroundOpacity = value).sanitized() } },
+            )
 
-                ColorSwatchRow(
-                    label = "Text Color",
-                    swatches = TEXT_COLOR_SWATCHES,
-                    selectedHex = appearance.fontColor,
-                    onSelect = { hex ->
-                        onUpdate { it.copy(fontColor = hex).sanitized() }
-                    },
-                )
-
-                if (showTextOpacity) {
-                    PercentInputRow(
-                        label = "Text Opacity",
-                        value = appearance.textOpacity,
-                        min = 1,
-                        onChange = { value ->
-                            onUpdate { it.copy(textOpacity = value).sanitized() }
-                        },
-                    )
-                }
-
-                // ---- Background section -----------------------------------------
-                SectionHeader("Background")
-
-                BackgroundStyleRow(
-                    selected = appearance.backgroundStyle,
-                    onSelect = { value ->
-                        onUpdate { it.copy(backgroundStyle = value).sanitized() }
-                    },
-                )
-
-                ColorSwatchRow(
-                    label = "Background Color",
-                    swatches = BACKGROUND_COLOR_SWATCHES,
-                    selectedHex = appearance.backgroundColor,
-                    onSelect = { hex ->
-                        onUpdate { it.copy(backgroundColor = hex).sanitized() }
-                    },
-                )
-
-                PercentInputRow(
-                    label = "Background Opacity",
-                    value = appearance.backgroundOpacity,
-                    min = 0,
-                    onChange = { value ->
-                        onUpdate { it.copy(backgroundOpacity = value).sanitized() }
-                    },
-                )
-
-                // ---- Outline section --------------------------------------------
-                SectionHeader("Outline")
-
-                ToggleRow(
-                    label = "Text Outline",
-                    subtitle = null,
+            Spacer(Modifier.height(14.dp))
+            PlayerGroup {
+                PlayerSwitchRow(
+                    label = "Text outline",
                     checked = appearance.textOutline,
-                    onCheckedChange = { value ->
-                        onUpdate { it.copy(textOutline = value).sanitized() }
-                    },
+                    onCheckedChange = { value -> onUpdate { it.copy(textOutline = value).sanitized() } },
                 )
-
-                if (appearance.textOutline) {
-                    ColorSwatchRow(
-                        label = "Outline Color",
-                        swatches = BACKGROUND_COLOR_SWATCHES,
-                        selectedHex = appearance.textOutlineColor,
-                        onSelect = { hex ->
-                            onUpdate { it.copy(textOutlineColor = hex).sanitized() }
-                        },
-                    )
+            }
+            if (appearance.textOutline) {
+                val outlineIndex = BACKGROUND_COLORS.indexOfFirst {
+                    colorsEqual(it.first, appearance.textOutlineColor)
                 }
-
-                // ---- Position section -------------------------------------------
-                SectionHeader("Position")
-
-                PositionRow(
-                    selected = appearance.position,
-                    onSelect = { value ->
-                        onUpdate { it.copy(position = value).sanitized() }
+                PlayerFieldLabel("Outline color", BACKGROUND_COLORS.getOrNull(outlineIndex)?.second)
+                PlayerSwatchRow(
+                    colors = BACKGROUND_COLORS.map { hexToComposeColor(it.first) to it.second },
+                    selectedIndex = outlineIndex,
+                    onSelect = { index ->
+                        onUpdate { it.copy(textOutlineColor = BACKGROUND_COLORS[index].first).sanitized() }
                     },
                 )
-
-                Spacer(modifier = Modifier.height(24.dp))
             }
+
+            val positionIndex = POSITIONS.indexOfFirst { it.first == appearance.position }
+            PlayerFieldLabel("Position", POSITIONS.getOrNull(positionIndex)?.second)
+            PlayerChoiceSegments(
+                options = POSITIONS.map { it.second },
+                selectedIndex = positionIndex,
+                onSelect = { index -> onUpdate { it.copy(position = POSITIONS[index].first).sanitized() } },
+            )
+            Spacer(Modifier.height(16.dp))
         }
     }
-}
-
-@Composable
-private fun SectionHeader(text: String) {
-    Text(
-        text = text.uppercase(),
-        color = Color.White.copy(alpha = 0.6f),
-        fontSize = 12.sp,
-        fontWeight = FontWeight.Medium,
-        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun FontSizeRow(
-    selected: SubtitleFontSizePreset,
-    onSelect: (SubtitleFontSizePreset) -> Unit,
-) {
-    val options = listOf(
-        SubtitleFontSizePreset.Small to "Small",
-        SubtitleFontSizePreset.Medium to "Medium",
-        SubtitleFontSizePreset.Large to "Large",
-        SubtitleFontSizePreset.XLarge to "X-Large",
-        SubtitleFontSizePreset.XXLarge to "XX-Large",
-    )
-    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Text(
-            text = "Font Size",
-            color = Color.White,
-            fontSize = 16.sp,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(options) { (value, label) ->
-                PillButton(
-                    label = label,
-                    isSelected = selected == value,
-                    onClick = { onSelect(value) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FontFamilyRow(
-    selected: String,
-    onSelect: (String) -> Unit,
-) {
-    val options = listOf(
-        SubtitleAppearance.SANS_SERIF to "Sans-serif",
-        SubtitleAppearance.SERIF to "Serif",
-        SubtitleAppearance.MONOSPACE to "Monospace",
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Font Family",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.weight(1f),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            options.forEach { (value, label) ->
-                PillButton(
-                    label = label,
-                    isSelected = selected == value,
-                    onClick = { onSelect(value) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BackgroundStyleRow(
-    selected: SubtitleBackgroundStylePreset,
-    onSelect: (SubtitleBackgroundStylePreset) -> Unit,
-) {
-    val options = listOf(
-        SubtitleBackgroundStylePreset.Box to "Box",
-        SubtitleBackgroundStylePreset.Shadow to "Shadow",
-        SubtitleBackgroundStylePreset.Outline to "Outline",
-        SubtitleBackgroundStylePreset.None to "None",
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Background Style",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.weight(1f),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            options.forEach { (value, label) ->
-                PillButton(
-                    label = label,
-                    isSelected = selected == value,
-                    onClick = { onSelect(value) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PositionRow(
-    selected: SubtitlePositionPreset,
-    onSelect: (SubtitlePositionPreset) -> Unit,
-) {
-    val options = listOf(
-        SubtitlePositionPreset.Bottom to "Bottom",
-        SubtitlePositionPreset.LowerThird to "Lower Third",
-        SubtitlePositionPreset.Top to "Top",
-    )
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "Position",
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.weight(1f),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            options.forEach { (value, label) ->
-                PillButton(
-                    label = label,
-                    isSelected = selected == value,
-                    onClick = { onSelect(value) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun PillButton(
-    label: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(14.dp)
-    val baseModifier = Modifier.clickable(onClick = onClick)
-    Box(
-        modifier = if (isSelected) {
-            baseModifier.background(color = Color.White, shape = shape)
-        } else {
-            baseModifier
-                .background(color = Color.Transparent, shape = shape)
-                .border(width = 1.dp, color = Color.White, shape = shape)
-        },
-    ) {
-        Text(
-            text = label,
-            color = if (isSelected) Color.Black else Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-        )
-    }
-}
-
-@Composable
-private fun ColorSwatchRow(
-    label: String,
-    swatches: List<String>,
-    selectedHex: String,
-    onSelect: (String) -> Unit,
-) {
-    Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 16.sp,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(horizontal = 0.dp),
-        ) {
-            items(swatches) { hex ->
-                ColorSwatch(
-                    hex = hex,
-                    isSelected = colorsEqual(hex, selectedHex),
-                    onClick = { onSelect(hex) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ColorSwatch(
-    hex: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    val color = hexToComposeColor(hex)
-    val baseModifier = Modifier
-        .size(24.dp)
-        .clickable(onClick = onClick)
-        .background(color = color, shape = CircleShape)
-    Box(
-        modifier = if (isSelected) {
-            baseModifier.border(width = 2.dp, color = Color.White, shape = CircleShape)
-        } else {
-            baseModifier.border(width = 1.dp, color = Color.White.copy(alpha = 0.4f), shape = CircleShape)
-        },
-    )
 }
 
 /**
- * A typed percentage value (`min`-100), for controls where dragging a slider
- * is more fiddly than just typing the number — opacity wants precision at the
- * low end where a few percent is the difference between legible and not.
+ * A typed percentage (`min`-100), for controls where dragging a slider is more
+ * fiddly than typing the number — opacity wants precision at the low end where
+ * a few percent is the difference between legible and not.
  */
 @Composable
-private fun PercentInputRow(
+private fun PercentField(
     label: String,
     value: Int,
     min: Int,
@@ -493,7 +206,7 @@ private fun PercentInputRow(
         text = (clamped ?: value).toString()
     }
 
-    // Dismissing the sheet while the field is still focused (swipe-away, back
+    // Dismissing the menu while the field is still focused (swipe-away, back
     // press) tears down this composable without firing onFocusChanged(false),
     // so a typed-but-uncommitted percentage would otherwise be silently lost.
     // rememberUpdatedState keeps the lambda pointed at the latest commit
@@ -504,23 +217,16 @@ private fun PercentInputRow(
     }
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+        modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 16.sp,
-            modifier = Modifier.weight(1f),
-        )
+        Text(text = label, style = PlayerType.FieldLabel, modifier = Modifier.weight(1f))
         BasicTextField(
             value = text,
             onValueChange = { input -> text = input.filter { it.isDigit() }.take(3) },
             singleLine = true,
-            textStyle = TextStyle(color = Color.White, fontSize = 16.sp, textAlign = TextAlign.End),
-            cursorBrush = SolidColor(Color.White),
+            textStyle = PlayerType.Value.copy(color = PlayerChrome.Paper, textAlign = TextAlign.End),
+            cursorBrush = SolidColor(PlayerChrome.Paper),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(
                 onDone = {
@@ -530,78 +236,62 @@ private fun PercentInputRow(
                 },
             ),
             modifier = Modifier
-                .width(44.dp)
-                .border(
-                    width = 1.dp,
-                    color = Color.White.copy(alpha = 0.4f),
-                    shape = RoundedCornerShape(6.dp),
-                )
-                .padding(horizontal = 8.dp, vertical = 6.dp)
+                .width(56.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(PlayerChrome.Raised)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
                 .onFocusChanged { focusState -> if (!focusState.isFocused) commit() },
         )
         Spacer(modifier = Modifier.width(6.dp))
-        Text(text = "%", color = Color.White, fontSize = 16.sp)
+        Text(text = "%", style = PlayerType.FieldLabel)
     }
 }
 
-@Composable
-private fun ToggleRow(
-    label: String,
-    subtitle: String?,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                color = Color.White,
-                fontSize = 16.sp,
-            )
-            if (subtitle != null) {
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 12.sp,
-                )
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = Color(0xFF06B6D4),
-            ),
-        )
-    }
-}
-
-private val TEXT_COLOR_SWATCHES = listOf(
-    "#ffffff", // White
-    "#facc15", // Yellow
-    "#22c55e", // Green
-    "#06b6d4", // Cyan
-    "#d946ef", // Magenta
-    "#ef4444", // Red
-    "#3b82f6", // Blue
-    "#9ca3af", // Gray
-    "#000000", // Black
+private val FONT_SIZES = listOf(
+    Triple(SubtitleFontSizePreset.Small, "S", "Small"),
+    Triple(SubtitleFontSizePreset.Medium, "M", "Medium"),
+    Triple(SubtitleFontSizePreset.Large, "L", "Large"),
+    Triple(SubtitleFontSizePreset.XLarge, "XL", "Extra large"),
+    Triple(SubtitleFontSizePreset.XXLarge, "XXL", "Largest"),
 )
 
-private val BACKGROUND_COLOR_SWATCHES = listOf(
-    "#000000", // Black
-    "#374151", // Dark Gray
-    "#1e3a5f", // Navy
-    "#7f1d1d", // Dark Red
-    "#14532d", // Dark Green
+private val FONT_FAMILIES = listOf(
+    SubtitleAppearance.SANS_SERIF to "Sans",
+    SubtitleAppearance.SERIF to "Serif",
+    SubtitleAppearance.MONOSPACE to "Mono",
+)
+
+private val BACKGROUND_STYLES = listOf(
+    SubtitleBackgroundStylePreset.None to "None",
+    SubtitleBackgroundStylePreset.Shadow to "Shadow",
+    SubtitleBackgroundStylePreset.Box to "Box",
+    SubtitleBackgroundStylePreset.Outline to "Outline",
+)
+
+private val POSITIONS = listOf(
+    SubtitlePositionPreset.Bottom to "Bottom",
+    SubtitlePositionPreset.LowerThird to "Lower third",
+    SubtitlePositionPreset.Top to "Top",
+)
+
+private val TEXT_COLORS = listOf(
+    "#ffffff" to "White",
+    "#facc15" to "Yellow",
+    "#22c55e" to "Green",
+    "#06b6d4" to "Cyan",
+    "#d946ef" to "Magenta",
+    "#ef4444" to "Red",
+    "#3b82f6" to "Blue",
+    "#9ca3af" to "Gray",
+    "#000000" to "Black",
+)
+
+private val BACKGROUND_COLORS = listOf(
+    "#000000" to "Black",
+    "#374151" to "Dark gray",
+    "#1e3a5f" to "Navy",
+    "#7f1d1d" to "Dark red",
+    "#14532d" to "Dark green",
 )
 
 /** Compose `Color` from a `#rrggbb` string. Falls back to white on garbage input. */

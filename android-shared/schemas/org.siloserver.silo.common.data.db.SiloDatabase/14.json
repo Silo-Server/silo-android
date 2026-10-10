@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 14,
-    "identityHash": "06c59f58042d8a7af87df6dde6dae8dd",
+    "identityHash": "96fd5a7fa0b67f01e9dd5635ed13546a",
     "entities": [
       {
         "tableName": "user_item_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `fileId` INTEGER NOT NULL, `positionSeconds` REAL NOT NULL, `durationSeconds` REAL, `audioFingerprint` TEXT, `subtitleFingerprint` TEXT, `cfi` TEXT, `readProgress` REAL, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `positionUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`, `fileId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `fileId` INTEGER NOT NULL, `positionSeconds` REAL NOT NULL, `durationSeconds` REAL, `audioFingerprint` TEXT, `subtitleFingerprint` TEXT, `cfi` TEXT, `readProgress` REAL, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`, `fileId`))",
         "fields": [
           {
             "fieldPath": "serverId",
@@ -73,11 +73,6 @@
             "fieldPath": "serverUpdatedAtMs",
             "columnName": "serverUpdatedAtMs",
             "affinity": "INTEGER"
-          },
-          {
-            "fieldPath": "positionUpdatedAtMs",
-            "columnName": "positionUpdatedAtMs",
-            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -116,7 +111,7 @@
       },
       {
         "tableName": "content_item_state",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `watched` INTEGER, `ratingValue` INTEGER, `favorite` INTEGER, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, `watchedUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `watched` INTEGER, `ratingValue` INTEGER, `favorite` INTEGER, `clientUpdatedAtMs` INTEGER NOT NULL, `serverUpdatedAtMs` INTEGER, PRIMARY KEY(`serverId`, `profileId`, `contentId`))",
         "fields": [
           {
             "fieldPath": "serverId",
@@ -160,11 +155,6 @@
           {
             "fieldPath": "serverUpdatedAtMs",
             "columnName": "serverUpdatedAtMs",
-            "affinity": "INTEGER"
-          },
-          {
-            "fieldPath": "watchedUpdatedAtMs",
-            "columnName": "watchedUpdatedAtMs",
             "affinity": "INTEGER"
           }
         ],
@@ -329,7 +319,7 @@
       },
       {
         "tableName": "downloads",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `mediaFileId` INTEGER NOT NULL, `recordId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `title` TEXT NOT NULL, `subtitle` TEXT, `posterUrl` TEXT, `posterThumbhash` TEXT, `year` INTEGER, `seriesTitle` TEXT, `seriesContentId` TEXT, `seasonNumber` INTEGER, `episodeNumber` INTEGER, `fileName` TEXT, `container` TEXT, `localUri` TEXT, `mediaType` TEXT NOT NULL, `overview` TEXT, `author` TEXT, `narrator` TEXT, `durationSeconds` REAL, `chaptersJson` TEXT, `status` TEXT NOT NULL, `kind` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `bytesSent` INTEGER NOT NULL, `createdAt` TEXT NOT NULL, `completedAt` TEXT, `updatedAtMs` INTEGER NOT NULL, `resumeValidator` TEXT, `quality` TEXT, `effectiveQuality` TEXT, `revision` INTEGER, `offlineTracksJson` TEXT, `posterIsEpisodeStill` INTEGER, `episodeUserDataJson` TEXT, PRIMARY KEY(`serverId`, `profileId`, `mediaFileId`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`serverId` TEXT NOT NULL, `profileId` TEXT NOT NULL, `mediaFileId` INTEGER NOT NULL, `recordId` TEXT NOT NULL, `contentId` TEXT NOT NULL, `title` TEXT NOT NULL, `subtitle` TEXT, `posterUrl` TEXT, `posterThumbhash` TEXT, `year` INTEGER, `seriesTitle` TEXT, `seriesContentId` TEXT, `seasonNumber` INTEGER, `episodeNumber` INTEGER, `fileName` TEXT, `container` TEXT, `localUri` TEXT, `mediaType` TEXT NOT NULL, `overview` TEXT, `author` TEXT, `narrator` TEXT, `durationSeconds` REAL, `chaptersJson` TEXT, `status` TEXT NOT NULL, `kind` TEXT NOT NULL, `fileSize` INTEGER NOT NULL, `bytesSent` INTEGER NOT NULL, `createdAt` TEXT NOT NULL, `completedAt` TEXT, `updatedAtMs` INTEGER NOT NULL, `resumeValidator` TEXT, `quality` TEXT, `effectiveQuality` TEXT, `revision` INTEGER, `offlineTracksJson` TEXT, `offlinePosterPath` TEXT, `offlineSeriesPosterPath` TEXT, `seriesPosterThumbhash` TEXT, PRIMARY KEY(`serverId`, `profileId`, `mediaFileId`))",
         "fields": [
           {
             "fieldPath": "serverId",
@@ -520,13 +510,18 @@
             "affinity": "TEXT"
           },
           {
-            "fieldPath": "posterIsEpisodeStill",
-            "columnName": "posterIsEpisodeStill",
-            "affinity": "INTEGER"
+            "fieldPath": "offlinePosterPath",
+            "columnName": "offlinePosterPath",
+            "affinity": "TEXT"
           },
           {
-            "fieldPath": "episodeUserDataJson",
-            "columnName": "episodeUserDataJson",
+            "fieldPath": "offlineSeriesPosterPath",
+            "columnName": "offlineSeriesPosterPath",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "seriesPosterThumbhash",
+            "columnName": "seriesPosterThumbhash",
             "affinity": "TEXT"
           }
         ],
@@ -1003,7 +998,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '06c59f58042d8a7af87df6dde6dae8dd')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '96fd5a7fa0b67f01e9dd5635ed13546a')"
     ]
   }
 }

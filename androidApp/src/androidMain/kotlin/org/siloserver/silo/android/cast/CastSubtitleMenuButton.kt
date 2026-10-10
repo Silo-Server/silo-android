@@ -1,12 +1,12 @@
 package org.siloserver.silo.android.cast
 
+import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
+import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.outlined.ClosedCaptionOff
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
@@ -49,8 +49,8 @@ fun CastSubtitleMenuButton(
             tint = if (tint == Color.Unspecified) LocalContentColor.current else tint,
             modifier = Modifier.size(iconSize),
         )
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
+        SiloDropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            SiloDropdownMenuItem(
                 text = { Text("Off") },
                 leadingIcon = {
                     if (activeId == null) Icon(Icons.Default.Check, contentDescription = null)
@@ -61,7 +61,7 @@ fun CastSubtitleMenuButton(
                 },
             )
             options.forEach { option ->
-                DropdownMenuItem(
+                SiloDropdownMenuItem(
                     text = { Text(option.label) },
                     leadingIcon = {
                         if (activeId == option.id) Icon(Icons.Default.Check, contentDescription = null)

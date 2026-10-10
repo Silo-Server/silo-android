@@ -3,28 +3,38 @@ package org.siloserver.silo.network.api
 import org.siloserver.silo.model.watchtogether.AddSuggestionRequest
 import org.siloserver.silo.model.watchtogether.CreateRoomRequest
 import org.siloserver.silo.model.watchtogether.JoinRoomRequest
+import org.siloserver.silo.model.watchtogether.MemberStateRequest
 import org.siloserver.silo.model.watchtogether.PromoteSuggestionRequest
+import org.siloserver.silo.model.watchtogether.RoomPhase
+import org.siloserver.silo.model.watchtogether.SelectionModeRequest
 import org.siloserver.silo.model.watchtogether.SetSelectionRequest
+import org.siloserver.silo.model.watchtogether.SourceFallbackRequest
 import org.siloserver.silo.model.watchtogether.UpdatePolicyRequest
+import org.siloserver.silo.model.watchtogether.readWatchPartyFixture
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeAttributeKey
 import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.SiloJson
+import org.siloserver.silo.network.SingleAttemptAttributeKey
+import org.siloserver.silo.network.apiv2.ApiV2Gate
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.serialization.kotlinx.json.json
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class WatchTogetherApiTest {
@@ -34,271 +44,292 @@ class WatchTogetherApiTest {
         serverUrl = "https://silo.example",
         profileToken = "profile-token",
     )
-
-    private class Captured {
-        val calls = mutableListOf<Call>()
-        val last: Call get() = calls.last()
-        val first: Call get() = calls.first()
-    }
+    private val roomId = "9f3c1a52-3c4e-4f7b-9a0e-6b2d8c1e7a10"
+    private val roomBody = readWatchPartyFixture("room_http.json")
 
     private data class Call(
         val method: HttpMethod,
         val path: String,
         val query: Map<String, String?>,
         val roomToken: String?,
+        val singleAttempt: Boolean,
+        val pinnedScope: AuthScopeSnapshot?,
         val body: String,
     )
 
-    private val roomJson = """
-        {"room_id":"room-1","phase":"lobby","playback_state":"idle","selection_mode":"host_pick",
-         "selection_revision":0,"code":"ABCD1234","guest_control_policy":"host_only",
-         "is_paused":false,"anchor_position_seconds":0.0,"anchor_updated_at":"2026-06-12T09:00:00Z",
-         "generation":1,"member_count":1,"host_connected":true,"self_role":"host",
-         "self_can_control_transport":true,"self_can_manage_room":true,"self_ignore_wait":false}
-    """.trimIndent()
+    private class Server(var status: HttpStatusCode = HttpStatusCode.OK, var body: String = "{}") {
+        val calls = mutableListOf<Call>()
+        val last: Call get() = calls.last()
+    }
 
-    private val suggestionsJson = """
-        {"items":[{"id":"sug-5","room_id":"room-1","suggester_user_id":"7","suggester_profile_id":"p",
-          "content_id":"c","content_type":"movie","title":"T","subtitle":"","poster_url":"","note":"",
-          "vote_count":2,"voted_by_me":true,"created_at":"2026-06-12T08:00:00Z"}],
-         "page":{"has_more":false}}
-    """.trimIndent()
-
-    private val problem = """{"type":"https://silo.example/problems/conflict","title":"Conflict","status":409,"detail":"Already voted"}"""
-
-    /** Routes by method: the first response answers the mutation, a suggestions GET always answers with the list. */
-    private fun api(
-        status: HttpStatusCode = HttpStatusCode.OK,
-        responseBody: String = "{}",
-        captured: Captured = Captured(),
-    ): Pair<WatchTogetherApi, Captured> {
+    private fun api(server: Server): WatchTogetherApi {
         val client = HttpClient(
             MockEngine { request ->
-                captured.calls += Call(
+                server.calls += Call(
                     method = request.method,
                     path = request.url.encodedPath,
                     query = request.url.parameters.names().associateWith { request.url.parameters[it] },
                     roomToken = request.headers["X-Room-Token"],
+                    singleAttempt = request.attributes.getOrNull(SingleAttemptAttributeKey) == true,
+                    pinnedScope = request.attributes.getOrNull(AuthScopeAttributeKey),
                     body = request.body.toByteArray().decodeToString(),
                 )
-                val followUpList = captured.calls.size > 1 &&
-                    request.method == HttpMethod.Get && request.url.encodedPath.endsWith("/suggestions")
-                if (followUpList) {
-                    respond(suggestionsJson, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
-                } else {
-                    respond(
-                        content = responseBody,
-                        status = status,
-                        headers = headersOf(HttpHeaders.ContentType, "application/problem+json"),
-                    )
-                }
+                val type = if (server.status.value >= 400) "application/problem+json" else "application/json"
+                respond(server.body, server.status, headersOf(HttpHeaders.ContentType, type))
             },
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return DefaultWatchTogetherApi(client, org.siloserver.silo.network.apiv2.ApiV2Gate.Unrestricted) to captured
+        return DefaultWatchTogetherApi(client, ApiV2Gate.Unrestricted)
+    }
+
+    private fun sent(call: Call) = SiloJson.parseToJsonElement(call.body).jsonObject
+
+    private fun assertInvalidResponse(result: ApiResult<*>) {
+        assertIs<ApiResult.Error>(result)
+        assertEquals("invalid_response", result.error)
+    }
+
+    // ---- create / join / read --------------------------------------------------
+
+    @Test
+    fun `create sends the caller room identity and requires 201`() = runTest {
+        val server = Server(HttpStatusCode.Created, roomBody)
+        val result = api(server).createRoom(CreateRoomRequest(roomId = roomId, selectionMode = "vote"), scope)
+
+        assertIs<ApiResult.Success<*>>(result)
+        assertEquals(HttpMethod.Post, server.last.method)
+        assertEquals("/api/v2/watch-together/rooms", server.last.path)
+        assertEquals(setOf("room_id", "selection_mode"), sent(server.last).keys)
+        assertEquals(roomId, sent(server.last).getValue("room_id").jsonPrimitive.content)
+        assertEquals(scope, server.last.pinnedScope)
+        assertNull(server.last.roomToken)
+        assertFalse(server.last.singleAttempt)
     }
 
     @Test
-    fun `createRoom posts client room_id and selection_mode and decodes room + token`() = runTest {
-        val (api, captured) = api(
-            status = HttpStatusCode.Created,
-            responseBody = """{"room":$roomJson,"room_access_token":"jwt-1"}""",
-        )
-        val r = api.createRoom(CreateRoomRequest(selectionMode = "vote"), scope)
-        assertEquals(HttpMethod.Post, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms", captured.last.path)
-        val sent = SiloJson.parseToJsonElement(captured.last.body).jsonObject
-        assertEquals(setOf("room_id", "selection_mode"), sent.keys)
-        assertEquals("vote", sent.getValue("selection_mode").jsonPrimitive.content)
-        assertTrue(sent.getValue("room_id").jsonPrimitive.content.length == 36)
-        assertIs<ApiResult.Success<*>>(r)
-        assertEquals("jwt-1", (r as ApiResult.Success).data.roomAccessToken)
+    fun `create answered with the wrong success status is an invalid response`() = runTest {
+        val result = api(Server(HttpStatusCode.OK, roomBody)).createRoom(CreateRoomRequest(roomId = roomId), scope)
+        assertInvalidResponse(result)
     }
 
     @Test
-    fun `createRoom defaults selection_mode to host_pick`() = runTest {
-        val (api, captured) = api(
-            status = HttpStatusCode.Created,
-            responseBody = """{"room":$roomJson,"room_access_token":"jwt-1"}""",
-        )
-        api.createRoom(CreateRoomRequest(), scope)
-        val sent = SiloJson.parseToJsonElement(captured.last.body).jsonObject
-        assertEquals("host_pick", sent.getValue("selection_mode").jsonPrimitive.content)
+    fun `create response naming another room is an invalid response`() = runTest {
+        val result = api(Server(HttpStatusCode.Created, roomBody)).createRoom(CreateRoomRequest(roomId = "other"), scope)
+        assertInvalidResponse(result)
     }
 
     @Test
-    fun `joinRoom posts code and decodes room`() = runTest {
-        val (api, captured) = api(responseBody = """{"room":$roomJson,"room_access_token":"jwt-2"}""")
-        val r = api.joinRoom(JoinRoomRequest(code = "ABCD1234"), scope)
-        assertEquals(HttpMethod.Post, captured.last.method)
-        assertEquals("/api/v2/watch-together/join", captured.last.path)
-        assertIs<ApiResult.Success<*>>(r)
-        assertEquals("room-1", (r as ApiResult.Success).data.room.roomId)
+    fun `join decodes the v2 snapshot with string ids and members`() = runTest {
+        val server = Server(body = roomBody)
+        val result = api(server).joinRoom(JoinRoomRequest(code = "K7PQ2M4X"), scope)
+
+        assertIs<ApiResult.Success<org.siloserver.silo.model.watchtogether.RoomResponse>>(result)
+        val room = result.data.room
+        assertEquals(RoomPhase.Playing, room.phase)
+        assertEquals(42, room.selectedFileId)
+        assertEquals(7, room.selectedLibraryId)
+        assertEquals(2, room.members.size)
+        assertEquals("12", room.selfMember?.userId)
+        assertTrue(room.members[1].isSyncing)
+        assertEquals("/rooms/join?token=Zq8vN3kR5tW1yB6cD9fG2hJ4", room.invitePath)
+        assertEquals(mapOf("code" to "K7PQ2M4X"), sent(server.last).mapValues { it.value.jsonPrimitive.content })
     }
 
     @Test
-    fun `getRoom passes X-Room-Token header and no query`() = runTest {
-        val (api, captured) = api(responseBody = """{"room":$roomJson,"room_access_token":"jwt-room"}""")
-        api.getRoom("room-1", "jwt-room", scope)
-        assertEquals(HttpMethod.Get, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
-        assertTrue(captured.last.query.isEmpty())
+    fun `a room response without proof is an invalid response`() = runTest {
+        val body = roomBody.replace(Regex("\"room_access_token\": \"[^\"]+\""), "\"room_access_token\": \"\"")
+        assertInvalidResponse(api(Server(body = body)).joinRoom(JoinRoomRequest(code = "K7PQ2M4X"), scope))
     }
 
     @Test
-    fun `setSelection puts content_id with string file_id`() = runTest {
-        val (api, captured) = api(responseBody = """{"room":$roomJson,"room_access_token":"jwt-room"}""")
-        api.setSelection("room-1", "jwt-room", SetSelectionRequest(contentId = "tt-9", fileId = 3), scope)
-        assertEquals(HttpMethod.Put, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/selection", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
-        val sent = SiloJson.parseToJsonElement(captured.last.body).jsonObject
-        assertEquals("tt-9", sent.getValue("content_id").jsonPrimitive.content)
-        assertEquals("3", sent.getValue("file_id").jsonPrimitive.content)
-        assertTrue(sent.getValue("file_id").jsonPrimitive.isString)
-        assertTrue("library_id" !in sent)
+    fun `room read sends the proof and rejects another room`() = runTest {
+        val server = Server(body = roomBody)
+        assertIs<ApiResult.Success<*>>(api(server).getRoom(roomId, "proof-1", scope))
+        assertEquals("proof-1", server.last.roomToken)
+        assertEquals("/api/v2/watch-together/rooms/$roomId", server.last.path)
+
+        assertInvalidResponse(api(server).getRoom("another-room", "proof-1", scope))
     }
 
     @Test
-    fun `updatePolicy patches policy with X-Room-Token`() = runTest {
-        val (api, captured) = api(responseBody = """{"room":$roomJson,"room_access_token":"jwt-room"}""")
-        api.updatePolicy(
-            "room-1",
-            "jwt-room",
-            UpdatePolicyRequest(guestControlPolicy = "guest_play_pause"),
-            scope,
-        )
-        assertEquals(HttpMethod.Patch, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/policy", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
+    fun `malformed success body is an invalid response, not a network error`() = runTest {
+        assertInvalidResponse(api(Server(body = """{"room":{}}""")).getRoom(roomId, "proof-1", scope))
     }
 
-    @Test
-    fun `closeRoom deletes and maps 204 to Unit`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-        val r = api.closeRoom("room-1", "jwt-room", scope)
-        assertEquals(HttpMethod.Delete, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
-        assertEquals(ApiResult.Success(Unit), r)
-    }
+    // ---- host operations --------------------------------------------------------
 
     @Test
-    fun `listSuggestions decodes v2 items envelope`() = runTest {
-        val (api, captured) = api(responseBody = suggestionsJson)
-        val r = api.listSuggestions("room-1", "jwt-room", scope)
-        assertEquals(HttpMethod.Get, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
-        val list = assertIs<ApiResult.Success<*>>(r).data as org.siloserver.silo.model.watchtogether.SuggestionsResponse
-        assertEquals("sug-5", list.suggestions.single().id)
-        assertEquals("7", list.suggestions.single().suggesterUserId)
-    }
-
-    @Test
-    fun `addSuggestion posts client suggestion_id then reads the list`() = runTest {
-        val (api, captured) = api(
-            status = HttpStatusCode.Created,
-            responseBody = """{"suggestion_id":"generated"}""",
-        )
-        val r = api.addSuggestion(
-            "room-1", "jwt-room",
-            AddSuggestionRequest(contentId = "c", contentType = "movie", title = "T"),
-            scope,
-        )
-        assertEquals(2, captured.calls.size)
-        assertEquals(HttpMethod.Post, captured.first.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions", captured.first.path)
-        assertEquals("jwt-room", captured.first.roomToken)
-        val sent = SiloJson.parseToJsonElement(captured.first.body).jsonObject
-        assertEquals(setOf("content_id", "content_type", "title", "suggestion_id"), sent.keys)
-        assertEquals(HttpMethod.Get, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions", captured.last.path)
-        assertEquals(1, assertIs<ApiResult.Success<*>>(r).let { (it.data as org.siloserver.silo.model.watchtogether.SuggestionsResponse).suggestions.size })
-    }
-
-    @Test
-    fun `deleteSuggestion deletes then reads the list`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-        val r = api.deleteSuggestion("room-1", "jwt-room", "sug-5", scope)
-        assertEquals(HttpMethod.Delete, captured.first.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions/sug-5", captured.first.path)
-        assertEquals("jwt-room", captured.first.roomToken)
-        assertEquals(HttpMethod.Get, captured.last.method)
-        assertIs<ApiResult.Success<*>>(r)
-    }
-
-    @Test
-    fun `room and suggestion identifiers are encoded as path segments`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-
-        api.deleteSuggestion("room/with ?#", "jwt-room", "suggestion/with ?#", scope)
+    fun `host operations authorize by identity and send no proof`() = runTest {
+        val server = Server(body = roomBody)
+        val api = api(server)
+        api.updatePolicy(roomId, UpdatePolicyRequest("guest_play_pause"), scope)
+        api.stageSelection(roomId, SetSelectionRequest("movie:heat-1995", fileId = 42, libraryId = 7), scope)
+        api.startPlayback(roomId, scope)
+        api.stopPlayback(roomId, scope)
+        api.setSelectionMode(roomId, SelectionModeRequest("vote"), scope)
+        api.setSelection(roomId, SetSelectionRequest("movie:heat-1995"), scope)
 
         assertEquals(
-            "/api/v2/watch-together/rooms/room%2Fwith%20%3F%23/suggestions/" +
-                "suggestion%2Fwith%20%3F%23",
-            captured.first.path,
+            listOf(
+                HttpMethod.Patch to "/policy",
+                HttpMethod.Put to "/staged-selection",
+                HttpMethod.Post to "/playback/start",
+                HttpMethod.Post to "/playback/stop",
+                HttpMethod.Patch to "/selection-mode",
+                HttpMethod.Put to "/selection",
+            ),
+            server.calls.map { it.method to it.path.removePrefix("/api/v2/watch-together/rooms/$roomId") },
         )
+        assertTrue(server.calls.all { it.roomToken == null && it.pinnedScope == scope })
     }
 
     @Test
-    fun `vote posts vote path then reads the list`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-        api.vote("room-1", "jwt-room", "sug-5", scope)
-        assertEquals(HttpMethod.Post, captured.first.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions/sug-5/vote", captured.first.path)
-        assertEquals("jwt-room", captured.first.roomToken)
-        assertEquals(HttpMethod.Get, captured.last.method)
+    fun `stage sends string file and library ids`() = runTest {
+        val server = Server(body = roomBody)
+        api(server).stageSelection(roomId, SetSelectionRequest("movie:heat-1995", fileId = 42, libraryId = 7), scope)
+        val body = sent(server.last)
+        assertEquals("42", body.getValue("file_id").jsonPrimitive.content)
+        assertTrue(body.getValue("file_id").jsonPrimitive.isString)
+        assertEquals("7", body.getValue("library_id").jsonPrimitive.content)
     }
 
     @Test
-    fun `unvote deletes vote path then reads the list`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.NoContent, responseBody = "")
-        api.unvote("room-1", "jwt-room", "sug-5", scope)
-        assertEquals(HttpMethod.Delete, captured.first.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions/sug-5/vote", captured.first.path)
-        assertEquals("jwt-room", captured.first.roomToken)
-        assertEquals(HttpMethod.Get, captured.last.method)
+    fun `only non-retryable operations skip the authentication replay`() = runTest {
+        val server = Server(body = roomBody)
+        val api = api(server)
+        api.startPlayback(roomId, scope)
+        api.setSelection(roomId, SetSelectionRequest("movie:heat-1995"), scope)
+        api.promoteSuggestion(roomId, "proof-1", PromoteSuggestionRequest("b2a1"), scope)
+        api.stopPlayback(roomId, scope)
+        api.stageSelection(roomId, SetSelectionRequest("movie:heat-1995"), scope)
+        api.getRoom(roomId, "proof-1", scope)
+
+        assertEquals(listOf(true, true, true, false, false, false), server.calls.map { it.singleAttempt })
     }
 
     @Test
-    fun `promote posts suggestion_id with X-Room-Token and decodes room`() = runTest {
-        val (api, captured) = api(responseBody = """{"room":$roomJson,"room_access_token":"jwt-room"}""")
-        api.promoteSuggestion(
-            "room-1",
-            "jwt-room",
-            PromoteSuggestionRequest(suggestionId = "sug-5"),
+    fun `end requires 204`() = runTest {
+        val server = Server(HttpStatusCode.NoContent, "")
+        assertIs<ApiResult.Success<Unit>>(api(server).closeRoom(roomId, scope))
+        assertEquals(HttpMethod.Delete, server.last.method)
+        assertNull(server.last.roomToken)
+    }
+
+    @Test
+    fun `source fallback sends the fence and reason with proof`() = runTest {
+        val server = Server(body = roomBody)
+        api(server).sourceFallback(
+            roomId,
+            "proof-1",
+            SourceFallbackRequest(selectionRevision = 3, failedFileId = "42", reason = "hdr_transcode_unsupported"),
             scope,
         )
-        assertEquals(HttpMethod.Post, captured.last.method)
-        assertEquals("/api/v2/watch-together/rooms/room-1/suggestions/promote", captured.last.path)
-        assertEquals("jwt-room", captured.last.roomToken)
-        val sent = SiloJson.parseToJsonElement(captured.last.body).jsonObject
-        assertEquals("sug-5", sent.getValue("suggestion_id").jsonPrimitive.content)
+        assertEquals("proof-1", server.last.roomToken)
+        assertEquals("/api/v2/watch-together/rooms/$roomId/source-fallback", server.last.path)
+        val body = sent(server.last)
+        assertEquals("3", body.getValue("selection_revision").jsonPrimitive.content)
+        assertEquals("42", body.getValue("failed_file_id").jsonPrimitive.content)
+        assertEquals("hdr_transcode_unsupported", body.getValue("reason").jsonPrimitive.content)
     }
 
     @Test
-    fun `vote problem surfaces as ApiResult Error without a follow-up read`() = runTest {
-        val (api, captured) = api(status = HttpStatusCode.Conflict, responseBody = problem)
-        val r = api.vote("room-1", "jwt-room", "sug-5", scope)
-        assertIs<ApiResult.Error>(r)
-        assertEquals(409, r.code)
-        assertEquals("conflict", r.error)
-        assertEquals("Already voted", r.message)
-        assertEquals(1, captured.calls.size)
+    fun `problem responses keep status and code`() = runTest {
+        val problem = """{"type":"https://silo.example/problems/conflict","title":"Conflict","status":409,"detail":"The room is closed."}"""
+        val result = api(Server(HttpStatusCode.Conflict, problem)).startPlayback(roomId, scope)
+        assertIs<ApiResult.Error>(result)
+        assertEquals(409, result.code)
+        assertEquals("conflict", result.error)
+    }
+
+    // ---- suggestions -------------------------------------------------------------
+
+    @Test
+    fun `suggestion page passes limit and cursor and decodes page metadata`() = runTest {
+        val server = Server(body = readWatchPartyFixture("suggestions_page.json"))
+        val result = api(server).listSuggestions(roomId, "proof-1", scope, cursor = "abc")
+
+        assertIs<ApiResult.Success<org.siloserver.silo.model.watchtogether.SuggestionsResponse>>(result)
+        assertEquals(mapOf("limit" to "50", "cursor" to "abc"), server.last.query)
+        assertEquals("proof-1", server.last.roomToken)
+        assertEquals(true, result.data.page?.hasMore)
+        assertEquals("c2VlZDoy", result.data.page?.nextCursor)
+        assertTrue(result.data.suggestions.single().votedByMe)
     }
 
     @Test
-    fun `join 410 problem surfaces as ApiResult Error`() = runTest {
-        val (api, _) = api(
-            status = HttpStatusCode.Gone,
-            responseBody = """{"type":"https://silo.example/problems/gone","title":"Gone","status":410,"detail":"Room is no longer active"}""",
+    fun `a page with more items but no cursor is an invalid response`() = runTest {
+        val body = """{"items":[],"page":{"has_more":true}}"""
+        assertInvalidResponse(api(Server(body = body)).listSuggestions(roomId, "proof-1", scope))
+    }
+
+    @Test
+    fun `add suggestion sends the caller id and checks the receipt`() = runTest {
+        val request = AddSuggestionRequest(suggestionId = "s-1", contentId = "movie:heat-1995", contentType = "movie", title = "Heat")
+        val server = Server(HttpStatusCode.Created, """{"suggestion_id":"s-1"}""")
+        assertIs<ApiResult.Success<*>>(api(server).addSuggestion(roomId, "proof-1", request, scope))
+        assertEquals("s-1", sent(server.last).getValue("suggestion_id").jsonPrimitive.content)
+        assertEquals(1, server.calls.size, "a mutation must not read the list itself")
+
+        server.body = """{"suggestion_id":"s-2"}"""
+        assertInvalidResponse(api(server).addSuggestion(roomId, "proof-1", request, scope))
+    }
+
+    @Test
+    fun `votes return an empty receipt and never read the list`() = runTest {
+        val server = Server(HttpStatusCode.NoContent, "")
+        val api = api(server)
+        assertIs<ApiResult.Success<Unit>>(api.vote(roomId, "proof-1", "b2a1", scope))
+        assertIs<ApiResult.Success<Unit>>(api.unvote(roomId, "proof-1", "b2a1", scope))
+        assertIs<ApiResult.Success<Unit>>(api.deleteSuggestion(roomId, "proof-1", "b2a1", scope))
+        assertEquals(
+            listOf(HttpMethod.Post, HttpMethod.Delete, HttpMethod.Delete),
+            server.calls.map { it.method },
         )
-        val r = api.joinRoom(JoinRoomRequest(code = "DEAD0000"), scope)
-        assertIs<ApiResult.Error>(r)
-        assertEquals(410, r.code)
-        assertEquals("Room is no longer active", r.message)
+        assertEquals("/api/v2/watch-together/rooms/$roomId/suggestions/b2a1/vote", server.calls[0].path)
+    }
+
+    // ---- shared browsing ---------------------------------------------------------
+
+    @Test
+    fun `member state rejects an empty id list before sending`() = runTest {
+        val server = Server(body = readWatchPartyFixture("member_state.json"))
+        val empty = api(server).memberState(roomId, "proof-1", MemberStateRequest(emptyList()), scope)
+        assertIs<ApiResult.Error>(empty)
+        assertEquals(422, empty.code)
+        assertTrue(server.calls.isEmpty())
+    }
+
+    @Test
+    fun `member state decodes and rejects unrequested items`() = runTest {
+        val server = Server(body = readWatchPartyFixture("member_state.json"))
+        val result = api(server).memberState(roomId, "proof-1", MemberStateRequest(listOf("movie:heat-1995")), scope)
+        assertIs<ApiResult.Success<org.siloserver.silo.model.watchtogether.MemberStateResponse>>(result)
+        assertEquals("in_progress", result.data.items.single().members.single().state)
+
+        assertInvalidResponse(api(server).memberState(roomId, "proof-1", MemberStateRequest(listOf("movie:other")), scope))
+    }
+
+    @Test
+    fun `picker decodes shared rows with next up`() = runTest {
+        val server = Server(body = readWatchPartyFixture("picker.json"))
+        val result = api(server).picker(roomId, "proof-1", scope)
+        assertIs<ApiResult.Success<org.siloserver.silo.model.watchtogether.PickerResponse>>(result)
+        assertTrue(result.data.continueTogether.isEmpty())
+        val row = result.data.watchlistUnion.single()
+        assertEquals("series:the-bear", row.item.contentId)
+        assertEquals("episode:the-bear-s02e06", row.nextUp?.contentId)
+        assertEquals("proof-1", server.last.roomToken)
+    }
+
+    @Test
+    fun `capabilities decode the vendored server fixture`() = runTest {
+        val server = Server(body = readWatchPartyFixture("capabilities.json"))
+        val result = api(server).capabilities(scope)
+        assertIs<ApiResult.Success<org.siloserver.silo.model.watchtogether.WatchTogetherCapabilitiesV2>>(result)
+        assertEquals("silo.room.v2", result.data.socketProtocol)
+        assertEquals(200, result.data.maxMemberStateIds)
+        assertEquals(false, result.data.allowed)
+        assertEquals("/api/v2/watch-together/capabilities", server.last.path)
     }
 }

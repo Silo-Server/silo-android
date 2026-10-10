@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -25,11 +24,9 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
@@ -44,11 +41,14 @@ import org.siloserver.silo.common.diagnostics.DiagnosticsConsentMode
 import org.siloserver.silo.common.diagnostics.DiagnosticsDestinationKind
 import org.siloserver.silo.common.diagnostics.DiagnosticsUiState
 import org.siloserver.silo.common.diagnostics.TimedCaptureStatus
+import org.siloserver.silo.tv.ui.components.TvDialogDefaults
+import org.siloserver.silo.tv.ui.components.tvDialogSurface
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.TvFrameRelocationMaxAttempts
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
 import org.siloserver.silo.tv.ui.screens.auth.QrCodePanel
+import org.siloserver.silo.tv.ui.screens.player.TvPlayerType
 import org.siloserver.silo.tv.ui.screens.settings.PickerOption
 import org.siloserver.silo.tv.ui.screens.settings.SettingsActionRow
 import org.siloserver.silo.tv.ui.screens.settings.SettingsFooterText
@@ -386,7 +386,8 @@ internal fun TvDiagnosticsSettingsPane(
         TvSettingsConfirmDialog(
             title = "Always send crash reports?",
             message = "Future eligible reports may upload automatically until you change this setting.",
-            confirmLabel = "Always Send",
+            confirmLabel = "Always send",
+            destructive = false,
             onConfirm = {
                 confirmAlways = false
                 onSetConsent(DiagnosticsConsentMode.ALWAYS)
@@ -408,7 +409,7 @@ internal fun TvDiagnosticsSettingsPane(
  */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
+internal fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
     BackHandler(onBack = onDismiss)
     val closeFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -424,23 +425,18 @@ private fun TvPrivacyPolicyDialog(onDismiss: () -> Unit) {
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(
-            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.86f)),
+            modifier = Modifier.fillMaxSize().background(TvDialogDefaults.Scrim),
             contentAlignment = Alignment.Center,
         ) {
             Column(
                 modifier = Modifier
-                    .width(360.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surface)
-                    .padding(20.dp),
+                    .width(380.dp)
+                    .tvDialogSurface()
+                    .padding(horizontal = 28.dp, vertical = 26.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = "Privacy Policy",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
+                Text(text = "Privacy Policy", style = TvPlayerType.DialogTitle)
                 Text(
                     text = "Scan this code with your phone, or type the address below, to read " +
                         "the full policy.",

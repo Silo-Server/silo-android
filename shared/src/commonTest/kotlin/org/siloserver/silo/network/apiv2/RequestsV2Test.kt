@@ -68,4 +68,44 @@ class RequestsV2Test {
         assertEquals(1, calls)
         client.close()
     }
+
+    @Test fun adminQueueFiltersByTitleAndWalksPages() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine { request ->
+            assertEquals("/api/v2/admin/requests", request.url.encodedPath)
+            assertEquals("pending", request.url.parameters["status"])
+            assertEquals("active", request.url.parameters["outcome"])
+            assertEquals("series", request.url.parameters["media_type"])
+            assertEquals("42", request.url.parameters["q"])
+            calls++
+            respond(if (calls == 1) """{"items":[$record],"page":{"has_more":true,"next_cursor":"next"}}"""
+                else """{"items":[$record],"page":{"has_more":false}}""", headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        val result = DefaultRequestsApi(client, ApiV2Gate.Unrestricted)
+            .adminRequests(status = "pending", outcome = "active", mediaType = "series", tmdbId = 42)
+        assertEquals(2, assertIs<ApiResult.Success<org.siloserver.silo.model.request.RequestsListResponse>>(result).data.requests.size)
+        assertEquals(2, calls)
+        client.close()
+    }
+
+    @Test fun moderationIsOnePostToItsActionPath() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine { request ->
+            calls++
+            assertEquals(HttpMethod.Post, request.method)
+            assertEquals("/api/v2/admin/requests/r1/retry", request.url.encodedPath)
+            respond(record.replace("\"pending\"", "\"approved\""), headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        }) { install(ContentNegotiation) { json(SiloJson) } }
+        val result = DefaultRequestsApi(client, ApiV2Gate.Unrestricted)
+            .adminAction("r1", org.siloserver.silo.model.request.AdminRequestAction.Retry)
+        assertEquals("approved", assertIs<ApiResult.Success<MediaRequest>>(result).data.status)
+        assertEquals(1, calls)
+        client.close()
+    }
+
+    @Test fun userFacingStateDecodes() {
+        val decoded = SiloJson.decodeFromString<MediaRequest>(record.replace("\"outcome\":\"active\"", "\"outcome\":\"active\",\"state\":\"processing\",\"approved_at\":\"2026-09-06T00:00:00Z\""))
+        assertEquals("processing", decoded.state)
+        assertEquals("2026-09-06T00:00:00Z", decoded.approvedAt)
+    }
 }

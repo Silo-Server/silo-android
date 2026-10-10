@@ -125,6 +125,47 @@ class HomeViewModelCacheIdentityTest {
         assertEquals(listOf(0, 0), observations.map { it.sectionCount })
     }
 
+    @Test
+    fun realtimeSignalsDuringARefreshRunOneMoreRefreshAfterIt() = runTest(dispatcher) {
+        var requests = 0
+        val realtimeEntered = CompletableDeferred<Unit>()
+        val releaseRealtime = CompletableDeferred<Unit>()
+        val followUpEntered = CompletableDeferred<Unit>()
+        val client = HttpClient(
+            MockEngine {
+                when (++requests) {
+                    2 -> {
+                        realtimeEntered.complete(Unit)
+                        releaseRealtime.await()
+                    }
+                    3 -> followUpEntered.complete(Unit)
+                }
+                respond(
+                    """{"sections":[]}""",
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+        ) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        val viewModel = HomeViewModel(
+            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
+            mediaActions = mediaActions(),
+        )
+        viewModel.uiState.first { !it.isLoading }
+
+        viewModel.refreshFromRealtime()
+        realtimeEntered.await()
+        // An access change reported while that fetch is out: its answer may
+        // predate the change. Repeated signals collapse into one follow-up.
+        viewModel.refreshFromRealtime()
+        viewModel.refreshFromRealtime()
+        releaseRealtime.complete(Unit)
+
+        followUpEntered.await()
+    }
+
     private class RecordingHomeCache : HomeCachePort {
         var sections: List<ResolvedSection>? = null
 

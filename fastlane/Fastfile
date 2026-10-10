@@ -1,6 +1,7 @@
 require "base64"
 require "fileutils"
 require "tmpdir"
+require_relative "play_bundle_manifest"
 
 # Root-level Fastfile — Android lane for Google Play releases. Mirrors the
 # structure of silo-apple's Fastfile:
@@ -194,74 +195,110 @@ end
 
 # ── Android ──────────────────────────────────────────────────────────────────
 
+def build_play_bundles(version:, base_code:, build:, track:)
+  PlayBundleManifest.identity(File.expand_path("..", __dir__), ENV)
+  require_signing_env!
+  ENV["SILO_RELEASE_KEYSTORE"] = resolve_release_keystore
+  materialize_google_services_json
+  yield if block_given?
+
+  # One invocation builds both bundles so shared modules compile once. Any
+  # task name containing "bundle" also disables the sideload APK ABI splits
+  # (see isBuildingBundle in the app build scripts) — the AABs do their own
+  # per-ABI delivery. R8 mapping files are embedded in the bundles
+  # (BUNDLE-METADATA), so Play picks up deobfuscation automatically.
+  gradle(
+    tasks: [":androidApp:bundleRelease", ":androidTvApp:bundleRelease"],
+    properties: {
+      "siloVersionName" => version,
+      "siloVersionCode" => base_code,
+      # The build counter as its own value: it is already folded into
+      # base_code, but the app reports it verbatim to the server.
+      "siloBuildNumber" => build,
+      # The track these bundles are actually uploaded to, so a beta-track
+      # tester and a production user are distinguishable in admin Activity
+      # instead of both reporting a generic "release".
+      "siloReleaseChannel" => track,
+    },
+    system_properties: {
+      "org.gradle.jvmargs" => "-Xmx4g -Dfile.encoding=UTF-8",
+    },
+    flags: "--max-workers=2",
+  )
+
+  [PHONE_AAB, TV_AAB].each do |aab|
+    UI.user_error!("Expected App Bundle not found at #{aab}") unless File.exist?(aab)
+  end
+
+  PlayBundleManifest.write!(root: File.expand_path("..", __dir__),
+                            version: version, base_code: base_code, build: build, track: track)
+end
+
+def publish_play_bundles(version:, base_code:, build:, track:, json_key: nil,
+                         manifest_sha256: ENV["SILO_PLAY_BUNDLE_MANIFEST_SHA256"], changelog_prepared: false)
+  PlayBundleManifest.verify!(root: File.expand_path("..", __dir__),
+                             version: version, base_code: base_code, build: build, track: track,
+                             producer_attempt: ENV["SILO_PLAY_BUNDLE_ATTEMPT"], manifest_sha256: manifest_sha256)
+  json_key ||= play_json_key_data
+  write_play_changelog unless changelog_prepared
+
+  # Both AABs go up in a single Play edit/release — phone and TV must ship
+  # together (see the header comment). Listing metadata and imagery stay
+  # managed in the Play Console; only the changelog is uploaded from here.
+  # If Google rejects the edit with "changes cannot be sent for review
+  # automatically", a manual review step is pending in the Play Console —
+  # pass changes_not_sent_for_review: true temporarily and submit there.
+  upload_to_play_store(
+    package_name: PACKAGE_NAME,
+    json_key_data: json_key,
+    track: track,
+    release_status: "completed",
+    version_name: version,
+    aab_paths: [PHONE_AAB, TV_AAB],
+    # Belt-and-braces: never let a stale APK from the gradle lane context
+    # conflict with the explicit aab_paths above.
+    skip_upload_apk: true,
+    skip_upload_metadata: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true,
+    skip_upload_changelogs: false,
+    changes_not_sent_for_review: false,
+    timeout: 900,
+  )
+
+  UI.success("Uploaded Silo #{version} build #{build} (phone #{base_code * 2} + TV #{base_code * 2 + 1}) to the #{track} track.")
+end
+
 platform :android do
+  desc "Prepare signed phone and TV App Bundles without publishing"
+  lane :prepare_bundles do
+    version, base_code, build = resolve_release_version
+    track = play_track
+    build_play_bundles(version: version, base_code: base_code, build: build, track: track)
+  end
+
+  desc "Upload the verified prepared phone and TV App Bundles"
+  lane :upload_bundles do
+    version, base_code, build = resolve_release_version
+    track = play_track
+    publish_play_bundles(version: version, base_code: base_code, build: build, track: track)
+  end
+
   desc "Build both App Bundles (phone + TV) and upload to a Google Play track"
   lane :beta do
     version, base_code, build = resolve_release_version
     track = play_track
+    # Preserve the local lane's early publisher-key validation.
     json_key = play_json_key_data
-    require_signing_env!
-    ENV["SILO_RELEASE_KEYSTORE"] = resolve_release_keystore
-    materialize_google_services_json
-    write_play_changelog
-
-    UI.message(
-      "Releasing Silo #{version} build #{build} to the #{track} track " \
-      "(base code #{base_code} → phone #{base_code * 2}, TV #{base_code * 2 + 1})"
-    )
-
-    # One invocation builds both bundles so shared modules compile once. Any
-    # task name containing "bundle" also disables the sideload APK ABI splits
-    # (see isBuildingBundle in the app build scripts) — the AABs do their own
-    # per-ABI delivery. R8 mapping files are embedded in the bundles
-    # (BUNDLE-METADATA), so Play picks up deobfuscation automatically.
-    gradle(
-      tasks: [":androidApp:bundleRelease", ":androidTvApp:bundleRelease"],
-      properties: {
-        "siloVersionName" => version,
-        "siloVersionCode" => base_code,
-        # The build counter as its own value: it is already folded into
-        # base_code, but the app reports it verbatim to the server.
-        "siloBuildNumber" => build,
-        # The track these bundles are actually uploaded to, so a beta-track
-        # tester and a production user are distinguishable in admin Activity
-        # instead of both reporting a generic "release".
-        "siloReleaseChannel" => track,
-      },
-      system_properties: {
-        "org.gradle.jvmargs" => "-Xmx4g -Dfile.encoding=UTF-8",
-      },
-      flags: "--max-workers=2",
-    )
-
-    [PHONE_AAB, TV_AAB].each do |aab|
-      UI.user_error!("Expected App Bundle not found at #{aab}") unless File.exist?(aab)
+    build_play_bundles(version: version, base_code: base_code, build: build, track: track) do
+      write_play_changelog
+      UI.message(
+        "Releasing Silo #{version} build #{build} to the #{track} track " \
+        "(base code #{base_code} → phone #{base_code * 2}, TV #{base_code * 2 + 1})"
+      )
     end
-
-    # Both AABs go up in a single Play edit/release — phone and TV must ship
-    # together (see the header comment). Listing metadata and imagery stay
-    # managed in the Play Console; only the changelog is uploaded from here.
-    # If Google rejects the edit with "changes cannot be sent for review
-    # automatically", a manual review step is pending in the Play Console —
-    # pass changes_not_sent_for_review: true temporarily and submit there.
-    upload_to_play_store(
-      package_name: PACKAGE_NAME,
-      json_key_data: json_key,
-      track: track,
-      release_status: "completed",
-      version_name: version,
-      aab_paths: [PHONE_AAB, TV_AAB],
-      # Belt-and-braces: never let a stale APK from the gradle lane context
-      # conflict with the explicit aab_paths above.
-      skip_upload_apk: true,
-      skip_upload_metadata: true,
-      skip_upload_images: true,
-      skip_upload_screenshots: true,
-      skip_upload_changelogs: false,
-      changes_not_sent_for_review: false,
-      timeout: 900,
-    )
-
-    UI.success("Uploaded Silo #{version} build #{build} (phone #{base_code * 2} + TV #{base_code * 2 + 1}) to the #{track} track.")
+    manifest = File.join(File.expand_path("..", __dir__), PlayBundleManifest::FILE_NAME)
+    publish_play_bundles(version: version, base_code: base_code, build: build, track: track, json_key: json_key,
+                         manifest_sha256: Digest::SHA256.file(manifest).hexdigest, changelog_prepared: true)
   end
 end

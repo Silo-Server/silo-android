@@ -1,5 +1,17 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
+import org.siloserver.silo.common.ui.marquee.MarqueeColors
+import org.siloserver.silo.common.ui.marquee.MarqueeProfileAvatar
+import org.siloserver.silo.common.ui.marquee.MarqueeScrim
+import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
+import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButton
+import org.siloserver.silo.tv.ui.components.marquee.TvMarqueeButtonKind
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,12 +24,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.runtime.Composable
@@ -29,14 +37,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
@@ -48,10 +52,6 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.common.ui.components.ProfileAvatarRef
-import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
-import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
 import org.siloserver.silo.tv.ui.focus.TvControlState
 import org.siloserver.silo.tv.ui.focus.tvControlSemantics
 import org.siloserver.silo.tv.ui.theme.FocusedContainer
@@ -59,17 +59,22 @@ import org.siloserver.silo.tv.ui.theme.FocusedContent
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 
 private const val PIN_LENGTH = 4
+private val PinKeySize = 50.dp
 
-/** Compact, remote-first PIN keypad for protected TV profiles. */
+/**
+ * Full-screen, remote-first PIN prompt over the brand light: the person's
+ * avatar, four dots, and a round keypad (silo-apple `PINEntryView` on tvOS).
+ * A wrong PIN turns the dots red and clears for another try.
+ */
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun TvPinEntryDialog(
-    profileName: String,
-    profileAvatar: ProfileAvatarRef = ProfileAvatarRef.None,
+    profile: Profile,
     onPinEntered: (String) -> Unit,
     onDismiss: () -> Unit,
     errorMessage: String? = null,
     isVerifying: Boolean = false,
+    prompt: String = "Enter your PIN",
 ) {
     var pin by remember { mutableStateOf("") }
     val fiveFocusRequester = remember { FocusRequester() }
@@ -91,26 +96,14 @@ fun TvPinEntryDialog(
         ),
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.72f)),
+            modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
         ) {
-            val panelShape = RoundedCornerShape(17.dp)
+            MarqueeBackdrop(mirrored = true)
+            MarqueeScrim(MarqueeScrimStyle.Ambient)
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
             Column(
                 modifier = Modifier
-                    .width(310.dp)
-                    .shadow(
-                        elevation = 18.dp,
-                        shape = panelShape,
-                        clip = false,
-                        ambientColor = Color.Black.copy(alpha = 0.45f),
-                        spotColor = Color.Black.copy(alpha = 0.45f),
-                    )
-                    .clip(panelShape)
-                    .background(Color(0xFF15171C))
-                    .border(0.5.dp, Color.White.copy(alpha = 0.16f), panelShape)
-                    .padding(horizontal = 28.dp, vertical = 22.dp)
                     // Retry-until-focused initial grab targeting the "5" key
                     // (issue #64's fix, now shared). Exits as soon as ANYTHING
                     // in the dialog holds focus, so a user who reaches Cancel
@@ -118,32 +111,26 @@ fun TvPinEntryDialog(
                     .then(rememberTvDialogInitialFocus(fiveFocusRequester)),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                ProfilePinAvatar(profileName = profileName, profileAvatar = profileAvatar)
-                Spacer(modifier = Modifier.height(5.dp))
+                MarqueeProfileAvatar(profile, size = 80.dp, baseSize = 110.dp, showsBadges = false)
                 Text(
-                    text = "Enter PIN for $profileName",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 14.sp,
-                        lineHeight = 17.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
+                    text = profile.name,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MarqueeColors.Ink,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .padding(top = 11.dp)
+                        .semantics { contentDescription = "Enter PIN for ${profile.name}" },
                 )
-                Spacer(modifier = Modifier.height(14.dp))
-                PinDots(pinLength = pin.length, error = latestError != null)
-
-                if (latestError != null || isVerifying) {
-                    Spacer(modifier = Modifier.height(7.dp))
-                    Text(
-                        text = latestError ?: "Verifying...",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                        color = if (latestError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                PinDots(pinLength = pin.length, error = latestError != null && pin.isEmpty(), modifier = Modifier.padding(top = 17.dp))
+                Box(Modifier.padding(top = 9.dp).height(17.dp), contentAlignment = Alignment.Center) {
+                    when {
+                        latestError != null -> Text(latestError, fontSize = 14.sp, color = MarqueeColors.Error)
+                        isVerifying -> Text("Checking…", fontSize = 14.sp, color = MarqueeColors.InkSecondary)
+                        else -> Text(prompt, fontSize = 14.sp, color = MarqueeColors.InkSecondary)
+                    }
                 }
-
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(15.dp))
                 PinKeypad(
                     fiveFocusRequester = fiveFocusRequester,
                     enabled = !isVerifying,
@@ -156,83 +143,32 @@ fun TvPinEntryDialog(
                     },
                     onBackspacePressed = { if (pin.isNotEmpty() && !isVerifying) pin = pin.dropLast(1) },
                 )
-                Spacer(modifier = Modifier.height(10.dp))
-                Surface(
+                // Not disabled while the PIN is checked: on TV a disabled
+                // control loses focus. The view model drops a late answer.
+                TvMarqueeButton(
+                    text = "Cancel",
                     onClick = onDismiss,
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(50)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = Color.Transparent,
-                        contentColor = SiloOnSurface,
-                        focusedContainerColor = FocusedContainer,
-                        focusedContentColor = FocusedContent,
-                        pressedContainerColor = FocusedContainer,
-                        pressedContentColor = FocusedContent,
-                    ),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.045f),
-                    border = ClickableSurfaceDefaults.border(
-                        focusedBorder = Border(
-                            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.90f)),
-                            shape = RoundedCornerShape(50),
-                        ),
-                    ),
-                ) {
-                    Text(
-                        text = "Cancel",
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    )
-                }
+                    kind = TvMarqueeButtonKind.Plain,
+                    compact = true,
+                    modifier = Modifier.padding(top = 15.dp),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ProfilePinAvatar(profileName: String, profileAvatar: ProfileAvatarRef) {
-    val avatarImage = rememberProfileAvatarImage(profileAvatar)
-    Box(
-        modifier = Modifier
-            .size(42.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.10f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (avatarImage != null) {
-            ThumbhashImage(
-                url = avatarImage.url,
-                thumbhash = null,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                cacheKey = avatarImage.cacheKey,
-                onError = avatarImage.onLoadFailed,
-            )
-        } else {
-            Text(
-                text = profileAvatarDisplayText(profileAvatar, profileName),
-                style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp, lineHeight = 21.sp),
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-        }
-    }
-}
-
-@Composable
-private fun PinDots(pinLength: Int, error: Boolean) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun PinDots(pinLength: Int, error: Boolean, modifier: Modifier = Modifier) {
+    val color = if (error) MarqueeColors.Error else MarqueeColors.Ink
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         repeat(PIN_LENGTH) { index ->
+            val filled = error || index < pinLength
             Box(
                 modifier = Modifier
-                    .size(12.dp)
+                    .size(13.dp)
                     .clip(CircleShape)
-                    .background(
-                        when {
-                            error -> MaterialTheme.colorScheme.error
-                            index < pinLength -> MaterialTheme.colorScheme.primary
-                            else -> Color.Black.copy(alpha = 0.45f)
-                        },
-                    ),
+                    .background(if (filled) color else Color.Transparent)
+                    .border(1.5.dp, color.copy(alpha = if (filled) 1f else 0.7f), CircleShape),
             )
         }
     }
@@ -252,10 +188,10 @@ private fun PinKeypad(
     // the initial-focus policy is one-shot and never re-fires.
     val keyState = TvControlState.transient(enabled)
     Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         listOf("123", "456", "789").forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 row.forEach { digit ->
                     PinKey(
                         label = digit.toString(),
@@ -266,8 +202,8 @@ private fun PinKeypad(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Spacer(modifier = Modifier.size(48.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Spacer(modifier = Modifier.size(PinKeySize))
             PinKey(label = "0", controlState = keyState, onClick = { onDigitPressed('0') })
             PinKey(
                 label = null,
@@ -290,7 +226,7 @@ private fun PinKey(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val keyShape = RoundedCornerShape(9.dp)
+    val keyShape = CircleShape
     Surface(
         onClick = { controlState.perform(onClick) },
         enabled = controlState.focusable,
@@ -300,19 +236,19 @@ private fun PinKey(
         // (the panel shows its own progress), so the resting and disabled
         // slots are the same colours either way.
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.10f),
+            containerColor = Color.White.copy(alpha = 0.13f),
             contentColor = SiloOnSurface,
             focusedContainerColor = FocusedContainer,
             focusedContentColor = FocusedContent,
             pressedContainerColor = FocusedContainer,
             pressedContentColor = FocusedContent,
-            disabledContainerColor = Color.White.copy(alpha = 0.10f),
+            disabledContainerColor = Color.White.copy(alpha = 0.13f),
             disabledContentColor = SiloOnSurface,
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
         border = ClickableSurfaceDefaults.border(
             border = Border(
-                border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.18f)),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
                 shape = keyShape,
             ),
             focusedBorder = Border(
@@ -321,7 +257,7 @@ private fun PinKey(
             ),
         ),
         modifier = modifier
-            .size(48.dp)
+            .size(PinKeySize)
             .tvControlSemantics(controlState),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -329,10 +265,9 @@ private fun PinKey(
                 Text(
                     text = label,
                     style = MaterialTheme.typography.titleLarge.copy(
-                        fontSize = 32.sp,
-                        lineHeight = 36.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
+                        fontSize = 22.sp,
+                        lineHeight = 26.sp,
+                        fontWeight = FontWeight.Normal,
                     ),
                     color = if (isFocused) FocusedContent else SiloOnSurface,
                 )

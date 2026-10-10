@@ -15,6 +15,8 @@ internal suspend fun loadLocalWatchMetadata(
     profileId: String,
     contentId: String,
     libraryId: Int? = null,
+    /** The downloaded file, so the server fills that version's on-demand markers. */
+    fileId: Int? = null,
     stillCurrent: () -> Boolean,
 ): WatchDetail? {
     if (owner == null || owner.serverId != serverId || owner.profileId != profileId) return null
@@ -24,7 +26,7 @@ internal suspend fun loadLocalWatchMetadata(
         return valid && stillCurrent()
     }
     if (!current()) return null
-    val result = repository.getWatchDetail(contentId, owner, libraryId)
+    val result = repository.getWatchDetail(contentId, owner, libraryId, fileId)
     if (!current()) return null
     return (result as? ApiResult.Success)?.data
 }

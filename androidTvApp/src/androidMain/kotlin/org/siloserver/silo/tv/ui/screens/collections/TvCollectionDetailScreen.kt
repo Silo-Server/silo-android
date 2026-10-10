@@ -38,6 +38,8 @@ fun TvCollectionDetailScreen(
     title: String,
     onItemClick: (contentId: String) -> Unit,
     onBack: () -> Unit,
+    // Plays the first pick of a shuffle started from the header.
+    onShuffleStarted: (org.siloserver.silo.model.shuffle.Shuffle) -> Unit = {},
     viewModel: TvCollectionDetailViewModel = koinViewModel(
         key = "collection-$collectionId",
         parameters = { parametersOf(collectionId, title) },
@@ -45,6 +47,10 @@ fun TvCollectionDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val gridState = rememberLazyGridState()
+    val shuffleLauncher = org.siloserver.silo.common.ui.rememberShuffleLauncher(
+        org.koin.compose.koinInject(),
+        onShuffleStarted,
+    )
 
     BackHandler(enabled = true) { onBack() }
 
@@ -76,14 +82,32 @@ fun TvCollectionDetailScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        Text(
-            text = state.name.ifBlank { title },
-            style = MaterialTheme.typography.displaySmall,
-            color = MaterialTheme.colorScheme.onBackground,
+        androidx.compose.foundation.layout.Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp, vertical = 12.dp),
-        )
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        ) {
+            Text(
+                text = state.name.ifBlank { title },
+                style = MaterialTheme.typography.displaySmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
+            )
+            if (
+                state.items.isNotEmpty() &&
+                shuffleLauncher.supports(org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION)
+            ) {
+                org.siloserver.silo.tv.ui.screens.library.TvShufflePill(
+                    onClick = {
+                        shuffleLauncher.start(
+                            org.siloserver.silo.model.shuffle.ShuffleScopeKind.USER_COLLECTION,
+                            collectionId,
+                        )
+                    },
+                )
+            }
+        }
 
         when {
             state.isLoading && state.items.isEmpty() -> TvLoadingScreen()
