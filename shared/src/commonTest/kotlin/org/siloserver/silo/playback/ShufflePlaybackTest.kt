@@ -70,11 +70,13 @@ class ShufflePlaybackTest {
             assertEquals(2, episode.episodeNumber)
             assertEquals("http://localhost/still.jpg", episode.stillUrl)
             assertEquals(42, episode.runtimeMinutes)
+            assertTrue(episode.isUnwatched)
 
             server.body = shuffleJson(current = episodeCard, next = movieCard)
             playback.refresh()
             val movie = assertNotNull(playback.nextPickAfter("ep-1"))
             assertFalse(movie.isEpisode)
+            assertFalse(movie.isUnwatched)
             assertEquals("Film", movie.title)
             assertNull(movie.seriesTitle)
             assertEquals(0, movie.seasonNumber)

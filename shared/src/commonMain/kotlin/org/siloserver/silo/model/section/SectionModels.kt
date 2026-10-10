@@ -33,6 +33,8 @@ data class SectionItem(
     @SerialName("position_seconds") val positionSeconds: Double? = null,
     @SerialName("duration_seconds") val durationSeconds: Double? = null,
     @SerialName("progress_updated_at") val progressUpdatedAt: String? = null,
+    @SerialName("poster_is_episode_still") val posterIsEpisodeStill: Boolean? = null,
+    @SerialName("backdrop_is_episode_still") val backdropIsEpisodeStill: Boolean? = null,
     @SerialName("poster_url") val posterUrl: String? = null,
     @SerialName("poster_thumbhash") val posterThumbhash: String? = null,
     @SerialName("backdrop_url") val backdropUrl: String? = null,

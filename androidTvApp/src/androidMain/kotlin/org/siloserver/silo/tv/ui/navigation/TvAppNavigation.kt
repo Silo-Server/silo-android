@@ -64,6 +64,7 @@ import org.siloserver.silo.tv.ui.screens.watchparty.rememberTvWatchPartyPlayGuar
 import org.siloserver.silo.repository.WatchTogetherRepository
 import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.common.cards.ProvideCardPresentation
+import org.siloserver.silo.common.cards.ProvideEpisodeSpoilerPrefs
 import org.siloserver.silo.common.settings.ProvideTitleArt
 import org.siloserver.silo.common.settings.TitleArtStore
 import org.siloserver.silo.common.overlays.ProvideCardOverlays
@@ -471,6 +472,7 @@ fun TvAppNavigation(
     val profileRepository: ProfileRepository = koinInject()
     val overlayPrefsStore: OverlayPrefsStore = koinInject()
     val cardPresentationStore: CardPresentationStore = koinInject()
+    val episodeSpoilerStore: org.siloserver.silo.common.settings.EpisodeSpoilerStore = koinInject()
     val seekIntervalStore: org.siloserver.silo.common.settings.SeekIntervalStore = koinInject()
     val titleArtStore: TitleArtStore = koinInject()
     val libraryPlaybackPrefsStore: LibraryPlaybackPrefsStore = koinInject()
@@ -818,6 +820,7 @@ fun TvAppNavigation(
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        episodeSpoilerStore.clear()
                         titleArtStore.clear()
                         watchNextSeeder.clear()
                     }
@@ -842,6 +845,17 @@ fun TvAppNavigation(
 
     ProvideCardOverlays(store = overlayPrefsStore, sessionKey = overlaySessionKey) {
     ProvideCardPresentation(store = cardPresentationStore, sessionKey = overlaySessionKey) {
+    ProvideEpisodeSpoilerPrefs(store = episodeSpoilerStore, sessionKey = overlaySessionKey) {
+    val launcherSpoilerState by episodeSpoilerStore.state.collectAsState()
+    LaunchedEffect(overlaySessionKey, launcherSpoilerState.support, launcherSpoilerState.prefs.hideImages) {
+        // The launcher row belongs to this TV's own profile: a phone's
+        // temporary cast identity must not reseed it with its titles.
+        if (overlaySessionKey != null && !tokenManager.hasTemporaryScope() &&
+            tokenManager.getProfileId() == overlaySessionKey &&
+            launcherSpoilerState.support != org.siloserver.silo.common.settings.EpisodeSpoilerSupport.Unknown) {
+            watchNextSeeder.updateImageProtection(launcherSpoilerState.prefs.hideImages)
+        }
+    }
     ProvideTitleArt(store = titleArtStore, sessionKey = overlaySessionKey) {
     Box(modifier = Modifier.fillMaxSize()) {
     // The first-run screens draw over one shared brand-light backdrop that
@@ -941,8 +955,9 @@ fun TvAppNavigation(
                         libraryPlaybackPrefsStore.clear()
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
-                        // Not seekIntervalStore.clear(): its identity flow already reset
-                        // it for the new server and is hydrating; clearing would drop that.
+                        // Not seekIntervalStore.clear() or episodeSpoilerStore.clear():
+                        // their identity flow already reset them for the new server
+                        // and is hydrating; clearing would drop that.
                         watchNextSeeder.clear()
                         watchNextSeeder.seedNow()
                         watchNextSeeder.enqueuePeriodic()
@@ -1017,6 +1032,9 @@ fun TvAppNavigation(
                     // re-selecting the same profile needs this.
                     scope.launch {
                         seekIntervalStore.hydrateIfNeeded()
+                        // Same for spoiler protection, which must be back on
+                        // before the new session's rows show episode stills.
+                        episodeSpoilerStore.hydrateIfNeeded()
                         titleArtStore.hydrateIfNeeded()
                     }
                 },
@@ -1132,6 +1150,7 @@ fun TvAppNavigation(
                         overlayPrefsStore.clear()
                         cardPresentationStore.clear()
                         seekIntervalStore.clear()
+                        episodeSpoilerStore.clear()
                         titleArtStore.clear()
                         // Drop our Watch Next rows + cancel the periodic refresh so
                         // the launcher doesn't keep showing the signed-out user's
@@ -1827,6 +1846,7 @@ fun TvAppNavigation(
             onDontSend = { diagnosticsViewModel.declinePrompt(prompt) },
             allowAlwaysSend = diagnosticsState.allowsAutomaticUpload,
         )
+    }
     }
     }
     }

@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.auth
 
 import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
@@ -33,6 +34,7 @@ class SignOutTeardown(
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
     private val titleArtStore: TitleArtStore,
+    private val episodeSpoilerStore: EpisodeSpoilerStore,
     private val requestsFeatureStore: RequestsFeatureStore,
     private val metadataAiFeatureStore: MetadataAiFeatureStore,
     private val serverRegistry: ServerRegistry,
@@ -65,6 +67,7 @@ class SignOutTeardown(
         cardPresentationStore.clear()
         seekIntervalStore.clear()
         titleArtStore.clear()
+        episodeSpoilerStore.clear()
         requestsFeatureStore.reset()
         metadataAiFeatureStore.reset()
     }

@@ -70,6 +70,8 @@ import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartyDetai
 import org.siloserver.silo.android.ui.screens.watchparty.rememberWatchPartySoloGuard
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.viewmodel.WatchPartyItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.downloads.DownloadEnqueuer
 import org.siloserver.silo.common.downloads.DownloadOpenTarget
@@ -838,6 +840,12 @@ fun ItemDetailScreen(
                                         fileId = selectedEpisodeVersion?.fileId
                                             ?.takeIf { episode.contentId == selectedEpisode?.contentId },
                                         libraryId = libraryId,
+                                        // The series poster stands in for the episode.
+                                        spoilers = WatchPartySpoilers(
+                                            unwatchedEpisode = EpisodeSpoilers.isUnwatched(episode.userData),
+                                            posterIsEpisodeStill = false,
+                                            backdropIsEpisodeStill = false,
+                                        ),
                                     )
                                 },
                             ),
@@ -1007,6 +1015,10 @@ fun ItemDetailScreen(
                                         posterUrl = portraitArtwork.url ?: detail.posterUrl,
                                         fileId = selectedVersion?.fileId,
                                         libraryId = libraryId,
+                                        spoilers = WatchPartySpoilers.of(detail).let { spoilers ->
+                                            // A season or series poster stands in for an episode's still.
+                                            if (portraitArtwork.url != null) spoilers.copy(posterIsEpisodeStill = false) else spoilers
+                                        },
                                     )
                                 },
                             ),

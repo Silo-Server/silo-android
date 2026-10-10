@@ -1,5 +1,8 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.model.settings.EpisodeSpoilers
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
@@ -265,7 +268,9 @@ fun TvCatalogGrid(
                 key = { _, item -> item.contentId },
                 contentType = { _, item -> item.type },
             ) { index, item ->
-                val (actions, userState) = rememberTvBrowseItemCardActions(item)
+                val (actions, userState, positionSeconds) = rememberTvBrowseItemCardActions(item)
+                val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+                val hideArtwork = EpisodeSpoilers.hidesBrowseArtwork(item, spoilerPrefs, userState.played, positionSeconds = positionSeconds)
                 val isRestoreTarget =
                     restoreItemFocusRequester != null && index == resolvedRestoreItemIndex
                 if (isRestoreTarget) {
@@ -296,6 +301,7 @@ fun TvCatalogGrid(
                     }
                 }
                 TvMediaCard(
+                    hideArtwork = hideArtwork,
                     title = item.title,
                     posterUrl = item.posterUrl,
                     posterThumbhash = item.posterThumbhash,

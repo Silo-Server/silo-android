@@ -15,13 +15,16 @@ class CatalogDetailReadV2Test {
     private fun detail(fileId: String) = """{"content_id":"m1","type":"movie","title":"Film","cast":[],"crew":[],"subtitles":[],"versions":[{"file_id":$fileId}],"user_data":{"last_file_id":"42"},"intro":{"start":1.5,"end":9.5}}"""
 
     @Test fun detailProjectsStringIdsAndCatalogMarkers() = runTest {
-        val client = client(detail("\"42\""))
+        val body = detail("\"42\"").dropLast(1) + ",\"poster_is_episode_still\":true,\"backdrop_is_episode_still\":false}"
+        val client = client(body)
         try {
             val result = assertIs<ApiResult.Success<*>>(CatalogV2Api(client, ApiV2Gate.Unrestricted).itemDetail("m1")).data as org.siloserver.silo.model.catalog.ItemDetail
             assertEquals(42, result.versions.single().fileId)
             assertEquals(42, result.userData?.lastFileId)
             assertEquals(1.5, result.intro?.start)
             assertEquals(9.5, result.intro?.end)
+            assertEquals(true, result.posterIsEpisodeStill)
+            assertEquals(false, result.backdropIsEpisodeStill)
         } finally { client.close() }
     }
 
@@ -80,7 +83,7 @@ class CatalogDetailReadV2Test {
         val client = HttpClient(MockEngine { request ->
             paths += request.url.encodedPath
             val body = when {
-                request.url.encodedPath.endsWith("/episodes") -> """{"items":[{"content_id":"e1","season_number":0,"episode_number":1,"files":[{"file_id":"2147483647"}],"user_data":{"last_file_id":"7"}}]}"""
+                request.url.encodedPath.endsWith("/episodes") -> """{"items":[{"content_id":"e1","season_number":0,"episode_number":1,"still_is_episode_still":false,"files":[{"file_id":"2147483647"}],"user_data":{"last_file_id":"7"}}]}"""
                 request.url.encodedPath.endsWith("/people/7") -> """{"id":"7","name":"Person"}"""
                 else -> {
                     assertEquals("Person", request.url.parameters["q"])
@@ -95,6 +98,7 @@ class CatalogDetailReadV2Test {
             val episodes = assertIs<ApiResult.Success<org.siloserver.silo.model.catalog.EpisodesResponse>>(api.seasonEpisodes("series", 0)).data
             assertEquals(Int.MAX_VALUE, episodes.episodes.single().files.single().fileId)
             assertEquals(7, episodes.episodes.single().userData?.lastFileId)
+            assertEquals(false, episodes.episodes.single().stillIsEpisodeStill)
             assertEquals(7L, assertIs<ApiResult.Success<org.siloserver.silo.model.catalog.Person>>(api.person(7)).data.id)
             assertEquals(Long.MAX_VALUE, assertIs<ApiResult.Success<List<org.siloserver.silo.model.catalog.Person>>>(api.people("Person")).data.single().id)
             assertEquals(listOf("/api/v2/catalog/series/series/seasons/0/episodes", "/api/v2/catalog/people/7", "/api/v2/catalog/people"), paths)

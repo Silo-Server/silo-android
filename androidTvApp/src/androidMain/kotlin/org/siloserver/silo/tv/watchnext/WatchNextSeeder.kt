@@ -45,6 +45,36 @@ class WatchNextSeeder(
     // AFTER the seed and erase the fresh rows it just inserted.
     private var clearJob: Job? = null
 
+    private val protectionPrefs = context.getSharedPreferences("silo_watch_next_protection", Context.MODE_PRIVATE)
+
+    // Bumped by every [updateImageProtection] under the prefs lock; a wipe
+    // that finishes after a newer call must not record its older setting.
+    private var protectionGeneration = 0
+
+    /** Clear exposed tiles only when known image protection changes from off to on. */
+    fun updateImageProtection(enabled: Boolean) {
+        val generation = synchronized(protectionPrefs) { ++protectionGeneration }
+        val wasEnabled = protectionPrefs.getBoolean("hide_images", false)
+        if (enabled && !wasEnabled) {
+            clear()
+            // Record the change only once the wipe has finished: a process
+            // death before then must wipe again on the next start.
+            val wipe = clearJob
+            scope.launch {
+                wipe?.join()
+                synchronized(protectionPrefs) {
+                    if (wipe?.isCancelled != true && generation == protectionGeneration) {
+                        protectionPrefs.edit().putBoolean("hide_images", true).apply()
+                    }
+                }
+            }
+        } else {
+            protectionPrefs.edit().putBoolean("hide_images", enabled).apply()
+        }
+        seedNow()
+        enqueuePeriodic()
+    }
+
     fun seedNow() {
         val pending = clearJob
         // A clear() after this call supersedes it: clear() invalidates the

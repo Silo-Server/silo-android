@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalStore
 import org.siloserver.silo.common.settings.TitleArtStore
@@ -52,7 +53,7 @@ class ProfileSwitchTeardownTest {
         assertEquals("flush", events.first())
         assertEquals("leave", events[1], "the shell is left only after the flush")
         assertEquals(
-            setOf("clear:overlays", "clear:cards", "clear:seek", "clear:titleArt"),
+            setOf("clear:overlays", "clear:cards", "clear:seek", "clear:titleArt", "clear:spoilers"),
             events.drop(2).toSet(),
         )
     }
@@ -106,6 +107,7 @@ class ProfileSwitchTeardownTest {
         cardPresentationStore = recordingClear("cards", onClear),
         seekIntervalStore = recordingClear<SeekIntervalStore>("seek", onClear),
         titleArtStore = recordingClear<TitleArtStore>("titleArt", onClear),
+        episodeSpoilerStore = recordingClear<EpisodeSpoilerStore>("spoilers", onClear),
         flushTimeoutMs = flushTimeoutMs,
     )
 

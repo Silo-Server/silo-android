@@ -528,14 +528,14 @@ val androidModule = module {
         )
     }
     single {
-        org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     single {
-        org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get())
+        org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get(), get())
     }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { SettingsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { DiagnosticsViewModel(get()) }
-    viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { DownloadsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { org.siloserver.silo.android.ui.screens.pairing.CompanionPairingViewModel(get(), get(), get()) }
     viewModel {
         val tokens = get<org.siloserver.silo.network.TokenManager>()

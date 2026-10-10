@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.components
 
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import androidx.compose.foundation.background
@@ -70,6 +71,7 @@ import org.siloserver.silo.tv.ui.util.tvArtworkAspectRatioForMediaType
 @Composable
 fun TvMediaCard(
     title: String,
+    hideArtwork: Boolean = false,
     posterUrl: String?,
     posterThumbhash: String?,
     onClick: () -> Unit,
@@ -142,7 +144,8 @@ fun TvMediaCard(
             },
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                ThumbhashImage(
+                SpoilerImage(
+                    hidden = hideArtwork,
                     url = posterUrl,
                     thumbhash = posterThumbhash,
                     contentDescription = title,

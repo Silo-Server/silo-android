@@ -32,6 +32,7 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.tv.ui.theme.ProgressFill
@@ -42,6 +43,7 @@ import org.siloserver.silo.tv.ui.theme.siloCardDefaults
 @Composable
 fun TvReferenceShelfCard(
     title: String,
+    hideArtwork: Boolean = false,
     imageUrl: String?,
     imageThumbhash: String?,
     onClick: () -> Unit,
@@ -80,7 +82,8 @@ fun TvReferenceShelfCard(
                 .fillMaxSize(),
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                ThumbhashImage(
+                SpoilerImage(
+                    hidden = hideArtwork,
                     url = imageUrl,
                     thumbhash = imageThumbhash,
                     contentDescription = title,

@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.model.shuffle.Shuffle
 import org.siloserver.silo.model.shuffle.ShuffleScope
 import org.siloserver.silo.network.ApiResult
@@ -23,6 +24,8 @@ data class ShuffleNextPick(
     val stillThumbhash: String?,
     val overview: String?,
     val runtimeMinutes: Int,
+    /** An episode the profile hasn't started, by the pick's own watch state; never a movie. */
+    val isUnwatched: Boolean,
 )
 
 /** Names what a shuffle draws from: "Movies", or "Breaking Bad · Season 2" for a season. */
@@ -52,6 +55,7 @@ internal fun SectionItem.toShuffleNextPick(): ShuffleNextPick {
         stillThumbhash = (if (episode) posterThumbhash else null) ?: backdropThumbhash,
         overview = overview,
         runtimeMinutes = runtime ?: 0,
+        isUnwatched = episode && EpisodeSpoilers.isUnwatched(this),
     )
 }
 

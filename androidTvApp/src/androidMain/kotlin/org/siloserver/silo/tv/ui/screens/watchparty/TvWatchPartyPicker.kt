@@ -76,6 +76,8 @@ import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.viewmodel.WatchPartyItem
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 
 /** One Home-style shelf of the picker. */
 private data class TvPickerShelf(
@@ -85,6 +87,10 @@ private data class TvPickerShelf(
     val showProgress: Boolean = false,
 ) {
     val items: List<SectionItem> = entries.map { (item, entry) -> item.toSectionItem(entry) }
+
+    /** The items carry the room's progress; spoiler protection uses this profile's own. */
+    val unwatchedById: Map<String, Boolean> =
+        entries.associate { (item, _) -> item.contentId to WatchPartySpoilers.of(item).unwatchedEpisode }
 }
 
 /** What the confirmation page shows, and the item it stages or suggests. */
@@ -98,6 +104,7 @@ private data class TvPickerChoice(
     val backdropThumbhash: String?,
     val overview: String?,
     val facts: List<String>,
+    val spoilers: WatchPartySpoilers = item.spoilers,
 )
 
 /**
@@ -166,6 +173,8 @@ internal fun TvWatchPartyPicker(
                         title = nextUp.title.ifBlank { "Episode ${nextUp.episodeNumber}" },
                         subtitle = "${item.title} · S${nextUp.seasonNumber}E${nextUp.episodeNumber}",
                         posterUrl = item.posterUrl,
+                        // Series artwork; the episode's own watch state isn't known here.
+                        spoilers = WatchPartySpoilers(unwatchedEpisode = true, posterIsEpisodeStill = false, backdropIsEpisodeStill = false),
                     ),
                     title = item.title,
                     subtitle = "S${nextUp.seasonNumber} · E${nextUp.episodeNumber}" +
@@ -188,6 +197,7 @@ internal fun TvWatchPartyPicker(
                         title = item.title,
                         subtitle = item.year.takeIf { it > 0 }?.toString(),
                         posterUrl = item.posterUrl,
+                        spoilers = WatchPartySpoilers.of(item),
                     ),
                     title = item.title,
                     subtitle = null,
@@ -329,6 +339,7 @@ internal fun TvWatchPartyPicker(
                         items = shelf.items,
                         onItemClick = { contentId -> open(shelf, contentId) },
                         showProgress = shelf.showProgress,
+                        unwatchedById = shelf.unwatchedById,
                         startPadding = TvSkyline.safeAreaX,
                         endPadding = TvSkyline.safeAreaX,
                         rowTopPadding = 10.dp,
@@ -398,6 +409,7 @@ private fun TvPickerConfirmation(
     onDismiss: () -> Unit,
 ) {
     val confirmFocus = remember { FocusRequester() }
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val contentId = choice.item.contentId
     val seen by produceState<MemberStateLoad>(initialValue = MemberStateLoad.Loading, contentId) {
         value = MemberStateLoad.Loading
@@ -418,6 +430,7 @@ private fun TvPickerConfirmation(
                 url = choice.backdropUrl ?: choice.posterUrl,
                 thumbhash = if (choice.backdropUrl != null) choice.backdropThumbhash else choice.posterThumbhash,
                 isPoster = choice.backdropUrl == null,
+                hidden = choice.spoilers.hidesBackdrop(spoilerPrefs, choice.backdropUrl),
             )
             Column(
                 modifier = Modifier
@@ -434,6 +447,7 @@ private fun TvPickerConfirmation(
                         contentDescription = null,
                         modifier = Modifier.size(width = 110.dp, height = 165.dp),
                         defaultArtwork = DefaultArtworkKind.forItemType(choice.item.contentType),
+                        hidden = choice.spoilers.hidesPoster(spoilerPrefs),
                     )
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         TvPartyEyebrow(if (stages) "Watch together" else "Suggest to the party")
@@ -453,7 +467,7 @@ private fun TvPickerConfirmation(
                         }
                     }
                 }
-                choice.overview?.let { overview ->
+                choice.overview?.takeUnless { choice.spoilers.hidesOverview(spoilerPrefs) }?.let { overview ->
                     Text(
                         text = overview,
                         fontSize = TvPartyMetrics.body,
@@ -580,6 +594,8 @@ private fun BrowseItem.toSectionItem(entry: PickerEntry?): SectionItem = Section
     posterThumbhash = posterThumbhash,
     backdropUrl = backdropUrl,
     backdropThumbhash = backdropThumbhash,
+    posterIsEpisodeStill = posterIsEpisodeStill,
+    backdropIsEpisodeStill = backdropIsEpisodeStill,
     userState = userState,
     overlaySummary = overlaySummary,
     positionSeconds = entry?.members?.mapNotNull { it.positionSeconds }?.maxOrNull(),

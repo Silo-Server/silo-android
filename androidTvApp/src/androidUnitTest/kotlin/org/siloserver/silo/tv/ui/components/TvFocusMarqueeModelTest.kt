@@ -1,15 +1,144 @@
 package org.siloserver.silo.tv.ui.components
 
 import java.io.File
+import org.siloserver.silo.model.catalog.MediaItemUserState
 import org.siloserver.silo.model.catalog.DisplayRating
 import org.siloserver.silo.model.catalog.OverlaySummary
+import org.siloserver.silo.model.section.ResolvedSection
 import org.siloserver.silo.model.section.SectionItem
+import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TvFocusMarqueeModelTest {
+    @Test
+    fun rowUpdatesRefreshWatchStateWithoutChangingFocusOrEnrichment() {
+        val state = TvFocusMarqueeState()
+        state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+            userState = MediaItemUserState(played = true),
+        )
+        val row = ResolvedSection("row", "next_up", "Next Up", items = listOf(episode))
+        state.preview(episode, row.title, row.id)
+        state.commit(state.candidate)
+        val enrichment = TvMarqueeEnrichment(null, "https://example.test/series.jpg", null, backdropIsEpisodeStill = false)
+        state.applyEnrichment(episode.contentId, enrichment)
+
+        val unwatched = episode.copy(userState = MediaItemUserState(played = false))
+        state.refreshSources(listOf(row.copy(items = listOf(unwatched))))
+
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(null, state.content?.heroBackdropUrl)
+        assertEquals("row#episode", state.focusedMarqueeId)
+        assertTrue(state.hasSettledRealFocus)
+        assertEquals(enrichment, state.enrichment)
+        assertEquals(enrichment.backdropUrl, state.backdropContent?.heroBackdropUrl)
+        // A detail backdrop that is, or may be, the episode's still stays hidden.
+        state.applyEnrichment(episode.contentId, enrichment.copy(backdropIsEpisodeStill = null))
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
+
+        state.refreshSources(listOf(row))
+        assertEquals("Spoiler", state.content?.synopsis)
+        assertEquals(episode.backdropUrl, state.content?.heroBackdropUrl)
+    }
+
+    @Test
+    fun aDepartingLayerFollowsAProtectionChange() {
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        val shown = TvMarqueeContent.from(episode, "Next Up", "row")
+
+        val protected = shown.underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals(null, protected.heroBackdropUrl)
+        assertEquals(null, protected.synopsis)
+        assertEquals(shown.id, protected.id)
+        assertTrue(shown.underPrefs(EpisodeSpoilerPrefs.NONE) === shown)
+        val watched = TvMarqueeContent.from(episode.copy(userState = MediaItemUserState(played = true)), "Next Up", "row")
+        assertTrue(watched.underPrefs(EpisodeSpoilerPrefs(true, true)) === watched)
+        // An unchanged layer without a description stays the same instance.
+        val noOverview = TvMarqueeContent.from(episode.copy(overview = null), "Next Up", "row", EpisodeSpoilerPrefs(true, true))
+        assertTrue(noOverview.underPrefs(EpisodeSpoilerPrefs(true, true)) === noOverview)
+    }
+
+    @Test
+    fun hidingKeepsAnExplicitSeriesBackdropFromEnrichment() {
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        val shown = TvMarqueeContent.from(episode, "Next Up", "row")
+        val series = TvMarqueeEnrichment(null, "https://example.test/series.jpg", null, backdropIsEpisodeStill = false)
+
+        val keptSeries = shown.withEnrichment(series).underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals("https://example.test/series.jpg", keptSeries.heroBackdropUrl)
+        assertEquals(null, keptSeries.synopsis)
+        val unknown = shown.withEnrichment(series.copy(backdropIsEpisodeStill = null)).underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals(null, unknown.heroBackdropUrl)
+    }
+
+    @Test
+    fun rowUpdatesKeepDisplayedAndPendingCopiesBoundToTheirOwnRows() {
+        val state = TvFocusMarqueeState()
+        state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)
+        val watched = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Displayed spoiler", userState = MediaItemUserState(played = true),
+        )
+        val displayedRow = ResolvedSection("displayed", "next_up", "Next Up", items = listOf(watched))
+        val pendingItem = watched.copy(overview = "Pending spoiler")
+        val pendingRow = displayedRow.copy(id = "pending", items = listOf(pendingItem))
+        state.preview(watched, displayedRow.title, displayedRow.id)
+        state.commit(state.candidate)
+        state.preview(pendingItem, pendingRow.title, pendingRow.id)
+
+        val unwatched = watched.copy(userState = MediaItemUserState(played = false))
+        state.refreshSources(listOf(pendingRow, displayedRow.copy(items = listOf(unwatched))))
+
+        assertEquals(unwatched, state.content?.source)
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(pendingItem, state.candidate?.source)
+        assertEquals("Pending spoiler", state.candidate?.synopsis)
+        assertEquals("pending#episode", state.focusedMarqueeId)
+
+        val displayed = state.content
+        val pending = state.candidate
+        state.refreshSources(emptyList())
+        assertEquals(displayed, state.content)
+        assertEquals(pending, state.candidate)
+    }
+
+    @Test
+    fun preferencesReprojectTheDisplayedAndPendingEpisodes() {
+        val state = TvFocusMarqueeState()
+        val episode = SectionItem(
+            contentId = "unstarted", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        state.preview(episode, "Next Up")
+        state.commit(state.candidate)
+        state.preview(episode.copy(contentId = "pending"), "Next Up")
+        val pendingBeforeHydration = state.candidate
+
+        state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)
+
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
+        assertEquals(null, state.candidate?.synopsis)
+        state.commit(pendingBeforeHydration)
+        assertEquals(null, state.content?.synopsis)
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
+
+        state.spoilerPrefs = EpisodeSpoilerPrefs.NONE
+        assertEquals("Spoiler", state.content?.synopsis)
+        assertEquals(episode.backdropUrl, state.backdropContent?.heroBackdropUrl)
+    }
+
     @Test
     fun movieHeroSeparatesEditorialMetadataFromFormatBadges() {
         val content = TvMarqueeContent.from(

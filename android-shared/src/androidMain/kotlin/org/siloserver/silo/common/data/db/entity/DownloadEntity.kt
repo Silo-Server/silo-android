@@ -93,4 +93,6 @@ data class DownloadEntity(
     val offlineSeriesPosterPath: String? = null,
     /** ThumbHash of the parent series poster (episode downloads only). */
     val seriesPosterThumbhash: String? = null,
+    val posterIsEpisodeStill: Boolean? = null,
+    val episodeUserDataJson: String? = null,
 )

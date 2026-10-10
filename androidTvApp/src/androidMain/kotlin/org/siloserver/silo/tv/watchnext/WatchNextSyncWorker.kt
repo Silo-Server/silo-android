@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import org.siloserver.silo.repository.SectionRepository
+import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
+import org.siloserver.silo.common.settings.EpisodeSpoilerSupport
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,15 +26,33 @@ class WatchNextSyncWorker(
     params: WorkerParameters,
     private val sectionRepository: SectionRepository,
     private val repository: WatchNextRepository,
+    private val spoilerStore: EpisodeSpoilerStore,
+    private val catalogRepository: CatalogRepository,
     /** Profile Selection's verdict; see [TvProfileLaunchPreferences.allowsWatchNext]. */
     private val allowsWatchNext: () -> Boolean = { true },
+    /**
+     * A phone's cast identity is active; its titles never reach this TV's
+     * launcher. Returning to this TV's profile after the cast seeds again.
+     */
+    private val hasTemporaryScope: suspend () -> Boolean = { false },
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (wipeIfHidden()) return@withContext Result.success()
         if (inputData.getBoolean(KEY_POLICY_CHECK_ONLY, false)) return@withContext Result.success()
         val stopped = { isStopped || !allowsWatchNext() }
-        val completed = syncWatchNextHome(sectionRepository, repository.writeGate, stopped) { fields, run, authority ->
+        val completed = syncWatchNextHome(
+            sectionRepository, repository.writeGate, stopped,
+            spoilerPreferences = {
+                spoilerStore.refresh()
+                spoilerStore.state.value.takeUnless { it.support == EpisodeSpoilerSupport.Unknown }?.prefs
+            },
+            preferencesCurrent = { prefs ->
+                spoilerStore.state.value.let { it.support != EpisodeSpoilerSupport.Unknown && it.prefs == prefs }
+            },
+            seriesArtwork = { id -> (catalogRepository.getItemDetail(id) as? ApiResult.Success)?.data },
+            borrowedIdentity = hasTemporaryScope,
+        ) { fields, run, authority ->
             repository.diffAndApply(fields, run, authority)
         }
         // The verdict can flip mid-run (a timed choice expiring); wipe what

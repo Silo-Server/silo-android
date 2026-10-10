@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.common.settings.CardPresentationStore
+import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.OverlayPrefsStore
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.common.settings.SeekIntervalStore
@@ -28,6 +29,7 @@ class ProfileSwitchTeardown(
     private val cardPresentationStore: CardPresentationStore,
     private val seekIntervalStore: SeekIntervalStore,
     private val titleArtStore: TitleArtStore,
+    private val episodeSpoilerStore: EpisodeSpoilerStore,
     private val flushTimeoutMs: Long = FLUSH_TIMEOUT_MS,
 ) {
     private val _switching = MutableStateFlow(false)
@@ -59,6 +61,7 @@ class ProfileSwitchTeardown(
             cardPresentationStore.clear()
             seekIntervalStore.clear()
             titleArtStore.clear()
+            episodeSpoilerStore.clear()
         } finally {
             _switching.value = false
         }

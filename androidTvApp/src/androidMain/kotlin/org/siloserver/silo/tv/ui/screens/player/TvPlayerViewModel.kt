@@ -624,6 +624,8 @@ data class NextEpisodeState(
     val overview: String? = null,
     val seriesTitle: String? = null,
     val runtimeMinutes: Int = 0,
+    /** Not started by this profile; spoiler protection may hide [overview]. */
+    val isUnwatched: Boolean = true,
     /** False for a shuffled movie, which has no season or episode line. */
     val isEpisode: Boolean = true,
 )
@@ -4459,6 +4461,7 @@ class TvPlayerViewModel(
                 overview = next.overview,
                 seriesTitle = state.seriesTitle,
                 runtimeMinutes = next.runtime,
+                isUnwatched = org.siloserver.silo.model.settings.EpisodeSpoilers.isUnwatched(next.userData),
             )
             _uiState.update {
                 if (it.contentId != forContentId) it else it.copy(nextEpisode = nextState)
@@ -4856,6 +4859,7 @@ class TvPlayerViewModel(
                 overview = pick.overview,
                 seriesTitle = pick.seriesTitle,
                 runtimeMinutes = pick.runtimeMinutes,
+                isUnwatched = pick.isUnwatched,
                 isEpisode = pick.isEpisode,
             )
         }

@@ -92,6 +92,8 @@ import org.siloserver.silo.watchtogether.watchPartyLobbyHero
 import org.siloserver.silo.watchtogether.watchPartyLobbyHint
 import org.siloserver.silo.watchtogether.watchPartyPrimaryAction
 import org.siloserver.silo.watchtogether.watchPartySecondaryAction
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 
 /** What a room screen can do. The lobby and the in-player panel each supply their own. */
 internal class TvPartyRoomActions(
@@ -184,9 +186,15 @@ internal fun TvWatchPartyRoomView(
     )
 
     // The staged film's backdrop, else its poster blurred, else (voting) the leader's poster.
-    val leaderPoster = if (voting) (winner ?: suggestions.firstOrNull())?.posterUrl?.ifBlank { null } else null
-    val backdropUrl = staged?.backdropUrl ?: staged?.posterUrl ?: leaderPoster
+    val leader = if (voting) (winner ?: suggestions.firstOrNull())?.takeIf { it.posterUrl.isNotBlank() } else null
+    val backdropUrl = staged?.backdropUrl ?: staged?.posterUrl ?: leader?.posterUrl
     val backdropIsPoster = staged?.backdropUrl == null
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val backdropHidden = if (staged != null && (staged.backdropUrl != null || staged.posterUrl != null)) {
+        staged.spoilers.hidesBackdrop(spoilerPrefs, staged.backdropUrl)
+    } else {
+        leader?.let { WatchPartySpoilers.of(it).hidesPoster(spoilerPrefs) } ?: false
+    }
 
     Box(
         modifier = modifier
@@ -206,6 +214,7 @@ internal fun TvWatchPartyRoomView(
             url = backdropUrl,
             thumbhash = if (backdropIsPoster) staged?.posterThumbhash else staged?.backdropThumbhash,
             isPoster = backdropIsPoster,
+            hidden = backdropHidden,
         )
         Column(
             modifier = Modifier
@@ -278,7 +287,9 @@ internal fun TvWatchPartyRoomView(
                                 titleSize = TvPartyMetrics.heroTitle,
                                 memberStateLine = memberStateLine,
                             )
-                            staged?.overview?.takeIf { !room.selectedContentId.isNullOrBlank() }?.let { overview ->
+                            staged?.overview?.takeIf {
+                                !room.selectedContentId.isNullOrBlank() && !staged.spoilers.hidesOverview(spoilerPrefs)
+                            }?.let { overview ->
                                 Text(
                                     text = overview,
                                     fontSize = TvPartyMetrics.overview,
@@ -716,6 +727,7 @@ private fun TvPartySuggestionCard(
                     cornerRadius = 6.dp,
                     modifier = Modifier.fillMaxSize(),
                     defaultArtwork = DefaultArtworkKind.forItemType(suggestion.contentType),
+                    hidden = WatchPartySpoilers.of(suggestion).hidesPoster(LocalEpisodeSpoilerPrefs.current),
                 )
                 if (badge != null) {
                     Box(modifier = Modifier.align(Alignment.TopStart).padding(6.dp)) { badge() }
@@ -881,6 +893,8 @@ internal fun TvWatchPartyInvitePage(
     inviteUrl: String?,
     backdropUrl: String?,
     backdropThumbhash: String?,
+    /** Spoiler protection hides the staged title's backdrop. */
+    backdropHidden: Boolean,
     onDismiss: () -> Unit,
 ) {
     val doneFocus = remember { FocusRequester() }
@@ -895,7 +909,7 @@ internal fun TvWatchPartyInvitePage(
         ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            TvPartyBackdrop(url = backdropUrl, thumbhash = backdropThumbhash)
+            TvPartyBackdrop(url = backdropUrl, thumbhash = backdropThumbhash, hidden = backdropHidden)
             Row(
                 modifier = Modifier
                     .fillMaxSize()

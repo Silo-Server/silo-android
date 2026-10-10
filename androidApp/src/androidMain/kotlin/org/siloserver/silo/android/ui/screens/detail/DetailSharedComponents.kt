@@ -83,6 +83,8 @@ import org.siloserver.silo.android.ui.theme.SiloOpaqueControlBorder
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.android.ui.theme.PillShape
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
+import org.siloserver.silo.common.ui.components.SpoilerImage
 import org.siloserver.silo.common.settings.titleLogoUrl
 import org.siloserver.silo.common.ui.RatingEntry
 import org.siloserver.silo.common.ui.WholeTokenRow
@@ -94,6 +96,7 @@ import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.titleRatings
 import org.siloserver.silo.model.catalog.Season
 import org.siloserver.silo.model.catalog.isSpecialsForDisplay
+import org.siloserver.silo.model.settings.EpisodeSpoilers
 
 // ── Tokens ────────────────────────────────────────────────────
 
@@ -235,6 +238,7 @@ private fun ExpandedDetailHero(
         ExpandedDetailHeroBackdrop(
             artworkUrl = detail.backdropUrl,
             artworkThumbhash = detail.backdropThumbhash,
+            hidden = detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
             pageSurface = pageSurface,
         ) {
             Row(
@@ -359,12 +363,14 @@ internal fun ExpandedDetailHeroBackdrop(
     artworkUrl: String?,
     artworkThumbhash: String?,
     pageSurface: Color,
+    hidden: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
-        ThumbhashImage(
+        SpoilerImage(
             url = artworkUrl,
             thumbhash = artworkThumbhash,
+            hidden = hidden,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
@@ -529,6 +535,9 @@ fun DetailHero(
         DetailHeroArtwork(
             artworkUrl = detail.backdropUrl ?: detail.posterUrl,
             artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
+            hidden = detail.hidesEpisodeArtwork(
+                if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
+            ),
             contentDescription = detail.title,
         ) {
             HeroTitle(detail = detail)
@@ -580,6 +589,7 @@ internal fun DetailHeroArtwork(
     artworkUrl: String?,
     artworkThumbhash: String?,
     contentDescription: String? = null,
+    hidden: Boolean = false,
     title: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
@@ -626,9 +636,10 @@ internal fun DetailHeroArtwork(
                         )
                     },
             ) {
-                ThumbhashImage(
+                SpoilerImage(
                     url = artworkUrl,
                     thumbhash = artworkThumbhash,
+                    hidden = hidden,
                     contentDescription = contentDescription,
                     contentScale = ContentScale.Crop,
                     crossfadeMillis = DetailArtworkCrossfadeMs,
@@ -780,6 +791,12 @@ private fun Backdrop(
         }
     }
 }
+
+/** Whether spoiler protection hides artwork of this episode with the given provenance. */
+@Composable
+private fun ItemDetail.hidesEpisodeArtwork(artworkIsEpisodeStill: Boolean?): Boolean =
+    type.equals("episode", ignoreCase = true) &&
+        LocalEpisodeSpoilerPrefs.current.hidesImage(EpisodeSpoilers.isUnwatched(userData), artworkIsEpisodeStill)
 
 @Composable
 private fun HeroTitle(detail: ItemDetail) {

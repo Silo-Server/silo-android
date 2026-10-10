@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.tv.material3.MaterialTheme
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.section.SectionItem
 
@@ -52,6 +53,7 @@ fun TvRootHeroBackdrop(
     emptyWashColor: Color? = null,
     animateTransition: Boolean = true,
 ) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
 
@@ -144,10 +146,19 @@ fun TvRootHeroBackdrop(
                 ),
                 label = "tvRootHeroBackdropArt",
             ) { value ->
-                if (value?.heroBackdropUrl != null) {
+                val art = when {
+                    value == null -> null
+                    // Protection turning on for the item still shown hides
+                    // its still at once instead of fading the sharp one out.
+                    content != null && value.id == content.id ->
+                        if (content.hidesStills && !value.hidesStills) content else value
+                    // A departing item follows the current preferences too.
+                    else -> value.underPrefs(spoilerPrefs)
+                }
+                if (art?.heroBackdropUrl != null) {
                     CornerAnchoredArt(
-                        url = value.heroBackdropUrl,
-                        thumbhash = value.heroBackdropThumbhash,
+                        url = art.heroBackdropUrl,
+                        thumbhash = art.heroBackdropThumbhash,
                     )
                 } else {
                     Box(modifier = Modifier.fillMaxSize())
@@ -245,8 +256,10 @@ fun TvRootHeroBackdrop(
     item: SectionItem?,
     modifier: Modifier = Modifier,
 ) {
-    val content = remember(item?.contentId) {
-        item?.let { TvMarqueeContent.from(it, rowTitle = "") }
+    val spoilers = LocalEpisodeSpoilerPrefs.current
+    // Keyed on the whole item: a watch-state change re-decides spoiler hiding.
+    val content = remember(item, spoilers) {
+        item?.let { TvMarqueeContent.from(it, rowTitle = "", spoilers = spoilers) }
     }
     TvRootHeroBackdrop(content = content, modifier = modifier)
 }

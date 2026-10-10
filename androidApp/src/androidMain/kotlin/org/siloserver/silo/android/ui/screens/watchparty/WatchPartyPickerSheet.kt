@@ -73,6 +73,7 @@ import org.siloserver.silo.android.ui.components.MediaCard
 import org.siloserver.silo.android.ui.navigation.LocalHeroSourceHandoff
 import org.siloserver.silo.android.ui.navigation.LocalSharedTransitionScope
 import org.siloserver.silo.android.ui.theme.SiloOnSurface
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.android.ui.theme.SiloPageBackground
 import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.model.catalog.BrowseItem
@@ -86,6 +87,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.viewmodel.WatchPartyItem
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.viewmodel.WatchPartyPickerViewModel
 
 /** What choosing a title in the picker does. */
@@ -194,6 +196,7 @@ private data class WatchPartyChoice(
     /** The series to browse from here, for an episode. */
     val seriesId: String?,
     val lobbyItem: WatchPartyItem,
+    val spoilers: WatchPartySpoilers = lobbyItem.spoilers,
 ) {
     companion object {
         fun title(item: SectionItem) = WatchPartyChoice(
@@ -218,6 +221,7 @@ private data class WatchPartyChoice(
                 title = item.title,
                 subtitle = item.year.takeIf { it > 0 }?.toString(),
                 posterUrl = item.posterUrl,
+                spoilers = WatchPartySpoilers.of(item),
             ),
         )
 
@@ -248,6 +252,7 @@ private data class WatchPartyChoice(
                         series
                     },
                     posterUrl = item.posterUrl,
+                    spoilers = WatchPartySpoilers.of(item),
                 ),
             )
         }
@@ -273,6 +278,8 @@ private data class WatchPartyChoice(
                     title = episodeTitle,
                     subtitle = "${series.title} · S${next.seasonNumber}:E${next.episodeNumber}",
                     posterUrl = series.posterUrl,
+                    // Series artwork; the episode's own watch state isn't known here.
+                    spoilers = WatchPartySpoilers(unwatchedEpisode = true, posterIsEpisodeStill = false, backdropIsEpisodeStill = false),
                 ),
             )
         }
@@ -292,6 +299,9 @@ private fun BrowseItem.toSectionItem() = SectionItem(
     posterThumbhash = posterThumbhash,
     backdropUrl = backdropUrl,
     backdropThumbhash = backdropThumbhash,
+    posterIsEpisodeStill = posterIsEpisodeStill,
+    backdropIsEpisodeStill = backdropIsEpisodeStill,
+    positionSeconds = positionSeconds,
     userState = userState,
     overlaySummary = overlaySummary,
 )
@@ -516,6 +526,7 @@ private fun PickerSearchField(query: String, onQuery: (String) -> Unit, modifier
 
 @Composable
 private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // Home's row heading: 20sp, with the resume row's play glyph.
         Row(
@@ -550,6 +561,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
                         },
                         userState = item.userState,
                         onClick = { onOpen(item) },
+                        hideArtwork = WatchPartySpoilers.of(item).hidesBackdrop(spoilerPrefs, item.backdropUrl),
                     )
                 } else {
                     MediaCard(
@@ -562,6 +574,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
                         userState = item.userState,
                         progress = shelf.progress[item.contentId],
                         onClick = { onOpen(item) },
+                        hideArtwork = WatchPartySpoilers.of(item).hidesPoster(spoilerPrefs),
                     )
                 }
             }
@@ -571,6 +584,7 @@ private fun PickerShelfRow(shelf: PickerShelf, onOpen: (SectionItem) -> Unit) {
 
 @Composable
 private fun PickerSearchResults(state: WatchPartyPickerViewModel.PickerState, onOpen: (SectionItem) -> Unit) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     when {
         state.results.isNotEmpty() -> LazyVerticalGrid(
             columns = GridCells.Fixed(3),
@@ -589,6 +603,7 @@ private fun PickerSearchResults(state: WatchPartyPickerViewModel.PickerState, on
                     type = item.type,
                     userState = item.userState,
                     onClick = { onOpen(item) },
+                    hideArtwork = WatchPartySpoilers.of(item).hidesPoster(spoilerPrefs),
                     modifier = Modifier.fillMaxWidth(),
                     width = androidx.compose.ui.unit.Dp.Unspecified,
                 )
@@ -631,11 +646,13 @@ private fun PickerChoicePage(
         history = memberState(choice.contentId)
         loadingHistory = false
     }
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     Box(Modifier.fillMaxSize()) {
         WatchPartyBackdrop(
             url = choice.backdropUrl ?: choice.posterUrl,
             thumbhash = if (choice.backdropUrl != null) choice.backdropThumbhash else choice.posterThumbhash,
             isPoster = choice.backdropUrl == null,
+            hidden = choice.spoilers.hidesBackdrop(spoilerPrefs, choice.backdropUrl),
         )
         Column(
             Modifier
@@ -662,7 +679,7 @@ private fun PickerChoicePage(
                     .padding(top = 150.dp, bottom = WatchPartyMetrics.pageInset),
             ) {
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(WatchPartyMetrics.BODY.dp)) {
-                    WatchPartyHeroPoster(choice.posterUrl, choice.posterThumbhash, 120.dp)
+                    WatchPartyHeroPoster(choice.posterUrl, choice.posterThumbhash, 120.dp, choice.spoilers.hidesPoster(spoilerPrefs))
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         WatchPartyEyebrow(mode.eyebrow)
                         WatchPartyHeroTitle(choice.title, size = WatchPartyMetrics.HERO_TITLE * 0.9f)
@@ -672,7 +689,7 @@ private fun PickerChoicePage(
                         }
                     }
                 }
-                choice.overview?.takeIf { it.isNotBlank() }?.let {
+                choice.overview?.takeIf { it.isNotBlank() && !choice.spoilers.hidesOverview(spoilerPrefs) }?.let {
                     Text(it, fontSize = WatchPartyMetrics.BODY.sp, color = SiloSecondaryText, maxLines = 6)
                 }
                 WatchPartyButton(

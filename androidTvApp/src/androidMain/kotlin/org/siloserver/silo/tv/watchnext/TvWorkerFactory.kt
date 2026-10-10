@@ -15,6 +15,7 @@ import org.siloserver.silo.common.diagnostics.PendingReportStore
 import org.siloserver.silo.repository.SectionRepository
 import org.siloserver.silo.tv.data.preferences.TvProfileLaunchPreferences
 import org.koin.core.context.GlobalContext
+import org.siloserver.silo.network.TokenManager
 
 /**
  * Hand-rolled WorkerFactory that constructs DI-dependent workers via Koin.
@@ -48,7 +49,10 @@ class TvWorkerFactory : WorkerFactory() {
                     params = workerParameters,
                     sectionRepository = koin.get<SectionRepository>(),
                     repository = koin.get<WatchNextRepository>(),
+                    spoilerStore = koin.get(),
+                    catalogRepository = koin.get(),
                     allowsWatchNext = koin.get<TvProfileLaunchPreferences>()::allowsWatchNext,
+                    hasTemporaryScope = koin.get<TokenManager>()::hasTemporaryScope,
                 )
             }
             SyncWorker::class.java.name -> {

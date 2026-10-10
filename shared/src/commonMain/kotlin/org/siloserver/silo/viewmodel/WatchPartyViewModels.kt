@@ -63,6 +63,8 @@ data class WatchPartyItem(
     val posterUrl: String? = null,
     val fileId: Int? = null,
     val libraryId: Int? = null,
+    /** How spoiler protection treats the title until its detail loads. */
+    val spoilers: WatchPartySpoilers = WatchPartySpoilers.forType(contentType),
 )
 
 /**

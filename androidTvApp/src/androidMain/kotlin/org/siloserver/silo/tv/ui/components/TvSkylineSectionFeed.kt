@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -196,6 +197,7 @@ fun TvSkylineSectionFeed(
         }
     }
     val marquee = rememberTvFocusMarqueeState(fetchDetail = fetchDetail)
+    SideEffect { marquee.refreshSources(rows) }
     val initialMarqueeSeed = remember(rows) {
         rows.firstOrNull()?.let { section ->
             section.items.firstOrNull()?.let { item ->
