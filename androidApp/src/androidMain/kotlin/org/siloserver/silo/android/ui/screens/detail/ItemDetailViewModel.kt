@@ -1141,17 +1141,17 @@ class ItemDetailViewModel(
 
     fun toggleWatched() {
         val currentDetail = _uiState.value.detail ?: return
-        val current = currentDetail.userData?.played == true
-        val target = !current
+        val previous = currentDetail.userData
+        val target = previous?.played != true
         val generation = ++watchedMutationGeneration
-        updatePlayedState(target)
+        updateOwnUserData { it.withPlayed(target) }
         val writeIntent = personalDataRepository.beginWatched(contentId, target)
         viewModelScope.launch {
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
             if (!personalDataRepository.isCurrent(writeIntent)) return@launch
             when (writeResult) {
                 is ApiResult.Success -> { /* already updated */ }
-                else -> if (generation == watchedMutationGeneration) updatePlayedState(current)
+                else -> if (generation == watchedMutationGeneration) updateOwnUserData { previous }
             }
         }
     }
@@ -1159,18 +1159,16 @@ class ItemDetailViewModel(
     /** Marks one episode from the in-page rail without navigating away. */
     fun setEpisodeWatched(episodeContentId: String, watched: Boolean) {
         val state = _uiState.value
-        val previous = state.episodes.firstOrNull { it.contentId == episodeContentId }
-            ?.userData?.played
+        val previous = (state.episodes.firstOrNull { it.contentId == episodeContentId }
             ?: state.episodesBySeason.values.asSequence()
                 .flatten()
-                .firstOrNull { it.contentId == episodeContentId }
-                ?.userData?.played
-            ?: false
-        if (previous == watched) return
+                .firstOrNull { it.contentId == episodeContentId })
+            ?.userData
+        if ((previous?.played ?: false) == watched) return
 
         val generation = (episodeWatchedMutationGenerations[episodeContentId] ?: 0) + 1
         episodeWatchedMutationGenerations[episodeContentId] = generation
-        updateEpisodePlayedState(episodeContentId, watched)
+        updateEpisodeUserData(episodeContentId) { it.withPlayed(watched) }
         val writeIntent = personalDataRepository.beginWatched(episodeContentId, watched)
         viewModelScope.launch {
             val writeResult = personalDataRepository.performPersonalWrite(writeIntent)
@@ -1178,28 +1176,31 @@ class ItemDetailViewModel(
             when (writeResult) {
                 is ApiResult.Success -> Unit
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
-                    updateEpisodePlayedState(episodeContentId, previous)
+                    updateEpisodeUserData(episodeContentId) { previous }
                 }
             }
         }
     }
 
-    private fun updateEpisodePlayedState(episodeContentId: String, played: Boolean) {
+    /**
+     * Watched and unwatched both reset resume progress, as the server does, so
+     * spoiler protection sees the reset episode as not started.
+     */
+    private fun LeafItemUserData?.withPlayed(played: Boolean): LeafItemUserData =
+        (this ?: LeafItemUserData()).copy(played = played, isInProgress = false, positionSeconds = null)
+
+    private fun updateEpisodeUserData(episodeContentId: String, transform: (LeafItemUserData?) -> LeafItemUserData?) {
         fun EpisodeListItem.updated(): EpisodeListItem =
-            if (contentId != episodeContentId) this else copy(
-                userData = (userData ?: LeafItemUserData()).copy(played = played),
-            )
+            if (contentId != episodeContentId) this else copy(userData = transform(userData))
 
         _uiState.update { state ->
             val selectedDetail = state.selectedEpisodeDetail?.let { episodeDetail ->
-                if (episodeDetail.contentId != episodeContentId) episodeDetail else episodeDetail.copy(
-                    userData = (episodeDetail.userData ?: LeafItemUserData()).copy(played = played),
-                )
+                if (episodeDetail.contentId != episodeContentId) episodeDetail
+                else episodeDetail.copy(userData = transform(episodeDetail.userData))
             }
             val ownDetail = state.detail?.let { itemDetail ->
-                if (itemDetail.contentId != episodeContentId) itemDetail else itemDetail.copy(
-                    userData = (itemDetail.userData ?: LeafItemUserData()).copy(played = played),
-                )
+                if (itemDetail.contentId != episodeContentId) itemDetail
+                else itemDetail.copy(userData = transform(itemDetail.userData))
             }
             state.copy(
                 detail = ownDetail,
@@ -1212,11 +1213,10 @@ class ItemDetailViewModel(
         }
     }
 
-    private fun updatePlayedState(played: Boolean) {
+    private fun updateOwnUserData(transform: (LeafItemUserData?) -> LeafItemUserData?) {
         _uiState.update { state ->
             val detail = state.detail ?: return@update state
-            val userData = detail.userData ?: LeafItemUserData()
-            state.copy(detail = detail.copy(userData = userData.copy(played = played)))
+            state.copy(detail = detail.copy(userData = transform(detail.userData)))
         }
     }
 }
