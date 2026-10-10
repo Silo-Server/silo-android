@@ -85,6 +85,17 @@ class WatchNextHomeSyncTest {
         assertEquals(0, applies)
     }
 
+    @Test fun aCastIdentityInstalledMidRunNeverWritesTheLauncher() = runTest {
+        scenario { repo ->
+            var borrowed = false
+            hook = { borrowed = true }
+            assertTrue(syncWatchNextHome(repo, gate, { false }, borrowedIdentity = { borrowed }) { _, run, authority ->
+                gate.write(run, authority) { applies++ }
+            })
+            assertEquals(0, applies)
+        }
+    }
+
     @Test fun unknownPreferencesRetryWithoutPublishingAndChangedPreferencesFenceWrites() = runTest {
         scenario { repo ->
             assertFalse(syncWatchNextHome(repo, gate, { false }, spoilerPreferences = { null }) { _, _, _ -> applies++ })

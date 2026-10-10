@@ -87,6 +87,10 @@ private data class TvPickerShelf(
     val showProgress: Boolean = false,
 ) {
     val items: List<SectionItem> = entries.map { (item, entry) -> item.toSectionItem(entry) }
+
+    /** The items carry the room's progress; spoiler protection uses this profile's own. */
+    val unwatchedById: Map<String, Boolean> =
+        entries.associate { (item, _) -> item.contentId to WatchPartySpoilers.of(item).unwatchedEpisode }
 }
 
 /** What the confirmation page shows, and the item it stages or suggests. */
@@ -335,6 +339,7 @@ internal fun TvWatchPartyPicker(
                         items = shelf.items,
                         onItemClick = { contentId -> open(shelf, contentId) },
                         showProgress = shelf.showProgress,
+                        unwatchedById = shelf.unwatchedById,
                         startPadding = TvSkyline.safeAreaX,
                         endPadding = TvSkyline.safeAreaX,
                         rowTopPadding = 10.dp,

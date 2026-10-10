@@ -30,15 +30,16 @@ class WatchNextSyncWorker(
     private val catalogRepository: CatalogRepository,
     /** Profile Selection's verdict; see [TvProfileLaunchPreferences.allowsWatchNext]. */
     private val allowsWatchNext: () -> Boolean = { true },
-    /** A phone's cast identity is active; its titles never reach this TV's launcher. */
+    /**
+     * A phone's cast identity is active; its titles never reach this TV's
+     * launcher. Returning to this TV's profile after the cast seeds again.
+     */
     private val hasTemporaryScope: suspend () -> Boolean = { false },
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         if (wipeIfHidden()) return@withContext Result.success()
         if (inputData.getBoolean(KEY_POLICY_CHECK_ONLY, false)) return@withContext Result.success()
-        // Returning to this TV's profile after the cast seeds again.
-        if (hasTemporaryScope()) return@withContext Result.success()
         val stopped = { isStopped || !allowsWatchNext() }
         val completed = syncWatchNextHome(
             sectionRepository, repository.writeGate, stopped,
@@ -50,6 +51,7 @@ class WatchNextSyncWorker(
                 spoilerStore.state.value.let { it.support != EpisodeSpoilerSupport.Unknown && it.prefs == prefs }
             },
             seriesArtwork = { id -> (catalogRepository.getItemDetail(id) as? ApiResult.Success)?.data },
+            borrowedIdentity = hasTemporaryScope,
         ) { fields, run, authority ->
             repository.diffAndApply(fields, run, authority)
         }

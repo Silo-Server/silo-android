@@ -20,13 +20,16 @@ internal suspend fun syncWatchNextHome(
     spoilerPreferences: suspend () -> EpisodeSpoilerPrefs? = { EpisodeSpoilerPrefs.NONE },
     preferencesCurrent: (EpisodeSpoilerPrefs) -> Boolean = { true },
     seriesArtwork: suspend (String) -> ItemDetail? = { null },
+    /** A phone's cast identity is the current scope; the launcher row is never its to write. */
+    borrowedIdentity: suspend () -> Boolean = { false },
     apply: suspend (List<WatchNextProgramFields>, Long, suspend () -> Boolean) -> Unit,
 ): Boolean {
     val run = gate.capture()
+    if (borrowedIdentity()) return true
     val owner = sections.captureHomeAuthority() ?: return true
     var prefs: EpisodeSpoilerPrefs? = null
     suspend fun authority(): Boolean {
-        val valid = sections.isHomeAuthorityCurrent(owner)
+        val valid = sections.isHomeAuthorityCurrent(owner) && !borrowedIdentity()
         currentCoroutineContext().ensureActive()
         return valid && !stopped() && (prefs?.let(preferencesCurrent) ?: true)
     }

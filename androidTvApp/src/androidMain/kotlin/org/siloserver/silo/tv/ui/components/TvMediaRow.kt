@@ -79,6 +79,12 @@ fun TvMediaRow(
     icon: ImageVector? = null,
     onSeeAllClick: (() -> Unit)? = null,
     showProgress: Boolean = false,
+    /**
+     * This profile's own unwatched state per content id, when [items] carry
+     * someone else's progress (a party picker's group progress). Spoiler
+     * protection uses it instead of the items' position.
+     */
+    unwatchedById: Map<String, Boolean>? = null,
     style: TvRowStyle = TvRowStyle.Poster,
     cardLayout: TvRowCardLayout = TvRowCardLayout.Default,
     horizontalPadding: androidx.compose.ui.unit.Dp = Spacing.safeArea,
@@ -140,7 +146,7 @@ fun TvMediaRow(
     if (items.isEmpty()) return
     val rowState = rememberLazyListState()
     val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
-    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs) {
+    val rowItems = remember(items, showProgress, style, cardLayout, spoilerPrefs, unwatchedById) {
         // Deduplicate before keying. A repeated contentId inside one row makes
         // the lazy list throw ("Key ... was already used"), which is fatal —
         // and a row has no reason to show the same title twice anyway. Feeds
@@ -158,8 +164,10 @@ fun TvMediaRow(
                 overlay = OverlayDataExtractor.fromSectionItem(item),
                 contentType = "${cardLayout.name}:${style.name}:${item.type}",
                 // Protect the selected still while preserving series fallback art.
-                hidesArtwork = item.type.equals("episode", ignoreCase = true) &&
-                    spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(item), EpisodeSpoilers.selectedImageIsStill(item)),
+                hidesArtwork = item.type.equals("episode", ignoreCase = true) && spoilerPrefs.hidesImage(
+                    unwatchedById?.get(item.contentId) ?: EpisodeSpoilers.isUnwatched(item),
+                    EpisodeSpoilers.selectedImageIsStill(item),
+                ),
             )
         }
     }
