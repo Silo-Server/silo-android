@@ -166,6 +166,8 @@ class TvSettingsViewModel(
         // Spoiler protection for unwatched episodes, mirrored
         // from EpisodeSpoilerStore. The group is hidden unless supported.
         val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
+        /** Why the last spoiler switch change wasn't saved. */
+        val episodeSpoilerSaveError: String? = null,
         val navAction: NavAction? = null,
     )
 
@@ -471,6 +473,9 @@ class TvSettingsViewModel(
         val store = episodeSpoilerStore ?: return
         viewModelScope.launch {
             store.state.collect { spoilers -> _uiState.update { it.copy(episodeSpoilers = spoilers) } }
+        }
+        viewModelScope.launch {
+            store.saveError.collect { error -> _uiState.update { it.copy(episodeSpoilerSaveError = error) } }
         }
         viewModelScope.launch { store.refresh() }
     }

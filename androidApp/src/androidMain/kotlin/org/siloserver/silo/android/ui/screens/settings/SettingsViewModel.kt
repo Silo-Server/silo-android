@@ -147,6 +147,8 @@ data class SettingsUiState(
     val cardPresentation: CardPresentationUiState = CardPresentationUiState(),
     /** Spoiler protection for unwatched episodes; toggles show only when supported. */
     val episodeSpoilers: EpisodeSpoilerState = EpisodeSpoilerState(),
+    /** Why the last spoiler switch change wasn't saved. */
+    val episodeSpoilerSaveError: String? = null,
 
     // Notifications (in-app). Section is hidden entirely unless the server
     // reports in-app notifications are enabled AND preferences load.
@@ -485,6 +487,9 @@ class SettingsViewModel(
     private fun observeEpisodeSpoilers() {
         episodeSpoilerStore.state.onEach { state ->
             _uiState.update { it.copy(episodeSpoilers = state) }
+        }.launchIn(viewModelScope)
+        episodeSpoilerStore.saveError.onEach { error ->
+            _uiState.update { it.copy(episodeSpoilerSaveError = error) }
         }.launchIn(viewModelScope)
         // Opening Settings is a refresh edge, so a change made on another
         // device shows here without waiting for the next foreground.

@@ -133,6 +133,12 @@ class EpisodeSpoilerStoreTest {
 
         assertFalse(store.state.value.hideImages)
         assertTrue(store.lastError.value != null)
+        assertEquals("Couldn't save spoiler settings: Server error", store.saveError.value)
+
+        api.failPuts = false
+        store.set(EpisodeSpoilerSetting.Images, true)
+        runCurrent()
+        assertEquals(null, store.saveError.value)
     }
 
     @Test
@@ -344,7 +350,7 @@ private class FakeSpoilerSettingsApi(
     revision: Int = 17,
     var capabilities: ApiResult<SettingsContractCapabilities> = capabilitiesAt(revision),
     private var values: Map<String, JsonElement> = emptyMap(),
-    private val failPuts: Boolean = false,
+    var failPuts: Boolean = false,
     private val effectiveError: ApiResult.Error? = null,
 ) : SettingsApi(
     org.siloserver.silo.network.apiv2.SettingsV2Api(

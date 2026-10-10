@@ -848,7 +848,10 @@ fun TvAppNavigation(
     ProvideEpisodeSpoilerPrefs(store = episodeSpoilerStore, sessionKey = overlaySessionKey) {
     val launcherSpoilerState by episodeSpoilerStore.state.collectAsState()
     LaunchedEffect(overlaySessionKey, launcherSpoilerState.support, launcherSpoilerState.prefs.hideImages) {
-        if (overlaySessionKey != null && tokenManager.getProfileId() == overlaySessionKey &&
+        // The launcher row belongs to this TV's own profile: a phone's
+        // temporary cast identity must not reseed it with its titles.
+        if (overlaySessionKey != null && !tokenManager.hasTemporaryScope() &&
+            tokenManager.getProfileId() == overlaySessionKey &&
             launcherSpoilerState.support != org.siloserver.silo.common.settings.EpisodeSpoilerSupport.Unknown) {
             watchNextSeeder.updateImageProtection(launcherSpoilerState.prefs.hideImages)
         }

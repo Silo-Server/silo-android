@@ -145,10 +145,19 @@ fun TvRootHeroBackdrop(
                 ),
                 label = "tvRootHeroBackdropArt",
             ) { value ->
-                if (value?.heroBackdropUrl != null) {
+                // Protection turning on for the item still shown hides its
+                // still at once instead of fading the sharp one out.
+                val art = if (value != null && content != null && value.id == content.id &&
+                    content.hidesStills && !value.hidesStills
+                ) {
+                    content
+                } else {
+                    value
+                }
+                if (art?.heroBackdropUrl != null) {
                     CornerAnchoredArt(
-                        url = value.heroBackdropUrl,
-                        thumbhash = value.heroBackdropThumbhash,
+                        url = art.heroBackdropUrl,
+                        thumbhash = art.heroBackdropThumbhash,
                     )
                 } else {
                     Box(modifier = Modifier.fillMaxSize())

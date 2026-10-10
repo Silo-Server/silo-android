@@ -15,6 +15,7 @@ fun EpisodeSpoilerSettings(
     onHideImagesChanged: (Boolean) -> Unit,
     onHideOverviewsChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    saveError: String? = null,
 ) {
     SettingsSection(title = "Spoilers", modifier = modifier) {
         SettingsSwitchRow(
@@ -32,5 +33,6 @@ fun EpisodeSpoilerSettings(
         SettingsProse(
             body = "Applies to episodes you have not started, on every device that uses this profile.",
         )
+        saveError?.let { SettingsProse(body = it) }
     }
 }

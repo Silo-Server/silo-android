@@ -175,6 +175,7 @@ fun SettingsPlaybackScreen(viewModel: SettingsViewModel, onBackClick: () -> Unit
                     hideOverviews = state.episodeSpoilers.hideOverviews,
                     onHideImagesChanged = viewModel::setHideUnwatchedEpisodeImages,
                     onHideOverviewsChanged = viewModel::setHideUnwatchedEpisodeOverviews,
+                    saveError = state.episodeSpoilerSaveError,
                 )
             }
         }

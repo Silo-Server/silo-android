@@ -101,8 +101,11 @@ fun TvFocusMarquee(
                     contentAlignment = Alignment.BottomStart,
                 ) {
                     if (value != null) {
+                        // A layer for the item still shown takes its current
+                        // copy at once, so a synopsis protection now hides
+                        // doesn't fade out.
                         TvMarqueeBlock(
-                            content = value,
+                            content = if (content != null && value.id == content.id) content else value,
                             detailLine = detailLine.takeIf { value.id == content?.id },
                             footer = footer,
                         )

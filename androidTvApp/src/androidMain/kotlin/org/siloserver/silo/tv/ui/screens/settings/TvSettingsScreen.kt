@@ -1394,6 +1394,7 @@ private fun TvPlaybackSettingsPane(
                         text = "Applies to episodes you have not started, on every device " +
                             "that uses this profile.",
                     )
+                    state.episodeSpoilerSaveError?.let { SettingsFooterText(text = it) }
                 }
             }
         }

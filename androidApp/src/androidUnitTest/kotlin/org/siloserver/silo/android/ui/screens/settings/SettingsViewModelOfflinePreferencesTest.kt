@@ -185,6 +185,7 @@ class SettingsViewModelOfflinePreferencesTest {
             )),
             episodeSpoilerStore = idleStore(mapOf(
                 "getState" to MutableStateFlow(org.siloserver.silo.common.settings.EpisodeSpoilerState()),
+                "getSaveError" to MutableStateFlow<String?>(null),
             )),
             signOutTeardown = SignOutTeardown(
                 authRepository = authRepository,

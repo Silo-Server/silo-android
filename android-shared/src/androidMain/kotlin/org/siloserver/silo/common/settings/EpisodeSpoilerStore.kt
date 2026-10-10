@@ -89,6 +89,9 @@ interface EpisodeSpoilerStore {
     val state: StateFlow<EpisodeSpoilerState>
     val lastError: StateFlow<String?>
 
+    /** Why the last switch change wasn't saved, for Settings; cleared by the next save. */
+    val saveError: StateFlow<String?>
+
     /** Idempotent first load. Safe to call from every provider mount. */
     suspend fun hydrateIfNeeded()
 
@@ -140,6 +143,8 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val _lastError = MutableStateFlow<String?>(null)
     override val state: StateFlow<EpisodeSpoilerState> = _state.asStateFlow()
     override val lastError: StateFlow<String?> = _lastError.asStateFlow()
+    private val _saveError = MutableStateFlow<String?>(null)
+    override val saveError: StateFlow<String?> = _saveError.asStateFlow()
 
     private val lock = Any()
 
@@ -321,6 +326,7 @@ class DefaultEpisodeSpoilerStore private constructor(
                     _state.value = _state.value.with(setting, shown)
                 }
                 _lastError.value = error
+                _saveError.value = error?.let(::saveErrorText)
                 confirmed
             }
             if (error == null) synchronized(lock) {
@@ -339,6 +345,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         hasHydrated = false
         stateIdentity = null
         stateAuthority = null
+        _saveError.value = null
         _state.value = EpisodeSpoilerState()
         confirmed = EpisodeSpoilerState()
         latestRequest.clear()
@@ -353,6 +360,9 @@ class DefaultEpisodeSpoilerStore private constructor(
     internal companion object {
         const val PREFS_NAME = "silo_episode_spoilers"
         const val SAVE_FAILED_MESSAGE = "Could not save the setting."
+
+        /** Same wording as the title art and skip-interval save errors. */
+        fun saveErrorText(message: String): String = "Couldn't save spoiler settings: $message"
 
         /** Only a JSON boolean `true` turns a switch on; anything else is off. */
         fun decode(effective: Map<String, EffectiveSettingValue>, setting: EpisodeSpoilerSetting): Boolean =
