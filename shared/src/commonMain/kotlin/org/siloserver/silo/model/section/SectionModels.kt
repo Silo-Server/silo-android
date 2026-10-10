@@ -38,7 +38,11 @@ data class SectionItem(
     @SerialName("backdrop_url") val backdropUrl: String? = null,
     @SerialName("backdrop_thumbhash") val backdropThumbhash: String? = null,
     @SerialName("logo_url") val logoUrl: String? = null,
-    @SerialName("user_state") val userState: MediaItemUserState? = null
+    @SerialName("user_state") val userState: MediaItemUserState? = null,
+    /** This profile's metadata language while the card's description is not available in it yet. */
+    @SerialName("pending_translation_language") val pendingTranslationLanguage: String? = null,
+    /** Localized fields ("overview", "tagline") whose text was machine-translated by AI. */
+    @SerialName("machine_translated_fields") val machineTranslatedFields: List<String> = emptyList(),
 )
 
 @Serializable

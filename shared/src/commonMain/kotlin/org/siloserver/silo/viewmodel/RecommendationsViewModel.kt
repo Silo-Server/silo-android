@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 data class RecommendationsUiState(
@@ -27,6 +28,7 @@ data class RecommendationsUiState(
 
 class RecommendationsViewModel(
     private val recommendationRepository: RecommendationRepository,
+    catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(RecommendationsUiState())
@@ -35,7 +37,13 @@ class RecommendationsViewModel(
     private var loadGeneration = 0L
     private var loadJob: kotlinx.coroutines.Job? = null
 
-    init { loadRecommendations() }
+    init {
+        loadRecommendations()
+        catalogLanguage?.let { language ->
+            // Re-read the localized cards after a metadata-language change.
+            viewModelScope.launch { language.revision.drop(1).collect { refresh() } }
+        }
+    }
 
     fun loadRecommendations() = startLoad(refreshing = false)
     fun refresh() = startLoad(refreshing = true)

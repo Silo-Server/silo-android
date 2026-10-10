@@ -29,6 +29,7 @@ import org.siloserver.silo.model.catalog.SeasonUserData
 import org.siloserver.silo.model.catalog.isAudiobookItemType
 import org.siloserver.silo.model.catalog.initialSeasonDisplayPlan
 import org.siloserver.silo.model.catalog.sortedForDisplay
+import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes
 import org.siloserver.silo.model.playback.ClientCodecCapabilities
 import org.siloserver.silo.model.playback.buildPlaybackSubtitleChoices
@@ -404,6 +405,16 @@ class TvItemDetailViewModel(
         )
     val translationPhase: StateFlow<org.siloserver.silo.metadata.DescriptionTranslationPhase> =
         descriptionTranslation.phase
+
+    // A season's translation job also fills its episodes' descriptions. The
+    // series page lists the selected season's episodes in its rail, so it
+    // starts that job when an episode row reports a missing description. Its
+    // own controller keeps the series overview's single-flight latch apart.
+    private val episodeTranslation =
+        org.siloserver.silo.metadata.DescriptionTranslationController(
+            repository = metadataAiRepository,
+            delayMs = { kotlinx.coroutines.delay(it) },
+        )
 
 
     /**
@@ -1844,8 +1855,15 @@ class TvItemDetailViewModel(
         val previousId = _uiState.value.nextUpEpisode?.contentId
         if (nextUp?.contentId == previousId && _uiState.value.nextUpEpisode != null) {
             // Same target — just refresh the snapshot (userData may have changed)
-            // without re-loading playback detail.
-            _uiState.update { it.copy(nextUpEpisode = nextUp, nextUpTargetReady = true) }
+            // without re-loading playback detail. A fresher row also carries
+            // the episode's translated description into the hero.
+            _uiState.update {
+                it.copy(
+                    nextUpEpisode = nextUp,
+                    nextUpTargetReady = true,
+                    nextUpPlaybackDetail = nextUp?.let { row -> it.nextUpPlaybackDetail?.withEpisodeDescription(row) } ?: it.nextUpPlaybackDetail,
+                )
+            }
             return
         }
 
@@ -2148,8 +2166,60 @@ class TvItemDetailViewModel(
                         else -> target // transient refetch failure: keep polling
                     }
                 },
-                onTranslated = { },
+                // A season's job also translates its episodes: keep the rail current.
+                onPoll = { refreshEpisodesForTranslation(detail) },
+                onTranslated = { refreshEpisodesForTranslation(detail) },
             )
+        }
+    }
+
+    private fun refreshEpisodesForTranslation(detail: ItemDetail) {
+        if (!detail.type.equals("season", ignoreCase = true)) return
+        val seriesId = detail.seriesId?.takeIf { it.isNotBlank() } ?: return
+        val season = detail.seasonNumber ?: return
+        if (_uiState.value.selectedSeason != season) return
+        loadEpisodes(seriesId, season, quiet = true, revalidateFavorites = emptySet(), freshRead = true)
+    }
+
+    /**
+     * `auto` on-view mode for a series page's episode rail: start the shown
+     * season's translation once per (season, language) when its episode rows
+     * report a missing description, re-reading the rail until none does. The
+     * season detail's pending language covers its episodes, so it is the
+     * completion signal.
+     */
+    fun translateShownSeasonEpisodes() {
+        val state = _uiState.value
+        val detail = state.detail ?: return
+        if (!detail.type.equals("series", ignoreCase = true)) return
+        val seasonNumber = state.selectedSeason ?: return
+        val season = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: return
+        val target = state.episodes
+            .filter { it.seasonNumber == seasonNumber }
+            .pendingEpisodeTranslationLanguage() ?: return
+        // A season switched to while another season's job polls is retried
+        // when that job ends (below), rather than latched as already fired.
+        if (!episodeTranslation.claimAutoFire(season.contentId, target)) return
+        episodeTranslation.resetFailure()
+        val refreshRail = {
+            if (_uiState.value.selectedSeason == seasonNumber) {
+                loadEpisodes(detail.contentId, seasonNumber, quiet = true, revalidateFavorites = emptySet(), freshRead = true)
+            }
+        }
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            episodeTranslation.translate(
+                contentId = season.contentId,
+                targetLanguage = target,
+                refetchPendingLanguage = { owner ->
+                    when (val result = metadataAiRepository.refreshDetail(season.contentId, owner)) {
+                        is ApiResult.Success -> result.data.pendingTranslationLanguage
+                        else -> target // transient refetch failure: keep polling
+                    }
+                },
+                onPoll = { refreshRail() },
+                onTranslated = { refreshRail() },
+            )
+            if (episodeTranslation.takeDeferredAuto()) translateShownSeasonEpisodes()
         }
     }
 
@@ -2338,6 +2408,16 @@ class TvItemDetailViewModel(
         }
     }
 
+}
+
+/** The row's localized description, once it has one, replaces the detail's. */
+private fun ItemDetail.withEpisodeDescription(row: EpisodeListItem): ItemDetail {
+    if (row.contentId != contentId || row.overview.isNullOrBlank() || row.overview == overview) return this
+    return copy(
+        overview = row.overview,
+        machineTranslatedFields = row.machineTranslatedFields,
+        pendingTranslationLanguage = row.pendingTranslationLanguage,
+    )
 }
 
 private fun ItemDetail.withWatchedPlaybackState(watched: Boolean): ItemDetail {

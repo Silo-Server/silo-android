@@ -1,7 +1,11 @@
 package org.siloserver.silo.tv.ui.components
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,7 +41,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.LocalTextStyle
 import androidx.tv.material3.Text
 import org.siloserver.silo.common.settings.titleLogoUrl
+import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 
@@ -56,6 +62,9 @@ import org.siloserver.silo.tv.ui.theme.SiloSecondaryText
 fun TvFocusMarquee(
     content: TvMarqueeContent?,
     detailLine: String? = content?.detailLine,
+    /** The rested item's description translation; like [detailLine], it
+     *  updates the block in place instead of replaying the crossfade. */
+    translation: TvMarqueeTranslation? = null,
     modifier: Modifier = Modifier,
     startPadding: androidx.compose.ui.unit.Dp = 44.dp,
     topPadding: androidx.compose.ui.unit.Dp = 0.dp,
@@ -104,13 +113,19 @@ fun TvFocusMarquee(
                         TvMarqueeBlock(
                             content = value,
                             detailLine = detailLine.takeIf { value.id == content?.id },
+                            translation = translation.takeIf { it?.contentId == value.contentId },
                             footer = footer,
                         )
                     }
                 }
             }
         } else if (content != null) {
-            TvMarqueeBlock(content = content, detailLine = detailLine, footer = footer)
+            TvMarqueeBlock(
+                content = content,
+                detailLine = detailLine,
+                translation = translation.takeIf { it?.contentId == content.contentId },
+                footer = footer,
+            )
         }
     }
 }
@@ -119,6 +134,7 @@ fun TvFocusMarquee(
 private fun TvMarqueeBlock(
     content: TvMarqueeContent,
     detailLine: String?,
+    translation: TvMarqueeTranslation? = null,
     footer: (@Composable (TvMarqueeContent) -> Unit)? = null,
 ) {
     // tvOS parity (TVFocusMarquee): when the text-fallback title wraps to two
@@ -194,8 +210,13 @@ private fun TvMarqueeBlock(
             )
         }
 
+        val synopsisText = (translation?.synopsis ?: content.synopsis)?.takeIf { it.isNotBlank() }
+        val translating = translation?.translating == true
+        val machineTranslated = !translating && synopsisText != null &&
+            (translation?.machineTranslated ?: hasMachineTranslatedOverview(content.source.machineTranslatedFields))
+
         // Badge + meta line.
-        if (content.badges.isNotEmpty() || content.metaParts.isNotEmpty()) {
+        if (content.badges.isNotEmpty() || content.metaParts.isNotEmpty() || machineTranslated) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -214,13 +235,34 @@ private fun TvMarqueeBlock(
                         spacing = MarqueeMetaGap,
                     )
                 }
+                // The block has no spare row, so the machine-translation
+                // marker is the compact icon at the end of the meta line.
+                if (machineTranslated) {
+                    MachineTranslatedLabel(
+                        color = SiloSecondaryText,
+                        compact = true,
+                        iconSize = 14.dp,
+                    )
+                }
             }
         }
 
         // Two synopsis lines (one when a text title wraps): the raised
         // typography floors made the old three-line block tall enough to
         // climb under the top menu bar, and the bar zone wins.
-        content.synopsis?.takeIf { it.isNotBlank() }?.let { synopsis ->
+        synopsisText?.let { synopsis ->
+            // A running translation pulses the original text until the
+            // translated description replaces it.
+            val pulse = if (translating) {
+                rememberInfiniteTransition(label = "marqueeTranslating").animateFloat(
+                    initialValue = 0.35f,
+                    targetValue = 0.7f,
+                    animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                    label = "marqueeTranslatingAlpha",
+                ).value
+            } else {
+                1f
+            }
             Text(
                 text = synopsis,
                 color = SiloSecondaryText,
@@ -228,7 +270,9 @@ private fun TvMarqueeBlock(
                 lineHeight = MarqueeSynopsisSize * 1.35f,
                 maxLines = if (titleLineCount > 1) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = MarqueeSynopsisMaxWidth),
+                modifier = Modifier
+                    .widthIn(max = MarqueeSynopsisMaxWidth)
+                    .alpha(pulse),
             )
         }
 

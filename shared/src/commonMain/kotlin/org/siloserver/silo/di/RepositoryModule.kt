@@ -131,7 +131,8 @@ val repositoryModule = module {
     single { SettingsRepository(get()) }
     // Profile-scoped canonical settings, shared by the phone and TV screens so
     // one platform cannot grow a behavior the other lacks.
-    single { org.siloserver.silo.domain.settings.ProfileSettingsController(get()) }
+    single { org.siloserver.silo.domain.settings.CatalogLanguageRevision() }
+    single { org.siloserver.silo.domain.settings.ProfileSettingsController(get(), get()) }
     single { LibraryPlaybackPrefsRepository(get()) }
     single { DownloadsRepository(get(), getOrNull<org.siloserver.silo.repository.port.DownloadDeletionPort>() ?: org.siloserver.silo.repository.port.NoOpDownloadDeletionPort, get(), get(), get()) }
     single { EbookReaderRepository(get(), get()) }

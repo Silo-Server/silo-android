@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -66,6 +67,7 @@ class HomeViewModel(
     private val homeRealtime: org.siloserver.silo.repository.HomeRealtimeCoordinator? = null,
     private val identityTransitions: IdentityTransitionBarrier = DefaultIdentityTransitionBarrier(),
     private val diagnostics: HomeDiagnosticsObserver = HomeDiagnosticsObserver.None,
+    private val catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
 ) : ViewModel() {
 
     private var displayedOwner: AuthScopeSnapshot? = null
@@ -94,6 +96,14 @@ class HomeViewModel(
 
     init {
         loadSections()
+        catalogLanguage?.let { language ->
+            viewModelScope.launch {
+                // A metadata-language change re-localizes every card: re-read
+                // quietly. Unlike refreshFromRealtime this never skips, since a
+                // fetch already in flight still asked for the old language.
+                language.revision.drop(1).collect { fetchSections(HomeLoadTrigger.REALTIME) }
+            }
+        }
         homeRealtime?.let { coordinator ->
             viewModelScope.launch {
                 coordinator.refreshSignals.collect { refreshFromRealtime() }

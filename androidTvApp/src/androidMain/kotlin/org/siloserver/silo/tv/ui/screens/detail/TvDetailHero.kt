@@ -82,6 +82,8 @@ internal fun TvDetailHero(
     // Optional description-translation affordance (Apple tvOS parity),
     // rendered as its own focus stop directly under the synopsis.
     translation: (@Composable () -> Unit)? = null,
+    /** The shown synopsis was machine-translated: mark it "Translated by AI". */
+    machineTranslated: Boolean = false,
     /** Grows the hero, not the artwork, for a taller summary strip (request
      *  detail's status and stage track) so the actions stay inside its clip. */
     extraHeight: Dp = 0.dp,
@@ -164,6 +166,7 @@ internal fun TvDetailHero(
                 collapsedSynopsisLines = 3,
                 compactSeries = compactSeries,
                 translation = translation.takeUnless { compactSeries },
+                machineTranslated = machineTranslated && !compactSeries,
                 playbackSummary = playbackSummary,
             )
 
@@ -178,6 +181,14 @@ internal fun TvDetailHero(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) { actions() }
                         translation()
+                    }
+                } else if (compactSeries && machineTranslated) {
+                    // Series reserves fixed editorial slots, so the marker sits
+                    // at the end of the action row where the translate button
+                    // would; it is not focusable and adds no D-pad stop.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { actions() }
+                        TvMachineTranslatedLabel()
                     }
                 } else {
                     actions()
@@ -203,6 +214,7 @@ private fun EditorialColumn(
     collapsedSynopsisLines: Int,
     compactSeries: Boolean,
     translation: (@Composable () -> Unit)? = null,
+    machineTranslated: Boolean = false,
     playbackSummary: (@Composable () -> Unit)? = null,
 ) {
     val isCombinedSeriesEpisode = compactSeries && !seriesTitle.isNullOrBlank()
@@ -273,6 +285,7 @@ private fun EditorialColumn(
                     )
                 }
             }
+            if (machineTranslated && !overview.isNullOrBlank()) TvMachineTranslatedLabel()
             translation?.invoke()
         }
         // Bottom-lock the credit and playback readout independently of synopsis length.

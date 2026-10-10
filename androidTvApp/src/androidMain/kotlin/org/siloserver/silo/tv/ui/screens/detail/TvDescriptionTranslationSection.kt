@@ -11,7 +11,10 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
+import org.siloserver.silo.common.ui.components.MachineTranslatedLabel
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.sp
 
 /**
  * TV description-translation affordance (Apple tvOS parity): a focusable
@@ -60,4 +63,24 @@ internal fun TvDescriptionTranslationSection(
             Text("Translate description")
         }
     }
+}
+
+/**
+ * "Translated by AI" under a synopsis the server reports as machine-translated.
+ * Passive text, never focusable; [compact] is the icon-only form for episode
+ * cards, which still speaks the words to accessibility services.
+ */
+@Composable
+internal fun TvMachineTranslatedLabel(
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+    iconSize: Dp = 14.dp,
+) {
+    MachineTranslatedLabel(
+        color = Color.White.copy(alpha = 0.6f),
+        compact = compact,
+        fontSize = 14.sp,
+        iconSize = iconSize,
+        modifier = modifier,
+    )
 }

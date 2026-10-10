@@ -24,6 +24,7 @@ import org.siloserver.silo.network.isAccessRefusal
 import org.siloserver.silo.model.catalog.isBookLikeItemType
 import org.siloserver.silo.metadata.DescriptionTranslationController
 import org.siloserver.silo.metadata.DescriptionTranslationPhase
+import org.siloserver.silo.model.catalog.pendingEpisodeTranslationLanguage
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.repository.MetadataAiRepository
 import org.siloserver.silo.repository.DownloadsRepository
@@ -211,6 +212,16 @@ class ItemDetailViewModel(
         delayMs = { kotlinx.coroutines.delay(it) },
     )
     val translationPhase: StateFlow<DescriptionTranslationPhase> = descriptionTranslation.phase
+
+    // A season's translation job also fills its episodes' descriptions. Phone
+    // has no season page — the series page lists the selected season's
+    // episodes inline — so this page starts that job when an episode row
+    // reports a missing description. Its own controller keeps the series
+    // overview's single-flight latch independent.
+    private val episodeTranslation = DescriptionTranslationController(
+        repository = metadataAiRepository,
+        delayMs = { kotlinx.coroutines.delay(it) },
+    )
 
     init {
         viewModelScope.launch {
@@ -1242,6 +1253,58 @@ class ItemDetailViewModel(
                 },
                 onTranslated = { },
             )
+        }
+    }
+
+    /**
+     * `auto` on-view mode for the inline episode list: start the shown season's
+     * translation once per (season, language) when its episode rows report a
+     * missing description, then re-read the episodes until none does.
+     */
+    fun translateShownSeasonEpisodes() {
+        val state = _uiState.value
+        val detail = state.detail ?: return
+        val seriesId = if (detail.type == "series") detail.contentId else detail.seriesId ?: return
+        val seasonNumber = state.selectedSeasonNumber
+        val season = state.seasons.firstOrNull { it.seasonNumber == seasonNumber } ?: return
+        val target = state.episodes
+            .filter { it.seasonNumber == seasonNumber }
+            .pendingEpisodeTranslationLanguage() ?: return
+        // A season switched to while another season's job polls is retried
+        // when that job ends (below), rather than latched as already fired.
+        if (!episodeTranslation.claimAutoFire(season.contentId, target)) return
+        episodeTranslation.resetFailure()
+        viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            episodeTranslation.translate(
+                contentId = season.contentId,
+                targetLanguage = target,
+                refetchPendingLanguage = { owner ->
+                    when (
+                        val result = catalogRepository.getEpisodes(
+                            seriesId,
+                            seasonNumber,
+                            libraryId = libraryId,
+                            fresh = true,
+                        )
+                    ) {
+                        is ApiResult.Success -> if (metadataAiRepository.isCurrent(owner)) {
+                            val episodes = withLocalProgress(result.data.episodes)
+                            cacheEpisodes(seasonNumber, episodes)
+                            episodes.pendingEpisodeTranslationLanguage()
+                        } else {
+                            target
+                        }
+                        else -> target // transient refetch failure: keep polling
+                    }
+                },
+                onTranslated = {
+                    // The hero shows the selected episode's own detail overview.
+                    _uiState.value.selectedEpisodeContentId
+                        ?.takeIf { id -> _uiState.value.episodesBySeason[seasonNumber].orEmpty().any { it.contentId == id } }
+                        ?.let(::loadSelectedEpisodeDetail)
+                },
+            )
+            if (episodeTranslation.takeDeferredAuto()) translateShownSeasonEpisodes()
         }
     }
 

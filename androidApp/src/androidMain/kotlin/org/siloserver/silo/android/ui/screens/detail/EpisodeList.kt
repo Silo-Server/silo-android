@@ -56,6 +56,7 @@ import org.siloserver.silo.android.ui.util.playbackResumePosition
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import kotlin.math.abs
 
 /**
@@ -278,6 +279,11 @@ private fun EpisodeRailCard(
                     letterSpacing = 1.sp,
                     color = Color.White.copy(alpha = 0.55f),
                 )
+                if (showsEpisodeDetails && !episode.overview.isNullOrBlank() &&
+                    hasMachineTranslatedOverview(episode.machineTranslatedFields)
+                ) {
+                    DetailMachineTranslatedLabel(compact = true, iconSize = 11.dp)
+                }
                 if (isCurrent) {
                     Text(
                         text = "NOW VIEWING",

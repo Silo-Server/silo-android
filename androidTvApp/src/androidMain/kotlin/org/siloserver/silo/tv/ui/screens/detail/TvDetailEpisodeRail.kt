@@ -68,6 +68,7 @@ import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
 import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.model.catalog.EpisodeListItem
+import org.siloserver.silo.model.catalog.hasMachineTranslatedOverview
 import org.siloserver.silo.tv.ui.components.TvMediaCardActions
 import org.siloserver.silo.tv.ui.components.TvMediaCardContextMenu
 import org.siloserver.silo.tv.ui.components.tvEpisodeCardWidth
@@ -521,6 +522,12 @@ private fun TvDetailEpisodeCard(
                         }
                     } else if (isCurrent) {
                         NowViewingTag()
+                    }
+                    if (!hidesEpisodeTitle && caption.showsMetadata &&
+                        !episode.overview.isNullOrBlank() &&
+                        hasMachineTranslatedOverview(episode.machineTranslatedFields)
+                    ) {
+                        TvMachineTranslatedLabel(compact = true, iconSize = 12.dp)
                     }
                 }
 

@@ -145,6 +145,7 @@ fun TvHomeScreen(
                 firstRowContainerFocusRequester = firstRowContainerFocusRequester,
                 onContentUpFallbackChanged = onContentUpFallbackChanged,
                 onSetWatched = viewModel::setWatched,
+                onMarqueeTranslated = viewModel::refreshFromRealtime,
                 onToggleFavorite = viewModel::toggleFavorite,
                 onToggleWatchlist = viewModel::toggleWatchlist,
                 onDismissContinueWatching = viewModel::dismissContinueWatching,
@@ -239,8 +240,10 @@ private fun TvHomeContent(
     onDismissContinueWatching: (String, String) -> Unit = { _, _ -> },
     onDismissNextUp: (String, String) -> Unit = { _, _ -> },
     sectionsFullyResolved: Boolean = true,
+    onMarqueeTranslated: () -> Unit = {},
 ) {
     TvSkylineSectionFeed(
+        onMarqueeTranslated = onMarqueeTranslated,
         surfaceKey = "home",
         // tvOS Home drops the foreground marquee + row band by 56pt while
         // keeping the ambient art and top navigation fixed (28dp at TV scale).

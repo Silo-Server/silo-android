@@ -449,9 +449,9 @@ val androidTvModule = module {
     }
 
     // Content ViewModels
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
-    viewModel { RecommendationsViewModel(get()) }
+    viewModel { RecommendationsViewModel(get(), catalogLanguage = get()) }
     // The Requests page reads the approval queue itself, so the hub doesn't
     // count it; it loads its view models when it composes.
     viewModel { params ->
@@ -497,6 +497,7 @@ val androidTvModule = module {
             libraryType = params.get(),
             mediaScope = params.values.getOrNull(3) as? String,
             browsePrefs = get(),
+            catalogLanguage = get(),
         )
     }
     viewModel { params ->

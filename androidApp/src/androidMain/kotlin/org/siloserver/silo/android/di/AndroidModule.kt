@@ -449,7 +449,7 @@ val androidModule = module {
             shuffleFeatureStore = get(),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
     viewModel { MainHeaderViewModel(get()) }
     viewModel {
         LibrariesViewModel(
@@ -457,9 +457,10 @@ val androidModule = module {
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
             get(),
             get<org.siloserver.silo.common.settings.BrowsePrefsStore>(),
+            catalogLanguage = get(),
         )
     }
-    viewModel { RecommendationsViewModel(get()) }
+    viewModel { RecommendationsViewModel(get(), catalogLanguage = get()) }
     viewModel { SearchViewModel(get()) }
     single {
         org.siloserver.silo.common.settings.BrowsePrefsStore(

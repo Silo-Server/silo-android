@@ -128,6 +128,24 @@ class ProfileSettingsControllerTest {
     }
 
     @Test
+    fun `only a metadata language write that lands bumps the catalog language revision`() = runTest {
+        val revision = CatalogLanguageRevision()
+        val controller = ProfileSettingsController(SettingsRepository(FakeSettingsApi()), revision)
+
+        controller.setSubtitleLanguage("nl")
+        assertEquals(0L, revision.revision.value)
+        controller.setMetadataLanguage("nl")
+        assertEquals(1L, revision.revision.value)
+
+        val failing = ProfileSettingsController(
+            SettingsRepository(FakeSettingsApi(putResult = { ApiResult.Error(500, "server_error", "Failed") })),
+            revision,
+        )
+        failing.setMetadataLanguage("de")
+        assertEquals(1L, revision.revision.value)
+    }
+
+    @Test
     fun `clearing an absent value succeeds`() = runTest {
         // 404 means nothing was stored there, which is the state the caller
         // asked for — reporting it as an error would roll the UI back from a

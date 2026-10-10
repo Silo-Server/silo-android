@@ -142,6 +142,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
@@ -220,6 +221,7 @@ class LibrariesViewModel(
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
     private val playerSettingsStore: org.siloserver.silo.common.settings.PlayerSettingsStore? = null,
     private val browsePrefs: BrowsePrefsStore? = null,
+    catalogLanguage: org.siloserver.silo.domain.settings.CatalogLanguageRevision? = null,
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -263,6 +265,11 @@ class LibrariesViewModel(
                     refresh()
                 }
             }
+            ?.launchIn(viewModelScope)
+        // Titles and descriptions are localized per metadata language.
+        catalogLanguage?.revision
+            ?.drop(1)
+            ?.onEach { refresh() }
             ?.launchIn(viewModelScope)
         refresh()
     }
