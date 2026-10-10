@@ -150,7 +150,8 @@ fun TvRootHeroBackdrop(
                     value == null -> null
                     // Protection turning on for the item still shown hides
                     // its still at once instead of fading the sharp one out.
-                    content != null && value.id == content.id && content.hidesStills && !value.hidesStills -> content
+                    content != null && value.id == content.id ->
+                        if (content.hidesStills && !value.hidesStills) content else value
                     // A departing item follows the current preferences too.
                     else -> value.underPrefs(spoilerPrefs)
                 }

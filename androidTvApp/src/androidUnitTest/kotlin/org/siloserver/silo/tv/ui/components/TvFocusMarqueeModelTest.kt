@@ -61,6 +61,25 @@ class TvFocusMarqueeModelTest {
         assertTrue(shown.underPrefs(EpisodeSpoilerPrefs.NONE) === shown)
         val watched = TvMarqueeContent.from(episode.copy(userState = MediaItemUserState(played = true)), "Next Up", "row")
         assertTrue(watched.underPrefs(EpisodeSpoilerPrefs(true, true)) === watched)
+        // An unchanged layer without a description stays the same instance.
+        val noOverview = TvMarqueeContent.from(episode.copy(overview = null), "Next Up", "row", EpisodeSpoilerPrefs(true, true))
+        assertTrue(noOverview.underPrefs(EpisodeSpoilerPrefs(true, true)) === noOverview)
+    }
+
+    @Test
+    fun hidingKeepsAnExplicitSeriesBackdropFromEnrichment() {
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        val shown = TvMarqueeContent.from(episode, "Next Up", "row")
+        val series = TvMarqueeEnrichment(null, "https://example.test/series.jpg", null, backdropIsEpisodeStill = false)
+
+        val keptSeries = shown.withEnrichment(series).underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals("https://example.test/series.jpg", keptSeries.heroBackdropUrl)
+        assertEquals(null, keptSeries.synopsis)
+        val unknown = shown.withEnrichment(series.copy(backdropIsEpisodeStill = null)).underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals(null, unknown.heroBackdropUrl)
     }
 
     @Test

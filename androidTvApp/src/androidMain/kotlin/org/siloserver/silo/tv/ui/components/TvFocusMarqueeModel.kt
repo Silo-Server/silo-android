@@ -61,6 +61,8 @@ data class TvMarqueeContent(
     /** Spoiler protection hides this unwatched episode's stills, including an
      *  enrichment backdrop that is (or may be) one. */
     val hidesStills: Boolean = false,
+    /** Whether [backdropUrl], from the section item or enrichment, is an episode still; null when unknown. */
+    val backdropIsEpisodeStill: Boolean? = null,
 ) {
     /** Backdrop art for the root hero. Like tvOS, the section artwork is shown
      *  immediately; an episode can later upgrade to its higher-resolution series
@@ -73,17 +75,35 @@ data class TvMarqueeContent(
     val contentId: String get() = source.contentId
 
     /**
-     * This content under [prefs]: unchanged unless [prefs] now hide a still
-     * or synopsis it shows (or reveal one it hides), then rebuilt from its
-     * source item. A layer still fading out of a crossfade follows a
-     * protection change at once.
+     * This content under [prefs], so a layer still fading out of a crossfade
+     * follows a protection change at once: the same instance when nothing
+     * changes, without what [prefs] now hide, or rebuilt from its source item
+     * when [prefs] reveal something.
      */
     fun underPrefs(prefs: EpisodeSpoilerPrefs): TvMarqueeContent {
         if (!isEpisode) return this
         val unwatched = EpisodeSpoilers.isUnwatched(source)
-        val synopsisHidden = synopsis == null && !source.overview.isNullOrBlank()
-        if (prefs.hidesImage(unwatched) == hidesStills && prefs.hidesOverview(unwatched) == synopsisHidden) return this
-        return from(source, rowTitle = "", spoilers = prefs).copy(id = id)
+        val hideStills = prefs.hidesImage(unwatched)
+        val hasOverview = !source.overview.isNullOrBlank()
+        val hideSynopsis = prefs.hidesOverview(unwatched) && hasOverview
+        val synopsisHidden = synopsis == null && hasOverview
+        if (hideStills == hidesStills && hideSynopsis == synopsisHidden) return this
+        // Revealing needs the source item's artwork and text back.
+        if ((hidesStills && !hideStills) || (synopsisHidden && !hideSynopsis)) {
+            return from(source, rowTitle = "", spoilers = prefs).copy(id = id)
+        }
+        // Hiding drops only what is now hidden, so explicit series artwork
+        // (such as an enrichment backdrop) stays.
+        val dropBackdrop = hideStills && backdropIsEpisodeStill != false
+        val dropPoster = hideStills && source.posterIsEpisodeStill != false
+        return copy(
+            synopsis = if (hideSynopsis) null else synopsis,
+            backdropUrl = if (dropBackdrop) null else backdropUrl,
+            backdropThumbhash = if (dropBackdrop) null else backdropThumbhash,
+            posterUrl = if (dropPoster) null else posterUrl,
+            posterThumbhash = if (dropPoster) null else posterThumbhash,
+            hidesStills = hideStills,
+        )
     }
 
     /**
@@ -104,6 +124,7 @@ data class TvMarqueeContent(
             } else {
                 backdropThumbhash
             },
+            backdropIsEpisodeStill = if (upgradeBackdrop) enrichment.backdropIsEpisodeStill else backdropIsEpisodeStill,
         )
     }
 
@@ -169,6 +190,11 @@ data class TvMarqueeContent(
                 isEpisode = isEpisode,
                 source = item,
                 hidesStills = spoilers.hidesImage(unwatchedEpisode),
+                backdropIsEpisodeStill = if (!hidesBackdrop && sectionBackdropUrl != null) {
+                    item.backdropIsEpisodeStill
+                } else {
+                    item.posterIsEpisodeStill
+                },
             )
         }
 
