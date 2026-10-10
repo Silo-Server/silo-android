@@ -73,6 +73,20 @@ data class TvMarqueeContent(
     val contentId: String get() = source.contentId
 
     /**
+     * This content under [prefs]: unchanged unless [prefs] now hide a still
+     * or synopsis it shows (or reveal one it hides), then rebuilt from its
+     * source item. A layer still fading out of a crossfade follows a
+     * protection change at once.
+     */
+    fun underPrefs(prefs: EpisodeSpoilerPrefs): TvMarqueeContent {
+        if (!isEpisode) return this
+        val unwatched = EpisodeSpoilers.isUnwatched(source)
+        val synopsisHidden = synopsis == null && !source.overview.isNullOrBlank()
+        if (prefs.hidesImage(unwatched) == hidesStills && prefs.hidesOverview(unwatched) == synopsisHidden) return this
+        return from(source, rowTitle = "", spoilers = prefs).copy(id = id)
+    }
+
+    /**
      * Fold a landed [TvMarqueeEnrichment] into this content (tvOS
      * `TVFocusMarqueeModel.backdropURL` + `detailLine`). The aired/cast line
      * applies to every item; the backdrop upgrade applies to episodes only —

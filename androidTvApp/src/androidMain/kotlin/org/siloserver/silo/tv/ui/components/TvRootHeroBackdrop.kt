@@ -53,6 +53,7 @@ fun TvRootHeroBackdrop(
     emptyWashColor: Color? = null,
     animateTransition: Boolean = true,
 ) {
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
     val tintState = LocalAmbientBackdropTint.current
     val ambientAccent = tintState.accent
 
@@ -145,14 +146,13 @@ fun TvRootHeroBackdrop(
                 ),
                 label = "tvRootHeroBackdropArt",
             ) { value ->
-                // Protection turning on for the item still shown hides its
-                // still at once instead of fading the sharp one out.
-                val art = if (value != null && content != null && value.id == content.id &&
-                    content.hidesStills && !value.hidesStills
-                ) {
-                    content
-                } else {
-                    value
+                val art = when {
+                    value == null -> null
+                    // Protection turning on for the item still shown hides
+                    // its still at once instead of fading the sharp one out.
+                    content != null && value.id == content.id && content.hidesStills && !value.hidesStills -> content
+                    // A departing item follows the current preferences too.
+                    else -> value.underPrefs(spoilerPrefs)
                 }
                 if (art?.heroBackdropUrl != null) {
                     CornerAnchoredArt(

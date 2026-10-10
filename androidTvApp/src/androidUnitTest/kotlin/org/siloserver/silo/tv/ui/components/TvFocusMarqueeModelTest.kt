@@ -47,6 +47,23 @@ class TvFocusMarqueeModelTest {
     }
 
     @Test
+    fun aDepartingLayerFollowsAProtectionChange() {
+        val episode = SectionItem(
+            contentId = "episode", type = "episode", title = "Episode",
+            overview = "Spoiler", backdropUrl = "https://example.test/still.jpg",
+        )
+        val shown = TvMarqueeContent.from(episode, "Next Up", "row")
+
+        val protected = shown.underPrefs(EpisodeSpoilerPrefs(true, true))
+        assertEquals(null, protected.heroBackdropUrl)
+        assertEquals(null, protected.synopsis)
+        assertEquals(shown.id, protected.id)
+        assertTrue(shown.underPrefs(EpisodeSpoilerPrefs.NONE) === shown)
+        val watched = TvMarqueeContent.from(episode.copy(userState = MediaItemUserState(played = true)), "Next Up", "row")
+        assertTrue(watched.underPrefs(EpisodeSpoilerPrefs(true, true)) === watched)
+    }
+
+    @Test
     fun rowUpdatesKeepDisplayedAndPendingCopiesBoundToTheirOwnRows() {
         val state = TvFocusMarqueeState()
         state.spoilerPrefs = EpisodeSpoilerPrefs(true, true)
