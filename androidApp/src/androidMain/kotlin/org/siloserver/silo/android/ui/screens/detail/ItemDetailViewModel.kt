@@ -1299,7 +1299,7 @@ class ItemDetailViewModel(
                 }
                 else -> if (generation == watchedMutationGeneration) {
                     if (isSeries) failedSeriesWatchedGeneration = generation
-                    updateOwnUserData { previous }
+                    updateOwnUserData { it.withoutPlayed(target, previous) }
                 }
             }
         }
@@ -1512,7 +1512,7 @@ class ItemDetailViewModel(
                 }
                 else -> if (episodeWatchedMutationGenerations[episodeContentId] == generation) {
                     failedEpisodeWatchedGenerations[episodeContentId] = generation
-                    updateEpisodeUserData(episodeContentId) { previous }
+                    updateEpisodeUserData(episodeContentId) { it.withoutPlayed(watched, previous) }
                 }
             }
         }
@@ -1524,6 +1524,16 @@ class ItemDetailViewModel(
      */
     private fun LeafItemUserData?.withPlayed(played: Boolean): LeafItemUserData =
         (this ?: LeafItemUserData()).copy(played = played, isInProgress = false, positionSeconds = null)
+
+    /** Undoes a failed [withPlayed] only where it still shows; a newer reload wins. */
+    private fun LeafItemUserData?.withoutPlayed(played: Boolean, previous: LeafItemUserData?): LeafItemUserData? {
+        if (this == null || this != withPlayed(played)) return this
+        return copy(
+            played = previous?.played ?: false,
+            isInProgress = previous?.isInProgress,
+            positionSeconds = previous?.positionSeconds,
+        )
+    }
 
     private fun updateEpisodeUserData(episodeContentId: String, transform: (LeafItemUserData?) -> LeafItemUserData?) {
         fun EpisodeListItem.updated(): EpisodeListItem =

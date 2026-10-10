@@ -174,7 +174,15 @@ class DefaultEpisodeSpoilerStore private constructor(
     }
 
     private suspend fun onIdentityChanged() {
-        synchronized(lock) { resetLocked() }
+        val identity = currentIdentity()
+        val startGeneration = synchronized(lock) {
+            resetLocked()
+            stateIdentity = identity
+            generation
+        }
+        // A refresh for the previous identity can hold refreshLock through a
+        // network call; show this identity's last-known answer meanwhile.
+        if (identity != null) seedFromCache(identity, startGeneration)
         hydrateIfNeeded()
     }
 
@@ -206,6 +214,9 @@ class DefaultEpisodeSpoilerStore private constructor(
                 if (caps.code == 404) false else return commitError(caps.message, startGeneration)
             is ApiResult.NetworkError -> return commitError(caps.exception.message, startGeneration)
         }
+        // Superseded by a session boundary: release refreshLock now rather
+        // than after a second request whose answer would be discarded.
+        if (generation != startGeneration) return
         val resolved = if (!supported) {
             EpisodeSpoilerState(support = EpisodeSpoilerSupport.Unsupported)
         } else {

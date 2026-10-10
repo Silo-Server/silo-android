@@ -58,6 +58,9 @@ data class TvMarqueeContent(
     /** The source item, retained so the ambient tint extracts its palette from
      *  the same (debounced) card the marquee + backdrop show. */
     val source: SectionItem,
+    /** Spoiler protection hides this unwatched episode's stills, including an
+     *  enrichment backdrop that is (or may be) one. */
+    val hidesStills: Boolean = false,
 ) {
     /** Backdrop art for the root hero. Like tvOS, the section artwork is shown
      *  immediately; an episode can later upgrade to its higher-resolution series
@@ -77,7 +80,8 @@ data class TvMarqueeContent(
      * preserved, so the swap reads as an in-place refresh, not a new block.
      */
     fun withEnrichment(enrichment: TvMarqueeEnrichment): TvMarqueeContent {
-        val upgradeBackdrop = isEpisode && !enrichment.backdropUrl.isNullOrBlank()
+        val upgradeBackdrop = isEpisode && !enrichment.backdropUrl.isNullOrBlank() &&
+            (!hidesStills || enrichment.backdropIsEpisodeStill == false)
         return copy(
             detailLine = enrichment.detailLine ?: detailLine,
             backdropUrl = if (upgradeBackdrop) enrichment.backdropUrl else backdropUrl,
@@ -150,6 +154,7 @@ data class TvMarqueeContent(
                 posterThumbhash = if (hidesPoster) null else item.posterThumbhash,
                 isEpisode = isEpisode,
                 source = item,
+                hidesStills = spoilers.hidesImage(unwatchedEpisode),
             )
         }
 
@@ -234,6 +239,8 @@ data class TvMarqueeEnrichment(
     val detailLine: String?,
     val backdropUrl: String?,
     val backdropThumbhash: String?,
+    /** The detail's provenance for [backdropUrl]; null when unknown. */
+    val backdropIsEpisodeStill: Boolean? = null,
 ) {
     companion object {
         fun from(detail: ItemDetail): TvMarqueeEnrichment {
@@ -249,6 +256,7 @@ data class TvMarqueeEnrichment(
                 detailLine = if (parts.isEmpty()) null else parts.joinToString(" · "),
                 backdropUrl = detail.backdropUrl?.takeIf { it.isNotBlank() },
                 backdropThumbhash = detail.backdropThumbhash,
+                backdropIsEpisodeStill = detail.backdropIsEpisodeStill,
             )
         }
 

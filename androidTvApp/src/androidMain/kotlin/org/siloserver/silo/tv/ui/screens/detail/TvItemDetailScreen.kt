@@ -2668,7 +2668,9 @@ internal fun resolveTvDetailHeroArtwork(
     spoilerPrefs: EpisodeSpoilerPrefs = EpisodeSpoilerPrefs.NONE,
 ): TvDetailHeroArtwork {
     if (!detail.backdropUrl.isNullOrBlank() || !detail.backdropThumbhash.isNullOrBlank()) {
-        return TvDetailHeroArtwork(detail.backdropUrl, detail.backdropThumbhash)
+        val hidesBackdrop = detail.type.equals("episode", ignoreCase = true) &&
+            spoilerPrefs.hidesImage(EpisodeSpoilers.isUnwatched(detail.userData), detail.backdropIsEpisodeStill)
+        return TvDetailHeroArtwork(detail.backdropUrl.takeUnless { hidesBackdrop }, detail.backdropThumbhash)
     }
     return when (detail.type.lowercase()) {
         "series", "season" -> {

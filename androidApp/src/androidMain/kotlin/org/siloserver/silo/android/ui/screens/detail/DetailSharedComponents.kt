@@ -238,6 +238,7 @@ private fun ExpandedDetailHero(
         ExpandedDetailHeroBackdrop(
             artworkUrl = detail.backdropUrl,
             artworkThumbhash = detail.backdropThumbhash,
+            hidden = detail.hidesEpisodeArtwork(detail.backdropIsEpisodeStill),
             pageSurface = pageSurface,
         ) {
             Row(
@@ -362,12 +363,14 @@ internal fun ExpandedDetailHeroBackdrop(
     artworkUrl: String?,
     artworkThumbhash: String?,
     pageSurface: Color,
+    hidden: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
-        ThumbhashImage(
+        SpoilerImage(
             url = artworkUrl,
             thumbhash = artworkThumbhash,
+            hidden = hidden,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             crossfadeMillis = DetailArtworkCrossfadeMs,
@@ -532,10 +535,9 @@ fun DetailHero(
         DetailHeroArtwork(
             artworkUrl = detail.backdropUrl ?: detail.posterUrl,
             artworkThumbhash = detail.backdropThumbhash ?: detail.posterThumbhash,
-            hidden = detail.type.equals("episode", ignoreCase = true) && detail.backdropUrl.isNullOrBlank() &&
-                LocalEpisodeSpoilerPrefs.current.hidesImage(
-                    EpisodeSpoilers.isUnwatched(detail.userData), detail.posterIsEpisodeStill,
-                ),
+            hidden = detail.hidesEpisodeArtwork(
+                if (detail.backdropUrl != null) detail.backdropIsEpisodeStill else detail.posterIsEpisodeStill,
+            ),
             contentDescription = detail.title,
         ) {
             HeroTitle(detail = detail)
@@ -789,6 +791,12 @@ private fun Backdrop(
         }
     }
 }
+
+/** Whether spoiler protection hides artwork of this episode with the given provenance. */
+@Composable
+private fun ItemDetail.hidesEpisodeArtwork(artworkIsEpisodeStill: Boolean?): Boolean =
+    type.equals("episode", ignoreCase = true) &&
+        LocalEpisodeSpoilerPrefs.current.hidesImage(EpisodeSpoilers.isUnwatched(userData), artworkIsEpisodeStill)
 
 @Composable
 private fun HeroTitle(detail: ItemDetail) {

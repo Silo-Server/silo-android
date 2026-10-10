@@ -25,7 +25,7 @@ class TvFocusMarqueeModelTest {
         val row = ResolvedSection("row", "next_up", "Next Up", items = listOf(episode))
         state.preview(episode, row.title, row.id)
         state.commit(state.candidate)
-        val enrichment = TvMarqueeEnrichment(null, "https://example.test/series.jpg", null)
+        val enrichment = TvMarqueeEnrichment(null, "https://example.test/series.jpg", null, backdropIsEpisodeStill = false)
         state.applyEnrichment(episode.contentId, enrichment)
 
         val unwatched = episode.copy(userState = MediaItemUserState(played = false))
@@ -37,6 +37,9 @@ class TvFocusMarqueeModelTest {
         assertTrue(state.hasSettledRealFocus)
         assertEquals(enrichment, state.enrichment)
         assertEquals(enrichment.backdropUrl, state.backdropContent?.heroBackdropUrl)
+        // A detail backdrop that is, or may be, the episode's still stays hidden.
+        state.applyEnrichment(episode.contentId, enrichment.copy(backdropIsEpisodeStill = null))
+        assertEquals(null, state.backdropContent?.heroBackdropUrl)
 
         state.refreshSources(listOf(row))
         assertEquals("Spoiler", state.content?.synopsis)

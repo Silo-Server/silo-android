@@ -25,9 +25,13 @@ class TvDetailHeroArtworkTest {
             TvDetailHeroArtwork("episode-still", "still-hash"),
             resolveTvDetailHeroArtwork(detail.copy(userData = LeafItemUserData(played = true)), null, prefs),
         )
+        val withBackdrop = detail.copy(
+            backdropUrl = "series-backdrop", backdropThumbhash = "series-hash", backdropIsEpisodeStill = false,
+        )
+        assertEquals(TvDetailHeroArtwork("series-backdrop", "series-hash"), resolveTvDetailHeroArtwork(withBackdrop, null, prefs))
         assertEquals(
-            TvDetailHeroArtwork("series-backdrop", "series-hash"),
-            resolveTvDetailHeroArtwork(detail.copy(backdropUrl = "series-backdrop", backdropThumbhash = "series-hash"), null, prefs),
+            TvDetailHeroArtwork(null, "series-hash"),
+            resolveTvDetailHeroArtwork(withBackdrop.copy(backdropIsEpisodeStill = true), null, prefs),
         )
     }
 

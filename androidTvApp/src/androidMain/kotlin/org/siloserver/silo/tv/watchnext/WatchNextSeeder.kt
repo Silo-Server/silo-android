@@ -47,8 +47,13 @@ class WatchNextSeeder(
 
     private val protectionPrefs = context.getSharedPreferences("silo_watch_next_protection", Context.MODE_PRIVATE)
 
+    // Bumped by every [updateImageProtection] under the prefs lock; a wipe
+    // that finishes after a newer call must not record its older setting.
+    private var protectionGeneration = 0
+
     /** Clear exposed tiles only when known image protection changes from off to on. */
     fun updateImageProtection(enabled: Boolean) {
+        val generation = synchronized(protectionPrefs) { ++protectionGeneration }
         val wasEnabled = protectionPrefs.getBoolean("hide_images", false)
         if (enabled && !wasEnabled) {
             clear()
@@ -57,7 +62,11 @@ class WatchNextSeeder(
             val wipe = clearJob
             scope.launch {
                 wipe?.join()
-                if (wipe?.isCancelled != true) protectionPrefs.edit().putBoolean("hide_images", true).apply()
+                synchronized(protectionPrefs) {
+                    if (wipe?.isCancelled != true && generation == protectionGeneration) {
+                        protectionPrefs.edit().putBoolean("hide_images", true).apply()
+                    }
+                }
             }
         } else {
             protectionPrefs.edit().putBoolean("hide_images", enabled).apply()

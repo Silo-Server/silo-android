@@ -258,6 +258,36 @@ class EpisodeSpoilerStoreTest {
         assertEquals(EpisodeSpoilerPrefs(true, true), store.state.value.prefs)
     }
 
+    @Test
+    fun `an identity change shows its cache while another caller's refresh is in flight`() = runTest {
+        var serverUrl = "https://old.test"
+        val changes = MutableSharedFlow<Unit>()
+        val api = FakeSpoilerSettingsApi()
+        val cache = InMemoryEpisodeSpoilerCache()
+        cache.write("https://new.test|profile-1", EpisodeSpoilerState(
+            EpisodeSpoilerSupport.Supported, hideImages = true, hideOverviews = true,
+        ))
+        val store = storeFor(api, cache, serverUrl = { serverUrl }, identityChanges = changes)
+        runCurrent()
+        val staleCapabilities = CompletableDeferred<Unit>()
+        api.beforeCapabilities = { staleCapabilities.await() }
+        // The Watch Next worker, say, refreshing the old server.
+        backgroundScope.launch { store.refresh() }
+        runCurrent()
+
+        serverUrl = "https://new.test"
+        api.beforeCapabilities = { }
+        backgroundScope.launch { changes.emit(Unit) }
+        runCurrent()
+        assertEquals(EpisodeSpoilerPrefs(true, true), store.state.value.prefs)
+
+        staleCapabilities.complete(Unit)
+        runCurrent()
+        // Only the new server's refresh read the values.
+        assertEquals(1, api.effectiveReads.size)
+        assertEquals(EpisodeSpoilerPrefs.NONE, store.state.value.prefs)
+    }
+
     private val bothOn = mapOf(
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true),
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS to JsonPrimitive(true),
