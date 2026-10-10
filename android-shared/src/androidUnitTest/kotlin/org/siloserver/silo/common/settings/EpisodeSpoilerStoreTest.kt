@@ -9,6 +9,7 @@ import org.siloserver.silo.model.settings.SettingScopeIdentity
 import org.siloserver.silo.model.settings.SettingsContractCapabilities
 import org.siloserver.silo.model.settings.StoredSettingValue
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.api.SettingsApi
 import org.siloserver.silo.repository.SettingsRepository
 import io.ktor.client.HttpClient
@@ -288,6 +289,33 @@ class EpisodeSpoilerStoreTest {
         assertEquals(EpisodeSpoilerPrefs.NONE, store.state.value.prefs)
     }
 
+    @Test
+    fun `a queued write stays pinned to the profile that made it`() = runTest {
+        val original = authorityFor("profile-1")
+        var active = original
+        val api = FakeSpoilerSettingsApi()
+        val store = storeFor(api, captureAuthority = { active })
+        store.refresh()
+        val finishFirstWrite = CompletableDeferred<Unit>()
+        api.beforePut = { finishFirstWrite.await() }
+        store.set(EpisodeSpoilerSetting.Images, true)
+        runCurrent()
+        // Queued behind the first write while the active profile changes.
+        store.set(EpisodeSpoilerSetting.Overviews, true)
+        runCurrent()
+
+        active = authorityFor("profile-2")
+        api.beforePut = { }
+        finishFirstWrite.complete(Unit)
+        runCurrent()
+
+        assertEquals(listOf<AuthScopeSnapshot?>(original, original), api.putAuthorities.toList())
+    }
+
+    private fun authorityFor(profileId: String) = AuthScopeSnapshot(
+        serverId = "server", profileId = profileId, serverUrl = "https://server.test", profileToken = "token-$profileId",
+    )
+
     private val bothOn = mapOf(
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_IMAGES to JsonPrimitive(true),
         SettingKeys.CATALOG_HIDE_UNWATCHED_EPISODE_OVERVIEWS to JsonPrimitive(true),
@@ -299,11 +327,13 @@ class EpisodeSpoilerStoreTest {
         serverUrl: suspend () -> String? = { "https://server.test" },
         profileId: suspend () -> String? = { "profile-1" },
         identityChanges: Flow<Unit> = emptyFlow(),
+        captureAuthority: suspend () -> AuthScopeSnapshot? = { null },
     ) = DefaultEpisodeSpoilerStore.forTest(
         repository = SettingsRepository(api),
         scope = backgroundScope,
         getActiveProfileId = profileId,
         getServerUrl = serverUrl,
+        captureAuthority = captureAuthority,
         cache = cache,
         identityChanges = identityChanges,
     )
@@ -323,6 +353,7 @@ private class FakeSpoilerSettingsApi(
     ),
 ) {
     val puts = mutableListOf<Triple<String, SettingScope, JsonElement>>()
+    val putAuthorities = mutableListOf<AuthScopeSnapshot?>()
     val effectiveReads = mutableListOf<List<String>>()
     var beforeCapabilities: suspend () -> Unit = { }
     var beforePut: suspend () -> Unit = { }
@@ -367,6 +398,7 @@ private class FakeSpoilerSettingsApi(
         authority: org.siloserver.silo.network.AuthScopeSnapshot?,
     ): ApiResult<StoredSettingValue> {
         puts += Triple(key, scope.scope, value)
+        putAuthorities += authority
         beforePut()
         if (failPuts) return ApiResult.Error(500, "boom", "Server error")
         return ApiResult.Success(StoredSettingValue(key = key, scope = scope.scope.wire))

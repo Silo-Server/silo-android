@@ -8,6 +8,7 @@ import org.siloserver.silo.model.settings.EpisodeSpoilerPrefs
 import org.siloserver.silo.model.settings.EpisodeSpoilers
 import org.siloserver.silo.model.settings.SettingKeys
 import org.siloserver.silo.network.ApiResult
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -110,6 +111,7 @@ class DefaultEpisodeSpoilerStore private constructor(
     private val scope: CoroutineScope,
     private val getActiveProfileId: suspend () -> String?,
     private val getServerUrl: suspend () -> String?,
+    private val captureAuthority: suspend () -> AuthScopeSnapshot?,
     private val cache: EpisodeSpoilerCache,
     identityChanges: Flow<Unit>,
 ) : EpisodeSpoilerStore {
@@ -120,12 +122,14 @@ class DefaultEpisodeSpoilerStore private constructor(
         scope: CoroutineScope,
         getActiveProfileId: suspend () -> String?,
         getServerUrl: suspend () -> String?,
+        captureAuthority: suspend () -> AuthScopeSnapshot?,
         identityChanges: Flow<Unit> = emptyFlow(),
     ) : this(
         repository = repository,
         scope = scope,
         getActiveProfileId = getActiveProfileId,
         getServerUrl = getServerUrl,
+        captureAuthority = captureAuthority,
         cache = SharedPreferencesEpisodeSpoilerCache(
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE),
         ),
@@ -154,6 +158,10 @@ class DefaultEpisodeSpoilerStore private constructor(
     @Volatile
     private var stateIdentity: String? = null
 
+    /** The auth scope captured with [stateIdentity]; writes are pinned to it so
+     *  a server or profile switch cannot retarget a queued toggle. */
+    private var stateAuthority: AuthScopeSnapshot? = null
+
     /** The last values the server confirmed; a failed write restores these. */
     private var confirmed = EpisodeSpoilerState()
 
@@ -175,9 +183,11 @@ class DefaultEpisodeSpoilerStore private constructor(
 
     private suspend fun onIdentityChanged() {
         val identity = currentIdentity()
+        val authority = captureAuthority()
         val startGeneration = synchronized(lock) {
             resetLocked()
             stateIdentity = identity
+            stateAuthority = authority
             generation
         }
         // A refresh for the previous identity can hold refreshLock through a
@@ -193,6 +203,7 @@ class DefaultEpisodeSpoilerStore private constructor(
 
     override suspend fun refresh(): Unit = refreshLock.withLock {
         val identity = currentIdentity() ?: return
+        val authority = captureAuthority()
         val startGeneration: Int
         val startEpoch: Long
         synchronized(lock) {
@@ -201,6 +212,7 @@ class DefaultEpisodeSpoilerStore private constructor(
                 resetLocked()
                 stateIdentity = identity
             }
+            stateAuthority = authority
             startGeneration = generation
             startEpoch = mutationEpoch
         }
@@ -275,10 +287,12 @@ class DefaultEpisodeSpoilerStore private constructor(
         val startGeneration: Int
         val request: Long
         val identity: String
+        val authority: AuthScopeSnapshot?
         synchronized(lock) {
             val current = _state.value
             if (!current.isSupported) return
             identity = stateIdentity ?: return
+            authority = stateAuthority
             startGeneration = generation
             request = ++requestCounter
             latestRequest[setting] = request
@@ -288,7 +302,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         scope.launch {
             val result = writeLock.withLock {
                 if (generation != startGeneration) return@launch
-                repository.setProfileValue(setting.key, JsonPrimitive(enabled))
+                repository.setProfileValue(setting.key, JsonPrimitive(enabled), authority)
             }
             val error = when (result) {
                 is ApiResult.Success -> null
@@ -324,6 +338,7 @@ class DefaultEpisodeSpoilerStore private constructor(
         mutationEpoch += 1
         hasHydrated = false
         stateIdentity = null
+        stateAuthority = null
         _state.value = EpisodeSpoilerState()
         confirmed = EpisodeSpoilerState()
         latestRequest.clear()
@@ -354,6 +369,7 @@ class DefaultEpisodeSpoilerStore private constructor(
             scope: CoroutineScope,
             getActiveProfileId: suspend () -> String? = { "profile-1" },
             getServerUrl: suspend () -> String? = { "https://server.test" },
+            captureAuthority: suspend () -> AuthScopeSnapshot? = { null },
             cache: EpisodeSpoilerCache = InMemoryEpisodeSpoilerCache(),
             identityChanges: Flow<Unit> = emptyFlow(),
         ): DefaultEpisodeSpoilerStore = DefaultEpisodeSpoilerStore(
@@ -361,6 +377,7 @@ class DefaultEpisodeSpoilerStore private constructor(
             scope = scope,
             getActiveProfileId = getActiveProfileId,
             getServerUrl = getServerUrl,
+            captureAuthority = captureAuthority,
             cache = cache,
             identityChanges = identityChanges,
         )

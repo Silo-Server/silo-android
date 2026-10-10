@@ -219,6 +219,7 @@ val playerInfraModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
             getActiveProfileId = { get<ProfileRepository>().getActiveProfileId() },
             getServerUrl = { get<TokenManager>().getServerUrl() },
+            captureAuthority = { get<TokenManager>().snapshotCurrentScope() },
             identityChanges = identityChanges,
         )
     }
