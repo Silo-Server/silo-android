@@ -133,14 +133,15 @@ internal fun WatchPartyBackdrop(
 ) {
     Box(modifier.fillMaxSize().background(SiloBackground)) {
         // Each artwork keeps its own treatment while it fades out, so an
-        // outgoing protected still is never drawn unhidden.
+        // outgoing protected still is never drawn unhidden. A layer showing
+        // the current artwork is hidden at once when protection turns on.
         val target = url?.takeIf { it.isNotBlank() }?.let { BackdropArt(it, thumbhash, isPoster, hidden) }
         Crossfade(targetState = target, animationSpec = tween(400), label = "backdrop") { art ->
             if (art != null) {
                 SpoilerImage(
                     url = art.url,
                     thumbhash = art.thumbhash,
-                    hidden = art.hidden,
+                    hidden = art.hidden || (target?.hidden == true && art.url == target.url),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
