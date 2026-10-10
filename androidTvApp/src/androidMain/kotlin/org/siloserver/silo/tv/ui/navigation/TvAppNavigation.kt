@@ -1590,6 +1590,20 @@ fun TvAppNavigation(
                 castLaunchId = castLaunchId,
                 onStaleCastLaunch = leaveStaleCastLaunch,
                 onExit = { navController.popBackStack() },
+                // Up Next On Deck pick: replace this player with the pick's.
+                // No resume override: the On Deck snapshot dates from when
+                // this item started, so the player reads the saved position.
+                onPlayOnDeckItem = { pickContentId, pickType ->
+                    navController.navigateToTvPlayback(
+                        destination = tvPlayDestinationFor(
+                            itemType = pickType,
+                            contentId = pickContentId,
+                            fileId = null,
+                        ),
+                        contentId = pickContentId,
+                        lastPlaybackNavigation = lastPlaybackNavigation,
+                    )
+                },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.
                 onReturnToWatchPartyLobby = { id ->

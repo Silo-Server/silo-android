@@ -753,6 +753,9 @@ class TvPlayerViewModel(
     // Shuffle: the server picks what plays next. Optional so tests that
     // construct the VM directly stay source-compatible.
     private val shuffleFeatureStore: org.siloserver.silo.model.feature.ShuffleFeatureStore? = null,
+    // Home sections feeding the Up Next overlay's On Deck row. Optional so
+    // tests that construct the VM directly stay source-compatible.
+    private val sectionRepository: org.siloserver.silo.repository.SectionRepository? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1144,6 +1147,8 @@ class TvPlayerViewModel(
         val seasonNumber: Int? = null,
         val episodeNumber: Int? = null,
         val nextEpisode: NextEpisodeState? = null,
+        // Up Next's On Deck row: other items in progress (tvOS parity).
+        val onDeckItems: List<TvOnDeckItem> = emptyList(),
         val stillWatchingPrompt: Boolean = false,
         // Up-Next end-of-playback surface (mirrors tvOS PlayerNextUpScreen). When
         // `showNextUp` is true the screen renders the Up-Next overlay — a 16:9
@@ -2452,7 +2457,10 @@ class TvPlayerViewModel(
                             )
                         }
                         startIntroAutoSkipObserver()
-                        if (!nextUpTransitionGate.isActive) resolveNextEpisode()
+                        if (!nextUpTransitionGate.isActive) {
+                            resolveNextEpisode()
+                            loadOnDeckItems()
+                        }
                     }
                     is VideoPlayerUiState.Error -> {
                         episodeSelectionHandoffSlot.retainForRetry(
@@ -3168,6 +3176,7 @@ class TvPlayerViewModel(
                 )
             }
             resolveNextEpisode()
+            loadOnDeckItems()
         }
     }
 
@@ -4420,6 +4429,45 @@ class TvPlayerViewModel(
      * excluded, per the resolver's playback-order contract) and finds the
      * immediate next via [nextEpisodeAfter].
      */
+    private var onDeckGeneration = 0L
+
+    /**
+     * Populates the Up Next overlay's On Deck row (tvOS
+     * `loadNextUpOnDeckItems` and phone parity): home continue-watching pools,
+     * minus the current item and its series. A Watch Party never shows it:
+     * the room decides what plays.
+     */
+    private fun loadOnDeckItems() {
+        val run = ++onDeckGeneration
+        val repository = sectionRepository ?: return
+        val state = _uiState.value
+        val forContentId = state.contentId
+        val currentSeriesId = state.seriesId
+        val sessionId = state.sessionId
+        _uiState.update { it.copy(onDeckItems = emptyList()) }
+        if (roomId != null) return
+        fun stillCurrent() = run == onDeckGeneration &&
+            _uiState.value.contentId == forContentId && _uiState.value.sessionId == sessionId
+        viewModelScope.launch {
+            val owner = repository.captureHomeAuthority() ?: return@launch
+            repository.loadScopedHomeSections(owner, ::stillCurrent) { sections ->
+                val pool = sections.toTvOnDeckItems(forContentId, currentSeriesId)
+                _uiState.update { if (!stillCurrent()) it else it.copy(onDeckItems = pool) }
+            }
+        }
+    }
+
+    /**
+     * An On Deck pick leaves this player for another item: an explicit choice,
+     * so stop the countdown before navigation replaces the screen and its
+     * disposal finishes the session as any exit does.
+     */
+    fun onOnDeckItemChosen() {
+        nextUpCountdownJob?.cancel()
+        nextUpCountdownJob = null
+        _uiState.update { it.copy(nextUpCountdownSeconds = null) }
+    }
+
     private fun resolveNextEpisode() {
         // The room owns what plays next; nothing here may offer it.
         if (roomId != null) return
