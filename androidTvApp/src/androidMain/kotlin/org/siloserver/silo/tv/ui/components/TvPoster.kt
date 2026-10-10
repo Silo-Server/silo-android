@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import org.siloserver.silo.common.ui.components.DefaultArtworkKind
-import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.common.ui.components.SpoilerImage
 
 /**
  * Poster image that shows the default artwork when the URL is missing or fails to load.
@@ -29,15 +29,18 @@ fun TvPoster(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = 8.dp,
     defaultArtwork: DefaultArtworkKind = DefaultArtworkKind.Video,
+    /** Spoiler protection hides this artwork: an unwatched episode's still. */
+    hidden: Boolean = false,
 ) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
             .background(MaterialTheme.colorScheme.surfaceVariant),
     ) {
-        ThumbhashImage(
+        SpoilerImage(
             url = imageUrl,
             thumbhash = null,
+            hidden = hidden,
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),

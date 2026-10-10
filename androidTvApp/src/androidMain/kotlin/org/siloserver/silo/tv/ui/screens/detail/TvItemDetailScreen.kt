@@ -153,6 +153,7 @@ import org.siloserver.silo.tv.ui.screens.watchparty.tvWatchPartyItem
 import org.siloserver.silo.watchtogether.WatchPartyDestination
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 
 internal data class TvSeriesDetailRedirect(
     val seriesContentId: String,
@@ -1683,6 +1684,7 @@ private fun HeroActionRow(
             posterUrl = detail.posterUrl,
             fileId = selectedFileId,
             libraryId = libraryId,
+            spoilers = WatchPartySpoilers.of(detail),
         )
         detail.type == "series" && nextUp != null && playReady -> tvWatchPartyItem(
             contentId = nextUp.contentId,
@@ -1692,6 +1694,11 @@ private fun HeroActionRow(
             posterUrl = nextUp.stillUrl ?: detail.posterUrl,
             fileId = selectedFileId,
             libraryId = libraryId,
+            spoilers = WatchPartySpoilers(
+                unwatchedEpisode = EpisodeSpoilers.isUnwatched(nextUp.userData),
+                posterIsEpisodeStill = if (!nextUp.stillUrl.isNullOrBlank()) nextUp.stillIsEpisodeStill else false,
+                backdropIsEpisodeStill = false,
+            ),
         )
         else -> null
     }

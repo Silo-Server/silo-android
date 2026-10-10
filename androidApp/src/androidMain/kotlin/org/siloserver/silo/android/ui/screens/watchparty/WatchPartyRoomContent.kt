@@ -91,7 +91,9 @@ import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
+import org.siloserver.silo.common.cards.LocalEpisodeSpoilerPrefs
 import org.siloserver.silo.viewmodel.WatchPartyItem
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import org.siloserver.silo.watchtogether.WatchPartyConnectionTone
 import org.siloserver.silo.watchtogether.WatchPartyEligibility
 import org.siloserver.silo.watchtogether.WatchPartyFeatures
@@ -146,6 +148,7 @@ internal data class WatchPartyStagedTitle(
     val overview: String?,
     /** The catalog refused this profile the title (403/404). */
     val unavailable: Boolean,
+    val spoilers: WatchPartySpoilers = WatchPartySpoilers.NONE,
 )
 
 @Composable
@@ -156,7 +159,9 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
     val libraryId = room?.selectedLibraryId
     var detail by remember(stagedId) { mutableStateOf<ItemDetail?>(null) }
     var unavailable by remember(stagedId) { mutableStateOf(false) }
-    LaunchedEffect(stagedId, libraryId) {
+    // Re-read on each phase change: after the party plays the title, its watch
+    // state decides whether spoiler protection still hides it.
+    LaunchedEffect(stagedId, libraryId, room?.phase) {
         val id = stagedId ?: return@LaunchedEffect
         when (val result = catalog.getItemDetail(id, libraryId)) {
             is ApiResult.Success -> detail = result.data
@@ -179,9 +184,11 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
             chips = emptyList(),
             overview = null,
             unavailable = unavailable,
+            spoilers = preview?.spoilers ?: WatchPartySpoilers.NONE,
         )
     }
     val episode = loaded.type == "episode"
+    val spoilers = WatchPartySpoilers.of(loaded)
     val versions = loaded.versions
     val version = versions.firstOrNull { it.fileId == room.selectedFileId } ?: versions.singleOrNull()
     return WatchPartyStagedTitle(
@@ -196,8 +203,9 @@ internal fun rememberWatchPartyStagedTitle(room: RoomSnapshot?, suggestions: Lis
             watchPartyRuntime(loaded.runtime),
         ),
         chips = watchPartyQualityChips(version),
-        overview = loaded.overview?.takeIf { it.isNotBlank() },
+        overview = loaded.overview?.takeIf { it.isNotBlank() && !spoilers.hidesOverview(LocalEpisodeSpoilerPrefs.current) },
         unavailable = false,
+        spoilers = spoilers,
     )
 }
 
@@ -241,13 +249,19 @@ internal fun WatchPartyRoomContent(
     val winner = roomVoteWinner(suggestions)
     // The film is the room: its backdrop, else its poster, else a voting
     // room's leader, blurred.
-    val leaderPoster = if (room.selectionMode == RoomSelectionMode.Vote) {
-        (winner ?: suggestions.firstOrNull())?.posterUrl?.takeIf { it.isNotBlank() }
+    val leader = if (room.selectionMode == RoomSelectionMode.Vote) {
+        (winner ?: suggestions.firstOrNull())?.takeIf { it.posterUrl.isNotBlank() }
     } else {
         null
     }
-    val backdrop = staged?.backdropUrl ?: staged?.posterUrl ?: leaderPoster
+    val backdrop = staged?.backdropUrl ?: staged?.posterUrl ?: leader?.posterUrl
     val backdropIsPoster = staged?.backdropUrl == null
+    val spoilerPrefs = LocalEpisodeSpoilerPrefs.current
+    val backdropHidden = if (staged != null && (staged.backdropUrl != null || staged.posterUrl != null)) {
+        staged.spoilers.hidesBackdrop(spoilerPrefs, staged.backdropUrl)
+    } else {
+        leader?.let { WatchPartySpoilers.of(it).hidesPoster(spoilerPrefs) } ?: false
+    }
 
     val primary = watchPartyPrimaryAction(room, features, suggestions, unavailable)
     val secondary = watchPartySecondaryAction(room, primary)
@@ -308,6 +322,7 @@ internal fun WatchPartyRoomContent(
             url = backdrop,
             thumbhash = if (backdropIsPoster) staged?.posterThumbhash else staged?.backdropThumbhash,
             isPoster = backdropIsPoster,
+            hidden = backdropHidden,
         )
         Column(
             Modifier
@@ -415,7 +430,12 @@ private fun RoomHero(room: RoomSnapshot, staged: WatchPartyStagedTitle?, suggest
         modifier = Modifier.padding(top = if (compact) 4.dp else if (showsPoster) 120.dp else 40.dp),
     ) {
         if (showsPoster) {
-            WatchPartyHeroPoster(staged?.posterUrl, staged?.posterThumbhash, if (compact) 72.dp else 112.dp)
+            WatchPartyHeroPoster(
+                staged?.posterUrl,
+                staged?.posterThumbhash,
+                if (compact) 72.dp else 112.dp,
+                hidden = staged?.spoilers?.hidesPoster(LocalEpisodeSpoilerPrefs.current) == true,
+            )
         }
         Column(verticalArrangement = Arrangement.spacedBy((titleSize * 0.28f).dp), modifier = Modifier.weight(1f)) {
             WatchPartyEyebrow(hero.eyebrow)
@@ -781,7 +801,13 @@ private fun CandidateRow(
                 }
                 .padding(8.dp),
         ) {
-            WatchPartyPoster(suggestion.posterUrl, null, WatchPartyMetrics.ballotPosterWidth, cornerRadius = 6.dp)
+            WatchPartyPoster(
+                suggestion.posterUrl,
+                null,
+                WatchPartyMetrics.ballotPosterWidth,
+                cornerRadius = 6.dp,
+                hidden = WatchPartySpoilers.of(suggestion).hidesPoster(LocalEpisodeSpoilerPrefs.current),
+            )
             SuggestionText(suggestion, Modifier.weight(1f))
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.widthIn(min = 48.dp)) {
                 Text(
@@ -941,7 +967,13 @@ private fun HostPickSuggestionRow(
                 }
                 .padding(8.dp),
         ) {
-            WatchPartyPoster(suggestion.posterUrl, null, WatchPartyMetrics.ballotPosterWidth, cornerRadius = 6.dp)
+            WatchPartyPoster(
+                suggestion.posterUrl,
+                null,
+                WatchPartyMetrics.ballotPosterWidth,
+                cornerRadius = 6.dp,
+                hidden = WatchPartySpoilers.of(suggestion).hidesPoster(LocalEpisodeSpoilerPrefs.current),
+            )
             SuggestionText(suggestion, Modifier.weight(1f))
             when {
                 queued -> Text(

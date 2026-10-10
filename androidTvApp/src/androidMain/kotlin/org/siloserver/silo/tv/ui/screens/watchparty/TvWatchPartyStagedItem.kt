@@ -9,6 +9,7 @@ import org.siloserver.silo.model.watchtogether.Suggestion
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.CatalogRepository
 import org.siloserver.silo.viewmodel.WatchPartyItem
+import org.siloserver.silo.viewmodel.WatchPartySpoilers
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -42,6 +43,7 @@ internal data class TvStagedPreview(
     val facts: List<String> = emptyList(),
     /** The chosen version's quality: "4K", "HDR". */
     val chips: List<String> = emptyList(),
+    val spoilers: WatchPartySpoilers = WatchPartySpoilers.NONE,
 )
 
 /**
@@ -55,13 +57,23 @@ internal fun rememberTvStagedPreview(
     fileId: Int?,
     libraryId: Int?,
     suggestions: List<Suggestion>,
+    /** Re-reads the detail when it changes, such as the room's phase after playback. */
+    refreshKey: Any? = null,
     catalog: CatalogRepository = koinInject(),
 ): TvStagedPreview? {
-    val detail by produceState<ItemDetail?>(initialValue = null, contentId, libraryId) {
-        value = null
-        val id = contentId?.takeIf { it.isNotBlank() } ?: return@produceState
-        value = catalog.getCachedItemDetail(id, libraryId)
-            ?: (catalog.getItemDetail(id, libraryId) as? ApiResult.Success)?.data
+    val detail by produceState<ItemDetail?>(initialValue = null, contentId, libraryId, refreshKey) {
+        val id = contentId?.takeIf { it.isNotBlank() }
+        val shown = value?.takeIf { it.contentId == id }
+        value = shown
+        id ?: return@produceState
+        if (shown == null) {
+            value = catalog.getCachedItemDetail(id, libraryId)
+                ?: (catalog.getItemDetail(id, libraryId) as? ApiResult.Success)?.data
+        } else {
+            // Same title, new phase: after the party plays it, a fresh read
+            // carries the watch state spoiler protection needs.
+            (catalog.getItemDetail(id, libraryId) as? ApiResult.Success)?.data?.let { value = it }
+        }
     }
     val id = contentId?.takeIf { it.isNotBlank() } ?: return null
     val loaded = detail?.takeIf { it.contentId == id }
@@ -83,16 +95,18 @@ internal fun rememberTvStagedPreview(
                 version?.resolution?.let(::tvWatchPartyResolutionChip),
                 "HDR".takeIf { version?.hdr == true },
             ),
+            spoilers = WatchPartySpoilers.of(loaded),
         )
     }
     TvWatchPartyPreviews.get(id)?.let { item ->
-        return TvStagedPreview(item.title, item.subtitle, item.posterUrl)
+        return TvStagedPreview(item.title, item.subtitle, item.posterUrl, spoilers = item.spoilers)
     }
     suggestions.firstOrNull { it.contentId == id }?.let { suggestion ->
         return TvStagedPreview(
             title = suggestion.title,
             subtitle = suggestion.subtitle.ifBlank { null },
             posterUrl = suggestion.posterUrl.ifBlank { null },
+            spoilers = WatchPartySpoilers.of(suggestion),
         )
     }
     return TvStagedPreview(title = "Loading title…", subtitle = null, posterUrl = null)
@@ -125,6 +139,7 @@ internal fun tvWatchPartyItem(
     posterUrl: String?,
     fileId: Int?,
     libraryId: Int?,
+    spoilers: WatchPartySpoilers = WatchPartySpoilers.forType(contentType),
 ): WatchPartyItem = WatchPartyItem(
     contentId = contentId,
     contentType = contentType,
@@ -133,4 +148,5 @@ internal fun tvWatchPartyItem(
     posterUrl = posterUrl?.takeIf { it.isNotBlank() },
     fileId = fileId,
     libraryId = libraryId,
+    spoilers = spoilers,
 )
