@@ -1571,14 +1571,12 @@ fun TvAppNavigation(
                 castLaunchId = castLaunchId,
                 onStaleCastLaunch = leaveStaleCastLaunch,
                 onExit = { navController.popBackStack() },
-                // Up Next On Deck pick: replace this player with the pick's,
-                // resuming where it was left (tvOS parity).
-                onPlayOnDeckItem = { pickContentId, resumePositionSeconds ->
+                // Up Next On Deck pick: replace this player with the pick's.
+                // No resume override: the On Deck snapshot dates from when
+                // this item started, so the player reads the saved position.
+                onPlayOnDeckItem = { pickContentId ->
                     navController.navigateToTvPlayback(
-                        destination = TvRoute.Player(
-                            contentId = pickContentId,
-                            resumePositionSeconds = resumePositionSeconds,
-                        ).route,
+                        destination = TvRoute.Player(contentId = pickContentId).route,
                         contentId = pickContentId,
                         lastPlaybackNavigation = lastPlaybackNavigation,
                     )

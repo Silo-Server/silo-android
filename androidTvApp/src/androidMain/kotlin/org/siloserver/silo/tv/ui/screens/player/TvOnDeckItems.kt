@@ -10,8 +10,6 @@ data class TvOnDeckItem(
     val artUrl: String?,
     val artThumbhash: String?,
     val progressFraction: Float?,
-    /** Where the item resumes; null lets the player use the saved position. */
-    val resumePositionSeconds: Double?,
 )
 
 /**
@@ -49,7 +47,6 @@ internal fun List<ResolvedSection>.toTvOnDeckItems(contentId: String, seriesId: 
                 artUrl = item.backdropUrl,
                 artThumbhash = item.backdropThumbhash,
                 progressFraction = progress,
-                resumePositionSeconds = item.positionSeconds,
             )
         }
 }

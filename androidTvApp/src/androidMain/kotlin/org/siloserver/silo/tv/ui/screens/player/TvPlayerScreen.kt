@@ -2,16 +2,6 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
-import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
-import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.ui.layout.LayoutCoordinates
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.draw.drawWithContent
-import org.siloserver.silo.common.ui.components.ThumbhashImage
-import org.siloserver.silo.tv.ui.components.TvMediaCard
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -31,9 +21,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -49,6 +42,7 @@ import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -63,13 +57,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -145,6 +143,7 @@ import org.siloserver.silo.common.player.video.PlaybackRuntimeCorrectionMetrics
 import org.siloserver.silo.common.player.video.PlaybackStartupStallDetector
 import org.siloserver.silo.common.player.video.PostResumeVideoStallDetector
 import org.siloserver.silo.common.player.video.VideoPlayerTrackEntry
+import org.siloserver.silo.common.ui.components.ThumbhashImage
 import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 import org.siloserver.silo.domain.player.IntroAutoSkipState
 import org.siloserver.silo.model.playback.PlaybackExecutionPlan
@@ -164,10 +163,12 @@ import org.siloserver.silo.tv.cast.TvSiloCastReceiver
 import org.siloserver.silo.tv.data.preferences.PlaybackQuality
 import org.siloserver.silo.tv.ui.components.TvErrorScreen
 import org.siloserver.silo.tv.ui.components.TvLoadingScreen
+import org.siloserver.silo.tv.ui.components.TvMediaCard
 import org.siloserver.silo.tv.ui.focus.TvContentInitialFocusMaxAttempts
 import org.siloserver.silo.tv.ui.focus.TvFocusLog
 import org.siloserver.silo.tv.ui.focus.claimFocusOrReport
 import org.siloserver.silo.tv.ui.focus.requestFocusUntilObserved
+import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
 
 private const val CONTROLS_AUTO_HIDE_MS = 5_000L
 // Pre-revision-9 relative seeks: 10s back, 30s forward, matching tvOS
@@ -270,7 +271,7 @@ fun TvPlayerScreen(
     // the hub explains why and offers Rejoin.
     onWatchPartyEnded: () -> Unit = onExit,
     // Up Next On Deck pick: replace this player with one for that item.
-    onPlayOnDeckItem: (contentId: String, resumePositionSeconds: Double?) -> Unit = { _, _ -> },
+    onPlayOnDeckItem: (contentId: String) -> Unit = {},
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
@@ -2505,7 +2506,7 @@ fun TvPlayerScreen(
                 // Leave like Back (the session finishes and saves its
                 // position), then open the pick in a fresh player.
                 viewModel.onOnDeckItemChosen()
-                exitPlayer(true) { latestOnPlayOnDeckItem(item.contentId, item.resumePositionSeconds) }
+                exitPlayer(true) { latestOnPlayOnDeckItem(item.contentId) }
             },
             qualityOfferLabel = lowerQuality?.label?.takeIf { qualityOfferVisible },
         )
@@ -3187,6 +3188,10 @@ private fun TvPlayerNextUpOverlay(
 
     var overlayCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
     var paneCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    // onGloballyPositioned hands back the same coordinates object on every
+    // layout, so its state never changes; these bounds do, and reading them
+    // in the hole redraws the cut-out whenever the pane moves.
+    var paneBoundsInRoot by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     BoxWithConstraints(
         modifier = Modifier
             .onFocusChanged { upNextHasFocus = it.hasFocus }
@@ -3205,6 +3210,7 @@ private fun TvPlayerNextUpOverlay(
             url = backdrop?.first,
             thumbhash = backdrop?.second,
             hole = {
+                paneBoundsInRoot
                 val overlay = overlayCoordinates
                 val pane = paneCoordinates
                 if (overlay != null && pane != null && overlay.isAttached && pane.isAttached) {
@@ -3238,6 +3244,7 @@ private fun TvPlayerNextUpOverlay(
                             .aspectRatio(16f / 9f)
                             .onGloballyPositioned {
                                 paneCoordinates = it
+                                paneBoundsInRoot = it.boundsInRoot()
                                 onVideoBoundsChanged(it.videoViewportBounds())
                             }
                             .clip(RoundedCornerShape(8.dp))
@@ -3559,34 +3566,34 @@ private fun TvNextUpOnDeckRow(
         // third of the way across, shifting it left as focus arrives from the
         // panel; scroll only when a card nears an edge.
         CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
-        androidx.compose.foundation.lazy.LazyRow(
-            contentPadding = PaddingValues(horizontal = 80.dp),
-            horizontalArrangement = Arrangement.spacedBy(cardSpacing),
-        ) {
-            items(items.size, key = { items[it].contentId }) { index ->
-                val item = items[index]
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    TvMediaCard(
-                        title = item.title,
-                        posterUrl = item.artUrl,
-                        posterThumbhash = item.artThumbhash,
-                        onClick = { onPlay(item) },
-                        progress = item.progressFraction,
-                        artworkAspectRatio = 16f / 9f,
-                        width = cardWidth,
-                    )
-                    item.subtitle?.let { subtitle ->
-                        androidx.tv.material3.Text(
-                            text = subtitle,
-                            color = Color.White.copy(alpha = 0.52f),
-                            style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            modifier = Modifier.width(cardWidth),
+            androidx.compose.foundation.lazy.LazyRow(
+                contentPadding = PaddingValues(horizontal = 80.dp),
+                horizontalArrangement = Arrangement.spacedBy(cardSpacing),
+            ) {
+                items(items.size, key = { items[it].contentId }) { index ->
+                    val item = items[index]
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        TvMediaCard(
+                            title = item.title,
+                            posterUrl = item.artUrl,
+                            posterThumbhash = item.artThumbhash,
+                            onClick = { onPlay(item) },
+                            progress = item.progressFraction,
+                            artworkAspectRatio = 16f / 9f,
+                            width = cardWidth,
                         )
+                        item.subtitle?.let { subtitle ->
+                            androidx.tv.material3.Text(
+                                text = subtitle,
+                                color = Color.White.copy(alpha = 0.52f),
+                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                modifier = Modifier.width(cardWidth),
+                            )
+                        }
                     }
                 }
             }
-        }
         }
     }
 }
