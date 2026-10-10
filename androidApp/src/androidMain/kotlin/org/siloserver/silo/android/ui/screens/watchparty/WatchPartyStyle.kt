@@ -132,17 +132,20 @@ internal fun WatchPartyBackdrop(
     hidden: Boolean = false,
 ) {
     Box(modifier.fillMaxSize().background(SiloBackground)) {
-        Crossfade(targetState = url?.takeIf { it.isNotBlank() }, animationSpec = tween(400), label = "backdrop") { art ->
+        // Each artwork keeps its own treatment while it fades out, so an
+        // outgoing protected still is never drawn unhidden.
+        val target = url?.takeIf { it.isNotBlank() }?.let { BackdropArt(it, thumbhash, isPoster, hidden) }
+        Crossfade(targetState = target, animationSpec = tween(400), label = "backdrop") { art ->
             if (art != null) {
                 SpoilerImage(
-                    url = art,
-                    thumbhash = thumbhash,
-                    hidden = hidden,
+                    url = art.url,
+                    thumbhash = art.thumbhash,
+                    hidden = art.hidden,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .then(if (isPoster) Modifier.blur(28.dp).alpha(0.7f) else Modifier),
+                        .then(if (art.isPoster) Modifier.blur(28.dp).alpha(0.7f) else Modifier),
                 )
             }
         }
@@ -161,6 +164,8 @@ internal fun WatchPartyBackdrop(
         )
     }
 }
+
+private data class BackdropArt(val url: String, val thumbhash: String?, val isPoster: Boolean, val hidden: Boolean)
 
 /** Transparent bar: a round Back and the centred page title. */
 @Composable

@@ -893,8 +893,9 @@ internal fun TvWatchPartyInvitePage(
     inviteUrl: String?,
     backdropUrl: String?,
     backdropThumbhash: String?,
+    /** Spoiler protection hides the staged title's backdrop. */
+    backdropHidden: Boolean,
     onDismiss: () -> Unit,
-    backdropHidden: Boolean = false,
 ) {
     val doneFocus = remember { FocusRequester() }
     Popup(
