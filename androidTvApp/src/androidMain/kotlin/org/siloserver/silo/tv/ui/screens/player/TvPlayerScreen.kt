@@ -2,6 +2,16 @@
 
 package org.siloserver.silo.tv.ui.screens.player
 
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import org.siloserver.silo.tv.ui.theme.TvSmoothBringIntoViewSpec
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.drawWithContent
+import org.siloserver.silo.common.ui.components.ThumbhashImage
+import org.siloserver.silo.tv.ui.components.TvMediaCard
 import org.siloserver.silo.playback.SubtitleSyncNotice
 import android.app.Activity
 import android.content.ComponentName
@@ -259,6 +269,8 @@ fun TvPlayerScreen(
     // The Watch Party ended under this player (or its membership is gone);
     // the hub explains why and offers Rejoin.
     onWatchPartyEnded: () -> Unit = onExit,
+    // Up Next On Deck pick: replace this player with one for that item.
+    onPlayOnDeckItem: (contentId: String, resumePositionSeconds: Double?) -> Unit = { _, _ -> },
     preferredFileId: Int? = null,
     preferredQuality: String? = null,
     // Watch Party room. When non-null, [WatchPartyPlayback] binds this player
@@ -562,6 +574,7 @@ fun TvPlayerScreen(
         }
     }
     val stopPlaybackAndExit = { exitPlayer(true, null) }
+    val latestOnPlayOnDeckItem by rememberUpdatedState(onPlayOnDeckItem)
     val latestOnStaleCastLaunch by rememberUpdatedState(onStaleCastLaunch)
     // The phone's launch went stale just before this player registered. The
     // callback checks this player is still on top right before stopping what
@@ -2487,6 +2500,13 @@ fun TvPlayerScreen(
             onExitPlayback = { stopPlaybackAndExit() },
             onNextUpVideoBoundsChanged = { nextUpVideoBounds = it },
             onIntroPromptSelect = { handleIntroPromptSelect() },
+            onDeckItems = state.onDeckItems,
+            onPlayOnDeckItem = { item ->
+                // Leave like Back (the session finishes and saves its
+                // position), then open the pick in a fresh player.
+                viewModel.onOnDeckItemChosen()
+                exitPlayer(true) { latestOnPlayOnDeckItem(item.contentId, item.resumePositionSeconds) }
+            },
             qualityOfferLabel = lowerQuality?.label?.takeIf { qualityOfferVisible },
         )
         if (watchParty != null) {
@@ -3150,6 +3170,9 @@ private fun TvPlayerNextUpOverlay(
     shuffle: TvShuffleUiState? = null,
     onPickAnother: () -> Unit = {},
     onStopShuffling: () -> Unit = {},
+    // Other items in progress, shown under the panel (tvOS On Deck parity).
+    onDeckItems: List<TvOnDeckItem> = emptyList(),
+    onPlayOnDeckItem: (TvOnDeckItem) -> Unit = {},
 ) {
     val primaryFocus = remember { FocusRequester() }
     var upNextHasFocus by remember { mutableStateOf(false) }
@@ -3162,235 +3185,408 @@ private fun TvPlayerNextUpOverlay(
         )
     }
 
-    Box(
+    var overlayCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    var paneCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    BoxWithConstraints(
         modifier = Modifier
             .onFocusChanged { upNextHasFocus = it.hasFocus }
+            .onGloballyPositioned { overlayCoordinates = it }
             .fillMaxSize(),
     ) {
-        Row(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth()
-                .padding(horizontal = 80.dp),
-            horizontalArrangement = Arrangement.spacedBy(48.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // The existing PlayerView is measured and placed into this pane.
-            // It stays mounted while the successor prepares.
+        // tvOS grid, five cards wide so everything fits one screen: On Deck
+        // cards span the content column, the preview covers the first two.
+        val cardSpacing = 20.dp
+        val onDeckCardWidth = (maxWidth - 160.dp - cardSpacing * 4) / 5
+        // tvOS backgroundArtwork: the next episode's still, else the first
+        // On Deck item's art.
+        val backdrop = nextEpisode?.stillUrl?.takeIf { it.isNotBlank() }?.let { it to null }
+            ?: onDeckItems.firstOrNull()?.let { it.artUrl to it.artThumbhash }
+        TvNextUpBackdrop(
+            url = backdrop?.first,
+            thumbhash = backdrop?.second,
+            hole = {
+                val overlay = overlayCoordinates
+                val pane = paneCoordinates
+                if (overlay != null && pane != null && overlay.isAttached && pane.isAttached) {
+                    overlay.localBoundingBoxOf(pane)
+                } else {
+                    null
+                }
+            },
+        )
+        // One fixed screen, never scrolled: the video is a separate surface
+        // placed at the pane's bounds, and it cannot follow a scroll.
+        Column(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .aspectRatio(16f / 9f)
-                    .onGloballyPositioned { onVideoBoundsChanged(it.videoViewportBounds()) }
-                    .clip(RoundedCornerShape(8.dp))
-                    .border(
-                        width = 1.dp,
-                        color = Color.White.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(8.dp),
-                    ),
-            )
-
-            // Next-episode panel.
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(20.dp),
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentAlignment = Alignment.Center,
             ) {
-                shuffle?.scopeLabel?.let { scope ->
-                    Row(
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 80.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(cardSpacing),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // The existing PlayerView is measured and placed into this pane.
+                    // It stays mounted while the successor prepares.
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        androidx.tv.material3.Icon(
-                            imageVector = Icons.Filled.Shuffle,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                        androidx.tv.material3.Text(
-                            text = "Shuffling $scope",
-                            color = Color.White.copy(alpha = 0.75f),
-                            style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                            maxLines = 1,
-                        )
-                    }
-                }
-                val eyebrow = when {
-                    nextEpisode == null -> if (videoEnded) "Finished" else "More To Watch"
-                    shuffle != null -> "Up Next at Random"
-                    videoEnded -> "Playing Next"
-                    else -> "Up Next"
-                }
-                androidx.tv.material3.Text(
-                    text = eyebrow.uppercase(),
-                    color = Color.White.copy(alpha = 0.52f),
-                    style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
-                )
+                            .width(onDeckCardWidth * 2 + cardSpacing)
+                            .aspectRatio(16f / 9f)
+                            .onGloballyPositioned {
+                                paneCoordinates = it
+                                onVideoBoundsChanged(it.videoViewportBounds())
+                            }
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(
+                                width = 1.dp,
+                                color = Color.White.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(8.dp),
+                            ),
+                    )
 
-                if (nextEpisode != null) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        // A shuffled movie has no series line; its own title heads the panel.
-                        val heading = nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }
-                            ?: nextEpisode.title.takeUnless { nextEpisode.isEpisode }
-                        heading?.let { title ->
+                    // Next-episode panel.
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        shuffle?.scopeLabel?.let { scope ->
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(percent = 50))
+                                    .background(Color.White.copy(alpha = 0.10f))
+                                    .padding(horizontal = 14.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                androidx.tv.material3.Icon(
+                                    imageVector = Icons.Filled.Shuffle,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.75f),
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                androidx.tv.material3.Text(
+                                    text = "Shuffling $scope",
+                                    color = Color.White.copy(alpha = 0.75f),
+                                    style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                        val eyebrow = when {
+                            nextEpisode == null -> if (videoEnded) "Finished" else "More To Watch"
+                            shuffle != null -> "Up Next at Random"
+                            videoEnded -> "Playing Next"
+                            else -> "Up Next"
+                        }
+                        androidx.tv.material3.Text(
+                            text = eyebrow.uppercase(),
+                            color = Color.White.copy(alpha = 0.52f),
+                            style = androidx.tv.material3.MaterialTheme.typography.labelLarge,
+                        )
+
+                        if (nextEpisode != null) {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                // A shuffled movie has no series line; its own title heads the panel.
+                                val heading = nextEpisode.seriesTitle?.takeIf { it.isNotBlank() }
+                                    ?: nextEpisode.title.takeUnless { nextEpisode.isEpisode }
+                                heading?.let { title ->
+                                    androidx.tv.material3.Text(
+                                        text = title,
+                                        color = Color.White,
+                                        style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
+                                        maxLines = 1,
+                                    )
+                                }
+                                if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    androidx.tv.material3.Text(
+                                        text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
+                                        color = Color.White.copy(alpha = 0.62f),
+                                        style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
+                                    )
+                                    androidx.tv.material3.Text(
+                                        text = nextEpisode.title ?: "Next Episode",
+                                        color = Color.White,
+                                        style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
+                                        maxLines = 1,
+                                        modifier = Modifier.weight(1f, fill = false),
+                                    )
+                                    // Runtime shares the episode line to keep the panel short.
+                                    if (nextEpisode.runtimeMinutes > 0) {
+                                        androidx.tv.material3.Text(
+                                            text = "· ${nextEpisode.runtimeMinutes} min",
+                                            color = Color.White.copy(alpha = 0.46f),
+                                            style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
+                                        )
+                                    }
+                                }
+                                if (!nextEpisode.isEpisode && nextEpisode.runtimeMinutes > 0) {
+                                    androidx.tv.material3.Text(
+                                        text = "${nextEpisode.runtimeMinutes} min",
+                                        color = Color.White.copy(alpha = 0.46f),
+                                        style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                                nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                                    androidx.tv.material3.Text(
+                                        text = overview,
+                                        color = Color.White.copy(alpha = 0.58f),
+                                        style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+                                        maxLines = 2,
+                                    )
+                                }
+                            }
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                TvDialogActionRow(
+                                    title = "Play Now",
+                                    onClick = onPlayNow,
+                                    modifier = Modifier
+                                        .width(220.dp)
+                                        .focusRequester(primaryFocus),
+                                )
+                                if (countdownSeconds != null) {
+                                    TvCountdownRing(
+                                        seconds = countdownSeconds,
+                                        totalSeconds = countdownTotalSeconds,
+                                    )
+                                }
+                            }
+
+                            if (shuffle != null) {
+                                TvDialogActionRow(
+                                    title = "Pick Another",
+                                    onClick = onPickAnother,
+                                    enabled = !shuffle.pickingAnother,
+                                    modifier = Modifier.width(260.dp),
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                                if (!videoEnded) {
+                                    TvDialogActionRow(
+                                        title = "Keep Watching",
+                                        onClick = onKeepWatching,
+                                        modifier = Modifier.width(220.dp),
+                                    )
+                                }
+                                TvDialogActionRow(
+                                    title = "Back",
+                                    onClick = onBack,
+                                    modifier = Modifier.width(140.dp),
+                                )
+                            }
+                            shuffle?.message?.let { message ->
+                                androidx.tv.material3.Text(
+                                    text = message,
+                                    color = Color(0xFFFFB4AB),
+                                    style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                            // Interactive toggle (was a dead focusable): OK flips
+                            // auto-play; focus inverts the pill so the D-pad stop is
+                            // visible.
+                            var autoPlayToggleFocused by remember { mutableStateOf(false) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                androidx.tv.material3.Text(
+                                    text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
+                                    color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
+                                    style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                    modifier = Modifier
+                                        .onFocusChanged { autoPlayToggleFocused = it.isFocused }
+                                        .clip(RoundedCornerShape(percent = 50))
+                                        .background(if (autoPlayToggleFocused) Color.White else Color.Transparent)
+                                        .clickable { onToggleAutoPlay() }
+                                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                                )
+                                if (shuffle != null) {
+                                    var stopFocused by remember { mutableStateOf(false) }
+                                    androidx.tv.material3.Text(
+                                        text = "·",
+                                        color = Color.White.copy(alpha = 0.54f),
+                                        style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                    )
+                                    androidx.tv.material3.Text(
+                                        text = "Stop shuffling",
+                                        color = if (stopFocused) Color.Black else Color.White.copy(alpha = 0.54f),
+                                        style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
+                                        modifier = Modifier
+                                            .onFocusChanged { stopFocused = it.isFocused }
+                                            .clip(RoundedCornerShape(percent = 50))
+                                            .background(if (stopFocused) Color.White else Color.Transparent)
+                                            .clickable { onStopShuffling() }
+                                            .padding(horizontal = 12.dp, vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        } else {
+                            // Finished / no-next-episode state.
                             androidx.tv.material3.Text(
-                                text = title,
+                                text = if (videoEnded) "End of playback" else "Almost finished",
                                 color = Color.White,
                                 style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
-                                maxLines = 1,
                             )
-                        }
-                        if (nextEpisode.isEpisode) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             androidx.tv.material3.Text(
-                                text = "S${nextEpisode.seasonNumber}·E${nextEpisode.episodeNumber}",
+                                text = if (shuffle != null) "Nothing else in this shuffle can play." else "No next episode is available.",
                                 color = Color.White.copy(alpha = 0.62f),
-                                style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
-                            )
-                            androidx.tv.material3.Text(
-                                text = nextEpisode.title ?: "Next Episode",
-                                color = Color.White,
-                                style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
-                                maxLines = 2,
-                            )
-                        }
-                        if (nextEpisode.runtimeMinutes > 0) {
-                            androidx.tv.material3.Text(
-                                text = "${nextEpisode.runtimeMinutes} min",
-                                color = Color.White.copy(alpha = 0.46f),
-                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                            )
-                        }
-                        nextEpisode.overview?.takeIf { it.isNotBlank() }?.let { overview ->
-                            androidx.tv.material3.Text(
-                                text = overview,
-                                color = Color.White.copy(alpha = 0.58f),
                                 style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
-                                maxLines = 3,
                             )
+                            if (!videoEnded) {
+                                TvDialogActionRow(
+                                    title = "Keep Watching",
+                                    onClick = onKeepWatching,
+                                    modifier = Modifier
+                                        .width(260.dp)
+                                        .focusRequester(primaryFocus),
+                                )
+                                TvDialogActionRow(
+                                    title = "Back",
+                                    onClick = onBack,
+                                    modifier = Modifier.width(160.dp),
+                                )
+                            } else {
+                                TvDialogActionRow(
+                                    title = "Back",
+                                    onClick = onBack,
+                                    modifier = Modifier
+                                        .width(160.dp)
+                                        .focusRequester(primaryFocus),
+                                )
+                            }
                         }
                     }
+                }
+            }
+            if (onDeckItems.isNotEmpty()) {
+                TvNextUpOnDeckRow(
+                    items = onDeckItems,
+                    cardWidth = onDeckCardWidth,
+                    cardSpacing = cardSpacing,
+                    onPlay = onPlayOnDeckItem,
+                )
+            }
+        }
+    }
+}
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TvDialogActionRow(
-                            title = "Play Now",
-                            onClick = onPlayNow,
-                            modifier = Modifier
-                                .width(220.dp)
-                                .focusRequester(primaryFocus),
-                        )
-                        if (countdownSeconds != null) {
-                            TvCountdownRing(
-                                seconds = countdownSeconds,
-                                totalSeconds = countdownTotalSeconds,
-                            )
-                        }
-                    }
-
-                    if (shuffle != null) {
-                        TvDialogActionRow(
-                            title = "Pick Another",
-                            onClick = onPickAnother,
-                            enabled = !shuffle.pickingAnother,
-                            modifier = Modifier.width(260.dp),
-                        )
-                    }
-                    if (!videoEnded) {
-                        TvDialogActionRow(
-                            title = "Keep Watching",
-                            onClick = onKeepWatching,
-                            modifier = Modifier.width(260.dp),
-                        )
-                    }
-                    TvDialogActionRow(
-                        title = "Back",
-                        onClick = onBack,
-                        modifier = Modifier.width(160.dp),
+/**
+ * Full-screen artwork behind the Up Next overlay (tvOS `backgroundArtwork`):
+ * dimmed so it tints rather than shows. `Modifier.blur` does nothing before
+ * Android 12 (the SHIELD runs 11), so the softness comes from decoding the
+ * image tiny and scaling it up. The [hole] — the mini-player pane — is
+ * cleared so the video drawn beneath this overlay stays visible.
+ */
+@Composable
+private fun TvNextUpBackdrop(url: String?, thumbhash: String?, hole: () -> androidx.compose.ui.geometry.Rect?) {
+    if (url.isNullOrBlank() && thumbhash.isNullOrBlank()) return
+    val holeRadius = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                hole()?.let { rect ->
+                    drawRoundRect(
+                        color = Color.Black,
+                        topLeft = rect.topLeft,
+                        size = rect.size,
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(holeRadius),
+                        blendMode = androidx.compose.ui.graphics.BlendMode.Clear,
                     )
-                    shuffle?.message?.let { message ->
+                }
+            },
+    ) {
+        ThumbhashImage(
+            url = url,
+            thumbhash = thumbhash,
+            contentDescription = null,
+            decodeSizePx = 48,
+            // Its own cache entry: under the URL alone, a full-size copy
+            // cached by another screen comes back sharp instead of tiny.
+            cacheKey = url?.let { "next-up-backdrop:$it" },
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = 1.12f
+                    scaleY = 1.12f
+                },
+        )
+        // tvOS dims to ~4% (0.18 under a 0.78 scrim), which barely reads on a
+        // TV in a dim room; keep ~40% and let the scrim carry legibility.
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)))
+        // Deeper at the bottom so the On Deck row reads over the art.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.55f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.85f),
+                    ),
+                ),
+        )
+    }
+}
+
+/** The Up Next overlay's On Deck row: other items in progress (tvOS parity). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun TvNextUpOnDeckRow(
+    items: List<TvOnDeckItem>,
+    cardWidth: androidx.compose.ui.unit.Dp,
+    cardSpacing: androidx.compose.ui.unit.Dp,
+    onPlay: (TvOnDeckItem) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        androidx.tv.material3.Text(
+            text = "On Deck",
+            color = Color.White.copy(alpha = 0.86f),
+            style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 80.dp),
+        )
+        // TV's default focus pivot slides the row so the focused card sits a
+        // third of the way across, shifting it left as focus arrives from the
+        // panel; scroll only when a card nears an edge.
+        CompositionLocalProvider(LocalBringIntoViewSpec provides TvSmoothBringIntoViewSpec) {
+        androidx.compose.foundation.lazy.LazyRow(
+            contentPadding = PaddingValues(horizontal = 80.dp),
+            horizontalArrangement = Arrangement.spacedBy(cardSpacing),
+        ) {
+            items(items.size, key = { items[it].contentId }) { index ->
+                val item = items[index]
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    TvMediaCard(
+                        title = item.title,
+                        posterUrl = item.artUrl,
+                        posterThumbhash = item.artThumbhash,
+                        onClick = { onPlay(item) },
+                        progress = item.progressFraction,
+                        artworkAspectRatio = 16f / 9f,
+                        width = cardWidth,
+                    )
+                    item.subtitle?.let { subtitle ->
                         androidx.tv.material3.Text(
-                            text = message,
-                            color = Color(0xFFFFB4AB),
-                            style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    // Interactive toggle (was a dead focusable): OK flips
-                    // auto-play; focus inverts the pill so the D-pad stop is
-                    // visible.
-                    var autoPlayToggleFocused by remember { mutableStateOf(false) }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.tv.material3.Text(
-                            text = "Auto-play is ${if (autoPlayEnabled) "On" else "Off"}",
-                            color = if (autoPlayToggleFocused) Color.Black else Color.White.copy(alpha = 0.54f),
+                            text = subtitle,
+                            color = Color.White.copy(alpha = 0.52f),
                             style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                            modifier = Modifier
-                                .onFocusChanged { autoPlayToggleFocused = it.isFocused }
-                                .clip(RoundedCornerShape(percent = 50))
-                                .background(if (autoPlayToggleFocused) Color.White else Color.Transparent)
-                                .clickable { onToggleAutoPlay() }
-                                .padding(horizontal = 12.dp, vertical = 4.dp),
-                        )
-                        if (shuffle != null) {
-                            var stopFocused by remember { mutableStateOf(false) }
-                            androidx.tv.material3.Text(
-                                text = "·",
-                                color = Color.White.copy(alpha = 0.54f),
-                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                            )
-                            androidx.tv.material3.Text(
-                                text = "Stop shuffling",
-                                color = if (stopFocused) Color.Black else Color.White.copy(alpha = 0.54f),
-                                style = androidx.tv.material3.MaterialTheme.typography.labelMedium,
-                                modifier = Modifier
-                                    .onFocusChanged { stopFocused = it.isFocused }
-                                    .clip(RoundedCornerShape(percent = 50))
-                                    .background(if (stopFocused) Color.White else Color.Transparent)
-                                    .clickable { onStopShuffling() }
-                                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
-                } else {
-                    // Finished / no-next-episode state.
-                    androidx.tv.material3.Text(
-                        text = if (videoEnded) "End of playback" else "Almost finished",
-                        color = Color.White,
-                        style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
-                    )
-                    androidx.tv.material3.Text(
-                        text = if (shuffle != null) "Nothing else in this shuffle can play." else "No next episode is available.",
-                        color = Color.White.copy(alpha = 0.62f),
-                        style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
-                    )
-                    if (!videoEnded) {
-                        TvDialogActionRow(
-                            title = "Keep Watching",
-                            onClick = onKeepWatching,
-                            modifier = Modifier
-                                .width(260.dp)
-                                .focusRequester(primaryFocus),
-                        )
-                        TvDialogActionRow(
-                            title = "Back",
-                            onClick = onBack,
-                            modifier = Modifier.width(160.dp),
-                        )
-                    } else {
-                        TvDialogActionRow(
-                            title = "Back",
-                            onClick = onBack,
-                            modifier = Modifier
-                                .width(160.dp)
-                                .focusRequester(primaryFocus),
+                            maxLines = 1,
+                            modifier = Modifier.width(cardWidth),
                         )
                     }
                 }
             }
+        }
         }
     }
 }
@@ -3749,6 +3945,8 @@ private fun TvPlayerOverlays(
     onExitPlayback: () -> Unit,
     onNextUpVideoBoundsChanged: (Rect) -> Unit,
     onIntroPromptSelect: () -> Unit,
+    onDeckItems: List<TvOnDeckItem> = emptyList(),
+    onPlayOnDeckItem: (TvOnDeckItem) -> Unit = {},
     /** Watch Party: the lower rung offered after repeated stalls, or null. */
     qualityOfferLabel: String? = null,
 ) {
@@ -3939,6 +4137,8 @@ private fun TvPlayerOverlays(
                     shuffle = shuffle,
                     onPickAnother = onPickAnother,
                     onStopShuffling = onStopShuffling,
+                    onDeckItems = onDeckItems,
+                    onPlayOnDeckItem = onPlayOnDeckItem,
                 )
             }
         }

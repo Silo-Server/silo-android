@@ -587,6 +587,7 @@ val androidTvModule = module {
             serverReachabilityMonitor = get(),
             launchArgs = params.get<TvPlayerLaunchArgs>(),
             shuffleFeatureStore = get(),
+            sectionRepository = get(),
         )
     }
 

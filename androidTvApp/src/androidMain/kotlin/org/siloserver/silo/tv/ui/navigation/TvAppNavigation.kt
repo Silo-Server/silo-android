@@ -1571,6 +1571,18 @@ fun TvAppNavigation(
                 castLaunchId = castLaunchId,
                 onStaleCastLaunch = leaveStaleCastLaunch,
                 onExit = { navController.popBackStack() },
+                // Up Next On Deck pick: replace this player with the pick's,
+                // resuming where it was left (tvOS parity).
+                onPlayOnDeckItem = { pickContentId, resumePositionSeconds ->
+                    navController.navigateToTvPlayback(
+                        destination = TvRoute.Player(
+                            contentId = pickContentId,
+                            resumePositionSeconds = resumePositionSeconds,
+                        ).route,
+                        contentId = pickContentId,
+                        lastPlaybackNavigation = lastPlaybackNavigation,
+                    )
+                },
                 // Host Stop: back to the room's lobby in place of the player.
                 // The membership is kept, so the lobby follows the next Start.
                 onReturnToWatchPartyLobby = { id ->
