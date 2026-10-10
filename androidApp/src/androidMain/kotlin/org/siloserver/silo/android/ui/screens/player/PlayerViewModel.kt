@@ -5022,6 +5022,8 @@ class PlayerViewModel(
                 runtimeMinutes = pick.runtimeMinutes,
                 seriesTitle = pick.seriesTitle,
                 overview = pick.overview,
+                // A pick carries no watch state: protect episodes, never movies.
+                isUnwatched = pick.isEpisode,
                 isEpisode = pick.isEpisode,
             )
         }
