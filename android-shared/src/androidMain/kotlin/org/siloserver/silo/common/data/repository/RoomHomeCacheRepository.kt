@@ -73,8 +73,8 @@ class RoomHomeCacheRepository(
     override suspend fun getCachedHomeV2(owner: AuthScopeSnapshot): HomeCacheSnapshot? {
         val profile = owner.profileId ?: return null
         if (owner != snapshotProvider()) return null
-        val row = runCatching { scopedDao.get(owner.serverId, profile, scopedKey(owner)) }.getOrNull()
-        val sections = row?.let { decode(it.json) }
+        val row = runCatching { scopedDao.get(owner.serverId, profile, scopedKey(owner)) }.getOrNull() ?: return null
+        val sections = decode(row.json)
         if (owner != snapshotProvider()) return null
         return sections?.let { HomeCacheSnapshot(it, row.cachedAtMs) }
     }
@@ -116,6 +116,7 @@ class RoomHomeCacheRepository(
     }
 
     override suspend fun getCachedHome(): HomeCacheSnapshot? {
+        val identityGeneration = identityTransitions.generation.value
         val snapshot = snapshotProvider() ?: return null
         val profileId = snapshot.profileId ?: return null
         // An oversized legacy row (written before the cap) throws
@@ -127,6 +128,8 @@ class RoomHomeCacheRepository(
                 null
             } ?: return null
         val sections = decode(row.sectionsJson) ?: return null
+        // The read and the decode suspend: serve nothing if the identity moved meanwhile.
+        if (snapshot != snapshotProvider() || identityGeneration != identityTransitions.generation.value) return null
         return HomeCacheSnapshot(sections = sections, cachedAtMs = row.cachedAtMs)
     }
 
