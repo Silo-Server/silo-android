@@ -101,7 +101,10 @@ fun TvHomeScreen(
     androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                if (shouldRefreshOnResume()) {
+                // The observer gets ON_RESUME as soon as it is added. On a new
+                // ViewModel that is while its own first load is still running,
+                // and a second full Home read would only supersede it.
+                if (shouldRefreshOnResume() && !viewModel.uiState.value.isLoading) {
                     viewModel.refreshFromRealtime()
                 }
             }

@@ -4,10 +4,13 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.*
 import io.ktor.http.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.api.SectionApi
 import org.siloserver.silo.repository.SectionRepository
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.*
 
 class HomeSectionsV2Test {
@@ -35,6 +38,48 @@ class HomeSectionsV2Test {
             status = HttpStatusCode.OK; body = """{"sections":[]}"""; assertTrue(api.list(owner).getOrThrow().sections.isEmpty())
             late = true; assertIs<ApiResult.Error>(api.list(original))
             val sent = sends; assertIs<ApiResult.Error>(api.list(original)); assertEquals(sent, sends)
+        } finally { client.close() }
+    }
+    private class RecordingDispatcher : CoroutineDispatcher() {
+        var dispatches = 0
+        override fun dispatch(context: CoroutineContext, block: Runnable) { dispatches++; Dispatchers.Default.dispatch(context, block) }
+    }
+    // With 100-item rows Home is over 1 MB; reading it on the caller's main thread stalled low-end TVs.
+    @Test fun homeResponsesAreReadAndDecodedOnTheDecodeDispatcher() = runTest {
+        val row = """{"id":"second","section_type":"continue_watching","title":"Second","items":[{"content_id":"movie:2","type":"movie","title":"Two"}]}"""
+        val client = HttpClient(MockEngine {
+            respond(if (it.url.encodedPath.endsWith("/items")) row else good, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+        })
+        try {
+            val decode = RecordingDispatcher()
+            val api = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = decode)
+            api.list(owner).getOrThrow(); val afterList = decode.dispatches; assertTrue(afterList > 0)
+            assertEquals("second", api.section("second", owner).getOrThrow().section?.id); assertTrue(decode.dispatches > afterList)
+        } finally { client.close() }
+    }
+    @Test fun firstLoadJoinsARunningReadButRefreshesNeverDo() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        var sends = 0; var gate = CompletableDeferred<Unit>()
+        val client = HttpClient(MockEngine(MockEngineConfig().apply {
+            this.dispatcher = dispatcher
+            addHandler { sends++; gate.await(); respond(good, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
+        }))
+        try {
+            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)))
+            val warmup = async { repository.getHomeSections(owner) }; runCurrent()
+            val firstLoad = async { repository.getHomeSectionsJoiningRead(owner) }; runCurrent(); assertEquals(1, sends)
+            val refresh = async { repository.getHomeSections(owner) }; runCurrent(); assertEquals(2, sends)
+            gate.complete(Unit)
+            for (read in listOf(warmup, firstLoad, refresh)) assertEquals(listOf("second", "first"), read.await().getOrThrow().sections.map { it.id })
+            assertEquals(2, sends)
+            // A joined read cancelled with its own caller leaves the first load to read for itself.
+            gate = CompletableDeferred()
+            val cancelled = async { repository.getHomeSections(owner) }; runCurrent()
+            val retried = async { repository.getHomeSectionsJoiningRead(owner) }; runCurrent(); assertEquals(3, sends)
+            cancelled.cancel(); runCurrent(); assertEquals(4, sends)
+            gate.complete(Unit); assertIs<ApiResult.Success<*>>(retried.await())
+            // Nothing running: the first load reads normally.
+            assertIs<ApiResult.Success<*>>(repository.getHomeSectionsJoiningRead(owner)); assertEquals(5, sends)
         } finally { client.close() }
     }
     @Test fun suspendedAuthorityCannotPublishIntoReplacementPlaybackRun() = runTest {

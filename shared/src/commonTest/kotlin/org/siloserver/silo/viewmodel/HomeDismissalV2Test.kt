@@ -68,7 +68,7 @@ class HomeDismissalV2Test {
         })) { install(ContentNegotiation) { json(SiloJson) } }
         val store = ViewModelStore()
         try {
-            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
+            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)))
             val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))))
             store.put("home", vm)
             runCurrent()

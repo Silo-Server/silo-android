@@ -77,7 +77,7 @@ class HomeViewModelCacheIdentityTest {
         val cache = RecordingHomeCache()
         val viewModel = HomeViewModel(
             sectionRepository = SectionRepository(
-                sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)),
+                sectionApi = SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)),
             ),
             mediaActions = mediaActions(),
             homeCache = cache,
@@ -107,7 +107,7 @@ class HomeViewModelCacheIdentityTest {
         }
         val observations = mutableListOf<HomeLoadObservation>()
         val viewModel = HomeViewModel(
-            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
+            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher))),
             mediaActions = mediaActions(),
             diagnostics = HomeDiagnosticsObserver(observations::add),
         )
@@ -150,7 +150,7 @@ class HomeViewModelCacheIdentityTest {
             install(ContentNegotiation) { json(SiloJson) }
         }
         val viewModel = HomeViewModel(
-            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted))),
+            sectionRepository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher))),
             mediaActions = mediaActions(),
         )
         viewModel.uiState.first { !it.isLoading }

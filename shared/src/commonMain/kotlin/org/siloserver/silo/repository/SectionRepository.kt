@@ -14,8 +14,15 @@ import org.siloserver.silo.network.map
 import org.siloserver.silo.repository.port.CatalogCachePort
 import org.siloserver.silo.repository.port.NoOpCatalogCachePort
 import org.siloserver.silo.repository.port.canServeCache
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class SectionRepository(
     private val sectionApi: SectionApi,
@@ -25,7 +32,42 @@ class SectionRepository(
     suspend fun captureHomeAuthority() = sectionApi.captureHomeAuthority()
     suspend fun isHomeAuthorityCurrent(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.isHomeAuthorityCurrent(owner)
 
-    suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSections(owner)
+    private val homeReadLock = Mutex()
+    private var homeRead: Pair<org.siloserver.silo.network.AuthScopeSnapshot, CompletableDeferred<ApiResult<SectionsResponse>>>? = null
+
+    suspend fun getHomeSections(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
+        val read = CompletableDeferred<ApiResult<SectionsResponse>>()
+        homeReadLock.withLock { homeRead = owner to read }
+        try {
+            return sectionApi.getHomeSections(owner).also { read.complete(it) }
+        } catch (e: Throwable) {
+            read.completeExceptionally(e)
+            throw e
+        } finally {
+            withContext(NonCancellable) { homeReadLock.withLock { if (homeRead?.second === read) homeRead = null } }
+        }
+    }
+
+    /**
+     * Home's first load: joins a read for the same [owner] that is already
+     * running instead of starting another. At launch the startup warmup starts
+     * one, and with 100-item rows each read downloads and decodes over 1 MB.
+     * Refreshes use [getHomeSections], which never joins: they must see changes
+     * made after an earlier read started.
+     */
+    suspend fun getHomeSectionsJoiningRead(owner: org.siloserver.silo.network.AuthScopeSnapshot): ApiResult<SectionsResponse> {
+        val running = homeReadLock.withLock { homeRead?.takeIf { it.first == owner }?.second }
+        if (running != null) {
+            try {
+                return running.await()
+            } catch (e: CancellationException) {
+                // The read we joined was cancelled with its caller; read for ourselves.
+                currentCoroutineContext().ensureActive()
+            }
+        }
+        return getHomeSections(owner)
+    }
+
     suspend fun getHomeSectionItems(id: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) = sectionApi.getHomeSectionItems(id, owner)
 
     suspend fun dismissHomeItem(surface: String, itemId: String, anchor: String, owner: org.siloserver.silo.network.AuthScopeSnapshot) =

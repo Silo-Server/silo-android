@@ -61,7 +61,7 @@ class HomeScreenV2Test {
         }))
         val store = ViewModelStore()
         try {
-            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted)))
+            val repository = SectionRepository(SectionApi(client, home = HomeSectionsV2Api(client, tokens, ApiV2Gate.Unrestricted, decodeDispatcher = dispatcher)))
             val vm = HomeViewModel(repository, MediaActionsCoordinator(PersonalDataRepository(PersonalDataApi(client))), cache, local, catalogLanguage = language)
             store.put("home", vm); block(vm)
         } finally { store.clear(); client.close(); Dispatchers.resetMain() }

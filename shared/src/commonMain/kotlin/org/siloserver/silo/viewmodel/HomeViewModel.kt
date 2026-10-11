@@ -307,7 +307,13 @@ class HomeViewModel(
                 ),
             )
         }
-        when (val result = sectionRepository.getHomeSections(owner)) {
+        // The first load may join the startup warmup's read; refreshes always read anew.
+        val read = if (trigger == HomeLoadTrigger.INITIAL) {
+            sectionRepository.getHomeSectionsJoiningRead(owner)
+        } else {
+            sectionRepository.getHomeSections(owner)
+        }
+        when (val result = read) {
             is ApiResult.Success -> {
                 val sections = result.data.sections
                 // `/home/sections` already returns each section with its items
@@ -331,23 +337,11 @@ class HomeViewModel(
                 // Don't persist a partially-resolved home over a good cached one.
                 val fullyResolved = hydration.fullyResolved
 
-                // Cache the RAW server sections (snapshot), but display with the
-                // local optimistic overlay applied.
-                if (
-                    fullyResolved &&
-                    // A superseded fetch must not write its sections to the
-                    // cache either: the next cold start would serve them.
-                    generation == fetchGeneration &&
-                    requestIdentityGeneration == identityTransitions.generation.value
-                ) {
-                    homeCache.cacheHomeV2(resolved, owner) { generation == fetchGeneration && displayedOwner == owner }
-                }
                 val overlaid = overlayLocalState(resolved)
-                // Checked AGAIN, after the cache write and the overlay. Both
-                // suspend, and a newer fetch can complete and publish during
-                // either — so a check taken before them proves only that this
-                // reply was current when it arrived, not that it still is when
-                // it finally writes.
+                // Checked AGAIN, after the overlay. It suspends, and a newer
+                // fetch can complete and publish meanwhile — so a check taken
+                // before it proves only that this reply was current when it
+                // arrived, not that it still is when it finally writes.
                 if (!mayPublish(owner, generation)) {
                     report(HomeLoadOutcome.SUPERSEDED, resolved)
                     return generation
@@ -373,6 +367,19 @@ class HomeViewModel(
                         // THOSE, which were complete when they were published.
                         it.copy(isLoading = false, error = null)
                     }
+                }
+                // Cache the RAW server sections (snapshot); the screen shows them
+                // with the local overlay. Written after publishing: with 100-item
+                // rows the snapshot is about 1 MB, and encoding it would hold the
+                // rows back from the screen.
+                if (
+                    fullyResolved &&
+                    // A superseded fetch must not write its sections to the
+                    // cache either: the next cold start would serve them.
+                    generation == fetchGeneration &&
+                    requestIdentityGeneration == identityTransitions.generation.value
+                ) {
+                    homeCache.cacheHomeV2(resolved, owner) { generation == fetchGeneration && displayedOwner == owner }
                 }
             }
             is ApiResult.Error -> {
