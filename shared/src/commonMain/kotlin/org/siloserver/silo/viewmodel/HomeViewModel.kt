@@ -308,7 +308,9 @@ class HomeViewModel(
             )
         }
         // The first load may join the startup warmup's read; refreshes always read anew.
-        val read = if (trigger == HomeLoadTrigger.INITIAL) {
+        // Only with no acknowledged membership change: a joined read may predate one, and
+        // must not vouch for it through the witnesses captured above.
+        val read = if (trigger == HomeLoadTrigger.INITIAL && membershipWitnesses.isEmpty()) {
             sectionRepository.getHomeSectionsJoiningRead(owner)
         } else {
             sectionRepository.getHomeSections(owner)

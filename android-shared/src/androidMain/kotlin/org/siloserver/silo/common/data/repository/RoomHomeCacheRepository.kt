@@ -42,8 +42,15 @@ class RoomHomeCacheRepository(
     private suspend fun encode(sections: List<ResolvedSection>): String =
         withContext(jsonDispatcher) { json.encodeToString(sections) }
 
-    private suspend fun decode(body: String): List<ResolvedSection>? =
-        withContext(jsonDispatcher) { runCatching { json.decodeFromString<List<ResolvedSection>>(body) }.getOrNull() }
+    private suspend fun decode(body: String): List<ResolvedSection>? = withContext(jsonDispatcher) {
+        // Corrupt or forward-incompatible JSON (a SerializationException, which is an
+        // IllegalArgumentException) is a cache miss; cancellation still propagates.
+        try {
+            json.decodeFromString<List<ResolvedSection>>(body)
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
 
     override suspend fun cacheHomeV2(sections: List<ResolvedSection>, owner: AuthScopeSnapshot, stillCurrent: () -> Boolean) {
         val profile = owner.profileId ?: return
