@@ -59,9 +59,22 @@ class NotificationsV2Test {
     @Test fun aPushForAnotherServerIsReadWithItsSavedLoginWhileAMovedActiveCaptureIsRefused() = runTest {
         val identity = Identity()
         val saved = AuthScopeSnapshot.savedLogin("other", "https://other.invalid", "kids", "kids-proof", identityGeneration = 1)
-        val c = client { request ->
-            assertEquals(saved, request.attributes[AuthScopeAttributeKey])
+        // Through the production auth plugin: the other server's own token and the
+        // registered profile's proof go to that server's address.
+        val c = HttpClient(MockEngine { request ->
+            assertEquals("https://other.invalid/api/v2/notifications/delivery-1", request.url.toString())
+            assertEquals("Bearer OTHER-ACCESS", request.headers[HttpHeaders.Authorization])
+            assertEquals("kids", request.headers["X-Profile-Id"])
+            assertEquals("kids-proof", request.headers["X-Profile-Token"])
             reply(row("delivery-1"))
+        }) {
+            install(ContentNegotiation) { json(SiloJson) }
+            install(SiloAuthPlugin) {
+                tokenManager = object : TokenManager by identity {
+                    override suspend fun getAccessTokenForScope(scope: AuthScopeSnapshot) =
+                        "OTHER-ACCESS".takeIf { scope.serverId == "other" }
+                }
+            }
         }
         try {
             val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity)
