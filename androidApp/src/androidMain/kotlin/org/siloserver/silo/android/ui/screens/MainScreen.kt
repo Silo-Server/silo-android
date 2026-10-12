@@ -300,7 +300,7 @@ fun MainScreen(
             // Same teardown as the Settings sign-out: otherwise the next
             // user's shell renders (and can write back) the previous
             // profile's overlays and card presentation.
-            signOutTeardown.signOut()
+            if (!signOutTeardown.signOut()) return@launch
             navController.navigate(Route.Login.route) {
                 popUpTo(0) { inclusive = true }
                 launchSingleTop = true

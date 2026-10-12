@@ -1105,7 +1105,7 @@ fun AppNavigation(
                 onChangeServer = { navController.navigate(Route.ServerList.route) },
                 onSignOut = {
                     navScope.launch {
-                        signOutTeardown.signOut()
+                        if (!signOutTeardown.signOut()) return@launch
                         navController.navigate(Route.Login.route) {
                             popUpTo(0) { inclusive = true }
                         }

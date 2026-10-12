@@ -536,8 +536,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             // Pushes in-flight settings, then drops per-profile cached prefs so
             // the next user doesn't see stale rows flash before the fresh fetch.
-            signOutTeardown.signOut()
-            _uiState.update { it.copy(loggedOut = true) }
+            if (signOutTeardown.signOut()) _uiState.update { it.copy(loggedOut = true) }
         }
     }
 

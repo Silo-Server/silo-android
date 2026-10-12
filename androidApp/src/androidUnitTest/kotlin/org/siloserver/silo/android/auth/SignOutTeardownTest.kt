@@ -61,6 +61,17 @@ class SignOutTeardownTest {
         assertNull(tokens.getAccessToken())
     }
 
+    @Test
+    fun switchingServersWhileThePushRemovalWaitsSignsNobodyOut() = runTest {
+        val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
+        val active = MutableStateFlow<String?>("home")
+
+        val signedOut = teardown(tokens, nativeSignIn(), active, unregisterPush = { active.value = "cabin" }).signOut()
+
+        assertFalse(signedOut)
+        assertEquals("access", tokens.getAccessToken(), "cabin, active by then, keeps its account")
+    }
+
     private fun TestScope.nativeSignIn() = NativeSignInCoordinator(
         InMemoryPendingNativeSignInStore(),
         idle(),
@@ -71,6 +82,7 @@ class SignOutTeardownTest {
     private fun teardown(
         tokens: TokenManagerImpl,
         coordinator: NativeSignInCoordinator,
+        activeServerId: MutableStateFlow<String?> = MutableStateFlow("home"),
         unregisterPush: suspend (String) -> Unit = {},
     ) = SignOutTeardown(
         authRepository = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens),
@@ -84,7 +96,7 @@ class SignOutTeardownTest {
         episodeSpoilerStore = idle(),
         requestsFeatureStore = RequestsFeatureStore(RequestsRepository(idle())),
         metadataAiFeatureStore = MetadataAiFeatureStore(MetadataAiRepository(idle())),
-        serverRegistry = idle(mapOf("getActiveServerId" to MutableStateFlow<String?>("home"))),
+        serverRegistry = idle(mapOf("getActiveServerId" to activeServerId)),
         nativeSignIn = coordinator,
         unregisterPush = unregisterPush,
     )
