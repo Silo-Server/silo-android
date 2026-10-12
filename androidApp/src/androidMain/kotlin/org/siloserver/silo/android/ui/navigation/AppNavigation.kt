@@ -887,7 +887,9 @@ fun AppNavigation(
                     val switching = switchTo != null
                     // Same teardown as every other sign-out, which also has
                     // the next provider sign-in offer another account.
-                    if (signOutFirst) signOutTeardown.signOut(flushFirst = false, startSignIn = startSignIn)
+                    // Nobody was signed out (another server or login became active
+                    // meanwhile): don't open the sign-in this was preparing.
+                    if (signOutFirst && !signOutTeardown.signOut(flushFirst = false, startSignIn = startSignIn)) return@launch
                     onRequeueExternalRoute(pairDeviceRoute(pendingCode ?: code))
                     navController.navigate(Route.Login.route) {
                         if (switching || signOutFirst) popUpTo(0) { inclusive = true }
