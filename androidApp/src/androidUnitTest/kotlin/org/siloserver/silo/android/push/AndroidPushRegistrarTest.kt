@@ -211,6 +211,26 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,2L,2L),generations)
         val record=store.entries.single(); assertNull(record.intent.registration); assertTrue(record.acknowledged)
     }
+    @Test fun aServerWhoseLoginHoldsItAgainIsCaughtUpAgain()=runTest {
+        var current=token
+        val r=registrar(object:AndroidPushTokenProvider { override suspend fun token()=current }); r.registerToken(token)
+        val home=owner.copy(scope=owner.scope.copy(identityGeneration=3))
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
+        fun cabinToken()=store.entries.single { it.intent.serverId=="cabin" }.intent.registration!!.token
+        // A cabin sign-out that could not reach the server marks its record, then stops: the login stays.
+        suspend fun signOutOfCabinThatStops() { available=false; assertFalse(r.unregisterDevice("cabin") is ApiResult.Success); available=true }
+
+        owner=cabin; uncertain=true; r.registerToken(token); uncertain=false
+        signOutOfCabinThatStops()
+        assertIs<ApiResult.Success<*>>(r.registerToken(token)) // re-sent and acknowledged
+        owner=home; current="n".repeat(80); r.registerOtherServersIfBehind()
+        assertEquals(current,cabinToken())
+
+        owner=cabin; signOutOfCabinThatStops()
+        assertIs<ApiResult.Success<*>>(r.registerToken(current)) // already held: nothing to send
+        owner=home; current="m".repeat(80); r.registerOtherServersIfBehind()
+        assertEquals(current,cabinToken())
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null

@@ -198,6 +198,13 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun markOwnerLeaving(serverUrl: String, device: String) =
         updateRecord(serverUrl, device) { record -> record?.takeUnless { it.ownerLeaving }?.copy(ownerLeaving = true) ?: record }
 
+    /**
+     * A record acknowledged for a login that is still current is nobody's leftover:
+     * catching up a rotated token must reach that server again.
+     */
+    private suspend fun clearOwnerLeaving(serverUrl: String, device: String, generation: Long) =
+        updateRecord(serverUrl, device) { record -> record?.takeIf { it.generation == generation }?.copy(ownerLeaving = false) ?: record }
+
     private suspend fun apply(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any): ApiResult<PushDeviceRegisterResponse?> =
         serverLock(owner.scope.serverUrl).withLock { applyOnServer(owner, request, attempt, mayReconcile = true) }
 
@@ -247,7 +254,10 @@ class AndroidPushRegistrar internal constructor(
                         it.intent.profileId != intent.profileId || it.intent.profileToken != intent.profileToken)) {
                     return failure("push_previous_intent_uncertain")
                 }
-                if (it.acknowledged && it.intent == intent) return ApiResult.Success(it.receipt)
+                if (it.acknowledged && it.intent == intent) {
+                    if (it.ownerLeaving) clearOwnerLeaving(serverUrl, device, it.generation)
+                    return ApiResult.Success(it.receipt)
+                }
             }
             val entry = if (previous != null && (previous.intent == intent || reconciling)) previous else {
                 if (previous?.generation == Long.MAX_VALUE) return failure("push_generation_exhausted")
@@ -272,7 +282,7 @@ class AndroidPushRegistrar internal constructor(
                 stored?.takeIf { it.generation == entry.generation && it.key == entry.key }?.let(outcome) ?: stored
             }
             when (result) {
-                is ApiResult.Success -> settle { it.copy(acknowledged = true, receipt = result.data) }
+                is ApiResult.Success -> settle { it.copy(acknowledged = true, receipt = result.data, ownerLeaving = false) }
                 is ApiResult.Error -> if (result.code in setOf(401, 403, 409, 422)) {
                     // No generation rebase or replacement secret after a definite refusal.
                     settle { it.copy(refusal = "push_registration_refused") }
