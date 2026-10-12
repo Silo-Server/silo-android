@@ -12,13 +12,14 @@ class AndroidPushRegistrarTest {
     private var owner = DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
     private val token = "t".repeat(80)
     private val proof = "k".repeat(43)
-    /** The login saved for "server", which removal acts as whatever profile is active. */
-    private var savedLogin: String? = "login"
+    /** Logins saved per server, which removal and token rotation act as whatever is active. */
+    private val savedLogins = mapOf("server" to "login", "cabin" to "login-cabin")
     private val authorities = object : DurableLoginAuthorityProvider {
         override suspend fun snapshotDurableLoginAuthority() = owner
         override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
-            savedLogin?.takeIf { serverId == "server" }?.let {
-                DurableLoginAuthority(it, AuthScopeSnapshot.savedLogin(serverId, "https://example.invalid", profileId, profileToken, 5))
+            savedLogins[serverId]?.let {
+                val url = if (serverId == "server") "https://example.invalid" else "https://$serverId.invalid"
+                DurableLoginAuthority(it, AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, 5))
             }
     }
     private var removedAs: AuthScopeSnapshot? = null
@@ -36,15 +37,17 @@ class AndroidPushRegistrarTest {
     private var send: suspend () -> Unit = {}
     private var failCode: Int?=null
     private var uncertain=false
+    private var unreachableUrl: String?=null
     private var available=true
     private val api=object : PushRegistrationApi {
         override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> = ApiResult.Success(available)
         override suspend fun register(request: PushDeviceRegisterRequest,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<PushDeviceRegisterResponse> {
-            assertEquals(generation,store.entries.single().generation) // durable before dispatch
-            assertEquals(request,store.entries.single().intent.registration)
+            val record=store.entries.single { it.serverUrl==owner.serverUrl }
+            assertEquals(generation,record.generation) // durable before dispatch
+            assertEquals(request,record.intent.registration)
             generations+=generation; keys+=key; send()
             failCode?.let { return ApiResult.Error(it,"refused","") }
-            if(uncertain) return ApiResult.NetworkError(IllegalStateException("lost reply"))
+            if(uncertain || owner.serverUrl==unreachableUrl) return ApiResult.NetworkError(IllegalStateException("lost reply"))
             return ApiResult.Success(PushDeviceRegisterResponse("r$generation",request.pushMode,generation.toString(),"d$generation"))
         }
         override suspend fun delete(deviceId:String,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<Unit> {
@@ -97,6 +100,19 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,2L,3L),generations); assertEquals(setOf(proof),keys.toSet())
         val record=store.entries.single()
         assertEquals("next",record.intent.loginId); assertTrue(record.acknowledged)
+    }
+    @Test fun aRotatedTokenReachesEachOtherSavedServerAsItsOwnLoginWhenOneFails()=runTest {
+        val r=registrar(); r.registerToken(token)
+        val home=owner
+        owner=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
+        r.registerToken(token)
+        owner=home.copy(scope=home.scope.copy(identityGeneration=3))
+        unreachableUrl=home.scope.serverUrl
+        r.registerRotatedToken("n".repeat(80))
+        val cabin=store.entries.single { it.intent.serverId=="cabin" }
+        assertEquals("n".repeat(80),cabin.intent.registration!!.token); assertTrue(cabin.acknowledged)
+        assertEquals("login-cabin" to "adult",cabin.intent.loginId to cabin.intent.profileId)
+        assertFalse(store.entries.single { it.intent.serverId=="server" }.acknowledged)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

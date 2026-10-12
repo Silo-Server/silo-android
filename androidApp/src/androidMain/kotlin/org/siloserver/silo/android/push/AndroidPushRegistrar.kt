@@ -58,6 +58,37 @@ class AndroidPushRegistrar internal constructor(
         val owner = capture() ?: return failure("push_authority_changed")
         return register(token.trim(), owner, attempt)
     }
+    /**
+     * Registers a rotated FCM [token] with every saved server this device is
+     * registered with: the active one for whoever is active there, each other
+     * one as the login and profile it was registered for. Each server's attempt
+     * is bounded on its own, so one that fails or stalls costs only itself.
+     */
+    suspend fun registerRotatedToken(token: String) {
+        val rotated = token.trim()
+        val activeServerId = capture()?.scope?.serverId
+        if (activeServerId != null) withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerToken(rotated) }
+        val device = deviceIdProvider()
+        val others = installations().filter {
+            it.deviceId == device && it.intent.serverId != activeServerId && it.intent.registration != null && it.refusal == null
+        }
+        for (installation in others) {
+            withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerAsRegisteredOwner(installation, rotated) }
+        }
+    }
+
+    private suspend fun registerAsRegisteredOwner(installation: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
+        val attempt = beginRequest()
+        val owner = registeredOwnerOf(installation) ?: return failure("push_authority_changed")
+        if (token.length !in 64..512) return failure("invalid_push_token")
+        return apply(owner, checkNotNull(installation.intent.registration).copy(token = token), attempt)
+    }
+
+    /** [installation]'s server's saved login acting as the profile it was registered for; null once that login is gone. */
+    private suspend fun registeredOwnerOf(installation: PushInstallation): DurableLoginAuthority? =
+        authorities.savedLoginAuthority(installation.intent.serverId, installation.intent.profileId, installation.intent.profileToken)
+            ?.takeIf { it.loginId == installation.intent.loginId && it.scope.serverUrl == installation.serverUrl }
+
     private suspend fun register(token: String, owner: DurableLoginAuthority, attempt: Any): ApiResult<PushDeviceRegisterResponse> {
         if (token.length !in 64..512) return failure("invalid_push_token")
         val result = apply(owner, PushDeviceRegisterRequest("android", token, deviceIdProvider()), attempt)
@@ -83,9 +114,7 @@ class AndroidPushRegistrar internal constructor(
         val registered = installations().firstOrNull {
             it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
         } ?: return failure("push_not_registered")
-        val owner = authorities.savedLoginAuthority(serverId, registered.intent.profileId, registered.intent.profileToken)
-            ?.takeIf { it.loginId == registered.intent.loginId && it.scope.serverUrl == registered.serverUrl }
-            ?: return failure("push_authority_changed")
+        val owner = registeredOwnerOf(registered) ?: return failure("push_authority_changed")
         return apply(owner, null, attempt).map { Unit }
     }
 
