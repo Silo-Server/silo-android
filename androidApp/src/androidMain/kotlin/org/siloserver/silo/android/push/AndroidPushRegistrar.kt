@@ -2,7 +2,7 @@ package org.siloserver.silo.android.push
 
 import java.security.SecureRandom
 import java.util.Base64
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -24,8 +24,10 @@ class AndroidPushRegistrar internal constructor(
     },
 ) {
     private val mutex = Mutex()
-    private val latestRequest = AtomicReference<Any>()
-    private fun beginRequest(): Any = Any().also(latestRequest::set)
+    /** The newest operation per saved server: a newer one supersedes an older one there, never another server's. */
+    private val latestRequests = ConcurrentHashMap<String, Any>()
+    private fun beginRequest(serverId: String): Any = Any().also { latestRequests[serverId] = it }
+    private fun isLatest(owner: DurableLoginAuthority, attempt: Any) = latestRequests[owner.scope.serverId] === attempt
     private suspend fun capture() = authorities.snapshotDurableLoginAuthority()?.takeIf {
         it.loginId.isNotBlank() && !it.scope.profileId.isNullOrBlank() && it.scope.credentialGenerationId == null
     }
@@ -47,15 +49,15 @@ class AndroidPushRegistrar internal constructor(
     private fun failure(code: String) = ApiResult.Error(0, code, "Push registration requires its original installation and login authority.")
 
     suspend fun registerIfAvailable(): ApiResult<PushDeviceRegisterResponse>? {
-        val attempt = beginRequest()
         val owner = capture() ?: return null
+        val attempt = beginRequest(owner.scope.serverId)
         val token = tokenProvider.token()?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         if (!current(owner)) return failure("push_authority_changed")
         return register(token, owner, attempt)
     }
     suspend fun registerToken(token: String): ApiResult<PushDeviceRegisterResponse> {
-        val attempt = beginRequest()
         val owner = capture() ?: return failure("push_authority_changed")
+        val attempt = beginRequest(owner.scope.serverId)
         return register(token.trim(), owner, attempt)
     }
     /**
@@ -78,7 +80,7 @@ class AndroidPushRegistrar internal constructor(
     }
 
     private suspend fun registerAsRegisteredOwner(installation: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
-        val attempt = beginRequest()
+        val attempt = beginRequest(installation.intent.serverId)
         val owner = registeredOwnerOf(installation) ?: return failure("push_authority_changed")
         if (token.length !in 64..512) return failure("invalid_push_token")
         return apply(owner, checkNotNull(installation.intent.registration).copy(token = token), attempt)
@@ -109,7 +111,7 @@ class AndroidPushRegistrar internal constructor(
         withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId) } ?: failure("push_unregister_timed_out")
 
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
-        val attempt = beginRequest()
+        val attempt = beginRequest(serverId)
         val device = deviceIdProvider()
         val registered = installations().firstOrNull {
             it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
@@ -125,7 +127,7 @@ class AndroidPushRegistrar internal constructor(
         mayReconcile: Boolean): ApiResult<PushDeviceRegisterResponse?> {
         try {
             if (!current(owner)) return failure("push_authority_changed")
-            if (latestRequest.get() !== attempt) return failure("push_request_superseded")
+            if (!isLatest(owner, attempt)) return failure("push_request_superseded")
             val device = request?.deviceId ?: deviceIdProvider()
             if (device.isBlank() || device.length > 128) return failure("invalid_push_device")
             val available = repository.available(owner.scope)
@@ -137,7 +139,7 @@ class AndroidPushRegistrar internal constructor(
             if (!current(owner)) return failure("push_authority_changed")
             val records = read()
             if (!current(owner)) return failure("push_authority_changed")
-            if (latestRequest.get() !== attempt) return failure("push_request_superseded")
+            if (!isLatest(owner, attempt)) return failure("push_request_superseded")
             val matches = records.filter { it.serverUrl == owner.scope.serverUrl && it.deviceId == device }
             check(matches.size <= 1)
             val previous = matches.singleOrNull()

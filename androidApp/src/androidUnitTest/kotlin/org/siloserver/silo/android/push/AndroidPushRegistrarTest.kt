@@ -39,8 +39,9 @@ class AndroidPushRegistrarTest {
     private var uncertain=false
     private var unreachableUrl: String?=null
     private var available=true
+    private var onAvailable: suspend (AuthScopeSnapshot) -> Unit = {}
     private val api=object : PushRegistrationApi {
-        override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> = ApiResult.Success(available)
+        override suspend fun available(owner: AuthScopeSnapshot): ApiResult<Boolean> { onAvailable(owner); return ApiResult.Success(available) }
         override suspend fun register(request: PushDeviceRegisterRequest,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<PushDeviceRegisterResponse> {
             val record=store.entries.single { it.serverUrl==owner.serverUrl }
             assertEquals(generation,record.generation) // durable before dispatch
@@ -113,6 +114,21 @@ class AndroidPushRegistrarTest {
         assertEquals("n".repeat(80),cabin.intent.registration!!.token); assertTrue(cabin.acknowledged)
         assertEquals("login-cabin" to "adult",cabin.intent.loginId to cabin.intent.profileId)
         assertFalse(store.entries.single { it.intent.serverId=="server" }.acknowledged)
+    }
+    @Test fun anotherServersRegistrationDoesNotSupersedeARemoval()=runTest {
+        val r=registrar(); r.registerToken(token)
+        val home=owner
+        owner=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
+        r.registerToken(token)
+        owner=home.copy(scope=home.scope.copy(identityGeneration=3))
+        val removing=CompletableDeferred<Unit>(); val proceed=CompletableDeferred<Unit>()
+        onAvailable={ if(it.serverUrl=="https://cabin.invalid") { removing.complete(Unit); proceed.await() } }
+        val removal=async { r.unregisterDevice("cabin") }
+        removing.await()
+        val registration=async { r.registerToken("n".repeat(80)) }
+        proceed.complete(Unit)
+        assertIs<ApiResult.Success<Unit>>(removal.await()); assertIs<ApiResult.Success<*>>(registration.await())
+        assertNull(store.entries.single { it.intent.serverId=="cabin" }.intent.registration)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
