@@ -125,13 +125,21 @@ class AndroidPushRegistrar internal constructor(
         }
     }
 
-    private suspend fun registerAsRegisteredOwner(installation: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
-        val owner = registeredOwnerOf(installation) ?: return failure("push_authority_changed")
+    private suspend fun registerAsRegisteredOwner(behind: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
         if (token.length !in 64..512) return failure("invalid_push_token")
         // Joins that server's newest operation rather than starting a newer one:
         // bringing a token up to date must never supersede a removal under way there.
-        val attempt = latestRequests.getOrPut(installation.intent.serverId) { Any() }
-        return apply(owner, checkNotNull(installation.intent.registration).copy(token = token), attempt)
+        val attempt = latestRequests.getOrPut(behind.intent.serverId) { Any() }
+        return serverLock(behind.serverUrl).withLock {
+            // Renews only the registration found behind. Anything that replaced it
+            // since (another profile, a newer token, a removal) leaves this stale.
+            val record = recordOf(behind.serverUrl, behind.deviceId)
+            if (record == null || record.generation != behind.generation || record.intent != behind.intent) {
+                return@withLock failure("push_registration_changed")
+            }
+            val owner = registeredOwnerOf(record) ?: return@withLock failure("push_authority_changed")
+            applyOnServer(owner, checkNotNull(record.intent.registration).copy(token = token), attempt, mayReconcile = true)
+        }
     }
 
     /** [installation]'s server's saved login acting as the profile it was registered for; null once that login is gone. */

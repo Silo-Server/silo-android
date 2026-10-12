@@ -231,6 +231,25 @@ class AndroidPushRegistrarTest {
         owner=home; current="m".repeat(80); r.registerOtherServersIfBehind()
         assertEquals(current,cabinToken())
     }
+    @Test fun aCatchUpRenewsOnlyTheRegistrationItFoundBehind()=runTest {
+        var current=token
+        val r=registrar(object:AndroidPushTokenProvider { override suspend fun token()=current }); r.registerToken(token)
+        val home=owner.copy(scope=owner.scope.copy(identityGeneration=9))
+        for ((server,profile) in listOf("attic" to "guest","cabin" to "adult")) {
+            owner=DurableLoginAuthority("login-$server",AuthScopeSnapshot(server,profile,"https://$server.invalid","$profile-pin",identityGeneration=2))
+            r.registerToken(token)
+        }
+        owner=home; current="n".repeat(80)
+        // While the catch-up is busy with the attic, the cabin's login switches profile and registers it.
+        var switched=false
+        onAvailable={ if(it.serverUrl=="https://attic.invalid" && !switched) {
+            switched=true
+            owner=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","kids","https://cabin.invalid","kids-pin",identityGeneration=4))
+            assertIs<ApiResult.Success<*>>(r.registerToken(token)); owner=home
+        } }
+        r.registerOtherServersIfBehind()
+        assertEquals("kids",store.entries.single { it.intent.serverId=="cabin" }.intent.profileId)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null
