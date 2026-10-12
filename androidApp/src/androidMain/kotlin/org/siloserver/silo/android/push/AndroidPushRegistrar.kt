@@ -121,8 +121,21 @@ class AndroidPushRegistrar internal constructor(
         val registered = installations().firstOrNull {
             it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
         } ?: return failure("push_not_registered")
+        markOwnerLeaving(registered)
         val owner = registeredOwnerOf(registered) ?: return failure("push_authority_changed")
         return apply(owner, null, attempt).map { Unit }
+    }
+
+    /**
+     * Marks [installation] when it is a registration still uncertain, before the
+     * removal meant to replace it can fail: its login is about to be cleared, and
+     * then nobody can replay it exactly.
+     */
+    private suspend fun markOwnerLeaving(installation: PushInstallation) = mutex.withLock {
+        val records = read()
+        val uncertain = records.firstOrNull { it.serverUrl == installation.serverUrl && it.deviceId == installation.deviceId }
+            ?.takeIf { !it.acknowledged && it.intent.registration != null && !it.ownerLeaving } ?: return@withLock
+        write(records.map { if (it === uncertain) it.copy(ownerLeaving = true) else it })
     }
 
     private suspend fun apply(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any): ApiResult<PushDeviceRegisterResponse?> =
@@ -149,13 +162,14 @@ class AndroidPushRegistrar internal constructor(
             check(matches.size <= 1)
             val previous = matches.singleOrNull()
             val intent = PushInstallationIntent(owner.scope.serverId, owner.loginId, requireNotNull(owner.scope.profileId), owner.scope.profileToken, request)
-            // An uncertain removal is superseded rather than replayed: the server takes a
-            // registration at a higher generation whether the removal landed or never
-            // arrived, and the login that sent it is usually gone, as sign-out removes
-            // first and then clears it. An uncertain registration is still replayed exactly.
-            val supersedesRemoval = request != null && previous != null && !previous.acknowledged &&
-                previous.intent.registration == null
-            val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesRemoval
+            // An uncertain removal, or an uncertain registration whose login was leaving,
+            // is superseded rather than replayed: the server takes a registration at a
+            // higher generation whether the uncertain intent landed or never arrived, and
+            // the login that sent it is usually gone, as sign-out removes first and then
+            // clears it. Any other uncertain registration is still replayed exactly.
+            val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
+                (previous.intent.registration == null || previous.ownerLeaving)
+            val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {

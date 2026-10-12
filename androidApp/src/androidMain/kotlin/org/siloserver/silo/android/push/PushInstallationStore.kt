@@ -22,6 +22,12 @@ internal data class PushInstallation(
     val acknowledged: Boolean = false,
     val receipt: PushDeviceRegisterResponse? = null,
     val refusal: String? = null,
+    /**
+     * This registration is uncertain and its login is being signed out (or its
+     * server removed), so nobody will be left to replay it exactly: the next
+     * registration supersedes it instead.
+     */
+    val ownerLeaving: Boolean = false,
 ) { override fun toString() = "PushInstallation(<redacted>)" }
 
 @Serializable

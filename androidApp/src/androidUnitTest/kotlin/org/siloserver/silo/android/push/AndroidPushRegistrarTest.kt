@@ -134,6 +134,15 @@ class AndroidPushRegistrarTest {
         store.broken=true
         assertEquals("push_persistence_unavailable",assertIs<ApiResult.Error>(registrar().unregisterDevice("server")).error)
     }
+    @Test fun theNextLoginSupersedesARegistrationThatSignOutCouldNotRemove()=runTest {
+        uncertain=true; val r=registrar(); r.registerToken(token)
+        uncertain=false; available=false
+        assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        available=true
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(r.registerToken(token))
+        assertEquals(listOf(1L,2L),generations); assertEquals("next",store.entries.single().intent.loginId)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null
