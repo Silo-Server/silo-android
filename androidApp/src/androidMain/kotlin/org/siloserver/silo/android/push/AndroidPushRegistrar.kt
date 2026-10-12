@@ -137,10 +137,11 @@ class AndroidPushRegistrar internal constructor(
         // bringing a token up to date must never supersede a removal under way there.
         val attempt = latestRequests.getOrPut(behind.intent.serverId) { Any() }
         return serverLock(behind.serverUrl).withLock {
-            // Renews only the registration found behind. Anything that replaced it
-            // since (another profile, a newer token, a removal) leaves this stale.
+            // Renews only the registration found behind, never one a login on its way
+            // out holds. Anything that replaced it since (another profile, a newer
+            // token, a removal) leaves this stale.
             val record = recordOf(behind.serverUrl, behind.deviceId)
-            if (record == null || record.generation != behind.generation || record.intent != behind.intent) {
+            if (record == null || record.generation != behind.generation || record.intent != behind.intent || record.ownerLeaving) {
                 return@withLock failure("push_registration_changed")
             }
             val owner = registeredOwnerOf(record) ?: return@withLock failure("push_authority_changed")
@@ -175,6 +176,37 @@ class AndroidPushRegistrar internal constructor(
         throw cancelled
     } catch (_: Exception) {
         failure("push_persistence_unavailable")
+    }
+
+    /**
+     * Puts [serverId]'s registration back after a sign-out or server removal that
+     * removed it and then stopped, leaving that server's login in place: as the
+     * login and profile it was registered for, with the current token. Nothing
+     * happens once that login is gone, so a removal whose login really was
+     * cleared stays removed. Bounded and never throws, like [unregisterDevice].
+     */
+    suspend fun restoreRegistration(serverId: String): ApiResult<PushDeviceRegisterResponse?> = try {
+        withTimeoutOrNull(UNREGISTER_BUDGET_MS) { restoreAsRegisteredOwner(serverId) } ?: failure("push_restore_timed_out")
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        failure("push_persistence_unavailable")
+    }
+
+    private suspend fun restoreAsRegisteredOwner(serverId: String): ApiResult<PushDeviceRegisterResponse?> {
+        val attempt = beginRequest(serverId)
+        val device = deviceIdProvider()
+        val token = tokenProvider.token()?.trim()?.takeIf { it.length in 64..512 } ?: return failure("invalid_push_token")
+        val found = installations().firstOrNull { it.intent.serverId == serverId && it.deviceId == device && it.refusal == null }
+            ?: return failure("push_not_registered")
+        return serverLock(found.serverUrl).withLock {
+            val record = recordOf(found.serverUrl, device)?.takeIf { it.intent.serverId == serverId && it.refusal == null }
+                ?: return@withLock failure("push_not_registered")
+            val owner = registeredOwnerOf(record) ?: return@withLock failure("push_authority_changed")
+            // The registration it held, or the one register() sends, with the current token.
+            val request = record.intent.registration?.copy(token = token) ?: PushDeviceRegisterRequest("android", token, device)
+            applyOnServer(owner, request, attempt, mayReconcile = true)
+        }
     }
 
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
@@ -250,12 +282,6 @@ class AndroidPushRegistrar internal constructor(
             val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
                 (previous.intent.registration == null || previous.ownerLeaving)
             val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
-            // A saved login only renews a registration this device still holds there,
-            // never revives one: that server may just have been removed or signed out of.
-            if (request != null && owner.scope.isGenerationPinned &&
-                (previous == null || previous.intent.registration == null || previous.ownerLeaving)) {
-                return failure("push_not_registered")
-            }
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
@@ -318,5 +344,18 @@ class AndroidPushRegistrar internal constructor(
 
     private companion object {
         const val UNREGISTER_BUDGET_MS = 8_000L
+    }
+}
+
+/**
+ * Runs a push registration step for a sign-out or server removal, which carries
+ * on whatever the step throws. Cancellation still propagates and stops it.
+ */
+internal suspend fun tolerateFailure(step: suspend () -> Unit) {
+    try {
+        step()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
     }
 }

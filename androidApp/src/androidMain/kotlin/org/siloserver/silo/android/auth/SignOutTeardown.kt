@@ -1,7 +1,7 @@
 package org.siloserver.silo.android.auth
 
-import kotlinx.coroutines.CancellationException
 import org.siloserver.silo.android.push.AndroidPushRegistrar
+import org.siloserver.silo.android.push.tolerateFailure
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
 import org.siloserver.silo.common.settings.LibraryPlaybackPrefsStore
@@ -43,6 +43,8 @@ class SignOutTeardown(
     private val nativeSignIn: NativeSignInCoordinator,
     /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
     private val unregisterPush: suspend (serverEntryId: String) -> Unit = {},
+    /** Puts it back when the sign-out then stops ([AndroidPushRegistrar.restoreRegistration]). */
+    private val restorePush: suspend (serverEntryId: String) -> Unit = {},
 ) {
     /**
      * Push settings still waiting to sync. Call before switching servers so
@@ -68,20 +70,19 @@ class SignOutTeardown(
         // Captured before anything it waits on: this is the account that leaves.
         val signedOutOf = serverRegistry.activeServerId.value
         val target = authRepository.captureSignOutTarget()
+        fun stillActive() = serverRegistry.activeServerId.value == signedOutOf
         if (flushFirst) flushPendingSettings()
+        if (!stillActive()) return false
         // While the credentials removing it needs still exist. A registration
         // left behind keeps the server pushing this device for an account it
         // no longer holds, but failing to remove it never stops the sign-out.
         // Cancellation still does, before anyone is signed out.
-        if (signedOutOf != null) {
-            try {
-                unregisterPush(signedOutOf)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-            }
+        if (signedOutOf != null) tolerateFailure { unregisterPush(signedOutOf) }
+        if (!stillActive()) {
+            // Removed above, but that server keeps its login, so it keeps its pushes.
+            if (signedOutOf != null) tolerateFailure { restorePush(signedOutOf) }
+            return false
         }
-        if (serverRegistry.activeServerId.value != signedOutOf) return false
         if (!authRepository.logout(target)) return false
         nativeSignIn.discardPending()
         if (signedOutOf != null) nativeSignIn.requestAccountChoice(signedOutOf, autoStart = startSignIn)

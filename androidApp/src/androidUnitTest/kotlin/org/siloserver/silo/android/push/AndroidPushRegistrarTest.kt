@@ -13,7 +13,7 @@ class AndroidPushRegistrarTest {
     private val token = "t".repeat(80)
     private val proof = "k".repeat(43)
     /** Logins saved per server, which removal and token rotation act as whatever is active. */
-    private val savedLogins = mapOf("server" to "login", "cabin" to "login-cabin", "attic" to "login-attic")
+    private val savedLogins = mutableMapOf("server" to "login", "cabin" to "login-cabin", "attic" to "login-attic")
     private val authorities = object : DurableLoginAuthorityProvider {
         override suspend fun snapshotDurableLoginAuthority() = owner.also { afterCapture(); afterCapture = {} }
         override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
@@ -262,6 +262,19 @@ class AndroidPushRegistrarTest {
         afterCapture={ owner=cabin.copy(scope=cabin.scope.copy(identityGeneration=4)) }
         r.registerRotatedToken("n".repeat(80))
         for (record in store.entries) assertEquals("n".repeat(80),record.intent.registration!!.token,record.intent.serverId)
+    }
+    @Test fun aRestorePutsBackARemovedRegistrationOnlyWhileItsLoginRemains()=runTest {
+        val r=registrar(); r.registerToken(token)
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        assertIs<ApiResult.Success<*>>(r.restoreRegistration("server"))
+        val restored=store.entries.single()
+        assertEquals(token,restored.intent.registration?.token); assertEquals("login",restored.intent.loginId)
+        assertTrue(restored.acknowledged); assertFalse(restored.ownerLeaving)
+
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        savedLogins.remove("server") // the sign-out went through after all
+        assertIs<ApiResult.Error>(r.restoreRegistration("server"))
+        assertNull(store.entries.single().intent.registration)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

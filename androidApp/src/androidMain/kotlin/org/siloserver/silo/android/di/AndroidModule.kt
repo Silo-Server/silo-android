@@ -546,6 +546,7 @@ val androidModule = module {
         org.siloserver.silo.android.auth.SignOutTeardown(
             get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
             unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) },
+            restorePush = { get<AndroidPushRegistrar>().restoreRegistration(it) },
         )
     }
     single {
@@ -602,7 +603,13 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get(), get(), get(), unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) }) }
+    viewModel {
+        ServerListViewModel(
+            get(), get(), get(), get(),
+            unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) },
+            restorePush = { get<AndroidPushRegistrar>().restoreRegistration(it) },
+        )
+    }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()

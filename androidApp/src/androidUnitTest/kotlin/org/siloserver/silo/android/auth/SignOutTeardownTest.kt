@@ -65,20 +65,24 @@ class SignOutTeardownTest {
     }
 
     @Test
-    fun switchingServersWhileTheSignOutWaitsSignsNobodyOut() = runTest {
+    fun switchingServersWhileTheSignOutWaitsSignsNobodyOutAndKeepsTheirPushes() = runTest {
         for (during in listOf("settings flush", "push removal")) {
             val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
             val active = MutableStateFlow<String?>("home")
-            val switch: suspend (String) -> Unit = { active.value = "cabin" }
+            val removed = mutableListOf<String>()
+            val restored = mutableListOf<String>()
 
             val signedOut = teardown(
                 tokens, nativeSignIn(), active,
                 onFlush = { if (during == "settings flush") active.value = "cabin" },
-                unregisterPush = if (during == "push removal") switch else { _ -> },
+                unregisterPush = { removed += it; if (during == "push removal") active.value = "cabin" },
+                restorePush = { restored += it },
             ).signOut()
 
             assertFalse(signedOut, during)
             assertEquals("access", tokens.getAccessToken(), "cabin, active by then, keeps its account ($during)")
+            // Home keeps its login, so whatever push registration it lost is put back.
+            assertEquals<List<String>>(removed, restored, during)
         }
     }
 
@@ -108,6 +112,7 @@ class SignOutTeardownTest {
         activeServerId: MutableStateFlow<String?> = MutableStateFlow("home"),
         onFlush: () -> Unit = {},
         unregisterPush: suspend (String) -> Unit = {},
+        restorePush: suspend (String) -> Unit = {},
     ) = SignOutTeardown(
         authRepository = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens),
         playerSettingsStore = idle<PlayerSettingsStore>(mapOf("flushPendingDeviceSettings" to onFlush)),
@@ -123,6 +128,7 @@ class SignOutTeardownTest {
         serverRegistry = idle(mapOf("getActiveServerId" to activeServerId)),
         nativeSignIn = coordinator,
         unregisterPush = unregisterPush,
+        restorePush = restorePush,
     )
 
     /**

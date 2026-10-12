@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.auth.ActiveProfileReset
 import org.siloserver.silo.android.push.AndroidPushRegistrar
+import org.siloserver.silo.android.push.tolerateFailure
 
 /**
  * Where to land after a successful server switch. The list view emits this
@@ -45,6 +46,8 @@ class ServerListViewModel(
     private val activeProfileReset: ActiveProfileReset,
     /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
     private val unregisterPush: suspend (serverEntryId: String) -> Unit = {},
+    /** Puts it back when the server then stays saved ([AndroidPushRegistrar.restoreRegistration]). */
+    private val restorePush: suspend (serverEntryId: String) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -117,13 +120,14 @@ class ServerListViewModel(
             // While the server's credentials still exist: removal wipes them.
             // Failing to remove the registration never stops the removal;
             // cancellation still does, before anything is removed.
+            tolerateFailure { unregisterPush(serverId) }
             try {
-                unregisterPush(serverId)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
+                serverRegistry.remove(serverId)
+            } catch (failure: Exception) {
+                // Not removed, so it keeps its login, and its pushes with it.
+                if (failure !is CancellationException) tolerateFailure { restorePush(serverId) }
+                throw failure
             }
-            serverRegistry.remove(serverId)
 
             // Removing the ACTIVE server promotes the next-MRU entry inside
             // the registry, which never probes: without this the promoted
