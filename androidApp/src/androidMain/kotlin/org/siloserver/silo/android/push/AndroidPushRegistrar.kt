@@ -166,9 +166,8 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
         val attempt = beginRequest(serverId)
         val device = deviceIdProvider()
-        val found = installations().firstOrNull {
-            it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
-        } ?: return failure("push_not_registered")
+        val found = installations().firstOrNull { it.intent.serverId == serverId && it.deviceId == device && it.removable }
+            ?: return failure("push_not_registered")
         // Before waiting on anything: should the removal not finish, whatever this
         // record then holds belongs to a login about to be cleared.
         markOwnerLeaving(found.serverUrl, device)
@@ -176,13 +175,20 @@ class AndroidPushRegistrar internal constructor(
             // Read again under the server's lock: a registration finishing first can
             // change the registered profile, and the server refuses a removal from any
             // other profile, for good.
-            val registered = recordOf(found.serverUrl, device)?.takeIf {
-                it.intent.serverId == serverId && it.intent.registration != null && it.refusal == null
-            } ?: return@withLock failure("push_not_registered")
+            val registered = recordOf(found.serverUrl, device)?.takeIf { it.intent.serverId == serverId && it.removable }
+                ?: return@withLock failure("push_not_registered")
             val owner = registeredOwnerOf(registered) ?: return@withLock failure("push_authority_changed")
             applyOnServer(owner, null, attempt, mayReconcile = true).map { Unit }
         }
     }
+
+    /**
+     * A registration, or a removal not yet confirmed, which is then sent again
+     * exactly as persisted: one cut off before it reached the server must not
+     * be taken for done.
+     */
+    private val PushInstallation.removable: Boolean
+        get() = refusal == null && (intent.registration != null || !acknowledged)
 
     /**
      * Marks [serverUrl]'s record as belonging to a login on its way out, so the

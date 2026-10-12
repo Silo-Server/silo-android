@@ -203,6 +203,14 @@ class AndroidPushRegistrarTest {
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
         assertEquals("next",store.entries.single().intent.loginId)
     }
+    @Test fun aRemovalLeftPendingIsSentAgainByTheNextOne()=runTest {
+        val r=registrar(); r.registerToken(token)
+        uncertain=true; assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        uncertain=false
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        assertEquals(listOf(1L,2L,2L),generations)
+        val record=store.entries.single(); assertNull(record.intent.registration); assertTrue(record.acknowledged)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null
