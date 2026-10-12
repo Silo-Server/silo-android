@@ -89,7 +89,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Release calendar | ✅ | ✅ | Top-level mobile tab and TV top-menu tab |
 | Live home refresh (events websocket) | ✅ | ✅ | `HomeRealtimeCoordinator`: user_state/catalog channels, 2s debounce; TV also refreshes on resume |
 | System "Watch Next" row integration | ➖ | ✅ | `WatchNextRepository` (tvprovider) |
-| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; "Notify me when available" on titles someone else requested (when the server reports `follow_supported`); request administration stays in web admin |
+| Requests | ✅ | ✅ | Server-gated by `requests_enabled`, re-checked when the app returns to the foreground (open Requests screens close if it turned off); phone: profile menu + search; TV: top-bar tab + search; "Notify me when available" on titles someone else requested (when the server reports `follow_supported`); request administration stays in web admin |
 
 ## Reading (ebooks)
 

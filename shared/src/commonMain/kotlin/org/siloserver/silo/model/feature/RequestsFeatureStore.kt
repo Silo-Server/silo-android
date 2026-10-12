@@ -63,6 +63,18 @@ class RequestsFeatureStore(
         _isResolved.value = true
     }
 
+    /**
+     * Re-probe when the app returns to the foreground, so an admin turning
+     * requests off (or on) while the app was in the background shows up
+     * without a restart, as on Apple. Skipped until the shell's own probe for
+     * this session has answered: before that, nobody is signed in or a server
+     * or profile switch is in flight, and the shell's probe will answer.
+     */
+    suspend fun refreshAfterReturnToForeground() {
+        if (!_isResolved.value) return
+        refresh()
+    }
+
     fun reset() {
         generation += 1
         repository.reset()

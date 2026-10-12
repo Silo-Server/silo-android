@@ -2,6 +2,7 @@ package org.siloserver.silo.model.feature
 
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -90,6 +91,44 @@ class RequestsFeatureStoreTest {
     }
 
     @Test
+    fun returningToTheForegroundSeesRequestsTurnedOff() = runTest {
+        val store = RequestsFeatureStore(
+            RequestsRepository(
+                FakeRequestsApi(
+                    ApiResult.Success(available()),
+                    ApiResult.Success(RequestsFeatureStatus(requestsEnabled = false, allowed = true, state = "disabled")),
+                ),
+            ),
+        )
+        store.refresh()
+        assertTrue(store.isEnabled.value)
+
+        store.refreshAfterReturnToForeground()
+
+        assertFalse(store.isEnabled.value)
+        // Resolved, so a Requests screen that is open knows to close.
+        assertTrue(store.isResolved.value)
+    }
+
+    @Test
+    fun returningToTheForegroundLeavesAnUnansweredSessionToTheShellProbe() = runTest {
+        val api = FakeRequestsApi(ApiResult.Success(available()), ApiResult.Success(available()))
+        val store = RequestsFeatureStore(RequestsRepository(api))
+
+        // Before the shell's first probe (signed out, or still starting).
+        store.refreshAfterReturnToForeground()
+        assertFalse(store.isResolved.value)
+        assertEquals(0, api.statusCalls)
+
+        // After a server or profile switch reset.
+        store.refresh()
+        store.reset()
+        store.refreshAfterReturnToForeground()
+        assertFalse(store.isResolved.value)
+        assertEquals(1, api.statusCalls)
+    }
+
+    @Test
     fun resetHidesRequestsBeforeNextProbe() = runTest {
         val repository = RequestsRepository(
             FakeRequestsApi(
@@ -117,13 +156,17 @@ private class FakeRequestsApi(
     vararg statusResults: ApiResult<RequestsFeatureStatus>,
 ) : RequestsApi {
     private val statusResults = statusResults.toMutableList()
+    var statusCalls = 0
+        private set
 
-    override suspend fun status(): ApiResult<RequestsFeatureStatus> =
-        if (statusResults.isNotEmpty()) {
+    override suspend fun status(): ApiResult<RequestsFeatureStatus> {
+        statusCalls += 1
+        return if (statusResults.isNotEmpty()) {
             statusResults.removeAt(0)
         } else {
             ApiResult.NetworkError(IllegalStateException("no fake status result"))
         }
+    }
 
     override suspend fun discover(): ApiResult<RequestsDiscoverResponse> =
         ApiResult.NetworkError(IllegalStateException("not used"))
