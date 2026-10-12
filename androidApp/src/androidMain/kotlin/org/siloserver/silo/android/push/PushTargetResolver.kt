@@ -5,7 +5,10 @@ import org.siloserver.silo.network.DurableLoginAuthority
 import org.siloserver.silo.network.DurableLoginAuthorityProvider
 import org.siloserver.silo.network.ServerRegistry
 
-/** The server and profile a push names, as `silo_server_id` and `silo_profile_id`. */
+/**
+ * The server and profile a push names, as `silo_server_id` and `silo_profile_id`;
+ * blank when it named only the other.
+ */
 data class PushIssuer(val serverId: String, val profileId: String)
 
 /**
@@ -41,6 +44,7 @@ internal class PushTargetResolver(
     private val entriesWithIdentity: suspend (serverId: String, candidates: List<ServerEntry>) -> List<ServerEntry>,
 ) {
     suspend fun resolve(issuer: PushIssuer): PushTarget? {
+        if (issuer.serverId.isBlank() || issuer.profileId.isBlank()) return null
         val entries = registry.entries.value
         fun PushInstallation.entry() = entries.firstOrNull { it.id == intent.serverId && it.url == serverUrl }
         fun PushInstallation.identity() = receipt?.serverId ?: entry()?.verifiedServerId?.takeIf { it.isNotBlank() }

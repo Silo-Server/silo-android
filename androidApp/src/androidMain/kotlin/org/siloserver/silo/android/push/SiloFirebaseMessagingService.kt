@@ -36,11 +36,15 @@ class PushMessageHandler(
             data[key]?.trim()?.takeIf { it.isNotEmpty() }
         }
 
-    /** Null unless the push names both; servers and relays that predate them name neither. */
+    /**
+     * Null only when the push names neither, as servers and relays that predate
+     * them do. Naming one without the other still says the push may be another
+     * server's, so it never falls back to the active one: its blank half matches
+     * no target.
+     */
     private fun issuerFrom(data: Map<String, String>): PushIssuer? {
-        val serverId = data[SERVER_ID_KEY]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        val profileId = data[PROFILE_ID_KEY]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-        return PushIssuer(serverId, profileId)
+        if (SERVER_ID_KEY !in data && PROFILE_ID_KEY !in data) return null
+        return PushIssuer(data[SERVER_ID_KEY]?.trim().orEmpty(), data[PROFILE_ID_KEY]?.trim().orEmpty())
     }
 
     companion object {
