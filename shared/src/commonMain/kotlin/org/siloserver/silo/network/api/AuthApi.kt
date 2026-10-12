@@ -133,8 +133,9 @@ class AuthApi(
             }
         }.map { account -> account.toUser() }
 
-    suspend fun logout(): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
-        client.post("/api/v2/auth/logout").requireAuthStatus(204)
+    /** Ends the active session, or the one [scope] was captured from even when another is active by then. */
+    suspend fun logout(scope: AuthScopeSnapshot? = null): ApiResult<Unit> = safeApiV2Call(apiV2Gate) {
+        client.post("/api/v2/auth/logout") { scope?.let { authScope(it) } }.requireAuthStatus(204)
     }
 
 }

@@ -59,13 +59,16 @@ class SignOutTeardown(
      * provider is asked to offer another account) has the login screen that
      * follows start the provider sign-in by itself.
      *
-     * False when another server became active while the push registration was
-     * being removed: nobody is signed out then, as whoever is active now is not
-     * who asked to leave.
+     * False when another server or login became active while the sign-out
+     * waited on the network (flushing settings, removing the push
+     * registration, ending the server's session): nobody is signed out here
+     * then, as whoever is active now is not who asked to leave.
      */
     suspend fun signOut(flushFirst: Boolean = true, startSignIn: Boolean = false): Boolean {
-        if (flushFirst) flushPendingSettings()
+        // Captured before anything it waits on: this is the account that leaves.
         val signedOutOf = serverRegistry.activeServerId.value
+        val target = authRepository.captureSignOutTarget()
+        if (flushFirst) flushPendingSettings()
         // While the credentials removing it needs still exist. A registration
         // left behind keeps the server pushing this device for an account it
         // no longer holds, but failing to remove it never stops the sign-out.
@@ -78,10 +81,8 @@ class SignOutTeardown(
             } catch (_: Exception) {
             }
         }
-        // The removal can wait on the network, and logout() signs out whichever
-        // server is active when it runs.
         if (serverRegistry.activeServerId.value != signedOutOf) return false
-        authRepository.logout()
+        if (!authRepository.logout(target)) return false
         nativeSignIn.discardPending()
         if (signedOutOf != null) nativeSignIn.requestAccountChoice(signedOutOf, autoStart = startSignIn)
         libraryPlaybackPrefsStore.clear()

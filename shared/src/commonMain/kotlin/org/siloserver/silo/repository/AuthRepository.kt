@@ -14,6 +14,7 @@ import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.AccountSessionExpectation
+import org.siloserver.silo.network.AuthScopeSnapshot
 import org.siloserver.silo.network.AccountSessionChangedException
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.api.AuthApi
@@ -269,6 +270,28 @@ class AuthRepository(
         } finally {
             tokenManager.signOutCurrentServer()
         }
+    }
+
+    /** The server and login a sign-out is leaving, captured before it waits on anything. */
+    suspend fun captureSignOutTarget(): SignOutTarget {
+        val scope = tokenManager.snapshotCurrentScope()
+        return SignOutTarget(scope, scope?.serverId?.let { tokenManager.loginSessionId(it) })
+    }
+
+    /**
+     * [logout] of [target] only: the server's session ends through a request
+     * pinned to that server and login, and this device's credentials are
+     * cleared only while they are still that server's and login's. False,
+     * signing nobody out here, once another server or login has become active.
+     */
+    suspend fun logout(target: SignOutTarget): Boolean {
+        var signedOut = false
+        try {
+            authApi.logout(target.scope)
+        } finally {
+            signedOut = tokenManager.signOutServer(target.scope?.serverId, target.loginId)
+        }
+        return signedOut
     }
 
     /** Returns the currently configured server URL. */
@@ -596,4 +619,12 @@ fun ApiV2ProbeResult.toServerContract(): ServerContract = when (this) {
     is ApiV2ProbeResult.V2 -> ServerContract.V2
     ApiV2ProbeResult.UpdateServer -> ServerContract.UPDATE_REQUIRED
     is ApiV2ProbeResult.Failure -> ServerContract.UNKNOWN
+}
+
+/** See [AuthRepository.captureSignOutTarget]. */
+class SignOutTarget internal constructor(
+    internal val scope: AuthScopeSnapshot?,
+    internal val loginId: String?,
+) {
+    override fun toString(): String = "SignOutTarget(<redacted>)"
 }

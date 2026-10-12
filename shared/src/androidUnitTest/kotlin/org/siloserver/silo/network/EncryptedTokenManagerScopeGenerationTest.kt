@@ -432,6 +432,25 @@ class EncryptedTokenManagerScopeGenerationTest {
     }
 
     @Test
+    fun aSignOutClearsOnlyTheServerAndLoginItWasMeantFor() = runTest {
+        val registry = FakeServerRegistry()
+        val manager = EncryptedTokenManagerImpl(
+            inMemoryPreferences(*savedSession("server-a", null), *savedSession("server-b", null)),
+            registry,
+        )
+        val loginA = manager.loginSessionId("server-a")
+
+        registry.switchExternally("server-b")
+        assertFalse(manager.signOutServer("server-a", loginA), "server-b became active first")
+        assertEquals("server-b-access", manager.getAccessToken())
+
+        registry.switchExternally("server-a")
+        assertTrue(manager.signOutServer("server-a", loginA))
+        assertNull(manager.getAccessToken())
+        assertNull(manager.loginSessionId("server-a"))
+    }
+
+    @Test
     fun theActiveServersNearExpiryAsksForARefresh() = runTest {
         val near = EncryptedTokenManagerImpl(inMemoryPreferences(*savedSession("server-a", 10_000L)), FakeServerRegistry())
         assertTrue(near.accessTokenExpiresWithin(scope("server-a"), marginMs = 60_000L))

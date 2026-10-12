@@ -12,6 +12,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.AuthApi
@@ -64,14 +65,21 @@ class SignOutTeardownTest {
     }
 
     @Test
-    fun switchingServersWhileThePushRemovalWaitsSignsNobodyOut() = runTest {
-        val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
-        val active = MutableStateFlow<String?>("home")
+    fun switchingServersWhileTheSignOutWaitsSignsNobodyOut() = runTest {
+        for (during in listOf("settings flush", "push removal")) {
+            val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
+            val active = MutableStateFlow<String?>("home")
+            val switch: suspend (String) -> Unit = { active.value = "cabin" }
 
-        val signedOut = teardown(tokens, nativeSignIn(), active, unregisterPush = { active.value = "cabin" }).signOut()
+            val signedOut = teardown(
+                tokens, nativeSignIn(), active,
+                onFlush = { if (during == "settings flush") active.value = "cabin" },
+                unregisterPush = if (during == "push removal") switch else { _ -> },
+            ).signOut()
 
-        assertFalse(signedOut)
-        assertEquals("access", tokens.getAccessToken(), "cabin, active by then, keeps its account")
+            assertFalse(signedOut, during)
+            assertEquals("access", tokens.getAccessToken(), "cabin, active by then, keeps its account ($during)")
+        }
     }
 
     @Test
@@ -98,10 +106,11 @@ class SignOutTeardownTest {
         tokens: TokenManagerImpl,
         coordinator: NativeSignInCoordinator,
         activeServerId: MutableStateFlow<String?> = MutableStateFlow("home"),
+        onFlush: () -> Unit = {},
         unregisterPush: suspend (String) -> Unit = {},
     ) = SignOutTeardown(
         authRepository = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens),
-        playerSettingsStore = idle(),
+        playerSettingsStore = idle<PlayerSettingsStore>(mapOf("flushPendingDeviceSettings" to onFlush)),
         libraryPlaybackPrefsStore = idle(),
         overlayPrefsStore = idle(),
         activeProfileStore = ActiveProfileStore(ProfileRepository(ProfileApi(http, ApiV2Gate.Unrestricted), tokens)),
@@ -116,9 +125,17 @@ class SignOutTeardownTest {
         unregisterPush = unregisterPush,
     )
 
-    /** Collaborators the sign-out doesn't depend on: they answer nothing and emit nothing. */
+    /**
+     * Collaborators the sign-out doesn't depend on: they answer nothing and emit
+     * nothing, except a [values] entry, which is returned, or run when it is a
+     * function.
+     */
     private inline fun <reified T> idle(values: Map<String, Any> = emptyMap()): T =
         Proxy.newProxyInstance(T::class.java.classLoader, arrayOf(T::class.java)) { _, method, _ ->
-            values[method.name] ?: if (Flow::class.java.isAssignableFrom(method.returnType)) emptyFlow<Any>() else Unit
+            when (val value = values[method.name]) {
+                is Function0<*> -> value().let { Unit }
+                null -> if (Flow::class.java.isAssignableFrom(method.returnType)) emptyFlow<Any>() else Unit
+                else -> value
+            }
         } as T
 }

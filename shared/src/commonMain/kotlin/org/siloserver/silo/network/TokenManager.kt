@@ -209,6 +209,22 @@ interface TokenManager {
     /** Wipe just the active server's tokens + profile state, keeping the registry entry. */
     suspend fun signOutCurrentServer()
 
+    /**
+     * [signOutCurrentServer], but only while [serverId] is still the active
+     * server and [loginId] its saved login ([loginSessionId]): a sign-out that
+     * waited on the network must not clear whichever account became active
+     * meanwhile. False when it cleared nothing.
+     *
+     * The default checks, then clears, which suits single-scope managers;
+     * managers that switch servers must make the check and the clear one step.
+     */
+    suspend fun signOutServer(serverId: String?, loginId: String?): Boolean {
+        val active = snapshotCurrentScope()?.serverId
+        if (active != serverId || active?.let { loginSessionId(it) } != loginId) return false
+        signOutCurrentServer()
+        return true
+    }
+
     // ----- Scoped auth (Track B outbox replay; see [AuthScopeSnapshot]) -----
 
     /**
