@@ -94,7 +94,7 @@ fun TvRequestCard(
     )
 }
 
-/** Poster card for a request record (the user's own, or one an admin decides on): its status is the caption. */
+/** Poster card for one of the user's own request records: its status is the caption. */
 @Composable
 fun TvRequestRecordCard(
     record: MediaRequest,

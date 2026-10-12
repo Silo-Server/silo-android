@@ -454,7 +454,7 @@ val androidTvModule = module {
     viewModel { TvServerListViewModel(get(), get(), get(), get(), get()) }
 
     viewModel { params ->
-        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get(), featureStore = get())
+        org.siloserver.silo.viewmodel.RequestDetailViewModel(get(), params.get(), params.get())
     }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
@@ -469,16 +469,12 @@ val androidTvModule = module {
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
     viewModel { org.siloserver.silo.tv.ui.screens.home.TvUpcomingViewModel(get()) }
     viewModel { RecommendationsViewModel(get(), catalogLanguage = get()) }
-    // The Requests page reads the approval queue itself, so the hub doesn't
-    // count it; it loads its view models when it composes.
+    // The Requests page loads its view models when it composes.
     viewModel { params ->
-        RequestsViewModel(get(), get(), countsPendingApprovals = false, loadOnInit = params.getOrNull<Boolean>() ?: true)
+        RequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
     }
     viewModel { RequestSearchViewModel(get()) }
     viewModel { params -> MyRequestsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true) }
-    viewModel { params ->
-        org.siloserver.silo.viewmodel.RequestApprovalsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
-    }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {

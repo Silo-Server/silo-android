@@ -509,12 +509,9 @@ val androidModule = module {
     viewModel { HistoryViewModel(get(), get()) }
     viewModel { CollectionsViewModel(get()) }
     viewModel { params -> CollectionDetailViewModel(get(), get(), params.get()) }
-    viewModel { RequestsViewModel(get(), get()) }
+    viewModel { RequestsViewModel(get()) }
     viewModel { RequestSearchViewModel(get()) }
     viewModel { MyRequestsViewModel(get()) }
-    viewModel { params ->
-        org.siloserver.silo.viewmodel.RequestApprovalsViewModel(get(), loadOnInit = params.getOrNull<Boolean>() ?: true)
-    }
     // Platform supplies "today" and the IANA timezone; the shared ViewModel's
     // week math stays deterministic in commonTest (no Clock.System default).
     viewModel {
@@ -531,7 +528,6 @@ val androidModule = module {
             repository = get(),
             mediaType = args.first,
             tmdbId = args.second,
-            featureStore = get(),
         )
     }
     single {

@@ -1,7 +1,5 @@
 package org.siloserver.silo.viewmodel
 
-import org.siloserver.silo.model.request.AdminRequestAction
-import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.MediaRequest
@@ -20,7 +18,6 @@ import org.siloserver.silo.model.request.RequestsListResponse
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.RequestsApi
 import org.siloserver.silo.repository.RequestsRepository
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -281,29 +278,6 @@ class RequestsViewModelTest {
     }
 
     @Test
-    fun `an approvals read sent before a decision does not bring the row back`() = runTest(dispatcher) {
-        val waiting = stubRequest(id = "r-1", tmdbId = 80, title = "Waiting")
-        val gate = CompletableDeferred<Unit>()
-        val api = FakeRequestsApi(
-            adminHandler = { status, _ ->
-                gate.await()
-                ApiResult.Success(RequestsListResponse(if (status == RequestStatus.Pending) listOf(waiting) else emptyList()))
-            },
-            adminActionResult = ApiResult.Success(waiting.copy(status = RequestStatus.Approved)),
-        )
-        val viewModel = RequestApprovalsViewModel(RequestsRepository(api), loadOnInit = false)
-        viewModel.refresh()
-
-        viewModel.perform(AdminRequestAction.Approve, waiting)
-        dispatcher.scheduler.advanceTimeBy(1_000)
-        gate.complete(Unit)
-        dispatcher.scheduler.advanceUntilIdle()
-
-        assertTrue(viewModel.uiState.value.awaitingApproval.isEmpty())
-        assertEquals(listOf("r-1"), api.adminActionCalls)
-    }
-
-    @Test
     fun `requests view model falls back to default message for blank discover errors`() = runTest(dispatcher) {
         val api = FakeRequestsApi(
             discoverResult = ApiResult.Error(code = 500, error = "internal", message = ""),
@@ -418,15 +392,12 @@ private class FakeRequestsApi(
         limit: Int?,
         offset: Int?,
     ) -> ApiResult<RequestsListResponse>)? = null,
-    private val adminHandler: (suspend (status: String?, outcome: String?) -> ApiResult<RequestsListResponse>)? = null,
-    private val adminActionResult: ApiResult<MediaRequest> = ApiResult.Error(403, "forbidden", ""),
 ) : RequestsApi {
 
     val calls = mutableListOf<String>()
     val searchCalls = mutableListOf<SearchCall>()
     val createRequests = mutableListOf<CreateMediaRequest>()
     val cancelCalls = mutableListOf<String>()
-    val adminActionCalls = mutableListOf<String>()
 
     override suspend fun status(): ApiResult<RequestsFeatureStatus> {
         calls += "status"
@@ -479,20 +450,6 @@ private class FakeRequestsApi(
         return cancelResult
     }
 
-    override suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> =
-        ApiResult.Error(403, "forbidden", "")
-
-    override suspend fun adminRequests(
-        status: String?,
-        outcome: String?,
-        mediaType: String?,
-        tmdbId: Int?,
-    ): ApiResult<RequestsListResponse> = adminHandler?.invoke(status, outcome) ?: ApiResult.Error(403, "forbidden", "")
-
-    override suspend fun adminAction(id: String, action: AdminRequestAction, reason: String?): ApiResult<MediaRequest> {
-        adminActionCalls += id
-        return adminActionResult
-    }
 }
 
 private fun stubResult(

@@ -1,7 +1,5 @@
 package org.siloserver.silo.repository
 
-import org.siloserver.silo.model.request.AdminRequestAction
-import org.siloserver.silo.model.request.AdminRequestCapabilities
 import org.siloserver.silo.model.request.CreateMediaRequest
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.RequestMediaDetail
@@ -57,14 +55,6 @@ class RequestsRepository(
     private val _lastUpdate = MutableStateFlow<RequestEvent?>(null)
     /** The most recent create or cancel of the signed-in user's own request. */
     val lastUpdate: StateFlow<RequestEvent?> = _lastUpdate.asStateFlow()
-
-    private val _lastModeration = MutableStateFlow<RequestEvent?>(null)
-    /**
-     * The most recent admin decision (approve, decline, retry) on anyone's
-     * request. Kept apart from [lastUpdate], whose consumers treat every record
-     * as the signed-in user's own.
-     */
-    val lastModeration: StateFlow<RequestEvent?> = _lastModeration.asStateFlow()
 
     suspend fun status(): ApiResult<RequestsFeatureStatus> = api.status()
 
@@ -131,30 +121,6 @@ class RequestsRepository(
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
         mutate({ api.cancel(id) }, ::publish)
 
-    suspend fun adminCapabilities(): ApiResult<AdminRequestCapabilities> = api.adminCapabilities()
-
-    suspend fun adminRequests(
-        status: String? = null,
-        outcome: String? = null,
-        mediaType: String? = null,
-        tmdbId: Int? = null,
-    ): ApiResult<List<MediaRequest>> = when (val result = read({ api.adminRequests(status, outcome, mediaType, tmdbId) })) {
-        is ApiResult.Success -> ApiResult.Success(result.data.requests)
-        is ApiResult.Error -> result
-        is ApiResult.NetworkError -> result
-    }
-
-    /** How many requests match, up to one page, and whether more follow. */
-    suspend fun adminRequestCount(status: String? = null, outcome: String? = null): ApiResult<AdminRequestCount> =
-        when (val result = read({ api.adminRequestsFirstPage(status, outcome) })) {
-            is ApiResult.Success -> ApiResult.Success(AdminRequestCount(result.data.requests.size, result.data.page.hasMore))
-            is ApiResult.Error -> result
-            is ApiResult.NetworkError -> result
-        }
-
-    suspend fun adminAction(id: String, action: AdminRequestAction, reason: String? = null): ApiResult<MediaRequest> =
-        mutate({ api.adminAction(id, action, reason) }, ::publishModeration)
-
     /** Warms the first rows' details so opening them lands on a finished page. */
     fun prefetch(records: List<MediaRequest>) {
         cache.prefetch(records) { key -> api.detail(key.mediaType, key.tmdbId) }
@@ -165,7 +131,6 @@ class RequestsRepository(
         mineReadAt = null
         _mine.value = emptyList()
         _lastUpdate.value = null
-        _lastModeration.value = null
         cache.clear()
     }
 
@@ -201,13 +166,6 @@ class RequestsRepository(
         _lastUpdate.value = RequestEvent(request, ++eventSequence)
     }
 
-    private fun publishModeration(request: MediaRequest) {
-        cache.unpinModeration(request)
-        // An admin deciding on their own request: their own lists update too.
-        if (cache.ownRecord(request.cacheKey())?.id == request.id) publish(request)
-        _lastModeration.value = RequestEvent(request, ++eventSequence)
-    }
-
     private fun upsertMine(request: MediaRequest) {
         _mine.update { list ->
             val replaced = list.map { if (it.id == request.id) request else it }
@@ -222,6 +180,3 @@ class RequestsRepository(
         private val SessionChanged = ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
     }
 }
-
-/** A count of admin requests, read one page deep: [hasMore] means there are more than [count]. */
-data class AdminRequestCount(val count: Int, val hasMore: Boolean)

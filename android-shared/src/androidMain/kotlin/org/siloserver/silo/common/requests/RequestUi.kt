@@ -122,10 +122,6 @@ object RequestRowCopy {
         return progress.longLabel
     }
 
-    /** "Series · 1080p · 4K" for admin rows. */
-    fun kindAndQuality(record: MediaRequest): String =
-        listOfNotNull(mediaTypeLabel(record.mediaType), RequestTargetSummary.qualities(record.targets)).joinToString(" · ")
-
     private fun format(timestamp: String?, formatter: DateTimeFormatter): String? {
         val value = timestamp?.takeIf { it.isNotBlank() } ?: return null
         return runCatching { formatter.format(Instant.parse(value).atZone(ZoneId.systemDefault())) }.getOrNull()

@@ -45,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,7 +66,6 @@ import org.siloserver.silo.android.ui.theme.SiloSecondaryText
 import org.siloserver.silo.android.ui.theme.SiloSurfaceContainer
 import org.siloserver.silo.android.ui.theme.SiloSurfaceElevated
 import org.siloserver.silo.common.cards.LocalCardPresentation
-import org.siloserver.silo.common.requests.RequestColors
 import org.siloserver.silo.common.requests.color
 import org.siloserver.silo.common.ui.components.DeferImagePresentationWhileScrolling
 import org.siloserver.silo.common.ui.components.ThumbhashImage
@@ -463,8 +461,6 @@ internal fun RequestSummaryCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     parts: List<Pair<RequestStatusTint, String>> = emptyList(),
-    leadingIcon: ImageVector? = null,
-    leadingTint: Color = SiloOnSurface,
 ) {
     val shape = RoundedCornerShape(18.dp)
     Row(
@@ -479,9 +475,6 @@ internal fun RequestSummaryCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (leadingIcon != null) {
-            Icon(imageVector = leadingIcon, contentDescription = null, tint = leadingTint, modifier = Modifier.size(24.dp))
-        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(text = title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = SiloOnSurface)
             if (parts.isNotEmpty()) {
@@ -546,20 +539,6 @@ internal fun <T> LazyListScope.requestGroupedSection(
     }
 }
 
-/** A quiet error line in the status line's slot. */
-@Composable
-internal fun RequestRowErrorLine(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "⚠ $text",
-        fontSize = 12.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = RequestColors.Rose,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
-        modifier = modifier,
-    )
-}
-
 // ── Loading placeholders ─────────────────────────────────────
 
 /** A rail of quiet poster placeholders in the final layout's shape. */
@@ -583,7 +562,7 @@ internal fun RequestRailSkeleton(progress: Float, title: String? = null, cardCou
     }
 }
 
-/** Grouped-row placeholders for My Requests and Approvals. */
+/** Grouped-row placeholders for My Requests. */
 @Composable
 internal fun RequestRowsSkeleton(progress: Float, rows: Int = 5) {
     Column(modifier = Modifier.padding(top = 8.dp)) {

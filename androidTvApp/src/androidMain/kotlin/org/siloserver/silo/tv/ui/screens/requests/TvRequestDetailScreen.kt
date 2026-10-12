@@ -23,10 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,7 +44,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.tv.material3.Button
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -57,7 +53,6 @@ import org.koin.core.parameter.parametersOf
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
 import org.siloserver.silo.model.catalog.ExternalRatings
-import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaDetail
 import org.siloserver.silo.model.request.RequestMediaType
@@ -80,7 +75,6 @@ import org.siloserver.silo.tv.ui.screens.detail.TvDetailHero
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailHorizontalInset
 import org.siloserver.silo.tv.ui.screens.detail.TvDetailSectionHeader
 import org.siloserver.silo.tv.ui.screens.detail.tvDetailPageSurfaceColor
-import org.siloserver.silo.tv.ui.theme.DarkSurfaceElevated
 import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.viewmodel.RequestDetailUiState
 import org.siloserver.silo.viewmodel.RequestDetailViewModel
@@ -90,7 +84,7 @@ import org.siloserver.silo.viewmodel.RequestPrimaryAction
  * TV request detail on the same page surface and hero as a library title
  * (`TvDetailHero`), like tvOS `RequestDetailView`: a STATUS / REQUESTED /
  * QUALITY summary with a labeled stage track, one primary action that morphs
- * in place, admin decisions, Cancel, and a "More like this" row.
+ * in place, Cancel, and a "More like this" row.
  *
  * Focus: the primary action is one stable node whose label and look follow
  * [RequestPrimaryAction], so focus stays put across request → requesting →
@@ -121,7 +115,6 @@ fun TvRequestDetailScreen(
     var pageHasFocus by remember { mutableStateOf(false) }
     var pageHadFocus by remember { mutableStateOf(false) }
     var primaryHasFocus by remember { mutableStateOf(false) }
-    var confirmingDecline by remember { mutableStateOf(false) }
     val showsLoading = state.detail == null && state.error == null
     // The title, not the loaded detail: refreshes after an action replace the
     // detail and must not re-run the claim below.
@@ -159,27 +152,6 @@ fun TvRequestDetailScreen(
 
     BackHandler(enabled = backEnabled) { onBack() }
 
-    if (confirmingDecline) {
-        AlertDialog(
-            onDismissRequest = { confirmingDecline = false },
-            containerColor = DarkSurfaceElevated,
-            titleContentColor = SiloOnSurface,
-            textContentColor = SiloOnSurface.copy(alpha = 0.76f),
-            title = { Text("Decline this request?", color = SiloOnSurface) },
-            text = { Text("The person who asked for it will see it as declined.", color = SiloOnSurface.copy(alpha = 0.76f)) },
-            confirmButton = {
-                // Keep first, so a stray press doesn't decide on someone's request.
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { confirmingDecline = false }) { Text("Keep") }
-                    Button(onClick = {
-                        confirmingDecline = false
-                        viewModel.moderate(AdminRequestAction.Decline)
-                    }) { Text("Decline") }
-                }
-            },
-        )
-    }
-
     val backdropUrl = state.detail?.let { requestBackdropUrl(it.backdropPath) ?: requestPosterUrl(it.posterPath) }
     val pageTint = rememberAmbientBackdropTintState()
     LaunchedEffect(backdropUrl) { pageTint.set(item = null, url = backdropUrl) }
@@ -207,9 +179,6 @@ fun TvRequestDetailScreen(
                         is RequestPrimaryAction.OpenInLibrary -> onOpenLibraryItem(action.contentId)
                         else -> Unit
                     }
-                },
-                onModerate = { action ->
-                    if (action == AdminRequestAction.Decline) confirmingDecline = true else viewModel.moderate(action)
                 },
                 onCancel = viewModel::cancel,
                 onOpenRecommendation = router::openResult,
@@ -245,7 +214,6 @@ private fun RequestDetailContent(
     primaryActionFocusRequester: FocusRequester,
     onPrimaryFocusChanged: (Boolean) -> Unit,
     onPrimary: () -> Unit,
-    onModerate: (AdminRequestAction) -> Unit,
     onCancel: () -> Unit,
     onOpenRecommendation: (RequestMediaResult) -> Unit,
 ) {
@@ -280,14 +248,6 @@ private fun RequestDetailContent(
                             onClick = onPrimary,
                             modifier = Modifier.onFocusChanged { onPrimaryFocusChanged(it.hasFocus) },
                         )
-                        state.moderationActions.forEach { action ->
-                            val (icon, title) = when (action) {
-                                AdminRequestAction.Approve -> Icons.Filled.Check to "Approve"
-                                AdminRequestAction.Decline -> Icons.Filled.Close to "Decline"
-                                AdminRequestAction.Retry -> Icons.Filled.Refresh to "Retry"
-                            }
-                            RequestActionPill(icon = icon, title = title, onClick = { onModerate(action) })
-                        }
                         if (state.canCancel) {
                             RequestActionPill(icon = Icons.Filled.Close, title = "Cancel Request", onClick = onCancel)
                         }
@@ -367,8 +327,8 @@ private fun RequestPrimaryActionPill(
 }
 
 /**
- * A secondary action in the hero row (Approve, Decline, Retry, Cancel), in the
- * row's 38dp capsule so every control in it shares one height.
+ * A secondary action in the hero row (Cancel), in the row's 38dp capsule so
+ * every control in it shares one height.
  */
 @Composable
 private fun RequestActionPill(icon: ImageVector, title: String, onClick: () -> Unit) {
@@ -402,7 +362,7 @@ private val StatusStripHeight = 64.dp
  */
 @Composable
 private fun RequestStatusStrip(progress: RequestProgress, state: RequestDetailUiState) {
-    val record = state.displayedRecord
+    val record = state.record
     Column(modifier = Modifier.padding(top = 7.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             SummaryField(label = "STATUS", value = progress.longLabel, dot = progress.tint.tvColor())

@@ -2,7 +2,6 @@ package org.siloserver.silo.tv.ui.screens.requests
 
 import androidx.compose.runtime.rememberCoroutineScope
 import org.siloserver.silo.common.requests.rememberRequestRouter
-import org.siloserver.silo.viewmodel.RequestApprovalsUiState
 import org.siloserver.silo.model.request.RequestDiscoverySection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -66,10 +65,7 @@ import org.siloserver.silo.common.cards.LocalCardPresentation
 import org.siloserver.silo.common.requests.RequestRowCopy
 import org.siloserver.silo.common.requests.RequestStageTrack
 import org.siloserver.silo.model.catalog.ExternalRatings
-import org.siloserver.silo.model.feature.RequestsFeatureStore
-import org.siloserver.silo.model.request.AdminRequestAction
 import org.siloserver.silo.model.request.MediaRequest
-import org.siloserver.silo.model.request.RequestAttention
 import org.siloserver.silo.model.request.RequestDisplayState
 import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestProgress
@@ -104,16 +100,15 @@ import org.siloserver.silo.tv.ui.theme.SiloOnSurface
 import org.siloserver.silo.tv.ui.theme.Spacing
 import org.siloserver.silo.tv.ui.theme.TvSkyline
 import org.siloserver.silo.viewmodel.MyRequestsViewModel
-import org.siloserver.silo.viewmodel.RequestApprovalsViewModel
 import org.siloserver.silo.viewmodel.RequestsViewModel
 
 /**
  * The top-bar Requests tab in the Skyline layout Home and the library tabs
  * use: an ambient backdrop and a passive preview panel that follow the focused
  * card, including its request status and stage track, over horizontally
- * scrolling rows in the bottom band (the tvOS `TVRequestsPage`). Rows: requests
- * waiting for this admin's approval, the user's own requests, failed requests
- * (admins), then the discover carousels.
+ * scrolling rows in the bottom band (the tvOS `TVRequestsPage`). Rows: the
+ * user's own requests, then the discover carousels. Request administration
+ * (approve, decline, retry) stays in web admin.
  *
  * Focus: the page claims the first card when the tab is selected, and the last
  * focused card when it returns from a detail page. Up from the first row
@@ -131,14 +126,10 @@ fun TvRequestsPage(
     hub: RequestsViewModel = koinViewModel(key = "tv-requests-hub") { parametersOf(false) },
     /** For Cancel on the user's own cards; the hub's list shows the rows. */
     mine: MyRequestsViewModel = koinViewModel(key = "tv-requests-mine") { parametersOf(false) },
-    approvals: RequestApprovalsViewModel = koinViewModel(key = "tv-requests-approvals") { parametersOf(false) },
-    featureStore: RequestsFeatureStore = koinInject(),
     repository: RequestsRepository = koinInject(),
 ) {
     val hubState by hub.uiState.collectAsState()
     val mineState by mine.uiState.collectAsState()
-    val approvalsState by approvals.uiState.collectAsState()
-    val canModerate by featureStore.canModerate.collectAsState()
     var hasLoaded by rememberSaveable { mutableStateOf(false) }
     var actionTarget by remember { mutableStateOf<TvRequestItem?>(null) }
     val scope = rememberCoroutineScope()
@@ -146,32 +137,17 @@ fun TvRequestsPage(
     // Rows appear together once every read for the page has answered, so the
     // first row never changes under a focused card. Re-read on every return.
     suspend fun load() {
-        val discover = scope.launch { hub.fetch() }
-        if (featureStore.canModerate.value) approvals.fetch()
-        discover.join()
+        hub.fetch()
         hasLoaded = true
     }
     LaunchedEffect(Unit) { load() }
-    // Moderation can be confirmed after the page's first load.
-    LaunchedEffect(canModerate) {
-        if (canModerate && hasLoaded) approvals.fetch()
-    }
 
-    val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections, approvalsState, canModerate) else emptyList()
-    // A failed action's reason shows for a few seconds; an unconfirmed decision
-    // stays until a read settles it.
+    val rows = if (hasLoaded) tvRequestRows(hubState.myRequests, hubState.sections) else emptyList()
+    // A failed cancel's reason shows for a few seconds.
     // The view models outlive this page's composition (a detail push and
     // Back re-enter it), so remember what was already shown and replay nothing.
     var transientMessage by remember { mutableStateOf<String?>(null) }
-    var seenFailedActions by rememberSaveable { mutableStateOf(approvalsState.failedActions) }
     var seenCancelMessage by rememberSaveable { mutableStateOf(mineState.actionErrorMessage) }
-    LaunchedEffect(approvalsState.failedActions) {
-        if (approvalsState.failedActions <= seenFailedActions) return@LaunchedEffect
-        seenFailedActions = approvalsState.failedActions
-        transientMessage = approvalsState.lastActionError
-        delay(ActionMessageMs)
-        transientMessage = null
-    }
     LaunchedEffect(mineState.actionErrorMessage) {
         val message = mineState.actionErrorMessage
         if (message == null || message == seenCancelMessage) return@LaunchedEffect
@@ -180,23 +156,18 @@ fun TvRequestsPage(
         delay(ActionMessageMs)
         if (transientMessage == message) transientMessage = null
     }
-    // An admin whose approval queue couldn't load sees why, instead of a page
-    // that silently lacks its approval rows.
-    val approvalsError = approvalsState.error?.takeIf { canModerate && hasLoaded }
-        ?.let { "Couldn't load requests waiting for approval" }
-    val actionMessage = approvalsState.actionErrorMessage ?: transientMessage ?: approvalsError
+    val actionMessage = transientMessage
 
     val router = rememberRequestRouter(repository, onOpenLibraryItem, onOpenRequestDetail)
     fun open(item: TvRequestItem) {
         when (item) {
             is TvRequestItem.Record -> router.openRecord(item.record)
-            is TvRequestItem.Approval -> router.openModerationRecord(item.record)
             is TvRequestItem.Result -> router.openResult(item.result)
         }
     }
 
     fun actionsFor(item: TvRequestItem): List<TvRequestAction> =
-        item.actions(canCancel = mineState::canCancel, canAct = approvalsState::canAct)
+        item.actions(canCancel = mineState::canCancel)
 
     val target = actionTarget
     val targetActions = target?.let(::actionsFor).orEmpty()
@@ -215,9 +186,6 @@ fun TvRequestsPage(
                 when (action) {
                     // The hub's list shows the row; it settles an uncertain cancel.
                     TvRequestAction.Cancel -> mine.cancel(record, refresh = { hub.fetch() })
-                    TvRequestAction.Approve -> approvals.perform(AdminRequestAction.Approve, record)
-                    TvRequestAction.Decline -> approvals.perform(AdminRequestAction.Decline, record)
-                    TvRequestAction.Retry -> approvals.perform(AdminRequestAction.Retry, record)
                 }
             },
         )
@@ -282,11 +250,6 @@ internal sealed interface TvRequestItem {
         override val id: String get() = "request:${record.id}"
     }
 
-    /** Someone's request, shown to an admin who can decide on it. */
-    data class Approval(val record: MediaRequest) : TvRequestItem {
-        override val id: String get() = "approval:${record.id}"
-    }
-
     data class Result(val result: RequestMediaResult) : TvRequestItem {
         override val id: String get() = "tmdb:${result.mediaType}:${result.tmdbId}"
     }
@@ -295,17 +258,9 @@ internal sealed interface TvRequestItem {
 private fun tvRequestRows(
     myRequests: List<MediaRequest>,
     sections: List<RequestDiscoverySection>,
-    approvals: RequestApprovalsUiState,
-    showsApprovals: Boolean,
 ): List<TvRequestRow> = buildList {
-    if (showsApprovals && approvals.awaitingApproval.isNotEmpty()) {
-        add(TvRequestRow("approvals", "Waiting for your approval", approvals.awaitingApproval.map { TvRequestItem.Approval(it) }))
-    }
     val mine = myRequests.filterTvMediaRequests()
     if (mine.isNotEmpty()) add(TvRequestRow("mine", "Your requests", mine.map { TvRequestItem.Record(it) }))
-    if (showsApprovals && approvals.failed.isNotEmpty()) {
-        add(TvRequestRow("failed", "Failed requests", approvals.failed.map { TvRequestItem.Approval(it) }))
-    }
     sections.filterTvRequestSections().forEachIndexed { index, section ->
         add(
             TvRequestRow(
@@ -485,13 +440,6 @@ private fun TvRequestsFeed(
                                             focusRequester = requesterFor(key),
                                             modifier = cardModifier,
                                         )
-                                        is TvRequestItem.Approval -> TvRequestRecordCard(
-                                            record = item.record,
-                                            onClick = { openFrom(key, item) },
-                                            onLongClick = { onLongPress(item) },
-                                            focusRequester = requesterFor(key),
-                                            modifier = cardModifier,
-                                        )
                                         is TvRequestItem.Result -> TvRequestCard(
                                             result = item.result,
                                             onClick = { openFrom(key, item) },
@@ -530,8 +478,8 @@ internal data class TvRequestPreview(
             val statusText: String?
             val year: Int?
             when (item) {
-                is TvRequestItem.Record, is TvRequestItem.Approval -> {
-                    val record = (item as? TvRequestItem.Record)?.record ?: (item as TvRequestItem.Approval).record
+                is TvRequestItem.Record -> {
+                    val record = item.record
                     title = record.title
                     overview = record.overview
                     posterPath = record.posterPath
@@ -559,7 +507,6 @@ internal data class TvRequestPreview(
             meta += TvHeroFactToken.TextToken(RequestRowCopy.mediaTypeLabel(mediaType))
             when (item) {
                 is TvRequestItem.Record -> RequestRowCopy.day(item.record.createdAt)?.let { meta += TvHeroFactToken.TextToken("Requested $it") }
-                is TvRequestItem.Approval -> RequestRowCopy.day(item.record.createdAt)?.let { meta += TvHeroFactToken.TextToken("Requested $it") }
                 is TvRequestItem.Result -> ExternalRatings.tmdb(item.result.voteAverage)?.let { meta += TvHeroFactToken.ExternalRating(it) }
             }
             val posterUrl = requestPosterUrl(posterPath)
@@ -742,27 +689,13 @@ private fun TvRequestsLoadingView() {
 
 internal enum class TvRequestAction(val label: String) {
     Cancel("Cancel Request"),
-    Approve("Approve"),
-    Decline("Decline"),
-    Retry("Retry"),
 }
 
 /** The long-press actions a card offers right now; empty when it has none. */
 internal fun TvRequestItem.actions(
     canCancel: (MediaRequest) -> Boolean,
-    canAct: (MediaRequest) -> Boolean,
 ): List<TvRequestAction> = when (this) {
     is TvRequestItem.Record -> if (canCancel(record)) listOf(TvRequestAction.Cancel) else emptyList()
-    is TvRequestItem.Approval -> if (!canAct(record)) {
-        emptyList()
-    } else {
-        when (val display = RequestDisplayState.of(record)) {
-            RequestDisplayState.Pending -> listOf(TvRequestAction.Approve, TvRequestAction.Decline)
-            is RequestDisplayState.NeedsAttention ->
-                if (display.attention == RequestAttention.Failed) listOf(TvRequestAction.Retry) else emptyList()
-            else -> emptyList()
-        }
-    }
     is TvRequestItem.Result -> emptyList()
 }
 
@@ -776,44 +709,20 @@ private fun TvRequestActionDialog(
 ) {
     val record = when (item) {
         is TvRequestItem.Record -> item.record
-        is TvRequestItem.Approval -> item.record
         is TvRequestItem.Result -> return
-    }
-    var confirmingDecline by remember(item) { mutableStateOf(false) }
-    if (confirmingDecline) {
-        // Keep comes first and takes focus, so a stray press doesn't decide on
-        // someone's request.
-        TvDialog(
-            title = "Decline this request?",
-            message = "${record.title} will show as declined to the person who asked for it.",
-            onDismissRequest = onDismiss,
-            actions = listOf(
-                TvDialogAction(label = "Keep", onClick = onDismiss),
-                TvDialogAction(
-                    label = "Decline",
-                    onClick = { onAction(TvRequestAction.Decline, record) },
-                    style = TvDialogActionStyle.Destructive,
-                ),
-            ),
-        )
-        return
     }
     // Close comes first and takes focus, so a stray press doesn't send a
     // non-retryable action.
     TvDialog(
         title = record.title,
-        message = if (item is TvRequestItem.Approval) "Requested by someone on this server." else RequestProgress.of(record).longLabel,
+        message = RequestProgress.of(record).longLabel,
         onDismissRequest = onDismiss,
         actions = listOf(TvDialogAction(label = "Close", onClick = onDismiss)) + actions.map { action ->
             TvDialogAction(
                 label = action.label,
-                // Decline asks first.
-                onClick = {
-                    if (action == TvRequestAction.Decline) confirmingDecline = true else onAction(action, record)
-                },
+                onClick = { onAction(action, record) },
                 style = when (action) {
-                    TvRequestAction.Cancel, TvRequestAction.Decline -> TvDialogActionStyle.Destructive
-                    TvRequestAction.Approve, TvRequestAction.Retry -> TvDialogActionStyle.Primary
+                    TvRequestAction.Cancel -> TvDialogActionStyle.Destructive
                 },
             )
         },

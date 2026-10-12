@@ -22,8 +22,7 @@ import org.siloserver.silo.network.ApiResult
  *
  * It holds, keyed by media type + TMDB id: the title detail from the last read
  * or prefetch; the signed-in user's own request records from every
- * `/requests/mine` read; and admin records from the approval queue. A tap
- * seeds it too: a card carries enough of the title for a provisional page.
+ * `/requests/mine` read. A tap seeds it too: a card carries enough of the title for a provisional page.
  * Every page still refreshes from the server; this only decides the first frame.
  *
  * Main-thread confined, like the view models that read it. Profile-scoped:
@@ -38,9 +37,6 @@ class RequestDetailCache(
 
     private val details = LinkedHashMap<Key, RequestMediaDetail>()
     private var ownRecords: Map<Key, MediaRequest> = emptyMap()
-    private var moderationRecords: Map<Key, MediaRequest> = emptyMap()
-    /** The exact request an admin opened from the approval queue; wins over any other for the title. */
-    private val pinnedModeration = mutableMapOf<Key, MediaRequest>()
     private val seeds = mutableMapOf<Key, RequestMediaResult>()
     private val prefetchQueue = ArrayDeque<Pair<Key, suspend (Key) -> ApiResult<RequestMediaDetail>>>()
     private var prefetchJob: Job? = null
@@ -49,29 +45,12 @@ class RequestDetailCache(
 
     fun detail(key: Key): RequestMediaDetail? = details[key]
     fun ownRecord(key: Key): MediaRequest? = ownRecords[key]
-    fun moderationRecord(key: Key): MediaRequest? = moderationRecords[key]
-    fun pinnedModerationRecord(key: Key): MediaRequest? = pinnedModeration[key]
-
-    /** Any other way into the title opens an ordinary page. */
-    fun unpinModeration(key: Key) {
-        pinnedModeration.remove(key)
-    }
-
-    /** Drops the pin once the request has been decided on. */
-    fun unpinModeration(record: MediaRequest) {
-        val key = record.cacheKey()
-        if (pinnedModeration[key]?.id == record.id) pinnedModeration.remove(key)
-    }
-
-    fun pinModeration(record: MediaRequest) {
-        pinnedModeration[record.cacheKey()] = record
-    }
 
     /** A page to show before the detail read answers: the cached detail, or one built from a card or record. */
     fun firstFrameDetail(key: Key): RequestMediaDetail? =
         details[key]
             ?: seeds[key]?.let(::provisionalDetail)
-            ?: (ownRecords[key] ?: moderationRecords[key])?.let(::provisionalDetail)
+            ?: ownRecords[key]?.let(::provisionalDetail)
 
     fun store(detail: RequestMediaDetail) {
         val key = Key(detail.mediaType, detail.tmdbId)
@@ -90,20 +69,6 @@ class RequestDetailCache(
         ownRecords = if (record.outcome == RequestOutcome.Cancelled) ownRecords - key else ownRecords + (key to record)
     }
 
-    /**
-     * Records in priority order: the first per title wins, so a pending request
-     * listed before a failed one is the one the page decides on.
-     */
-    fun storeModerationRecords(records: List<MediaRequest>) {
-        val next = LinkedHashMap<Key, MediaRequest>()
-        records.forEach { next.getOrPut(it.cacheKey()) { it } }
-        moderationRecords = next
-        // A complete read no longer listing a pinned request means someone
-        // already decided on it; its pin must not bring the buttons back.
-        val queued = records.mapTo(HashSet()) { it.id }
-        pinnedModeration.entries.removeAll { it.value.id !in queued }
-    }
-
     fun seed(result: RequestMediaResult) {
         seeds[Key(result.mediaType, result.tmdbId)] = result
     }
@@ -115,8 +80,6 @@ class RequestDetailCache(
         prefetchQueue.clear()
         details.clear()
         ownRecords = emptyMap()
-        moderationRecords = emptyMap()
-        pinnedModeration.clear()
         seeds.clear()
     }
 

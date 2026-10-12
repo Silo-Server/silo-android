@@ -244,21 +244,3 @@ data class RequestsFeatureStatus(
     val isAvailable: Boolean
         get() = requestsEnabled && allowed == true && state == "available"
 }
-
-/** `GET /api/v2/admin/requests/capabilities`: whether the request integration is configured. */
-@Serializable
-data class AdminRequestCapabilities(
-    val available: Boolean = false,
-)
-
-/** Moderation actions an admin can take on someone's request (`POST /api/v2/admin/requests/{id}/…`). */
-enum class AdminRequestAction(val path: String) {
-    Approve("approve"),
-    Decline("decline"),
-    Retry("retry"),
-}
-
-@Serializable
-data class AdminRequestActionBody(
-    val reason: String? = null,
-)

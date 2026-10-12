@@ -10,7 +10,7 @@ A detailed inventory of what the Android **phone** and **TV** clients do today. 
 
 File pointers are repository-relative.
 
-> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and from a top-bar tab and search on TV — matching the Apple clients. Admins who can moderate approve, decline, and retry requests there. The richer admin screens (users/sessions/logs/scans) remain inaccessible. Watch Party is experimental, behind Settings → Experimental → Watch Party.
+> **Important exposure note:** Requests is live on both Android surfaces, gated by the server's `requests_enabled` flag (`/api/v2/requests/status`), and reached from the profile menu and search on phone and from a top-bar tab and search on TV — matching the Apple clients. Request administration (approve, decline, retry, limits, auto-approve) stays in web admin. The admin screens (users/sessions/logs/scans) remain inaccessible. Watch Party is experimental, behind Settings → Experimental → Watch Party.
 
 ---
 
@@ -88,7 +88,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Release calendar | ✅ | ✅ | Top-level mobile tab and TV top-menu tab |
 | Live home refresh (events websocket) | ✅ | ✅ | `HomeRealtimeCoordinator`: user_state/catalog channels, 2s debounce; TV also refreshes on resume |
 | System "Watch Next" row integration | ➖ | ✅ | `WatchNextRepository` (tvprovider) |
-| Requests | ✅ | ✅ | Server-gated by `requests_enabled`; phone: profile menu + search; TV: top-bar tab + search; admin approve/decline/retry |
+| Requests | ✅ | ✅ | Server-gated by `requests_enabled`, re-checked when the app returns to the foreground (open Requests screens close if it turned off); phone: profile menu + search; TV: top-bar tab + search; request administration stays in web admin |
 
 ## Reading (ebooks)
 
@@ -135,7 +135,7 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 | Favorites & watchlist | ✅ | ✅ | TV: from Settings |
 | Ratings | ✅ | ✅ | |
 | Watch history | ✅ | ✅ | |
-| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests, admin approvals; see Requests above |
+| Content requests (browse/search TMDB, status tracking) | ✅ | ✅ | Four-step status track, My Requests; see Requests above |
 | Release calendar | ✅ | ✅ | |
 | Notifications inbox (paginated, realtime updates, mark-read) | ✅ | ✅ | REST + WebSocket |
 
@@ -160,6 +160,6 @@ Shown only while Settings → Experimental → Watch Party is on (default on in 
 
 **TV** is a 10-foot, D-pad client focused on browsing and playback, including audiobooks, calendar, the subtitle suite, person detail, and system Watch Next integration. It intentionally omits ebooks/reading and downloads management.
 
-**Not currently exposed on either Android surface:** the admin stats dashboard and full admin management (users/sessions/logs/scans). **Experimental:** Watch Party, behind Settings → Experimental. Request moderation (approve, decline, retry) is the one admin action the Requests screens offer.
+**Not currently exposed on either Android surface:** the admin stats dashboard, full admin management (users/sessions/logs/scans), and request moderation (approve, decline, retry), which stays in web admin. **Experimental:** Watch Party, behind Settings → Experimental.
 
 Both apps share the same networking, auth, repositories, most ViewModels, and the entire Media3 playback/capability stack.

@@ -2,7 +2,6 @@ package org.siloserver.silo.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import org.siloserver.silo.model.feature.RequestsFeatureStore
 import org.siloserver.silo.model.request.MediaRequest
 import org.siloserver.silo.model.request.MyRequestsBucket
 import org.siloserver.silo.model.request.RequestActionCopy
@@ -13,7 +12,6 @@ import org.siloserver.silo.model.request.RequestMediaResult
 import org.siloserver.silo.model.request.RequestMediaType
 import org.siloserver.silo.model.request.RequestMutationFailure
 import org.siloserver.silo.model.request.RequestOutcome
-import org.siloserver.silo.model.request.RequestStatus
 import org.siloserver.silo.model.request.applyingRequestUpdate
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
@@ -39,10 +37,6 @@ data class RequestsUiState(
     val sections: List<RequestDiscoverySection> = emptyList(),
     /** The signed-in user's requests, needs-attention first, newest first within each group. */
     val myRequests: List<MediaRequest> = emptyList(),
-    /** Requests waiting on this admin's decision; zero for everyone else. */
-    val pendingApprovals: Int = 0,
-    /** More requests wait than [pendingApprovals]: the count reads one page. */
-    val morePendingApprovals: Boolean = false,
     val error: String? = null,
     val query: String = "",
     val searchResults: List<RequestMediaResult> = emptyList(),
@@ -73,9 +67,6 @@ data class RequestsUiState(
  */
 class RequestsViewModel(
     private val repository: RequestsRepository,
-    private val featureStore: RequestsFeatureStore? = null,
-    /** False where the page reads the full approval queue itself (TV), so the hub doesn't read it twice. */
-    private val countsPendingApprovals: Boolean = true,
     /** Loads on creation; the TV page loads when it composes. */
     loadOnInit: Boolean = true,
 ) : ViewModel() {
@@ -90,13 +81,6 @@ class RequestsViewModel(
         if (loadOnInit) load()
         viewModelScope.launch {
             repository.lastUpdate.drop(1).filterNotNull().collect { applyRequestUpdate(it.record) }
-        }
-        viewModelScope.launch {
-            repository.lastModeration.drop(1).filterNotNull().collect { loadPendingApprovals() }
-        }
-        featureStore?.let { store ->
-            // Moderation can be confirmed after the hub's first load.
-            viewModelScope.launch { store.canModerate.drop(1).collect { loadPendingApprovals() } }
         }
     }
 
@@ -116,8 +100,6 @@ class RequestsViewModel(
     suspend fun fetch(): Boolean {
         val generation = ++loadGeneration
         _uiState.update { it.copy(isLoading = it.sections.isEmpty() && it.myRequests.isEmpty(), error = null) }
-        // The admin queue can take many pages; it fills its card when it lands.
-        val approvals = viewModelScope.launch { loadPendingApprovals() }
         val discover = viewModelScope.async { repository.discover() }
         val mine = repository.refreshMine()
         val sections = discover.await()
@@ -149,20 +131,7 @@ class RequestsViewModel(
                 )
             }
         }
-        approvals.join()
         return succeeded
-    }
-
-    /** The hub's approvals card is a nudge, not a list: a failed read hides it. */
-    private suspend fun loadPendingApprovals() {
-        if (!countsPendingApprovals || featureStore?.canModerate?.value != true) {
-            _uiState.update { it.copy(pendingApprovals = 0, morePendingApprovals = false) }
-            return
-        }
-        // One page answers the card; it doesn't need the whole queue.
-        val result = repository.adminRequestCount(status = RequestStatus.Pending, outcome = RequestOutcome.Active)
-        val pending = (result as? ApiResult.Success)?.data
-        _uiState.update { it.copy(pendingApprovals = pending?.count ?: 0, morePendingApprovals = pending?.hasMore == true) }
     }
 
     /** Debounced TMDB search (300 ms), as the Apple hub does. */

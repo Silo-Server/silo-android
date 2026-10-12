@@ -8,7 +8,7 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 
 /**
- * Sorts a failed create, cancel, or moderation into the two outcomes the UI
+ * Sorts a failed create or cancel into the two outcomes the UI
  * treats differently. All of them are `non_retryable`: the server keeps no
  * request identity, so a resend after an uncertain outcome can act twice.
  *
@@ -44,7 +44,6 @@ object RequestMutationFailure {
 object RequestActionCopy {
     const val UnconfirmedSubmit = "We couldn't confirm the request. Check My Requests before trying again."
     const val UnconfirmedCancel = "We couldn't confirm the cancellation. Refresh your requests to check it."
-    const val UnconfirmedModeration = "We couldn't confirm that decision. Refresh to see where the request stands."
 
     /**
      * Copy for a definite failure. v2 folds "already requested", "already
@@ -62,7 +61,7 @@ object RequestActionCopy {
 }
 
 /**
- * A cancel, approve, decline, or retry sent without a usable answer. A timed-out
+ * A cancel sent without a usable answer. A timed-out
  * call can still be running on the server when the next read comes back, so an
  * unchanged request proves nothing: the hold lasts until the request changes or
  * leaves the list. It lapses after [Lifetime], read or not, so a call that never
@@ -87,17 +86,6 @@ class RequestActionHold(
     companion object {
         val Lifetime: Duration = 60.seconds
     }
-}
-
-/** Where one row's admin action is, so the row can animate it. */
-sealed interface RequestRowActionPhase {
-    val action: AdminRequestAction
-
-    /** The button spins. */
-    data class Working(override val action: AdminRequestAction) : RequestRowActionPhase
-
-    /** The button shows its result, then the row leaves the list. */
-    data class Succeeded(override val action: AdminRequestAction) : RequestRowActionPhase
 }
 
 /**

@@ -104,7 +104,7 @@ val repositoryModule = module {
             scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
         )
     }
-    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get()) }
+    single { org.siloserver.silo.repository.ForegroundAccessCheck(get(), get(), get(), get()) }
     single { CollectionRepository(get()) }
     single {
         SectionRepository(

@@ -72,7 +72,7 @@ sealed interface RequestDisplayState {
 
     companion object {
         /**
-         * From a full request record: My Requests, the hub strip, admin rows.
+         * From a full request record: My Requests and the hub strip.
          * A decline or withdrawal explains itself in `outcome_reason`; a failure
          * in `last_error` (sent to admins only).
          */
