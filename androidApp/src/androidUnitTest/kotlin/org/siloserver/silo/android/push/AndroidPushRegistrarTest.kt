@@ -189,6 +189,20 @@ class AndroidPushRegistrarTest {
         assertEquals("kids",removedAs?.profileId)
         val record=store.entries.single(); assertNull(record.refusal); assertNull(record.intent.registration)
     }
+    @Test fun aRemovalMarksTheRecordWithoutWaitingOnARequestInFlight()=runTest {
+        uncertain=true
+        val entered=CompletableDeferred<Unit>(); val hold=CompletableDeferred<Unit>()
+        send={ entered.complete(Unit); hold.await() }
+        val r=registrar(); val registration=async { r.registerToken(token) }
+        entered.await()
+        // Sign-out removes while that registration's request is still out, and its budget runs out waiting.
+        assertEquals("push_unregister_timed_out",assertIs<ApiResult.Error>(r.unregisterDevice("server")).error)
+        hold.complete(Unit); registration.await()
+        send={}; uncertain=false
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(r.registerToken(token))
+        assertEquals("next",store.entries.single().intent.loginId)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null

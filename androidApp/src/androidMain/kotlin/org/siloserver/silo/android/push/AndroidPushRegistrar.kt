@@ -23,7 +23,15 @@ class AndroidPushRegistrar internal constructor(
         Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32).also { SecureRandom().nextBytes(it) })
     },
 ) {
-    private val mutex = Mutex()
+    /**
+     * Guards this device's installation records: each read, and each update of one
+     * server's record, as a single read-modify-write. Never held across a request,
+     * so marking a leaving login or answering a push never waits on a slow server.
+     */
+    private val recordsLock = Mutex()
+    /** One command at a time per saved server, so its intents reach it in order; servers never wait on each other. */
+    private val serverLocks = ConcurrentHashMap<String, Mutex>()
+    private fun serverLock(serverUrl: String) = serverLocks.getOrPut(serverUrl) { Mutex() }
     /** The newest operation per saved server: a newer one supersedes an older one there, never another server's. */
     private val latestRequests = ConcurrentHashMap<String, Any>()
     private fun beginRequest(serverId: String): Any = Any().also { latestRequests[serverId] = it }
@@ -39,13 +47,33 @@ class AndroidPushRegistrar internal constructor(
         return owner == live
     }
 
-    /** Last records read or written under [mutex], so a push never waits behind an in-flight registration. */
+    /** Last records read or written under [recordsLock], so a push never waits on the store either. */
     @Volatile private var known: List<PushInstallation>? = null
-    private suspend fun read() = store.read().also { known = it }
-    private suspend fun write(records: List<PushInstallation>) { store.write(records); known = records }
+    private suspend fun readLocked() = store.read().also { known = it }
 
     /** This device's installation records, one per server it has registered with. */
-    internal suspend fun installations(): List<PushInstallation> = known ?: mutex.withLock { read() }
+    internal suspend fun installations(): List<PushInstallation> = known ?: recordsLock.withLock { readLocked() }
+
+    private fun List<PushInstallation>.recordOf(serverUrl: String, device: String): PushInstallation? =
+        filter { it.serverUrl == serverUrl && it.deviceId == device }.also { check(it.size <= 1) }.singleOrNull()
+
+    /** [serverUrl]'s record for [device], as stored now. */
+    private suspend fun recordOf(serverUrl: String, device: String): PushInstallation? =
+        recordsLock.withLock { readLocked() }.recordOf(serverUrl, device)
+
+    /** Replaces [serverUrl]'s record for [device] with [change] of it, leaving every other server's as stored. */
+    private suspend fun updateRecord(serverUrl: String, device: String, change: (PushInstallation?) -> PushInstallation?) =
+        recordsLock.withLock {
+            val records = readLocked()
+            val stored = records.recordOf(serverUrl, device)
+            val updated = change(stored)
+            if (updated !== stored) {
+                val next = records.filterNot { it === stored } + listOfNotNull(updated)
+                store.write(next)
+                known = next
+            }
+        }
+
     private fun failure(code: String) = ApiResult.Error(0, code, "Push registration requires its original installation and login authority.")
 
     suspend fun registerIfAvailable(): ApiResult<PushDeviceRegisterResponse>? {
@@ -138,34 +166,37 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
         val attempt = beginRequest(serverId)
         val device = deviceIdProvider()
-        // The record and its registered profile are read under the same lock the
-        // removal is applied under: a registration finishing first can change that
-        // profile, and the server refuses a removal from any other profile, for good.
-        return mutex.withLock {
-            val records = read()
-            val registered = records.firstOrNull {
-                it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
+        val found = installations().firstOrNull {
+            it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
+        } ?: return failure("push_not_registered")
+        // Before waiting on anything: should the removal not finish, whatever this
+        // record then holds belongs to a login about to be cleared.
+        markOwnerLeaving(found.serverUrl, device)
+        return serverLock(found.serverUrl).withLock {
+            // Read again under the server's lock: a registration finishing first can
+            // change the registered profile, and the server refuses a removal from any
+            // other profile, for good.
+            val registered = recordOf(found.serverUrl, device)?.takeIf {
+                it.intent.serverId == serverId && it.intent.registration != null && it.refusal == null
             } ?: return@withLock failure("push_not_registered")
-            markOwnerLeavingLocked(records, registered)
             val owner = registeredOwnerOf(registered) ?: return@withLock failure("push_authority_changed")
-            applyLocked(owner, null, attempt, mayReconcile = true).map { Unit }
+            applyOnServer(owner, null, attempt, mayReconcile = true).map { Unit }
         }
     }
 
     /**
-     * Marks [registered] when it is still uncertain, before the removal meant to
-     * replace it can fail: its login is about to be cleared, and then nobody can
-     * replay it exactly.
+     * Marks [serverUrl]'s record as belonging to a login on its way out, so the
+     * next registration may supersede whatever it leaves uncertain: once that
+     * login is cleared, nobody can replay it exactly.
      */
-    private suspend fun markOwnerLeavingLocked(records: List<PushInstallation>, registered: PushInstallation) {
-        if (registered.acknowledged || registered.ownerLeaving) return
-        write(records.map { if (it === registered) it.copy(ownerLeaving = true) else it })
-    }
+    private suspend fun markOwnerLeaving(serverUrl: String, device: String) =
+        updateRecord(serverUrl, device) { record -> record?.takeUnless { it.ownerLeaving }?.copy(ownerLeaving = true) ?: record }
 
     private suspend fun apply(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any): ApiResult<PushDeviceRegisterResponse?> =
-        mutex.withLock { applyLocked(owner, request, attempt, mayReconcile = true) }
+        serverLock(owner.scope.serverUrl).withLock { applyOnServer(owner, request, attempt, mayReconcile = true) }
 
-    private suspend fun applyLocked(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any,
+    /** Applies one intent to [owner]'s server; the caller holds that server's lock. */
+    private suspend fun applyOnServer(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any,
         mayReconcile: Boolean): ApiResult<PushDeviceRegisterResponse?> {
         try {
             if (!current(owner)) return failure("push_authority_changed")
@@ -179,12 +210,10 @@ class AndroidPushRegistrar internal constructor(
                 else -> failure("push_registration_unavailable")
             }
             if (!current(owner)) return failure("push_authority_changed")
-            val records = read()
+            val serverUrl = owner.scope.serverUrl
+            val previous = recordOf(serverUrl, device)
             if (!current(owner)) return failure("push_authority_changed")
             if (!isLatest(owner, attempt)) return failure("push_request_superseded")
-            val matches = records.filter { it.serverUrl == owner.scope.serverUrl && it.deviceId == device }
-            check(matches.size <= 1)
-            val previous = matches.singleOrNull()
             val intent = PushInstallationIntent(owner.scope.serverId, owner.loginId, requireNotNull(owner.scope.profileId), owner.scope.profileToken, request)
             // An uncertain removal, or an uncertain registration whose login was leaving,
             // is superseded rather than replayed: the server takes a registration at a
@@ -220,10 +249,12 @@ class AndroidPushRegistrar internal constructor(
                     (previous?.generation ?: 0) + 1, intent)
             }
             check(entry.key.matches(Regex("[A-Za-z0-9_-]{43}")))
-            val retained = records.filterNot { it.serverUrl == entry.serverUrl && it.deviceId == entry.deviceId }
             if (!current(owner)) return failure("push_authority_changed")
             // Allocation reaches durable storage before any mutation can leave the process.
-            write(retained + entry)
+            // A login marked leaving meanwhile stays marked on the intent it allocates next.
+            if (entry !== previous) updateRecord(serverUrl, device) { stored ->
+                entry.copy(ownerLeaving = stored?.ownerLeaving == true && stored.intent.loginId == entry.intent.loginId)
+            }
             currentCoroutineContext().ensureActive()
             if (!current(owner)) return failure("push_authority_changed")
             val persistedRequest = entry.intent.registration
@@ -231,11 +262,14 @@ class AndroidPushRegistrar internal constructor(
                 repository.unregisterDevice(device, entry.key, entry.generation, owner.scope).map { null }
             } else repository.registerAndroidDevice(persistedRequest, entry.key, entry.generation, owner.scope)
             if (!current(owner)) return failure("push_authority_changed")
+            suspend fun settle(outcome: (PushInstallation) -> PushInstallation) = updateRecord(serverUrl, device) { stored ->
+                stored?.takeIf { it.generation == entry.generation && it.key == entry.key }?.let(outcome) ?: stored
+            }
             when (result) {
-                is ApiResult.Success -> write(retained + entry.copy(acknowledged = true, receipt = result.data))
+                is ApiResult.Success -> settle { it.copy(acknowledged = true, receipt = result.data) }
                 is ApiResult.Error -> if (result.code in setOf(401, 403, 409, 422)) {
                     // No generation rebase or replacement secret after a definite refusal.
-                    write(retained + entry.copy(refusal = "push_registration_refused"))
+                    settle { it.copy(refusal = "push_registration_refused") }
                 }
                 is ApiResult.NetworkError -> Unit // Exact persisted intent is the only retry candidate.
             }
@@ -243,7 +277,7 @@ class AndroidPushRegistrar internal constructor(
             // At most one exact pending replay precedes the new desired intent. Never
             // substitute a new token, verb, login or generation into that replay.
             return if (reconciling && result is ApiResult.Success) {
-                applyLocked(owner, request, attempt, mayReconcile = false)
+                applyOnServer(owner, request, attempt, mayReconcile = false)
             } else result
         } catch (cancelled: CancellationException) {
             throw cancelled
