@@ -101,28 +101,26 @@ class PushNotificationPresenter internal constructor(
 
     /**
      * A push that names its server and profile is read with that registration's
-     * saved login, whichever server and profile are active, and belongs to that
-     * identity even when the read fails. One naming a server or profile this
-     * device holds no registration and login for is not fetched at all, since
-     * any other server or profile would only answer for someone else: it posts
-     * generic and non-navigable.
+     * saved login, whichever server and profile are active. It belongs to that
+     * identity only once that server returns the row for that profile: the push
+     * names its issuer itself, and any server can name any pair. Otherwise, as
+     * for a pair this device holds no registration and login for (which is not
+     * fetched at all), it posts generic and non-navigable.
      */
     private suspend fun fetchForIssuer(deliveryId: String, issuer: PushIssuer): FetchedNotification {
-        var target: PushTarget? = null
-        val row = withinPushBudget {
-            val resolved = targets.resolve(issuer) ?: return@withinPushBudget null
-            target = resolved
-            (notificationsRepository.get(deliveryId, resolved.owner.scope) as? ApiResult.Success)?.data
-        }
-        val resolved = target ?: return FetchedNotification(row = null, attribution = null)
+        val (target, row) = withinPushBudget {
+            val target = targets.resolve(issuer) ?: return@withinPushBudget null
+            val row = (notificationsRepository.get(deliveryId, target.owner.scope) as? ApiResult.Success)?.data
+            row?.takeIf { it.profileId == target.profileId }?.let { target to it }
+        } ?: return FetchedNotification(row = null, attribution = null)
         // Signed out of that server (or into another account there) during the
         // read: nobody here is left to show it to.
-        if (tokenManager.loginSessionId(resolved.serverEntryId) != resolved.owner.loginId) {
+        if (tokenManager.loginSessionId(target.serverEntryId) != target.owner.loginId) {
             return FetchedNotification(row = null, attribution = null)
         }
         return FetchedNotification(
-            row = row?.takeIf { it.profileId.isBlank() || it.profileId == resolved.profileId },
-            attribution = PushNotificationAttribution(serverId = resolved.serverEntryId, profileId = resolved.profileId),
+            row = row,
+            attribution = PushNotificationAttribution(serverId = target.serverEntryId, profileId = target.profileId),
         )
     }
 
