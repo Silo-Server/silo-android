@@ -113,7 +113,13 @@ class AndroidPushRegistrar internal constructor(
             check(matches.size <= 1)
             val previous = matches.singleOrNull()
             val intent = PushInstallationIntent(owner.scope.serverId, owner.loginId, requireNotNull(owner.scope.profileId), owner.scope.profileToken, request)
-            val reconciling = previous != null && !previous.acknowledged && previous.intent != intent
+            // An uncertain removal is superseded rather than replayed: the server takes a
+            // registration at a higher generation whether the removal landed or never
+            // arrived, and the login that sent it is usually gone, as sign-out removes
+            // first and then clears it. An uncertain registration is still replayed exactly.
+            val supersedesRemoval = request != null && previous != null && !previous.acknowledged &&
+                previous.intent.registration == null
+            val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesRemoval
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {

@@ -48,7 +48,8 @@ class AndroidPushRegistrarTest {
             return ApiResult.Success(PushDeviceRegisterResponse("r$generation",request.pushMode,generation.toString(),"d$generation"))
         }
         override suspend fun delete(deviceId:String,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<Unit> {
-            generations+=generation; keys+=key; removedAs=owner; send(); return ApiResult.Success(Unit)
+            generations+=generation; keys+=key; removedAs=owner; send()
+            return if(uncertain) ApiResult.NetworkError(IllegalStateException("lost reply")) else ApiResult.Success(Unit)
         }
     }
     private fun registrar(provider: AndroidPushTokenProvider=object:AndroidPushTokenProvider { override suspend fun token()=token }) =
@@ -80,12 +81,22 @@ class AndroidPushRegistrarTest {
         assertEquals(listOf(1L,1L),generations); assertEquals(pending.intent,store.entries.single().intent)
         assertTrue(store.entries.single().acknowledged)
     }
-    @Test fun changedIntentOrReplacementLoginCannotRebaseUncertainty()=runTest {
+    @Test fun changedIntentOrReplacementLoginCannotRebaseAnUncertainRegistration()=runTest {
         uncertain=true; val r=registrar(); r.registerToken(token)
         assertFalse(r.registerToken("n".repeat(80)) is ApiResult.Success)
         owner=owner.copy(loginId="replacement",scope=owner.scope.copy(identityGeneration=2))
         assertIs<ApiResult.Error>(registrar().registerToken(token)); assertEquals(listOf(1L,1L),generations)
         assertEquals("login",store.entries.single().intent.loginId)
+    }
+    @Test fun theNextLoginSupersedesARemovalThatSignOutLeftUncertain()=runTest {
+        val r=registrar(); r.registerToken(token)
+        uncertain=true; assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        uncertain=false
+        owner=owner.copy(loginId="next",scope=owner.scope.copy(profileId="kids",profileToken="kids-pin",identityGeneration=2))
+        assertIs<ApiResult.Success<*>>(r.registerToken(token))
+        assertEquals(listOf(1L,2L,3L),generations); assertEquals(setOf(proof),keys.toSet())
+        val record=store.entries.single()
+        assertEquals("next",record.intent.loginId); assertTrue(record.acknowledged)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
