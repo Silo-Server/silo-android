@@ -143,6 +143,19 @@ class AndroidPushRegistrarTest {
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
         assertEquals(listOf(1L,2L),generations); assertEquals("next",store.entries.single().intent.loginId)
     }
+    @Test fun theNextForegroundGivesOtherServersARotatedTokenTheyMissed()=runTest {
+        val r=registrar(); r.registerToken(token)
+        val home=owner
+        owner=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
+        r.registerToken(token)
+        owner=home.copy(scope=home.scope.copy(identityGeneration=3))
+        val rotated="n".repeat(80)
+        registrar(object:AndroidPushTokenProvider { override suspend fun token()=rotated }).registerOtherServersIfBehind()
+        val cabin=store.entries.single { it.intent.serverId=="cabin" }
+        assertEquals(rotated,cabin.intent.registration!!.token); assertTrue(cabin.acknowledged)
+        assertEquals("login-cabin" to "adult",cabin.intent.loginId to cabin.intent.profileId)
+        assertEquals(token,store.entries.single { it.intent.serverId=="server" }.intent.registration!!.token)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null

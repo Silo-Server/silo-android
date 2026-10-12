@@ -62,20 +62,38 @@ class AndroidPushRegistrar internal constructor(
     }
     /**
      * Registers a rotated FCM [token] with every saved server this device is
-     * registered with: the active one for whoever is active there, each other
-     * one as the login and profile it was registered for. Each server's attempt
-     * is bounded on its own, so one that fails or stalls costs only itself.
+     * registered with: the active one for whoever is active there, then each
+     * other one as the login and profile it was registered for. FCM allows this
+     * little time, so it may stop short; [registerOtherServersIfBehind] finishes
+     * the rest on the next foreground.
      */
     suspend fun registerRotatedToken(token: String) {
         val rotated = token.trim()
         val activeServerId = capture()?.scope?.serverId
-        if (activeServerId != null) withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerToken(rotated) }
+        if (activeServerId != null) registerToken(rotated)
+        registerOtherServers(rotated, activeServerId)
+    }
+
+    /**
+     * Brings every saved server but the active one up to the current FCM token,
+     * as the login and profile each was registered for: whatever a rotation ran
+     * out of time for, or left uncertain, is finished here.
+     */
+    suspend fun registerOtherServersIfBehind() {
+        val token = tokenProvider.token()?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        registerOtherServers(token, capture()?.scope?.serverId)
+    }
+
+    /** Each server's attempt is bounded on its own, so one that fails or stalls costs only itself. */
+    private suspend fun registerOtherServers(token: String, activeServerId: String?) {
         val device = deviceIdProvider()
-        val others = installations().filter {
-            it.deviceId == device && it.intent.serverId != activeServerId && it.intent.registration != null && it.refusal == null
+        val behind = installations().filter {
+            val registration = it.intent.registration
+            it.deviceId == device && it.intent.serverId != activeServerId && it.refusal == null &&
+                registration != null && (registration.token != token || !it.acknowledged)
         }
-        for (installation in others) {
-            withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerAsRegisteredOwner(installation, rotated) }
+        for (installation in behind) {
+            withTimeoutOrNull(PUSH_WORK_BUDGET_MS) { registerAsRegisteredOwner(installation, token) }
         }
     }
 

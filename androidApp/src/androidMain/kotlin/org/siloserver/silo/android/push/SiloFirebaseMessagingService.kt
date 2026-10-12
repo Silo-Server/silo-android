@@ -105,8 +105,8 @@ internal suspend fun <T> withinPushBudget(block: suspend () -> T): T? =
  *
  * Both callbacks run on the SDK's intent-handling executor (never the main
  * thread), so running inline is safe; [PUSH_WORK_BUDGET_MS] keeps each one
- * inside the window FCM allows. A token rotation spends one budget per saved
- * server it is registered with; rotations are rare enough to afford that.
+ * inside the window FCM allows. A token rotation reaches the saved servers it
+ * can within that one budget; the next foreground registers the rest.
  */
 class SiloFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -130,10 +130,8 @@ class SiloFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         val registrar = runCatching { get<AndroidPushRegistrar>(AndroidPushRegistrar::class.java) }.getOrNull()
             ?: return
-        // Every saved server registered here gets the new token, each within
-        // its own budget. The catch is a boundary net, as above.
         runBlocking {
-            runCatching { registrar.registerRotatedToken(token) }
+            withinPushBudget { registrar.registerRotatedToken(token) }
         }
     }
 }

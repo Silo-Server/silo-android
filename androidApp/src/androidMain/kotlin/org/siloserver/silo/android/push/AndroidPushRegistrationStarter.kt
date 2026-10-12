@@ -40,6 +40,8 @@ class AndroidPushRegistrationStarter(
     private fun CoroutineScope.registerOnce() {
         launch {
             runCatching { registrar.registerIfAvailable() }
+            // Saved servers a token rotation did not reach in time.
+            runCatching { registrar.registerOtherServersIfBehind() }
         }
     }
 }
