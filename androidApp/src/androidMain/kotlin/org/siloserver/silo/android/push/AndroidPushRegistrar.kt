@@ -104,11 +104,16 @@ class AndroidPushRegistrar internal constructor(
      * this device; a removal intent is no push target.
      *
      * Bounded so an unreachable server cannot hold up the sign-out or removal
-     * waiting on it. A removal cut off mid-flight stays pending, like any
-     * uncertain one.
+     * waiting on it, and never throws, so unreadable records cannot abort it
+     * either. A removal cut off mid-flight stays pending, like any uncertain one.
      */
-    suspend fun unregisterDevice(serverId: String): ApiResult<Unit> =
+    suspend fun unregisterDevice(serverId: String): ApiResult<Unit> = try {
         withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId) } ?: failure("push_unregister_timed_out")
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        failure("push_persistence_unavailable")
+    }
 
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
         val attempt = beginRequest(serverId)

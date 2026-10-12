@@ -130,6 +130,10 @@ class AndroidPushRegistrarTest {
         assertIs<ApiResult.Success<Unit>>(removal.await()); assertIs<ApiResult.Success<*>>(registration.await())
         assertNull(store.entries.single { it.intent.serverId=="cabin" }.intent.registration)
     }
+    @Test fun unreadableRecordsFailARemovalInsteadOfThrowingIntoSignOut()=runTest {
+        store.broken=true
+        assertEquals("push_persistence_unavailable",assertIs<ApiResult.Error>(registrar().unregisterDevice("server")).error)
+    }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
         failCode=null
