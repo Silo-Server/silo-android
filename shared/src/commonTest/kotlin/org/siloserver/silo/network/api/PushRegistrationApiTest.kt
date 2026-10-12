@@ -32,6 +32,19 @@ class PushRegistrationApiTest {
         try {
             val r = assertIs<ApiResult.Success<PushDeviceRegisterResponse>>(DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted).register(request,key,9007199254740993,expected)).data
             assertEquals("opaque:r",r.id); assertEquals("opaque:d",r.serverDeviceId); assertEquals("9007199254740993",r.generation)
+            assertNull(r.serverId, "servers that predate server_id")
+        } finally { client.close() }
+    }
+    @Test fun receiptNamesTheServerDeploymentButAMalformedOneNeverFailsRegistration() = runTest {
+        var body = receipt.replace("}", ""","server_id":"deploy-1"}""")
+        val client = HttpClient(MockEngine { respond(body,HttpStatusCode.OK,headersOf(HttpHeaders.ContentType,"application/json")) }) {
+            install(ContentNegotiation) { json(SiloJson) }
+        }
+        try {
+            val api = DefaultPushRegistrationApi(client, tokens, ApiV2Gate.Unrestricted)
+            assertEquals("deploy-1", assertIs<ApiResult.Success<PushDeviceRegisterResponse>>(api.register(request,key,9007199254740993,owner)).data.serverId)
+            body = receipt.replace("}", ""","server_id":7}""")
+            assertNull(assertIs<ApiResult.Success<PushDeviceRegisterResponse>>(api.register(request,key,9007199254740993,owner)).data.serverId)
         } finally { client.close() }
     }
     @Test fun rejectsNumericMismatchedMissingAndWrongStatusReceipts() = runTest {

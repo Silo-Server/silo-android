@@ -80,7 +80,30 @@ data class AuthScopeSnapshot(
             identityGeneration = identityGeneration,
             isIdentityGenerationStamped = true,
         )
+
+        /**
+         * [profileless] for one of the saved account's profiles: the scope a
+         * push sent for another server or profile is fetched (or that server's
+         * push registration removed) under, whatever is active.
+         */
+        fun savedLogin(
+            serverId: String,
+            serverUrl: String,
+            profileId: String,
+            profileToken: String?,
+            identityGeneration: Long,
+        ) = profileless(serverId, serverUrl, identityGeneration).copy(profileId = profileId, profileToken = profileToken)
     }
+
+    /**
+     * Pinned to [identityGeneration] alone ([profileless], [savedLogin]) rather
+     * than captured from the active scope, so it can name a saved server that
+     * is not active and must not be compared with the active scope. The token
+     * manager stops handing out its credentials once any identity transition
+     * follows [identityGeneration].
+     */
+    val isGenerationPinned: Boolean
+        get() = credentialGenerationId == null && credentialEpoch == 0L && isIdentityGenerationStamped
 
     override fun toString(): String =
         "AuthScopeSnapshot(" +

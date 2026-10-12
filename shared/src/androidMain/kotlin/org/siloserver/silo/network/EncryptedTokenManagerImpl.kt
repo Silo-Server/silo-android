@@ -511,6 +511,23 @@ class EncryptedTokenManagerImpl(
         }
     }
 
+    override suspend fun savedLoginAuthority(
+        serverId: String,
+        profileId: String,
+        profileToken: String?,
+    ): DurableLoginAuthority? = tokenWriteMutex.withLock {
+        mutex.withLock {
+            ensureCacheMatchesRegistryLocked()
+            val url = registry.entries.value.firstOrNull { it.id == serverId }?.url
+            if (url.isNullOrBlank()) return@withLock null
+            val loginId = durableLoginIdLocked(serverId) ?: return@withLock null
+            DurableLoginAuthority(
+                loginId,
+                AuthScopeSnapshot.savedLogin(serverId, url, profileId, profileToken, identityTransitions.generation.value),
+            )
+        }
+    }
+
     /**
      * The login id of [serverId]'s saved slot, which every account
      * replacement writes afresh and every sign-out removes. A slot signed in

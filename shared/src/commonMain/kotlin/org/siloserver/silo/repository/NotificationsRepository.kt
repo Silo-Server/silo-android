@@ -290,6 +290,13 @@ class NotificationsRepository(
         return if (current(viewer)) result else ApiResult.Error(0, "identity_changed", "The active viewer changed.")
     }
 
+    /**
+     * [id] from the inbox of [owner], a saved login and profile that need not be
+     * the active ones (a push sent for another server or profile). Leaves the
+     * active inbox's state alone.
+     */
+    suspend fun get(id: String, owner: AuthScopeSnapshot): ApiResult<NotificationRow> = api.forScope(owner).get(id)
+
     suspend fun markRead(id: String) {
         val viewer = viewer()
         if (viewer.api.markRead(id) is ApiResult.Success) {

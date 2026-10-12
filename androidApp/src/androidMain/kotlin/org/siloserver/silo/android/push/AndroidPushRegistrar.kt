@@ -8,6 +8,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.siloserver.silo.model.notifications.*
 import org.siloserver.silo.network.*
 import org.siloserver.silo.repository.PushRegistrationRepository
@@ -28,7 +29,21 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun capture() = authorities.snapshotDurableLoginAuthority()?.takeIf {
         it.loginId.isNotBlank() && !it.scope.profileId.isNullOrBlank() && it.scope.credentialGenerationId == null
     }
-    private suspend fun current(owner: DurableLoginAuthority) = owner == capture()
+    /** A saved-login owner ([unregisterDevice]) is current while that server's login is, active or not. */
+    private suspend fun current(owner: DurableLoginAuthority): Boolean {
+        val live = if (owner.scope.isGenerationPinned) {
+            authorities.savedLoginAuthority(owner.scope.serverId, requireNotNull(owner.scope.profileId), owner.scope.profileToken)
+        } else capture()
+        return owner == live
+    }
+
+    /** Last records read or written under [mutex], so a push never waits behind an in-flight registration. */
+    @Volatile private var known: List<PushInstallation>? = null
+    private suspend fun read() = store.read().also { known = it }
+    private suspend fun write(records: List<PushInstallation>) { store.write(records); known = records }
+
+    /** This device's installation records, one per server it has registered with. */
+    internal suspend fun installations(): List<PushInstallation> = known ?: mutex.withLock { read() }
     private fun failure(code: String) = ApiResult.Error(0, code, "Push registration requires its original installation and login authority.")
 
     suspend fun registerIfAvailable(): ApiResult<PushDeviceRegisterResponse>? {
@@ -48,9 +63,29 @@ class AndroidPushRegistrar internal constructor(
         val result = apply(owner, PushDeviceRegisterRequest("android", token, deviceIdProvider()), attempt)
         return result.map { checkNotNull(it) }
     }
-    suspend fun unregisterDevice(): ApiResult<Unit> {
+    /**
+     * Removes this device's registration on [serverId], active or not, before that
+     * server's credentials are cleared. Acts as the login and profile it was
+     * registered for: the server refuses a removal from any other profile, and a
+     * refusal is kept for good. The record stays, as the server binds its key to
+     * this device; a removal intent is no push target.
+     *
+     * Bounded so an unreachable server cannot hold up the sign-out or removal
+     * waiting on it. A removal cut off mid-flight stays pending, like any
+     * uncertain one.
+     */
+    suspend fun unregisterDevice(serverId: String): ApiResult<Unit> =
+        withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId) } ?: failure("push_unregister_timed_out")
+
+    private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
         val attempt = beginRequest()
-        val owner = capture() ?: return failure("push_authority_changed")
+        val device = deviceIdProvider()
+        val registered = installations().firstOrNull {
+            it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
+        } ?: return failure("push_not_registered")
+        val owner = authorities.savedLoginAuthority(serverId, registered.intent.profileId, registered.intent.profileToken)
+            ?.takeIf { it.loginId == registered.intent.loginId && it.scope.serverUrl == registered.serverUrl }
+            ?: return failure("push_authority_changed")
         return apply(owner, null, attempt).map { Unit }
     }
 
@@ -71,7 +106,7 @@ class AndroidPushRegistrar internal constructor(
                 else -> failure("push_registration_unavailable")
             }
             if (!current(owner)) return failure("push_authority_changed")
-            val records = store.read()
+            val records = read()
             if (!current(owner)) return failure("push_authority_changed")
             if (latestRequest.get() !== attempt) return failure("push_request_superseded")
             val matches = records.filter { it.serverUrl == owner.scope.serverUrl && it.deviceId == device }
@@ -102,7 +137,7 @@ class AndroidPushRegistrar internal constructor(
             val retained = records.filterNot { it.serverUrl == entry.serverUrl && it.deviceId == entry.deviceId }
             if (!current(owner)) return failure("push_authority_changed")
             // Allocation reaches durable storage before any mutation can leave the process.
-            store.write(retained + entry)
+            write(retained + entry)
             currentCoroutineContext().ensureActive()
             if (!current(owner)) return failure("push_authority_changed")
             val persistedRequest = entry.intent.registration
@@ -111,10 +146,10 @@ class AndroidPushRegistrar internal constructor(
             } else repository.registerAndroidDevice(persistedRequest, entry.key, entry.generation, owner.scope)
             if (!current(owner)) return failure("push_authority_changed")
             when (result) {
-                is ApiResult.Success -> store.write(retained + entry.copy(acknowledged = true, receipt = result.data))
+                is ApiResult.Success -> write(retained + entry.copy(acknowledged = true, receipt = result.data))
                 is ApiResult.Error -> if (result.code in setOf(401, 403, 409, 422)) {
                     // No generation rebase or replacement secret after a definite refusal.
-                    store.write(retained + entry.copy(refusal = "push_registration_refused"))
+                    write(retained + entry.copy(refusal = "push_registration_refused"))
                 }
                 is ApiResult.NetworkError -> Unit // Exact persisted intent is the only retry candidate.
             }
@@ -129,5 +164,9 @@ class AndroidPushRegistrar internal constructor(
         } catch (_: Exception) {
             return failure("push_persistence_unavailable")
         }
+    }
+
+    private companion object {
+        const val UNREGISTER_BUDGET_MS = 8_000L
     }
 }

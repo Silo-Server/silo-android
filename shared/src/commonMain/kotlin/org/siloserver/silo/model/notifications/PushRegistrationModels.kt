@@ -17,4 +17,9 @@ data class PushDeviceRegisterResponse(
     @SerialName("push_mode") val pushMode: String,
     val generation: String,
     @SerialName("server_device_id") val serverDeviceId: String,
+    /**
+     * The registering server's deployment identity (`GET /api/v2/system/identity`),
+     * which its pushes name as `silo_server_id`. Null from servers that predate it.
+     */
+    @SerialName("server_id") val serverId: String? = null,
 )

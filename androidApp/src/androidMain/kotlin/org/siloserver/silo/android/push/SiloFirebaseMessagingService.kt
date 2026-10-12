@@ -24,6 +24,7 @@ class PushMessageHandler(
         }
         presenter.present(
             deliveryId = deliveryId,
+            issuer = issuerFrom(data),
             fallbackTitle = fallbackTitle ?: data["title"],
             fallbackBody = fallbackBody ?: data["body"],
         )
@@ -35,13 +36,25 @@ class PushMessageHandler(
             data[key]?.trim()?.takeIf { it.isNotEmpty() }
         }
 
+    /** Null unless the push names both; servers and relays that predate them name neither. */
+    private fun issuerFrom(data: Map<String, String>): PushIssuer? {
+        val serverId = data[SERVER_ID_KEY]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val profileId = data[PROFILE_ID_KEY]?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return PushIssuer(serverId, profileId)
+    }
+
     companion object {
-        // The Silo push relay sends data-only messages carrying exactly
-        // silo_delivery_id and silo_mode; the legacy keys stay as fallbacks.
+        // The Silo push relay sends data-only messages carrying silo_delivery_id
+        // and silo_mode, plus silo_server_id and silo_profile_id from servers
+        // that send them; the legacy delivery keys stay as fallbacks.
         const val SILO_DELIVERY_ID_KEY = "silo_delivery_id"
         const val DELIVERY_ID_KEY = "delivery_id"
         const val MODE_KEY = "silo_mode"
         const val MODE_BACKGROUND_WAKE = "background_wake"
+
+        /** The server deployment and profile the push was sent for. */
+        const val SERVER_ID_KEY = "silo_server_id"
+        const val PROFILE_ID_KEY = "silo_profile_id"
         private val DELIVERY_ID_KEYS =
             listOf(SILO_DELIVERY_ID_KEY, DELIVERY_ID_KEY, "deliveryId", "deliveryID", "id")
     }

@@ -29,16 +29,23 @@ class NotificationsV2Api(
 ) : NotificationsApi {
     override fun forScope(scope: AuthScopeSnapshot) = NotificationsV2Api(client, tokens, gate, scope)
 
+    /**
+     * A generation-pinned [captured] scope ([AuthScopeSnapshot.savedLogin]) can name a
+     * saved login that is not the active one, for a push sent to another server or
+     * profile: it is gated on its own server and guarded by the token manager at send
+     * time rather than compared with the active scope.
+     */
     private suspend inline fun <reified T, R> exchange(
         method: HttpMethod, path: String, noinline configure: HttpRequestBuilder.() -> Unit = {},
         crossinline project: (T) -> R,
     ): ApiResult<R> {
         val scope = captured ?: tokens.snapshotCurrentScope() ?: return identityChanged()
-        return ownedV2Call<T, R>(gate, tokens, scope, OwnerPolicy.IDENTITY,
-            if (T::class == Unit::class) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
+        val pinned = scope.isGenerationPinned
+        return ownedV2Call<T, R>(if (pinned) gate.forServer(scope.serverId) else gate, tokens, scope.takeUnless { pinned },
+            OwnerPolicy.IDENTITY, if (T::class == Unit::class) HttpStatusCode.NoContent else HttpStatusCode.OK, {
             client.request(path) {
                 this.method = method
-                authScope(owner!!); requireSiloAuth()
+                authScope(scope); requireSiloAuth()
                 if (method != HttpMethod.Get) singleAttempt()
                 configure()
             }

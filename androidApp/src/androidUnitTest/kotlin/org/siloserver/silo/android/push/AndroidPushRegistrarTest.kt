@@ -12,7 +12,16 @@ class AndroidPushRegistrarTest {
     private var owner = DurableLoginAuthority("login", AuthScopeSnapshot("server","profile","https://example.invalid","pin",identityGeneration=1))
     private val token = "t".repeat(80)
     private val proof = "k".repeat(43)
-    private val authorities = object : DurableLoginAuthorityProvider { override suspend fun snapshotDurableLoginAuthority() = owner }
+    /** The login saved for "server", which removal acts as whatever profile is active. */
+    private var savedLogin: String? = "login"
+    private val authorities = object : DurableLoginAuthorityProvider {
+        override suspend fun snapshotDurableLoginAuthority() = owner
+        override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
+            savedLogin?.takeIf { serverId == "server" }?.let {
+                DurableLoginAuthority(it, AuthScopeSnapshot.savedLogin(serverId, "https://example.invalid", profileId, profileToken, 5))
+            }
+    }
+    private var removedAs: AuthScopeSnapshot? = null
     private class Store : PushInstallationStore {
         var entries = emptyList<PushInstallation>()
         var onRead: suspend () -> Unit = {}
@@ -39,7 +48,7 @@ class AndroidPushRegistrarTest {
             return ApiResult.Success(PushDeviceRegisterResponse("r$generation",request.pushMode,generation.toString(),"d$generation"))
         }
         override suspend fun delete(deviceId:String,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<Unit> {
-            generations+=generation; keys+=key; send(); return ApiResult.Success(Unit)
+            generations+=generation; keys+=key; removedAs=owner; send(); return ApiResult.Success(Unit)
         }
     }
     private fun registrar(provider: AndroidPushTokenProvider=object:AndroidPushTokenProvider { override suspend fun token()=token }) =
@@ -48,10 +57,20 @@ class AndroidPushRegistrarTest {
         val r=registrar()
         assertIs<ApiResult.Success<*>>(r.registerToken(token)); r.registerToken(token)
         assertEquals(listOf(1L),generations)
-        r.registerToken("n".repeat(80)); r.unregisterDevice()
+        r.registerToken("n".repeat(80)); r.unregisterDevice("server")
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
         r.registerToken(token)
         assertEquals(listOf(1L,2L,3L,4L),generations); assertEquals(setOf(proof),keys.toSet())
+    }
+    @Test fun removalActsAsTheRegisteredProfileNotWhoeverIsActive()=runTest {
+        val r=registrar(); r.registerToken(token)
+        // The server refuses a removal from any other profile, and a refusal is kept for good.
+        owner=owner.copy(scope=owner.scope.copy(profileId="other",profileToken="other-pin",identityGeneration=2))
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        assertEquals("profile",removedAs?.profileId); assertEquals("pin",removedAs?.profileToken)
+        val record=store.entries.single()
+        assertNull(record.intent.registration); assertTrue(record.acknowledged); assertEquals(listOf(1L,2L),generations)
+        assertIs<ApiResult.Error>(r.unregisterDevice("elsewhere")); assertEquals(listOf(1L,2L),generations)
     }
     @Test fun uncertaintyAndRestartReplayExactIntentOnlyForOriginalDurableOwner()=runTest {
         uncertain=true; registrar().registerToken(token)

@@ -7,6 +7,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.*
+import org.siloserver.silo.model.notifications.NotificationRow
 import org.siloserver.silo.network.*
 import org.siloserver.silo.repository.*
 import kotlin.test.*
@@ -52,6 +53,24 @@ class NotificationsV2Test {
             assertEquals(1, posts); assertFalse(repository.rows.value.first().isRead)
             assertTrue(repository.rows.value.last().isRead); assertEquals(1, repository.unreadCount.value)
             assertEquals("opaque-library", repository.rows.value.first().libraryId)
+        } finally { c.close() }
+    }
+
+    @Test fun aPushForAnotherServerIsReadWithItsSavedLoginWhileAMovedActiveCaptureIsRefused() = runTest {
+        val identity = Identity()
+        val saved = AuthScopeSnapshot.savedLogin("other", "https://other.invalid", "kids", "kids-proof", identityGeneration = 1)
+        val c = client { request ->
+            assertEquals(saved, request.attributes[AuthScopeAttributeKey])
+            reply(row("delivery-1"))
+        }
+        try {
+            val repository = NotificationsRepository(NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted), tokens = identity)
+            assertEquals("delivery-1", assertIs<ApiResult.Success<NotificationRow>>(repository.get("delivery-1", saved)).data.id)
+
+            val captured = identity.scope
+            identity.scope = captured.copy(identityGeneration = 2)
+            val moved = NotificationsV2Api(c, identity, ApiV2Gate.Unrestricted).forScope(captured).get("delivery-1")
+            assertEquals("identity_changed", assertIs<ApiResult.Error>(moved).error)
         } finally { c.close() }
     }
 

@@ -19,27 +19,22 @@ import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.NotificationsRepository
 
-class PushNotificationPresenter(
+class PushNotificationPresenter internal constructor(
     private val context: Context,
     private val notificationsRepository: NotificationsRepository,
     private val tokenManager: TokenManager,
+    private val targets: PushTargetResolver,
 ) {
     suspend fun present(
         deliveryId: String,
+        issuer: PushIssuer? = null,
         fallbackTitle: String? = null,
         fallbackBody: String? = null,
     ) {
-        // Captured BEFORE the fetch, which can take seconds: reading identity
-        // afterwards attributed the notification to whatever the user had
-        // switched to in the meantime. The scope snapshot (not just the server
-        // id) is what detects an A→B→A round trip across the fetch, which a
-        // plain id comparison reports as "unchanged".
-        val scopeBeforeFetch = tokenManager.snapshotCurrentScope()
-
         // Fetch before the permission check: on a direct-lookup miss the fallback
         // refreshes the inbox, which keeps the in-app badge current even for a
         // profile that has denied POST_NOTIFICATIONS.
-        val row = fetch(deliveryId)
+        val (row, attribution) = if (issuer != null) fetchForIssuer(deliveryId, issuer) else fetchForActiveScope(deliveryId)
         if (!canPostNotifications()) return
         ensureChannel()
 
@@ -54,25 +49,6 @@ class PushNotificationPresenter(
         // identity is worse than none: a null component is treated as a
         // wildcard at delivery, so a half-attributed notification can act under
         // an identity that never generated it.
-        //
-        // The fetched row is authoritative for the profile — it IS the row from
-        // that profile's inbox. The server is only trusted if the scope did not
-        // move across the fetch.
-        //
-        // KNOWN LIMIT: the push payload carries no issuing server, and the FCM
-        // token stays registered with previously-active servers, so a push from
-        // server A arriving while B is active simply misses its lookup — it
-        // cannot be attributed to A at all, and is posted non-navigable below.
-        // Attributing it to B is what this used to do, and is wrong. Fixing it
-        // properly needs issuer fields in the push protocol: server-side work.
-        val scopeAfterFetch = tokenManager.snapshotCurrentScope()
-        val attribution = pushNotificationAttribution(
-            rowProfileId = row?.profileId,
-            serverIdBefore = scopeBeforeFetch?.serverId,
-            identityGenerationBefore = scopeBeforeFetch?.identityGeneration,
-            serverIdAfter = scopeAfterFetch?.serverId,
-            identityGenerationAfter = scopeAfterFetch?.identityGeneration,
-        )
         val issuingServerId = attribution?.serverId
         val issuingProfileId = attribution?.profileId
         val attributable = attribution != null
@@ -92,7 +68,9 @@ class PushNotificationPresenter(
             putExtra(EXTRA_DELIVERY_ID, deliveryId)
             // Only navigable when we know whose it is. Unattributable ones still
             // post — the user should see the event — but tapping just opens the
-            // app rather than acting on someone else's library.
+            // app rather than acting on someone else's library. An attributed
+            // one opens its route only while its server and profile are the
+            // active ones (MainActivity); otherwise it opens the app.
             if (attributable) {
                 putExtra(EXTRA_NAV_ROUTE, content.route)
                 putExtra(EXTRA_SERVER_ID, issuingServerId)
@@ -119,6 +97,66 @@ class PushNotificationPresenter(
             NotificationManagerCompat.from(context)
                 .notify(deliveryId.hashCode(), notification)
         }
+    }
+
+    /**
+     * A push that names its server and profile is read with that registration's
+     * saved login, whichever server and profile are active, and belongs to that
+     * identity even when the read fails. One naming a server or profile this
+     * device holds no registration and login for is not fetched at all, since
+     * any other server or profile would only answer for someone else: it posts
+     * generic and non-navigable.
+     */
+    private suspend fun fetchForIssuer(deliveryId: String, issuer: PushIssuer): FetchedNotification {
+        var target: PushTarget? = null
+        val row = withinPushBudget {
+            val resolved = targets.resolve(issuer) ?: return@withinPushBudget null
+            target = resolved
+            (notificationsRepository.get(deliveryId, resolved.owner.scope) as? ApiResult.Success)?.data
+        }
+        val resolved = target ?: return FetchedNotification(row = null, attribution = null)
+        // Signed out of that server (or into another account there) during the
+        // read: nobody here is left to show it to.
+        if (tokenManager.loginSessionId(resolved.serverEntryId) != resolved.owner.loginId) {
+            return FetchedNotification(row = null, attribution = null)
+        }
+        return FetchedNotification(
+            row = row?.takeIf { it.profileId.isBlank() || it.profileId == resolved.profileId },
+            attribution = PushNotificationAttribution(serverId = resolved.serverEntryId, profileId = resolved.profileId),
+        )
+    }
+
+    /** A push from a server or relay that predates naming its issuer: read as the active identity. */
+    private suspend fun fetchForActiveScope(deliveryId: String): FetchedNotification {
+        // Captured BEFORE the fetch, which can take seconds: reading identity
+        // afterwards attributed the notification to whatever the user had
+        // switched to in the meantime. The scope snapshot (not just the server
+        // id) is what detects an A→B→A round trip across the fetch, which a
+        // plain id comparison reports as "unchanged".
+        val scopeBeforeFetch = tokenManager.snapshotCurrentScope()
+        val row = fetch(deliveryId)
+
+        // The fetched row is authoritative for the profile — it IS the row from
+        // that profile's inbox. The server is only trusted if the scope did not
+        // move across the fetch.
+        //
+        // KNOWN LIMIT: this payload names no issuing server, and the FCM token
+        // stays registered with previously-active servers, so a push from
+        // server A arriving while B is active simply misses its lookup — it
+        // cannot be attributed to A at all, and is posted non-navigable.
+        // Attributing it to B is what this used to do, and is wrong. Servers
+        // that name the issuer take [fetchForIssuer] instead.
+        val scopeAfterFetch = tokenManager.snapshotCurrentScope()
+        return FetchedNotification(
+            row = row,
+            attribution = pushNotificationAttribution(
+                rowProfileId = row?.profileId,
+                serverIdBefore = scopeBeforeFetch?.serverId,
+                identityGenerationBefore = scopeBeforeFetch?.identityGeneration,
+                serverIdAfter = scopeAfterFetch?.serverId,
+                identityGenerationAfter = scopeAfterFetch?.identityGeneration,
+            ),
+        )
     }
 
     // sync refreshes the inbox for a background_wake push without posting a
@@ -228,6 +266,11 @@ class PushNotificationPresenter(
         const val EXTRA_PROFILE_ID = "silo_notification_profile_id"
     }
 }
+
+private data class FetchedNotification(
+    val row: NotificationRow?,
+    val attribution: PushNotificationAttribution?,
+)
 
 private data class PushNotificationContent(
     val title: String,

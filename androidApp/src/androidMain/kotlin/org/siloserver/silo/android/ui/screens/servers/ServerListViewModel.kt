@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.auth.ActiveProfileReset
+import org.siloserver.silo.android.push.AndroidPushRegistrar
 
 /**
  * Where to land after a successful server switch. The list view emits this
@@ -41,6 +42,8 @@ class ServerListViewModel(
     private val tokenManager: TokenManager,
     private val authRepository: AuthRepository,
     private val activeProfileReset: ActiveProfileReset,
+    /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
+    private val unregisterPush: suspend (serverEntryId: String) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -110,6 +113,8 @@ class ServerListViewModel(
     fun onRemove(serverId: String) {
         viewModelScope.launch {
             val wasActive = serverRegistry.activeServerId.value == serverId
+            // While the server's credentials still exist: removal wipes them.
+            unregisterPush(serverId)
             serverRegistry.remove(serverId)
 
             // Removing the ACTIVE server promotes the next-MRU entry inside

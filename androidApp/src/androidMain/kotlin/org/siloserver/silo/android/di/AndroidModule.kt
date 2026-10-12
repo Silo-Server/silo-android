@@ -286,6 +286,14 @@ val androidModule = module {
             context = androidContext(),
             notificationsRepository = get(),
             tokenManager = get(),
+            targets = org.siloserver.silo.android.push.PushTargetResolver(
+                installations = { get<AndroidPushRegistrar>().installations() },
+                authorities = get(),
+                registry = get(),
+                entriesWithIdentity = { serverId, candidates ->
+                    get<org.siloserver.silo.repository.ServerIdentityRepository>().entriesFor(serverId, candidates)
+                },
+            ),
         )
     }
     single { PushMessageHandler(presenter = get()) }
@@ -535,7 +543,10 @@ val androidModule = module {
         )
     }
     single {
-        org.siloserver.silo.android.auth.SignOutTeardown(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        org.siloserver.silo.android.auth.SignOutTeardown(
+            get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) },
+        )
     }
     single {
         org.siloserver.silo.android.auth.ProfileSwitchTeardown(get(), get(), get(), get(), get(), get(), get())
@@ -591,7 +602,7 @@ val androidModule = module {
     viewModel { ProfileSelectionViewModel(get(), get(), profileVerificationRecovery = getOrNull()) }
     viewModel { CreateProfileViewModel(get()) }
     viewModel { EditProfileViewModel(get()) }
-    viewModel { ServerListViewModel(get(), get(), get(), get()) }
+    viewModel { ServerListViewModel(get(), get(), get(), get(), unregisterPush = { get<AndroidPushRegistrar>().unregisterDevice(it) }) }
     viewModel { params ->
         val args = params.get<Pair<String?, String?>>()
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
