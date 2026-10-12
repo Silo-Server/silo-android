@@ -6,6 +6,7 @@ import org.siloserver.silo.model.server.ServerEntry
 import org.siloserver.silo.network.ServerRegistry
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.repository.AuthRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -114,7 +115,14 @@ class ServerListViewModel(
         viewModelScope.launch {
             val wasActive = serverRegistry.activeServerId.value == serverId
             // While the server's credentials still exist: removal wipes them.
-            unregisterPush(serverId)
+            // Failing to remove the registration never stops the removal;
+            // cancellation still does, before anything is removed.
+            try {
+                unregisterPush(serverId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+            }
             serverRegistry.remove(serverId)
 
             // Removing the ACTIVE server promotes the next-MRU entry inside

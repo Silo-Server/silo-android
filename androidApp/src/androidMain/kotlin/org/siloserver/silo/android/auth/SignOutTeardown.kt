@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.auth
 
+import kotlinx.coroutines.CancellationException
 import org.siloserver.silo.android.push.AndroidPushRegistrar
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
@@ -67,8 +68,16 @@ class SignOutTeardown(
         val signedOutOf = serverRegistry.activeServerId.value
         // While the credentials removing it needs still exist. A registration
         // left behind keeps the server pushing this device for an account it
-        // no longer holds.
-        if (signedOutOf != null) unregisterPush(signedOutOf)
+        // no longer holds, but failing to remove it never stops the sign-out.
+        // Cancellation still does, before anyone is signed out.
+        if (signedOutOf != null) {
+            try {
+                unregisterPush(signedOutOf)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+            }
+        }
         // The removal can wait on the network, and logout() signs out whichever
         // server is active when it runs.
         if (serverRegistry.activeServerId.value != signedOutOf) return false

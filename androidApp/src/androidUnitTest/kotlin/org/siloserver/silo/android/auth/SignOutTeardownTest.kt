@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -24,6 +25,7 @@ import java.lang.reflect.Proxy
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -70,6 +72,19 @@ class SignOutTeardownTest {
 
         assertFalse(signedOut)
         assertEquals("access", tokens.getAccessToken(), "cabin, active by then, keeps its account")
+    }
+
+    @Test
+    fun aPushRemovalThatFailsStillSignsOutButCancellationSignsNobodyOut() = runTest {
+        val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
+
+        assertFailsWith<CancellationException> {
+            teardown(tokens, nativeSignIn(), unregisterPush = { throw CancellationException("left") }).signOut()
+        }
+        assertEquals("access", tokens.getAccessToken())
+
+        assertTrue(teardown(tokens, nativeSignIn(), unregisterPush = { error("unreadable push records") }).signOut())
+        assertNull(tokens.getAccessToken())
     }
 
     private fun TestScope.nativeSignIn() = NativeSignInCoordinator(
