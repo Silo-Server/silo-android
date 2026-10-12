@@ -23,6 +23,8 @@ class AndroidPushRegistrarTest {
             }
     }
     private var removedAs: AuthScopeSnapshot? = null
+    /** The profile each server holds this device's registration for: it refuses a removal from any other. */
+    private val serverProfiles = mutableMapOf<String, String?>()
     private class Store : PushInstallationStore {
         var entries = emptyList<PushInstallation>()
         var onRead: suspend () -> Unit = {}
@@ -48,11 +50,13 @@ class AndroidPushRegistrarTest {
             assertEquals(request,record.intent.registration)
             generations+=generation; keys+=key; send()
             failCode?.let { return ApiResult.Error(it,"refused","") }
+            if(owner.serverUrl!=unreachableUrl) serverProfiles[owner.serverUrl]=owner.profileId
             if(uncertain || owner.serverUrl==unreachableUrl) return ApiResult.NetworkError(IllegalStateException("lost reply"))
             return ApiResult.Success(PushDeviceRegisterResponse("r$generation",request.pushMode,generation.toString(),"d$generation"))
         }
         override suspend fun delete(deviceId:String,key:String,generation:Long,owner:AuthScopeSnapshot):ApiResult<Unit> {
             generations+=generation; keys+=key; removedAs=owner; send()
+            if(serverProfiles[owner.serverUrl].let { it!=null && it!=owner.profileId }) return ApiResult.Error(409,"conflict","")
             return if(uncertain) ApiResult.NetworkError(IllegalStateException("lost reply")) else ApiResult.Success(Unit)
         }
     }
@@ -173,6 +177,17 @@ class AndroidPushRegistrarTest {
         assertIs<ApiResult.Success<Unit>>(removal!!.await())
         assertNull(store.entries.single { it.intent.serverId=="attic" }.intent.registration)
         assertEquals(current,store.entries.single { it.intent.serverId=="cabin" }.intent.registration!!.token)
+    }
+    @Test fun aRemovalActsAsTheProfileARegistrationFinishingFirstLeft()=runTest {
+        val r=registrar(); r.registerToken(token)
+        // A profile switch's registration is being written when sign-out starts removing.
+        owner=owner.copy(scope=owner.scope.copy(profileId="kids",profileToken="kids-pin",identityGeneration=2))
+        var removal: Deferred<ApiResult<Unit>>?=null
+        store.onWrite={ if(removal==null) { removal=async { r.unregisterDevice("server") }; yield() } }
+        assertIs<ApiResult.Success<*>>(r.registerToken(token))
+        assertIs<ApiResult.Success<Unit>>(removal!!.await())
+        assertEquals("kids",removedAs?.profileId)
+        val record=store.entries.single(); assertNull(record.refusal); assertNull(record.intent.registration)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

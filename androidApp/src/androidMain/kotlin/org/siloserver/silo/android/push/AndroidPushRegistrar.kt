@@ -138,24 +138,28 @@ class AndroidPushRegistrar internal constructor(
     private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
         val attempt = beginRequest(serverId)
         val device = deviceIdProvider()
-        val registered = installations().firstOrNull {
-            it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
-        } ?: return failure("push_not_registered")
-        markOwnerLeaving(registered)
-        val owner = registeredOwnerOf(registered) ?: return failure("push_authority_changed")
-        return apply(owner, null, attempt).map { Unit }
+        // The record and its registered profile are read under the same lock the
+        // removal is applied under: a registration finishing first can change that
+        // profile, and the server refuses a removal from any other profile, for good.
+        return mutex.withLock {
+            val records = read()
+            val registered = records.firstOrNull {
+                it.intent.serverId == serverId && it.deviceId == device && it.intent.registration != null && it.refusal == null
+            } ?: return@withLock failure("push_not_registered")
+            markOwnerLeavingLocked(records, registered)
+            val owner = registeredOwnerOf(registered) ?: return@withLock failure("push_authority_changed")
+            applyLocked(owner, null, attempt, mayReconcile = true).map { Unit }
+        }
     }
 
     /**
-     * Marks [installation] when it is a registration still uncertain, before the
-     * removal meant to replace it can fail: its login is about to be cleared, and
-     * then nobody can replay it exactly.
+     * Marks [registered] when it is still uncertain, before the removal meant to
+     * replace it can fail: its login is about to be cleared, and then nobody can
+     * replay it exactly.
      */
-    private suspend fun markOwnerLeaving(installation: PushInstallation) = mutex.withLock {
-        val records = read()
-        val uncertain = records.firstOrNull { it.serverUrl == installation.serverUrl && it.deviceId == installation.deviceId }
-            ?.takeIf { !it.acknowledged && it.intent.registration != null && !it.ownerLeaving } ?: return@withLock
-        write(records.map { if (it === uncertain) it.copy(ownerLeaving = true) else it })
+    private suspend fun markOwnerLeavingLocked(records: List<PushInstallation>, registered: PushInstallation) {
+        if (registered.acknowledged || registered.ownerLeaving) return
+        write(records.map { if (it === registered) it.copy(ownerLeaving = true) else it })
     }
 
     private suspend fun apply(owner: DurableLoginAuthority, request: PushDeviceRegisterRequest?, attempt: Any): ApiResult<PushDeviceRegisterResponse?> =
