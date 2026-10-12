@@ -13,7 +13,7 @@ class AndroidPushRegistrarTest {
     private val token = "t".repeat(80)
     private val proof = "k".repeat(43)
     /** Logins saved per server, which removal and token rotation act as whatever is active. */
-    private val savedLogins = mapOf("server" to "login", "cabin" to "login-cabin")
+    private val savedLogins = mapOf("server" to "login", "cabin" to "login-cabin", "attic" to "login-attic")
     private val authorities = object : DurableLoginAuthorityProvider {
         override suspend fun snapshotDurableLoginAuthority() = owner
         override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
@@ -155,6 +155,24 @@ class AndroidPushRegistrarTest {
         assertEquals(rotated,cabin.intent.registration!!.token); assertTrue(cabin.acknowledged)
         assertEquals("login-cabin" to "adult",cabin.intent.loginId to cabin.intent.profileId)
         assertEquals(token,store.entries.single { it.intent.serverId=="server" }.intent.registration!!.token)
+    }
+    @Test fun catchingUpATokenNeitherCancelsNorUndoesAServersRemoval()=runTest {
+        var current=token
+        val r=registrar(object:AndroidPushTokenProvider { override suspend fun token()=current }); r.registerToken(token)
+        val home=owner
+        for ((server,profile) in listOf("cabin" to "adult","attic" to "guest")) {
+            owner=DurableLoginAuthority("login-$server",AuthScopeSnapshot(server,profile,"https://$server.invalid","$profile-pin",identityGeneration=2))
+            r.registerToken(token)
+        }
+        owner=home.copy(scope=home.scope.copy(identityGeneration=3))
+        current="n".repeat(80)
+        // The attic is removed while the catch-up is busy with the cabin and has yet to reach it.
+        var removal: Deferred<ApiResult<Unit>>?=null
+        onAvailable={ if(it.serverUrl=="https://cabin.invalid" && removal==null) { removal=async { r.unregisterDevice("attic") }; yield() } }
+        r.registerOtherServersIfBehind()
+        assertIs<ApiResult.Success<Unit>>(removal!!.await())
+        assertNull(store.entries.single { it.intent.serverId=="attic" }.intent.registration)
+        assertEquals(current,store.entries.single { it.intent.serverId=="cabin" }.intent.registration!!.token)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

@@ -98,9 +98,11 @@ class AndroidPushRegistrar internal constructor(
     }
 
     private suspend fun registerAsRegisteredOwner(installation: PushInstallation, token: String): ApiResult<PushDeviceRegisterResponse?> {
-        val attempt = beginRequest(installation.intent.serverId)
         val owner = registeredOwnerOf(installation) ?: return failure("push_authority_changed")
         if (token.length !in 64..512) return failure("invalid_push_token")
+        // Joins that server's newest operation rather than starting a newer one:
+        // bringing a token up to date must never supersede a removal under way there.
+        val attempt = latestRequests.getOrPut(installation.intent.serverId) { Any() }
         return apply(owner, checkNotNull(installation.intent.registration).copy(token = token), attempt)
     }
 
@@ -188,6 +190,12 @@ class AndroidPushRegistrar internal constructor(
             val supersedesUncertainty = request != null && previous != null && !previous.acknowledged &&
                 (previous.intent.registration == null || previous.ownerLeaving)
             val reconciling = previous != null && !previous.acknowledged && previous.intent != intent && !supersedesUncertainty
+            // A saved login only renews a registration this device still holds there,
+            // never revives one: that server may just have been removed or signed out of.
+            if (request != null && owner.scope.isGenerationPinned &&
+                (previous == null || previous.intent.registration == null || previous.ownerLeaving)) {
+                return failure("push_not_registered")
+            }
             previous?.let {
                 check(it.generation > 0 && it.key.matches(Regex("[A-Za-z0-9_-]{43}")))
                 if (it.acknowledged && it.intent.registration != null) {
