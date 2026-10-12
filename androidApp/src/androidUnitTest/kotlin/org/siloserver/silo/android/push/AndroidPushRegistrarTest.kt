@@ -15,7 +15,7 @@ class AndroidPushRegistrarTest {
     /** Logins saved per server, which removal and token rotation act as whatever is active. */
     private val savedLogins = mapOf("server" to "login", "cabin" to "login-cabin", "attic" to "login-attic")
     private val authorities = object : DurableLoginAuthorityProvider {
-        override suspend fun snapshotDurableLoginAuthority() = owner
+        override suspend fun snapshotDurableLoginAuthority() = owner.also { afterCapture(); afterCapture = {} }
         override suspend fun savedLoginAuthority(serverId: String, profileId: String, profileToken: String?) =
             savedLogins[serverId]?.let {
                 val url = if (serverId == "server") "https://example.invalid" else "https://$serverId.invalid"
@@ -23,6 +23,8 @@ class AndroidPushRegistrarTest {
             }
     }
     private var removedAs: AuthScopeSnapshot? = null
+    /** Runs once, right after the next capture of the active login. */
+    private var afterCapture: () -> Unit = {}
     /** The profile each server holds this device's registration for: it refuses a removal from any other. */
     private val serverProfiles = mutableMapOf<String, String?>()
     private class Store : PushInstallationStore {
@@ -249,6 +251,17 @@ class AndroidPushRegistrarTest {
         } }
         r.registerOtherServersIfBehind()
         assertEquals("kids",store.entries.single { it.intent.serverId=="cabin" }.intent.profileId)
+    }
+    @Test fun aRotationGivesTheServerItBeganOnTheNewTokenEvenIfAnotherBecomesActive()=runTest {
+        val r=registrar(); r.registerToken(token)
+        val home=owner
+        val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
+        owner=cabin; r.registerToken(token)
+        owner=home.copy(scope=home.scope.copy(identityGeneration=3))
+        // The user switches to the cabin just after the rotation sees home as active.
+        afterCapture={ owner=cabin.copy(scope=cabin.scope.copy(identityGeneration=4)) }
+        r.registerRotatedToken("n".repeat(80))
+        for (record in store.entries) assertEquals("n".repeat(80),record.intent.registration!!.token,record.intent.serverId)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)

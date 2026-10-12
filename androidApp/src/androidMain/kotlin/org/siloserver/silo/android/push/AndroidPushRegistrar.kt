@@ -83,10 +83,14 @@ class AndroidPushRegistrar internal constructor(
         if (!current(owner)) return failure("push_authority_changed")
         return register(token, owner, attempt)
     }
-    suspend fun registerToken(token: String): ApiResult<PushDeviceRegisterResponse> {
-        val owner = capture() ?: return failure("push_authority_changed")
-        val attempt = beginRequest(owner.scope.serverId)
-        return register(token.trim(), owner, attempt)
+    /**
+     * Registers [token] with the active server for [owner], the active login the
+     * caller captured (it must still be active when the registration applies),
+     * or whoever is active now.
+     */
+    suspend fun registerToken(token: String, owner: DurableLoginAuthority? = null): ApiResult<PushDeviceRegisterResponse> {
+        val active = owner ?: capture() ?: return failure("push_authority_changed")
+        return register(token.trim(), active, beginRequest(active.scope.serverId))
     }
     /**
      * Registers a rotated FCM [token] with every saved server this device is
@@ -97,9 +101,11 @@ class AndroidPushRegistrar internal constructor(
      */
     suspend fun registerRotatedToken(token: String) {
         val rotated = token.trim()
-        val activeServerId = capture()?.scope?.serverId
-        if (activeServerId != null) registerToken(rotated)
-        registerOtherServers(rotated, activeServerId)
+        // For whoever was active when the rotation began: should that change first,
+        // the attempt stops, and the server is brought up to the new token below
+        // like every other one that does not have it yet.
+        capture()?.let { registerToken(rotated, it) }
+        registerOtherServers(rotated, exceptServerId = null)
     }
 
     /**
@@ -109,15 +115,15 @@ class AndroidPushRegistrar internal constructor(
      */
     suspend fun registerOtherServersIfBehind() {
         val token = tokenProvider.token()?.trim()?.takeIf { it.isNotEmpty() } ?: return
-        registerOtherServers(token, capture()?.scope?.serverId)
+        registerOtherServers(token, exceptServerId = capture()?.scope?.serverId)
     }
 
     /** Each server's attempt is bounded on its own, so one that fails or stalls costs only itself. */
-    private suspend fun registerOtherServers(token: String, activeServerId: String?) {
+    private suspend fun registerOtherServers(token: String, exceptServerId: String?) {
         val device = deviceIdProvider()
         val behind = installations().filter {
             val registration = it.intent.registration
-            it.deviceId == device && it.intent.serverId != activeServerId && it.refusal == null &&
+            it.deviceId == device && it.intent.serverId != exceptServerId && it.refusal == null &&
                 registration != null && (registration.token != token || !it.acknowledged)
         }
         for (installation in behind) {
