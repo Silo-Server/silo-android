@@ -170,31 +170,41 @@ class AndroidPushRegistrar internal constructor(
      * waiting on it, and never throws, so unreadable records cannot abort it
      * either. A removal cut off mid-flight stays pending, like any uncertain one.
      */
-    suspend fun unregisterDevice(serverId: String): ApiResult<Unit> = try {
-        withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId) } ?: failure("push_unregister_timed_out")
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (_: Exception) {
-        failure("push_persistence_unavailable")
+    suspend fun unregisterDevice(serverId: String): PushRemoval {
+        val attempt = beginRequest(serverId)
+        val result = try {
+            withTimeoutOrNull(UNREGISTER_BUDGET_MS) { removeAsRegisteredOwner(serverId, attempt) } ?: failure("push_unregister_timed_out")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            failure("push_persistence_unavailable")
+        }
+        return PushRemoval(serverId, attempt, result)
     }
 
     /**
-     * Puts [serverId]'s registration back after a sign-out or server removal that
-     * removed it and then stopped, leaving that server's login in place: as the
-     * login and profile it was registered for, with the current token. Nothing
-     * happens once that login is gone, so a removal whose login really was
-     * cleared stays removed. Bounded and never throws, like [unregisterDevice].
+     * Undoes [removal] after the sign-out or server removal that made it stopped,
+     * leaving that server's login in place: registers again as the login and
+     * profile it was registered for, with the current token. Only that removal
+     * is undone, and only while it is still the newest operation on that server,
+     * so a later removal (another sign-out, the server's removal) stands; and
+     * nothing happens once that login is gone, so a removal whose login really
+     * was cleared stays removed. Bounded and never throws, like [unregisterDevice].
      */
-    suspend fun restoreRegistration(serverId: String): ApiResult<PushDeviceRegisterResponse?> = try {
-        withTimeoutOrNull(UNREGISTER_BUDGET_MS) { restoreAsRegisteredOwner(serverId) } ?: failure("push_restore_timed_out")
+    suspend fun restoreRegistration(removal: PushRemoval): ApiResult<PushDeviceRegisterResponse?> = try {
+        withTimeoutOrNull(UNREGISTER_BUDGET_MS) { restoreAsRegisteredOwner(removal) } ?: failure("push_restore_timed_out")
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (_: Exception) {
         failure("push_persistence_unavailable")
     }
 
-    private suspend fun restoreAsRegisteredOwner(serverId: String): ApiResult<PushDeviceRegisterResponse?> {
-        val attempt = beginRequest(serverId)
+    private suspend fun restoreAsRegisteredOwner(removal: PushRemoval): ApiResult<PushDeviceRegisterResponse?> {
+        val serverId = removal.serverId
+        // Continues the removal's own operation instead of starting one, so anything
+        // started on that server since supersedes this, here or under its lock.
+        val attempt = removal.attempt
+        if (latestRequests[serverId] !== attempt) return failure("push_request_superseded")
         val device = deviceIdProvider()
         val token = tokenProvider.token()?.trim()?.takeIf { it.length in 64..512 } ?: return failure("invalid_push_token")
         val found = installations().firstOrNull { it.intent.serverId == serverId && it.deviceId == device && it.refusal == null }
@@ -209,8 +219,7 @@ class AndroidPushRegistrar internal constructor(
         }
     }
 
-    private suspend fun removeAsRegisteredOwner(serverId: String): ApiResult<Unit> {
-        val attempt = beginRequest(serverId)
+    private suspend fun removeAsRegisteredOwner(serverId: String, attempt: Any): ApiResult<Unit> {
         val device = deviceIdProvider()
         val found = installations().firstOrNull { it.intent.serverId == serverId && it.deviceId == device && it.removable }
             ?: return failure("push_not_registered")
@@ -346,6 +355,13 @@ class AndroidPushRegistrar internal constructor(
         const val UNREGISTER_BUDGET_MS = 8_000L
     }
 }
+
+/** One removal [AndroidPushRegistrar.unregisterDevice] made, which [AndroidPushRegistrar.restoreRegistration] can undo. */
+class PushRemoval internal constructor(
+    val serverId: String,
+    internal val attempt: Any,
+    val result: ApiResult<Unit>,
+)
 
 /**
  * Runs a push registration step for a sign-out or server removal, which carries

@@ -1,6 +1,7 @@
 package org.siloserver.silo.android.auth
 
 import org.siloserver.silo.android.push.AndroidPushRegistrar
+import org.siloserver.silo.android.push.PushRemoval
 import org.siloserver.silo.android.push.tolerateFailure
 import org.siloserver.silo.common.settings.CardPresentationStore
 import org.siloserver.silo.common.settings.EpisodeSpoilerStore
@@ -42,9 +43,9 @@ class SignOutTeardown(
     private val serverRegistry: ServerRegistry,
     private val nativeSignIn: NativeSignInCoordinator,
     /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
-    private val unregisterPush: suspend (serverEntryId: String) -> Unit = {},
-    /** Puts it back when the sign-out then stops ([AndroidPushRegistrar.restoreRegistration]). */
-    private val restorePush: suspend (serverEntryId: String) -> Unit = {},
+    private val unregisterPush: suspend (serverEntryId: String) -> PushRemoval? = { null },
+    /** Undoes that removal when the sign-out then stops ([AndroidPushRegistrar.restoreRegistration]). */
+    private val restorePush: suspend (PushRemoval) -> Unit = {},
 ) {
     /**
      * Push settings still waiting to sync. Call before switching servers so
@@ -77,10 +78,11 @@ class SignOutTeardown(
         // left behind keeps the server pushing this device for an account it
         // no longer holds, but failing to remove it never stops the sign-out.
         // Cancellation still does, before anyone is signed out.
-        if (signedOutOf != null) tolerateFailure { unregisterPush(signedOutOf) }
+        var removal: PushRemoval? = null
+        if (signedOutOf != null) tolerateFailure { removal = unregisterPush(signedOutOf) }
         if (!stillActive()) {
             // Removed above, but that server keeps its login, so it keeps its pushes.
-            if (signedOutOf != null) tolerateFailure { restorePush(signedOutOf) }
+            removal?.let { tolerateFailure { restorePush(it) } }
             return false
         }
         if (!authRepository.logout(target)) return false

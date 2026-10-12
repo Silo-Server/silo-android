@@ -12,8 +12,10 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.siloserver.silo.model.feature.MetadataAiFeatureStore
 import org.siloserver.silo.model.feature.RequestsFeatureStore
+import org.siloserver.silo.android.push.PushRemoval
 import org.siloserver.silo.common.settings.PlayerSettingsStore
 import org.siloserver.silo.model.profile.ActiveProfileStore
+import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.TokenManagerImpl
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.api.ProfileApi
@@ -58,7 +60,7 @@ class SignOutTeardownTest {
         val tokens = TokenManagerImpl().apply { saveTokens("access", "refresh", 3600) }
         val removedWith = mutableMapOf<String, String?>()
 
-        teardown(tokens, nativeSignIn(), unregisterPush = { removedWith[it] = tokens.getAccessToken() }).signOut()
+        teardown(tokens, nativeSignIn(), unregisterPush = { removedWith[it] = tokens.getAccessToken(); null }).signOut()
 
         assertEquals<Map<String, String?>>(mapOf("home" to "access"), removedWith)
         assertNull(tokens.getAccessToken())
@@ -75,8 +77,12 @@ class SignOutTeardownTest {
             val signedOut = teardown(
                 tokens, nativeSignIn(), active,
                 onFlush = { if (during == "settings flush") active.value = "cabin" },
-                unregisterPush = { removed += it; if (during == "push removal") active.value = "cabin" },
-                restorePush = { restored += it },
+                unregisterPush = {
+                    removed += it
+                    if (during == "push removal") active.value = "cabin"
+                    PushRemoval(it, Any(), ApiResult.Success(Unit))
+                },
+                restorePush = { restored += it.serverId },
             ).signOut()
 
             assertFalse(signedOut, during)
@@ -111,8 +117,8 @@ class SignOutTeardownTest {
         coordinator: NativeSignInCoordinator,
         activeServerId: MutableStateFlow<String?> = MutableStateFlow("home"),
         onFlush: () -> Unit = {},
-        unregisterPush: suspend (String) -> Unit = {},
-        restorePush: suspend (String) -> Unit = {},
+        unregisterPush: suspend (String) -> PushRemoval? = { null },
+        restorePush: suspend (PushRemoval) -> Unit = {},
     ) = SignOutTeardown(
         authRepository = AuthRepository(AuthApi(http, ApiV2Gate.Unrestricted), tokens),
         playerSettingsStore = idle<PlayerSettingsStore>(mapOf("flushPendingDeviceSettings" to onFlush)),

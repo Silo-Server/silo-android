@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.siloserver.silo.android.auth.ActiveProfileReset
 import org.siloserver.silo.android.push.AndroidPushRegistrar
+import org.siloserver.silo.android.push.PushRemoval
 import org.siloserver.silo.android.push.tolerateFailure
 
 /**
@@ -45,9 +46,9 @@ class ServerListViewModel(
     private val authRepository: AuthRepository,
     private val activeProfileReset: ActiveProfileReset,
     /** Removes this device's push registration on a server ([AndroidPushRegistrar.unregisterDevice]). */
-    private val unregisterPush: suspend (serverEntryId: String) -> Unit = {},
-    /** Puts it back when the server then stays saved ([AndroidPushRegistrar.restoreRegistration]). */
-    private val restorePush: suspend (serverEntryId: String) -> Unit = {},
+    private val unregisterPush: suspend (serverEntryId: String) -> PushRemoval? = { null },
+    /** Undoes that removal when the server then stays saved ([AndroidPushRegistrar.restoreRegistration]). */
+    private val restorePush: suspend (PushRemoval) -> Unit = {},
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -120,12 +121,13 @@ class ServerListViewModel(
             // While the server's credentials still exist: removal wipes them.
             // Failing to remove the registration never stops the removal;
             // cancellation still does, before anything is removed.
-            tolerateFailure { unregisterPush(serverId) }
+            var removal: PushRemoval? = null
+            tolerateFailure { removal = unregisterPush(serverId) }
             try {
                 serverRegistry.remove(serverId)
             } catch (failure: Exception) {
                 // Not removed, so it keeps its login, and its pushes with it.
-                if (failure !is CancellationException) tolerateFailure { restorePush(serverId) }
+                if (failure !is CancellationException) removal?.let { tolerateFailure { restorePush(it) } }
                 throw failure
             }
 

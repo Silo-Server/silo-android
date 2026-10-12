@@ -23,6 +23,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.siloserver.silo.android.auth.ActiveProfileReset
+import org.siloserver.silo.android.push.PushRemoval
 import org.siloserver.silo.common.profiles.ProfileLaunchPreferences
 import org.siloserver.silo.model.profile.ActiveProfileStore
 import org.siloserver.silo.model.server.ServerEntry
@@ -60,7 +61,7 @@ class ServerListViewModelRemovalTest {
         }
     }
 
-    private fun viewModel(unregisterPush: suspend (String) -> Unit): ServerListViewModel {
+    private fun viewModel(unregisterPush: suspend (String) -> PushRemoval?): ServerListViewModel {
         val tokens = TokenManagerImpl()
         val profiles = ProfileRepository(ProfileApi(http, ApiV2Gate.Unrestricted), tokens)
         val launchPreferences = RuntimeEnvironment.getApplication().getSharedPreferences("launch", Context.MODE_PRIVATE)

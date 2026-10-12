@@ -68,7 +68,7 @@ class AndroidPushRegistrarTest {
         val r=registrar()
         assertIs<ApiResult.Success<*>>(r.registerToken(token)); r.registerToken(token)
         assertEquals(listOf(1L),generations)
-        r.registerToken("n".repeat(80)); r.unregisterDevice("server")
+        r.registerToken("n".repeat(80)); r.unregisterDevice("server").result
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
         r.registerToken(token)
         assertEquals(listOf(1L,2L,3L,4L),generations); assertEquals(setOf(proof),keys.toSet())
@@ -77,11 +77,11 @@ class AndroidPushRegistrarTest {
         val r=registrar(); r.registerToken(token)
         // The server refuses a removal from any other profile, and a refusal is kept for good.
         owner=owner.copy(scope=owner.scope.copy(profileId="other",profileToken="other-pin",identityGeneration=2))
-        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server").result)
         assertEquals("profile",removedAs?.profileId); assertEquals("pin",removedAs?.profileToken)
         val record=store.entries.single()
         assertNull(record.intent.registration); assertTrue(record.acknowledged); assertEquals(listOf(1L,2L),generations)
-        assertIs<ApiResult.Error>(r.unregisterDevice("elsewhere")); assertEquals(listOf(1L,2L),generations)
+        assertIs<ApiResult.Error>(r.unregisterDevice("elsewhere").result); assertEquals(listOf(1L,2L),generations)
     }
     @Test fun uncertaintyAndRestartReplayExactIntentOnlyForOriginalDurableOwner()=runTest {
         uncertain=true; registrar().registerToken(token)
@@ -100,7 +100,7 @@ class AndroidPushRegistrarTest {
     }
     @Test fun theNextLoginSupersedesARemovalThatSignOutLeftUncertain()=runTest {
         val r=registrar(); r.registerToken(token)
-        uncertain=true; assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        uncertain=true; assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
         uncertain=false
         owner=owner.copy(loginId="next",scope=owner.scope.copy(profileId="kids",profileToken="kids-pin",identityGeneration=2))
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
@@ -129,7 +129,7 @@ class AndroidPushRegistrarTest {
         owner=home.copy(scope=home.scope.copy(identityGeneration=3))
         val removing=CompletableDeferred<Unit>(); val proceed=CompletableDeferred<Unit>()
         onAvailable={ if(it.serverUrl=="https://cabin.invalid") { removing.complete(Unit); proceed.await() } }
-        val removal=async { r.unregisterDevice("cabin") }
+        val removal=async { r.unregisterDevice("cabin").result }
         removing.await()
         val registration=async { r.registerToken("n".repeat(80)) }
         proceed.complete(Unit)
@@ -138,12 +138,12 @@ class AndroidPushRegistrarTest {
     }
     @Test fun unreadableRecordsFailARemovalInsteadOfThrowingIntoSignOut()=runTest {
         store.broken=true
-        assertEquals("push_persistence_unavailable",assertIs<ApiResult.Error>(registrar().unregisterDevice("server")).error)
+        assertEquals("push_persistence_unavailable",assertIs<ApiResult.Error>(registrar().unregisterDevice("server").result).error)
     }
     @Test fun theNextLoginSupersedesARegistrationThatSignOutCouldNotRemove()=runTest {
         uncertain=true; val r=registrar(); r.registerToken(token)
         uncertain=false; available=false
-        assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
         available=true
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
@@ -174,7 +174,7 @@ class AndroidPushRegistrarTest {
         current="n".repeat(80)
         // The attic is removed while the catch-up is busy with the cabin and has yet to reach it.
         var removal: Deferred<ApiResult<Unit>>?=null
-        onAvailable={ if(it.serverUrl=="https://cabin.invalid" && removal==null) { removal=async { r.unregisterDevice("attic") }; yield() } }
+        onAvailable={ if(it.serverUrl=="https://cabin.invalid" && removal==null) { removal=async { r.unregisterDevice("attic").result }; yield() } }
         r.registerOtherServersIfBehind()
         assertIs<ApiResult.Success<Unit>>(removal!!.await())
         assertNull(store.entries.single { it.intent.serverId=="attic" }.intent.registration)
@@ -185,7 +185,7 @@ class AndroidPushRegistrarTest {
         // A profile switch's registration is being written when sign-out starts removing.
         owner=owner.copy(scope=owner.scope.copy(profileId="kids",profileToken="kids-pin",identityGeneration=2))
         var removal: Deferred<ApiResult<Unit>>?=null
-        store.onWrite={ if(removal==null) { removal=async { r.unregisterDevice("server") }; yield() } }
+        store.onWrite={ if(removal==null) { removal=async { r.unregisterDevice("server").result }; yield() } }
         assertIs<ApiResult.Success<*>>(r.registerToken(token))
         assertIs<ApiResult.Success<Unit>>(removal!!.await())
         assertEquals("kids",removedAs?.profileId)
@@ -198,7 +198,7 @@ class AndroidPushRegistrarTest {
         val r=registrar(); val registration=async { r.registerToken(token) }
         entered.await()
         // Sign-out removes while that registration's request is still out, and its budget runs out waiting.
-        assertEquals("push_unregister_timed_out",assertIs<ApiResult.Error>(r.unregisterDevice("server")).error)
+        assertEquals("push_unregister_timed_out",assertIs<ApiResult.Error>(r.unregisterDevice("server").result).error)
         hold.complete(Unit); registration.await()
         send={}; uncertain=false
         owner=owner.copy(loginId="next",scope=owner.scope.copy(identityGeneration=2))
@@ -207,9 +207,9 @@ class AndroidPushRegistrarTest {
     }
     @Test fun aRemovalLeftPendingIsSentAgainByTheNextOne()=runTest {
         val r=registrar(); r.registerToken(token)
-        uncertain=true; assertFalse(r.unregisterDevice("server") is ApiResult.Success)
+        uncertain=true; assertFalse(r.unregisterDevice("server").result is ApiResult.Success)
         uncertain=false
-        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server").result)
         assertEquals(listOf(1L,2L,2L),generations)
         val record=store.entries.single(); assertNull(record.intent.registration); assertTrue(record.acknowledged)
     }
@@ -220,7 +220,7 @@ class AndroidPushRegistrarTest {
         val cabin=DurableLoginAuthority("login-cabin",AuthScopeSnapshot("cabin","adult","https://cabin.invalid","adult-pin",identityGeneration=2))
         fun cabinToken()=store.entries.single { it.intent.serverId=="cabin" }.intent.registration!!.token
         // A cabin sign-out that could not reach the server marks its record, then stops: the login stays.
-        suspend fun signOutOfCabinThatStops() { available=false; assertFalse(r.unregisterDevice("cabin") is ApiResult.Success); available=true }
+        suspend fun signOutOfCabinThatStops() { available=false; assertFalse(r.unregisterDevice("cabin").result is ApiResult.Success); available=true }
 
         owner=cabin; uncertain=true; r.registerToken(token); uncertain=false
         signOutOfCabinThatStops()
@@ -263,18 +263,20 @@ class AndroidPushRegistrarTest {
         r.registerRotatedToken("n".repeat(80))
         for (record in store.entries) assertEquals("n".repeat(80),record.intent.registration!!.token,record.intent.serverId)
     }
-    @Test fun aRestorePutsBackARemovedRegistrationOnlyWhileItsLoginRemains()=runTest {
+    @Test fun aRestoreUndoesOnlyItsOwnRemovalAndOnlyWhileItsLoginRemains()=runTest {
         val r=registrar(); r.registerToken(token)
-        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
-        assertIs<ApiResult.Success<*>>(r.restoreRegistration("server"))
+        assertIs<ApiResult.Success<*>>(r.restoreRegistration(r.unregisterDevice("server")))
         val restored=store.entries.single()
         assertEquals(token,restored.intent.registration?.token); assertEquals("login",restored.intent.loginId)
         assertTrue(restored.acknowledged); assertFalse(restored.ownerLeaving)
 
-        assertIs<ApiResult.Success<Unit>>(r.unregisterDevice("server"))
+        // A later removal (another sign-out, the server's removal) stands.
+        val earlier=r.unregisterDevice("server"); r.registerToken(token); r.unregisterDevice("server")
+        assertIs<ApiResult.Error>(r.restoreRegistration(earlier)); assertNull(store.entries.single().intent.registration)
+
+        r.registerToken(token); val removal=r.unregisterDevice("server")
         savedLogins.remove("server") // the sign-out went through after all
-        assertIs<ApiResult.Error>(r.restoreRegistration("server"))
-        assertNull(store.entries.single().intent.registration)
+        assertIs<ApiResult.Error>(r.restoreRegistration(removal)); assertNull(store.entries.single().intent.registration)
     }
     @Test fun conflictStaysDurableAndNeverRotatesProofOrGeneration()=runTest {
         failCode=409; registrar().registerToken(token)
