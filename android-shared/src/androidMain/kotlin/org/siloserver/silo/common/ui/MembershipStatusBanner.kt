@@ -11,37 +11,43 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import org.siloserver.silo.repository.MembershipActions
+import org.siloserver.silo.repository.port.MembershipPort
 
-/** Does not request focus or replace list content while a command is unresolved. */
+/**
+ * Briefly reports a Favorites or Watchlist change that still failed after automatic retries,
+ * and shows the legacy retained-changes notice. Does not request focus or replace list content.
+ */
 @Composable
 fun MembershipStatusBanner(actions: MembershipActions, modifier: Modifier = Modifier) {
-    val states by actions.actions.collectAsState()
     val generation by actions.generation.collectAsState()
     val legacy by actions.legacyNotice.collectAsState()
-    val scope = rememberCoroutineScope()
+    var failed by remember { mutableStateOf<MembershipPort.Kind?>(null) }
     LaunchedEffect(generation) { actions.observeChanges() }
-    val pending = states.values.firstOrNull { !it.confirmed && actions.current(it.intent) }
-    if (pending == null && !legacy) return
+    LaunchedEffect(generation) {
+        failed = null
+        actions.failures.collectLatest { key ->
+            failed = key.kind
+            delay(FAILURE_NOTICE_MS)
+            failed = null
+        }
+    }
+    val notice = failed
+    if (notice == null && !legacy) return
     Column(modifier.background(Color(0xF0222630)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        val text = when {
-            pending == null -> "Earlier unsent favorite changes were retained. Review your current Favorites before making a new choice."
-            pending.completion?.disposition == org.siloserver.silo.repository.port.MembershipPort.Disposition.PAUSED -> "The server has a different membership state. Review the item and choose again, or check its status."
-            pending.busy -> "Saving membership change…"
-            else -> "Membership change is unconfirmed. Your current items are retained."
+        val text = when (notice) {
+            MembershipPort.Kind.FAVORITE -> "Couldn't save your change to Favorites. Try again."
+            MembershipPort.Kind.WATCHLIST -> "Couldn't save your change to Watchlist. Try again."
+            null -> "Earlier unsent favorite changes were retained. Review your current Favorites before making a new choice."
         }
         BasicText(text, style = TextStyle(color = Color.White, fontSize = 15.sp))
-        if (pending != null && !pending.busy) {
-            BasicText(if (pending.command != null) "Check status" else "Try again",
-                modifier = Modifier.clickable(role = Role.Button) {
-                    scope.launch {
-                        if (pending.command != null) actions.checkStatus(pending.intent) else actions.perform(pending.intent)
-                    }
-                }.padding(8.dp), style = TextStyle(color = Color(0xFFAACFFF), fontSize = 16.sp))
-        } else if (pending == null) {
+        if (notice == null) {
             BasicText("Dismiss notice", modifier = Modifier.clickable(role = Role.Button) { actions.dismissLegacyNotice() }.padding(8.dp),
                 style = TextStyle(color = Color(0xFFAACFFF), fontSize = 16.sp))
         }
     }
 }
+
+private const val FAILURE_NOTICE_MS = 6_000L
