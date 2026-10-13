@@ -670,6 +670,31 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `the subtitle delay says where it is saved`() = runTest {
+        var revision = capabilitiesAt(17)
+        val contractRevision = SettingsContractRevision({ revision }, { serverUrl })
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncscope.preferences_pb") }) },
+        )
+        contractRevision.refresh(serverUrl)
+        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "below 18 timing stays on this device")
+
+        revision = capabilitiesAt(18)
+        contractRevision.refresh(serverUrl)
+        assertTrue(store.subtitleSyncSavedToProfileFlow.first())
+
+        store.setSubtitleDeviceOverrideEnabled(true)
+        assertFalse(store.subtitleSyncSavedToProfileFlow.first(), "Only on This Device keeps it here")
+    }
+
+    @Test
     fun `subtitleSyncMs follows the device toggle and clears a stale device row`() = runTest {
         val store = newStore()
         store.setSubtitleDeviceOverrideEnabled(true)

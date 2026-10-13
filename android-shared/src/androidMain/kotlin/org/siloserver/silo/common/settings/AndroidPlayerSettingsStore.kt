@@ -481,6 +481,19 @@ class AndroidPlayerSettingsStore(
             }.distinctUntilChanged()
         }
 
+    // Unknown revision counts as profile, as text opacity does: the flusher
+    // holds the write until the revision is known.
+    override val subtitleSyncSavedToProfileFlow: Flow<Boolean> =
+        if (contractRevision == null) {
+            subtitleUsesDeviceOverrideFlow.map { !it }
+        } else {
+            combine(subtitleUsesDeviceOverrideFlow, currentScopeFlow, contractRevision.known) { deviceOnly, scope, known ->
+                val revision = known?.takeIf { scope != null && it.serverUrl == scope.serverUrl }
+                    ?.manifestRevision
+                !deviceOnly && (revision == null || revision >= PlaybackSettingsKeys.SubtitleSyncProfileMinRevision)
+            }.distinctUntilChanged()
+        }
+
     override suspend fun setSubtitleMatchesDevice(enabled: Boolean) =
         writeBoolLocal(PlaybackSettingsKeys.SubtitleMatchesDevice, enabled)
 

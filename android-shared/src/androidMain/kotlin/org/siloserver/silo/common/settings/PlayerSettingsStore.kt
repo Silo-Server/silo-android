@@ -164,6 +164,14 @@ interface PlayerSettingsStore {
      * true, they are saved for this device only.
      */
     val subtitleUsesDeviceOverrideFlow: Flow<Boolean>
+
+    /**
+     * Whether a subtitle delay set now is saved for the profile on every
+     * device (false: on this device only — the toggle is on, or the server
+     * stores timing per device only).
+     */
+    val subtitleSyncSavedToProfileFlow: Flow<Boolean>
+        get() = subtitleUsesDeviceOverrideFlow.map { !it }
     /** tvOS "Match Device Settings": appearance follows OS captioning prefs. */
     val subtitleMatchesDeviceFlow: Flow<Boolean>
     /** iOS AppNavPreferences.showAudiobooks parity — audiobook surfaces are opt-in. */
