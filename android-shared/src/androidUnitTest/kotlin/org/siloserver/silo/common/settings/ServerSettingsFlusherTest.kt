@@ -626,6 +626,158 @@ class ServerSettingsFlusherTest {
         flusher.flushNow()
         assertEquals(JsonPrimitive("480p"), api.calls.single { it.key == cellularQuality }.value)
     }
+
+    // ---- Write scope ----------------------------------------------------
+
+    private val syncKey = SettingKeys.PLAYER_SUBTITLE_SYNC_MS
+
+    @Test
+    fun `a profile save addresses the profile and then clears the stale device row`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue(
+            "p1", objectKey, translucentText, serverUrl,
+            scope = SettingWriteScope.Profile(clearDevice = true),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+        )
+        assertTrue(api.calls.all { it.profileId == "p1" && it.key == objectKey })
+    }
+
+    @Test
+    fun `a profile save without a device row sends only the profile write`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile())
+        advanceUntilIdle()
+
+        assertEquals(listOf(SettingScopeIdentity.profile()), api.calls.map { it.scope })
+    }
+
+    @Test
+    fun `a failed device clear retries the whole profile save`() = runTest {
+        val api = RecordingSettingsApi()
+        api.failNextDeletes(1, ApiResult.Error(503, "unavailable", "busy"))
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.flushNow()
+        assertEquals(setOf(objectKey), flusher.pendingKeys("p1"))
+        advanceUntilIdle()
+
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+        assertEquals(SettingScopeIdentity.profileDevice(), api.calls.last().scope)
+        assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.last().kind)
+    }
+
+    @Test
+    fun `subtitle timing goes to the profile from revision 18`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue(
+            "p1", syncKey, "250", serverUrl,
+            scope = SettingWriteScope.Profile(clearDevice = true, minRevision = 18),
+        )
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(SettingScopeIdentity.profile(), SettingScopeIdentity.profileDevice()),
+            api.calls.map { it.scope },
+        )
+    }
+
+    @Test
+    fun `subtitle timing stays on the device below revision 18 and clears nothing`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue(
+            "p1", syncKey, "250", serverUrl,
+            scope = SettingWriteScope.Profile(clearDevice = true, minRevision = 18),
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, api.calls.size, "a revision 17 server refuses scope=profile with a 422")
+        assertEquals(RecordingSettingsApi.Call.Kind.PUT, api.calls.single().kind)
+        assertEquals(SettingScopeIdentity.profileDevice(), api.calls.single().scope)
+        assertEquals(JsonPrimitive(250L), api.calls.single().value)
+    }
+
+    @Test
+    fun `subtitle timing is held while the revision is unknown`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", syncKey, "250", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty(), "neither scope is safe to guess")
+        assertEquals(setOf(syncKey), flusher.pendingKeys("p1"))
+
+        api.manifestRevision(18)
+        flusher.flushNow()
+        assertEquals(SettingScopeIdentity.profile(), api.calls.single().scope)
+    }
+
+    @Test
+    fun `a device write after a profile save is not cleared by it`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.enqueue("p1", objectKey, SubtitleAppearance.DEFAULT.toJsonString(), serverUrl)
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+        )
+    }
+
+    @Test
+    fun `a profile save that clears the device row supersedes a queued device write`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, SubtitleAppearance.DEFAULT.toJsonString(), serverUrl)
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+        )
+    }
+
+    @Test
+    fun `profile writes for two profiles keep their own profile and scope`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile())
+        flusher.enqueue("p2", objectKey, translucentText, serverUrl)
+        advanceUntilIdle()
+
+        assertEquals(SettingScopeIdentity.profile(), api.calls.single { it.profileId == "p1" }.scope)
+        assertEquals(SettingScopeIdentity.profileDevice(), api.calls.single { it.profileId == "p2" }.scope)
+    }
 }
 
 /**

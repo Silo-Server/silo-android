@@ -122,17 +122,21 @@ fun SubtitleMetadataSection(
 }
 
 /**
- * Subtitles → Appearance: the live preview, then "Use Device Settings", whose
- * footer says where the style comes from. The preview draws [previewAppearance],
- * the style playback uses, so it shows the device caption style while Use
- * Device Settings is on. The Text, Background, and Layout groups below edit the
- * same appearance the player's Subtitle Style sheet does.
+ * Subtitles → Appearance: the live preview, then "Use Device Settings" and
+ * "Only on This Device", whose footer says where the style comes from and
+ * where edits are saved. The preview draws [previewAppearance], the style
+ * playback uses, so it shows the device caption style while Use Device
+ * Settings is on. The Text, Background, and Layout groups below edit the same
+ * appearance the player's Subtitle Style sheet does — the profile's, unless
+ * Only on This Device is on.
  */
 @Composable
 fun SubtitleAppearanceSection(
     previewAppearance: SubtitleAppearance,
     subtitleMatchesDevice: Boolean,
     onSubtitleMatchesDeviceChanged: (Boolean) -> Unit,
+    subtitleUsesDeviceOverride: Boolean,
+    onSubtitleDeviceOverrideChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
@@ -141,16 +145,23 @@ fun SubtitleAppearanceSection(
         Spacer(modifier = Modifier.height(SettingsDimens.sectionGap))
         SettingsSection(
             title = null,
-            footer = if (subtitleMatchesDevice) {
-                "Subtitles follow this device's caption style from Android's accessibility settings."
-            } else {
-                "Saved on the server for this profile on this device."
+            footer = when {
+                subtitleMatchesDevice ->
+                    "Subtitles follow this device's caption style from Android's accessibility settings."
+                subtitleUsesDeviceOverride -> "Only on this device."
+                else -> "Saved for this profile on all devices."
             },
         ) {
             SettingsSwitchRow(
                 label = "Use Device Settings",
                 checked = subtitleMatchesDevice,
                 onCheckedChange = onSubtitleMatchesDeviceChanged,
+            )
+            SettingsSwitchRow(
+                label = "Only on This Device",
+                checked = subtitleUsesDeviceOverride,
+                onCheckedChange = onSubtitleDeviceOverrideChanged,
+                enabled = !subtitleMatchesDevice,
             )
         }
     }

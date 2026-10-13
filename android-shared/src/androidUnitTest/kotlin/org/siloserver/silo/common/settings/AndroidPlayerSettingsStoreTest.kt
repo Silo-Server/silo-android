@@ -629,7 +629,7 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
-    fun `subtitleSyncMs writes the canonical remote device setting`() = runTest {
+    fun `subtitleSyncMs saves to the profile from revision 18`() = runTest {
         val store = newStore()
 
         store.setSubtitleSyncMs(-1900)
@@ -641,6 +641,104 @@ class AndroidPlayerSettingsStoreTest {
         assertEquals("-1900", call.value)
         assertEquals(serverUrl, call.serverUrl)
         assertFalse(call.isDelete)
+        // The flusher decides at send time; below 18 it lands on the device.
+        assertEquals(
+            SettingWriteScope.Profile(clearDevice = false, minRevision = PlaybackSettingsKeys.SubtitleSyncProfileMinRevision),
+            call.scope,
+        )
+    }
+
+    @Test
+    fun `subtitleSyncMs stays on the device when the server is known to be below revision 18`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(17) }, { serverUrl })
+        contractRevision.revisionFor(serverUrl)
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_sync17.preferences_pb") }) },
+        )
+
+        store.setSubtitleSyncMs(400)
+
+        assertEquals(SettingWriteScope.Device, fakeFlusher.calls.last().scope)
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `subtitleSyncMs follows the device toggle and clears a stale device row`() = runTest {
+        val store = newStore()
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+        assertEquals(SettingWriteScope.Device, fakeFlusher.calls.last().scope)
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+        assertTrue(
+            fakeFlusher.calls.any { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs },
+            "turning the toggle off returns timing to the profile's value",
+        )
+        assertFalse(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit saves to the profile and leaves the device toggle off`() = runTest {
+        val store = newStore()
+
+        store.updateSubtitleAppearance { it.copy(fontSize = SubtitleFontSizePreset.XLarge) }
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Profile(clearDevice = false), call.scope)
+        assertFalse(store.subtitleUsesDeviceOverrideFlow.first(), "editing no longer pins appearance to this device")
+        assertFalse(PlaybackSettingsKeys.SubtitleAppearance in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit with the toggle off clears a stale device row`() = runTest {
+        // The server says this device still holds its own appearance, but the
+        // toggle is off locally (e.g. it was switched off while offline).
+        val store = newStoreSeededWith { prefs ->
+            prefs[androidx.datastore.preferences.core.stringSetPreferencesKey("device_override_keys")] =
+                setOf(PlaybackSettingsKeys.SubtitleAppearance)
+        }
+
+        store.updateSubtitleAppearance { it.copy(fontColor = "#ffff00") }
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Profile(clearDevice = true), call.scope)
+        assertEquals("#ffff00", SubtitleAppearance.decode(call.value.orEmpty()).fontColor)
+        assertFalse(PlaybackSettingsKeys.SubtitleAppearance in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `an appearance edit with the toggle on stays on this device`() = runTest {
+        val store = newStore()
+        store.setSubtitleDeviceOverrideEnabled(true)
+
+        store.updateSubtitleAppearance { it.copy(fontSize = SubtitleFontSizePreset.Small) }
+        store.flushProjectedSubtitleAppearance()
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Device, call.scope)
+        assertTrue(store.subtitleUsesDeviceOverrideFlow.first())
+    }
+
+    @Test
+    fun `turning the device toggle on pins the appearance on screen`() = runTest {
+        val store = newStore()
+        val onScreen = SubtitleAppearance.DEFAULT.copy(fontColor = "#00ffff")
+        store.setSubtitleAppearance(onScreen)
+
+        store.setSubtitleDeviceOverrideEnabled(true)
+
+        val call = fakeFlusher.calls.last { it.key == PlaybackSettingsKeys.SubtitleAppearance }
+        assertEquals(SettingWriteScope.Device, call.scope)
+        assertEquals(onScreen, SubtitleAppearance.decode(call.value.orEmpty()))
+        assertEquals(onScreen, store.subtitleAppearanceFlow.first())
     }
 
     // ---- Server-sync surface ------------------------------------------
@@ -1038,14 +1136,13 @@ class AndroidPlayerSettingsStoreTest {
             fontColor = "#ff0000",
         )
 
+        store.setSubtitleDeviceOverrideEnabled(true)
         store.setSubtitleAppearance(custom)
         store.setSubtitleDeviceOverrideEnabled(false)
 
+        // The profile's appearance applies again; the device one is remembered.
         assertEquals(fallback, store.subtitleAppearanceFlow.first())
         assertEquals(custom, store.savedCustomSubtitleAppearanceFlow.first())
-
-        store.setSubtitleDeviceOverrideEnabled(true)
-        assertEquals(custom, store.subtitleAppearanceFlow.first())
     }
 
     @Test
@@ -1588,11 +1685,19 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         val value: String?,
         val isDelete: Boolean,
         val serverUrl: String,
+        val scope: SettingWriteScope = SettingWriteScope.Device,
     )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
-    override fun enqueue(profileId: String, key: String, value: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
-        calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl))
+    override fun enqueue(
+        profileId: String,
+        key: String,
+        value: String,
+        serverUrl: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        scope: SettingWriteScope,
+    ) {
+        calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl, scope = scope))
     }
 
     override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
