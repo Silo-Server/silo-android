@@ -1,11 +1,11 @@
 name: Store release published
 
-# When a store release (vX.Y.Z) is published, copy its universal APKs to fixed
-# "latest" names. These are reached through releases/latest/download/, so they
-# always serve the newest store release: the Downloader by AFTVnews codes
-# (1051382 phones, 1636227 Android TV) point at the -debug names, and the user
-# manual and older release notes at the -release names. Tester builds are
-# prereleases, so they never move these links.
+# When a store release (vX.Y.Z) is published, copy its APKs to the fixed names
+# silo-android-latest-universal-release.apk and
+# silo-android-tv-latest-universal-release.apk. Downloader by AFTVnews codes
+# 1051382 (phones) and 1636227 (Android TV), the README, and the user manual
+# reach them through releases/latest/download/, so they always serve the newest
+# store release. Tester builds are prereleases, so they never move these links.
 
 on:
   release:
@@ -30,21 +30,20 @@ jobs:
       GH_REPO: ${{ github.repository }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
-      - name: Copy the universal APKs to the latest names
+      - name: Copy the APKs to the latest names
         run: |
           if [[ ! "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "${TAG} is not a store release tag; nothing to do."
             exit 0
           fi
-          gh release download "${TAG}" --dir apks --pattern '*-universal.apk'
+          gh release download "${TAG}" --dir apks --pattern 'silo-android-*.apk'
           mkdir latest
           for prefix in silo-android silo-android-tv; do
-            matches=(apks/"${prefix}"-[0-9]*-universal.apk)
+            matches=(apks/"${prefix}"-[0-9]*.apk)
             if [[ ${#matches[@]} -ne 1 || ! -s "${matches[0]}" ]]; then
-              echo "::error::Expected one ${prefix} universal APK on ${TAG}."
+              echo "::error::Expected one ${prefix} APK on ${TAG}."
               exit 1
             fi
             cp "${matches[0]}" "latest/${prefix}-latest-universal-release.apk"
-            cp "${matches[0]}" "latest/${prefix}-latest-universal-debug.apk"
           done
           gh release upload "${TAG}" latest/*.apk --clobber

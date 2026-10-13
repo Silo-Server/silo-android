@@ -114,7 +114,7 @@ jobs:
             echo "### Install"
             echo
             echo "Get the app on Google Play, or install the APK with Downloader by AFTVnews: code 1051382 for phones and tablets, 1636227 for Android TV."
-            echo "To download an APK yourself: \`silo-android-${VERSION}-${BUILD}-universal.apk\` for phones and tablets, \`silo-android-tv-${VERSION}-${BUILD}-universal.apk\` for Android TV."
+            echo "To download an APK yourself: \`silo-android-${VERSION}-${BUILD}.apk\` for phones and tablets, \`silo-android-tv-${VERSION}-${BUILD}.apk\` for Android TV."
           } > body.md
           gh release create "${RELEASE_TAG}" --draft --target "${COMMIT}" \
             --title "Silo Android ${VERSION}" --notes-file body.md apks/*.apk

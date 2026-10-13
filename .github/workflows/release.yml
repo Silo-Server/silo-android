@@ -254,8 +254,8 @@ jobs:
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
           SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
 
-      # A separate Gradle run from the bundles: per-ABI APK splits are switched
-      # off whenever a bundle task runs (see isBuildingBundle).
+      # A separate Gradle run from the bundles: the APKs carry the sideload
+      # channel, and APK splits are switched off whenever a bundle task runs.
       - name: Build APKs
         env:
           VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
@@ -272,23 +272,16 @@ jobs:
             -PsiloReleaseChannel=sideload \
             --max-workers=2
 
-      # androidApp-arm64-v8a-release.apk -> silo-android-1.1.0-22-arm64-v8a.apk
+      # One universal APK per app: silo-android-1.0.0-22.apk for phones and
+      # tablets, silo-android-tv-1.0.0-22.apk for TV. Play serves per-ABI
+      # splits from the App Bundles; the per-ABI APKs Gradle also builds stay
+      # local.
       - name: Name the APKs
         run: |
           mkdir apks
-          for module in androidApp androidTvApp; do
-            prefix=silo-android
-            [[ "${module}" == androidTvApp ]] && prefix=silo-android-tv
-            for apk in "${module}"/build/outputs/apk/release/"${module}"-*-release.apk; do
-              variant="${apk##*/"${module}"-}"
-              cp "${apk}" "apks/${prefix}-${VERSION}-${BUILD}-${variant%-release.apk}.apk"
-            done
-          done
-          ls apks
-          if [[ "$(find apks -name '*.apk' | wc -l)" -ne 8 ]]; then
-            echo "::error::Expected 8 APKs: phone and TV, each per ABI and universal."
-            exit 1
-          fi
+          cp androidApp/build/outputs/apk/release/androidApp-universal-release.apk "apks/silo-android-${VERSION}-${BUILD}.apk"
+          cp androidTvApp/build/outputs/apk/release/androidTvApp-universal-release.apk "apks/silo-android-tv-${VERSION}-${BUILD}.apk"
+          ls -l apks
 
       - name: Upload APKs
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -327,8 +320,8 @@ jobs:
             echo
             echo "### Install"
             echo
-            echo "Phones and tablets: \`silo-android-${VERSION}-${BUILD}-universal.apk\`."
-            echo "Android TV: \`silo-android-tv-${VERSION}-${BUILD}-universal.apk\`."
+            echo "Phones and tablets: \`silo-android-${VERSION}-${BUILD}.apk\`."
+            echo "Android TV: \`silo-android-tv-${VERSION}-${BUILD}.apk\`."
             echo
             echo "The Downloader codes (1051382 for phones, 1636227 for Android TV) install the latest store release, not this tester build."
           } > notes.md
