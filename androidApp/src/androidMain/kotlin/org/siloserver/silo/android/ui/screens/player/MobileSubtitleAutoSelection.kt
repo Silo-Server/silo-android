@@ -3,13 +3,14 @@ package org.siloserver.silo.android.ui.screens.player
 import org.siloserver.silo.model.catalog.AudioTrack
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
+import org.siloserver.silo.model.playback.AutoSubtitleContext
+import org.siloserver.silo.model.playback.AutoSubtitleResolution
+import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
-import org.siloserver.silo.model.playback.autoSubtitlePreferenceOrder
 import org.siloserver.silo.model.playback.toAutoSubtitleCandidate
 import org.siloserver.silo.playback.canonicalSubtitleLanguage
 import org.siloserver.silo.playback.hasPositiveSubtitleDiscriminator
-import org.siloserver.silo.playback.isBitmapSubtitleCodecFamily
 import org.siloserver.silo.playback.matchesSubtitleMediaIdentity
 import org.siloserver.silo.playback.playbackSubtitleIdentity
 import org.siloserver.silo.playback.resolveDownloadedSubtitlePreferenceOrdinal
@@ -84,6 +85,16 @@ internal fun resolveMobileSubtitleOrdinal(
     return typedMatches.singleOrNull()
 }
 
+/**
+ * The phone's Auto pick, made by the shared [resolveAutoSubtitle] — the same
+ * rule the TV player and the detail page apply, so the two apps start the same
+ * file on the same track. In particular "Show forced subtitles" never lets a
+ * forced track outrank the full-dialogue track when subtitles are wanted
+ * (product owner call, 2026-08-16); the phone used to let a forced text track
+ * jump the queue.
+ *
+ * Candidates keep the phone's own SDH reading (label, source and URL).
+ */
 internal fun resolveMobileAutoSubtitleSelection(
     audioTracks: List<AudioTrack>,
     selectedAudioIndex: Int,
@@ -93,55 +104,24 @@ internal fun resolveMobileAutoSubtitleSelection(
     showForcedSubtitles: Boolean,
 ): MobileSubtitleAutoSelection {
     if (subtitles.isEmpty()) return MobileSubtitleAutoSelection.NoChange
-
-    val mode = subtitleMode?.trim()?.lowercase()?.takeIf { it.isNotBlank() } ?: "auto"
-    if (mode == "off") return MobileSubtitleAutoSelection.Disable
-
-    if (preferredLanguage != null && preferredLanguage.isBlank()) {
-        return MobileSubtitleAutoSelection.Disable
+    // An ORDINAL into audioTracks: audio carries no index on the wire.
+    val audioLanguage = audioTracks.getOrNull(selectedAudioIndex)?.language
+    val resolution = resolveAutoSubtitle(
+        candidates = subtitles.mapIndexed { ordinal, subtitle ->
+            subtitle.toMobileAutoSubtitleCandidate().copy(selectionIndex = ordinal)
+        },
+        context = AutoSubtitleContext(
+            preferredLanguage = preferredLanguage,
+            mode = subtitleMode,
+            showForced = showForcedSubtitles,
+            audioLanguage = audioLanguage,
+        ),
+    )
+    return when (resolution) {
+        AutoSubtitleResolution.NoChange -> MobileSubtitleAutoSelection.NoChange
+        AutoSubtitleResolution.Disable -> MobileSubtitleAutoSelection.Disable
+        is AutoSubtitleResolution.Select -> MobileSubtitleAutoSelection.Select(resolution.candidate.selectionIndex)
     }
-    val targetLanguage = canonicalSubtitleLanguage(preferredLanguage)
-    if (targetLanguage == null) {
-        if (mode == "always") {
-            return bestAutoSubtitleOrdinal(
-                subtitles = subtitles,
-                targetLanguage = null,
-                preferForced = showForcedSubtitles,
-            )?.let(MobileSubtitleAutoSelection::Select)
-                ?: MobileSubtitleAutoSelection.NoChange
-        }
-        return MobileSubtitleAutoSelection.NoChange
-    }
-
-    // An ORDINAL into audioTracks: audio carries no index on the wire, so the
-    // index search that used to come first matched nothing above row zero and
-    // only worked because of the ordinal fallback behind it.
-    val selectedAudioLanguage = audioTracks.getOrNull(selectedAudioIndex)
-    val selectedAudioMatches = canonicalSubtitleLanguage(selectedAudioLanguage?.language) == targetLanguage
-
-    if (mode == "auto" && selectedAudioMatches) {
-        if (showForcedSubtitles) {
-            bestForcedAutoSubtitleOrdinal(
-                subtitles = subtitles,
-                targetLanguage = targetLanguage,
-            )?.let { return MobileSubtitleAutoSelection.Select(it) }
-        }
-        return MobileSubtitleAutoSelection.Disable
-    }
-
-    val targetOrdinal = bestAutoSubtitleOrdinal(
-        subtitles = subtitles,
-        targetLanguage = targetLanguage,
-        preferForced = showForcedSubtitles,
-    ) ?: if (showForcedSubtitles) {
-        bestRankedOrdinal(subtitles.withIndex().filter { (_, subtitle) -> subtitle.forced == true })
-    } else {
-        null
-    }
-
-    return targetOrdinal
-        ?.let(MobileSubtitleAutoSelection::Select)
-        ?: MobileSubtitleAutoSelection.NoChange
 }
 
 /**
@@ -219,54 +199,6 @@ private fun normalizedSubtitleCodec(codecOrMime: String?): String? {
 }
 
 /**
- * Ranks with the shared [autoSubtitlePreferenceOrder] — burn-in, then
- * forced/SDH, then embedded over external over downloaded — so the mounted
- * order (externals first) no longer decides a tie.
- */
-private fun bestAutoSubtitleOrdinal(
-    subtitles: List<PlayerSubtitleInfo>,
-    targetLanguage: String?,
-    preferForced: Boolean,
-): Int? {
-    val pool = subtitles.withIndex().filter { (_, subtitle) ->
-        targetLanguage == null || canonicalSubtitleLanguage(subtitle.language) == targetLanguage
-    }
-    if (pool.isEmpty()) return null
-
-    if (preferForced) {
-        // Only a plain TEXT forced track jumps the queue here, as before: this
-        // step predates the shared "forced never outranks full dialogue" rule,
-        // and widening it to every renderable bitmap would let a forced PGS
-        // track displace the full one.
-        bestRankedOrdinal(
-            pool.filter { (_, subtitle) ->
-                subtitle.forced == true &&
-                    !subtitle.isEffectivelyHearingImpaired() &&
-                    !subtitle.isBitmap()
-            },
-        )?.let { return it }
-    }
-    return bestRankedOrdinal(pool)
-}
-
-private fun bestForcedAutoSubtitleOrdinal(
-    subtitles: List<PlayerSubtitleInfo>,
-    targetLanguage: String?,
-): Int? = bestRankedOrdinal(
-    subtitles.withIndex().filter { (_, subtitle) ->
-        subtitle.forced == true &&
-            (targetLanguage == null || canonicalSubtitleLanguage(subtitle.language) == targetLanguage)
-    },
-)
-
-/** The ordinal of the best-ranked row, or null for an empty pool. */
-private fun bestRankedOrdinal(pool: List<IndexedValue<PlayerSubtitleInfo>>): Int? =
-    pool
-        .map { (ordinal, subtitle) -> ordinal to subtitle.toMobileAutoSubtitleCandidate() }
-        .minWithOrNull(compareBy(autoSubtitlePreferenceOrder) { it.second })
-        ?.first
-
-/**
  * The phone's SDH predicate reads the runtime label, source and URL rather
  * than the catalog title, so it replaces the shared title check.
  */
@@ -277,9 +209,6 @@ private fun PlayerSubtitleInfo.isEffectivelyHearingImpaired(): Boolean =
     subtitleLabelIndicatesHearingImpaired(label) ||
         subtitleLabelIndicatesHearingImpaired(source) ||
         subtitleLabelIndicatesHearingImpaired(url)
-
-private fun PlayerSubtitleInfo.isBitmap(): Boolean =
-    isBitmapSubtitleCodecFamily(codec ?: subtitleCodecFromUrl(url))
 
 private fun subtitleCodecFromUrl(url: String?): String? =
     url
