@@ -38,7 +38,8 @@ SyncEngine pending/in-flight queries do not select or recover them.
 `RoomMembershipPort` owns one guarded runtime shared by inline producers and the background worker. Both inline and background senders must call the
 same `send` method; neither may send first and claim afterwards. Each enqueue gets
 a new database row and UUID even when its payload equals an older command. Pending
-intent coalesces; a sending command remains immutable and blocks another send for
+intent coalesces: a new command deletes the item's older ready, reconcile and paused
+commands, so none of them can be retried after it. A sending command remains immutable and blocks another send for
 the same key. Only an exact row, claim and authority match can consume a confirmed
 204. A newer coalesced command survives the old acknowledgement. Acknowledgement
 publication remains subject to the consumer's identity/generation checks at its
@@ -48,8 +49,9 @@ Cancellation or any unconfirmed response transitions the claimed command to
 reconciliation. Retry first issues a captured-authority GET. Observing the desired
 state resolves that command as reconciled. A mismatch pauses it and, while it is
 still the item's latest command and no sibling is sending, reclaims and resends
-it through the same claim protocol. A superseded paused command is deleted; the
-newer command decides the item. Read failures retain the unresolved command.
+it through the same claim protocol. A command that was mid-send when a newer one
+arrived and is retried later is deleted without sending; the newer command decides
+the item. Read failures retain the unresolved command.
 
 Startup must construct one process-wide owner identity and recover abandoned
 sending claims before starting any membership senders. Claims owned by a previous

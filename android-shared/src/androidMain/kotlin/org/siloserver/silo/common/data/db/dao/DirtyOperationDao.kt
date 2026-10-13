@@ -278,14 +278,19 @@ interface DirtyOperationDao {
         "AND state = 'membership_ready' ORDER BY id LIMIT :limit")
     suspend fun readyMembershipCommands(authority: String, limit: Int): List<DirtyOperationEntity>
 
-    /** Membership rows never enter the legacy retry/drain states. */
-    @Query("DELETE FROM dirty_operations WHERE coalesceKey = :key AND state = 'membership_ready'")
-    suspend fun deleteReadyMembership(key: String)
+    /**
+     * Membership rows never enter the legacy retry/drain states. A newer choice replaces every
+     * older command for the item that isn't mid-send, so a later retry can't resend an old one
+     * after the newer command is acknowledged and deleted.
+     */
+    @Query("DELETE FROM dirty_operations WHERE coalesceKey = :key " +
+        "AND state IN ('membership_ready', 'membership_reconcile', 'membership_paused')")
+    suspend fun deleteReplacedMembership(key: String)
 
     @Transaction
     suspend fun enqueueMembership(op: DirtyOperationEntity): Long {
         require(op.state == "membership_ready" && !op.membershipAuthority.isNullOrBlank())
-        deleteReadyMembership(op.coalesceKey)
+        deleteReplacedMembership(op.coalesceKey)
         return insert(op)
     }
 

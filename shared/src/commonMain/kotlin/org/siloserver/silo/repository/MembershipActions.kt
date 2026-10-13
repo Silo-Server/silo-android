@@ -159,6 +159,9 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
             val projection = activePort.projection(authority, command.itemId, command.kind) ?: continue
             if (projection.commandId != command.id || generation.value != authority.scope.identityGeneration) continue
             val intent = Intent(key, command.present, generation.value, kotlin.random.Random.nextLong())
+            // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
+            // The restored witness stays busy until that retry ends so perform can't run beside it.
+            val retry = projection.disposition != null
             mutableActions.update { states ->
                 if (states.containsKey(key)) {
                     val existing = states.getValue(key)
@@ -167,20 +170,26 @@ class MembershipActions(private val port: MembershipPort?, private val identity:
                         states + (key to existing.copy(command = command))
                     } else states
                 } else states + (key to Action(intent, command,
-                    MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false)))
+                    MembershipPort.Completion(projection.disposition ?: MembershipPort.Disposition.NEEDS_RECONCILIATION, false), busy = retry))
             }
-            // READY commands belong to the sync worker; earlier unconfirmed ones get one retry here.
-            if (projection.disposition != null && mutableActions.value[key]?.intent == intent) unresolved += intent to command
+            if (retry && mutableActions.value[key]?.intent == intent) unresolved += intent to command
         }
-        for ((intent, command) in unresolved) {
-            update(intent) { it.copy(busy = true) }
-            try {
-                complete(intent, activePort.retry(command))
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                complete(intent, UNCONFIRMED)
-            } finally { update(intent) { it.copy(busy = false) } }
+        var next = 0
+        try {
+            while (next < unresolved.size) {
+                val (intent, command) = unresolved[next++]
+                if (!current(intent)) continue
+                try {
+                    complete(intent, activePort.retry(command))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    complete(intent, UNCONFIRMED)
+                } finally { update(intent) { it.copy(busy = false) } }
+            }
+        } finally {
+            // Release restored witnesses a cancelled pass never reached.
+            for (index in next until unresolved.size) update(unresolved[index].first) { it.copy(busy = false) }
         }
         val retained = activePort.hasLegacyQuarantine()
         if (generation.value == authority.scope.identityGeneration) mutableLegacyNotice.value = retained
