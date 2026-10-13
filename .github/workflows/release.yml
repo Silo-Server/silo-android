@@ -75,7 +75,7 @@ jobs:
           fi
 
       # A promoted version waiting for Play review (a draft vX.Y.Z release)
-      # counts as released.
+      # counts as released. Listing drafts needs contents: write.
       - name: Choose version and build
         id: version
         env:
@@ -83,11 +83,12 @@ jobs:
           BUMP: ${{ inputs.bump }}
           VERSION: ${{ inputs.version }}
         run: |
+          draft_tags="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft) | .tagName')"
           drafts=()
-          while read -r draft; do
+          for draft in ${draft_tags}; do
             drafts+=(--draft "${draft}")
-          done < <(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,isDraft \
-            --jq '.[] | select(.isDraft) | .tagName')
+          done
           python3 scripts/release-version.py next --bump "${BUMP}" --version "${VERSION}" "${drafts[@]}" |
             tee -a "${GITHUB_OUTPUT}"
 
@@ -99,7 +100,7 @@ jobs:
           PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
         run: |
           if [[ -n "${PREVIOUS_TAG}" ]] && ! gh release view "${PREVIOUS_TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null; then
-            echo "::error::${PREVIOUS_TAG} has no release, so its run failed. Re-run that run's failed jobs, or delete the tag, then run Release again."
+            echo "::error::${PREVIOUS_TAG} has no release, so its run failed. Re-run that run's failed jobs. Delete the tag only if that run never uploaded to Play."
             exit 1
           fi
 
