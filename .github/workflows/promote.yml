@@ -72,9 +72,11 @@ jobs:
             echo "::error::${release_tag} already exists (possibly as a draft). Delete the draft to promote again."
             exit 1
           fi
-          echo "commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${BETA_TAG}" --jq .sha)" >> "${GITHUB_OUTPUT}"
+          commit="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${BETA_TAG}" --jq .sha)"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
           # Notes cover everything since the last store release.
-          echo "previous_release=$(gh release view --json tagName --jq .tagName)" >> "${GITHUB_OUTPUT}"
+          previous_release="$(gh release view --json tagName --jq .tagName)"
+          echo "previous_release=${previous_release}" >> "${GITHUB_OUTPUT}"
 
       - name: Write release notes
         env:
