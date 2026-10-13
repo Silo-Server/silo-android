@@ -709,6 +709,27 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun subtitlesOffStillStartTheForcedTrackForTheAudioThatPlays() {
+        // Series (or profile) set to Off with "Show forced subtitles" on: the
+        // next episode starts on the forced English line, as on web and TV.
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English Forced", language = "en", forced = true),
+        )
+        fun resolve(audio: String, forced: Boolean) = resolveMobileAutoSubtitleSelection(
+            audioTracks = listOf(audio(language = audio)),
+            selectedAudioIndex = 0,
+            subtitles = rows,
+            preferredLanguage = "",
+            subtitleMode = "off",
+            showForcedSubtitles = forced,
+        )
+        assertEquals(MobileSubtitleAutoSelection.Select(1), resolve("eng", forced = true))
+        assertEquals(MobileSubtitleAutoSelection.Disable, resolve("eng", forced = false))
+        assertEquals(MobileSubtitleAutoSelection.Disable, resolve("fra", forced = true))
+    }
+
+    @Test
     fun initialDetailOrdinalTranslatesFromCatalogToMountedList() {
         // Catalog order: [Signs (forced), English] with demux indices 3/5;
         // mounted order is reversed — the detail pick must land by match,
