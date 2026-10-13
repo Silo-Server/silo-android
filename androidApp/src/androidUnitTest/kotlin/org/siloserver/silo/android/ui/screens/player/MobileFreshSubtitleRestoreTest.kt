@@ -144,6 +144,53 @@ class MobileFreshSubtitleRestoreTest {
         }
     }
 
+    @Test
+    fun `a track remembered while it played natively restores when the next plan offers it as a sidecar`() = runTest {
+        // Last session mounted the Spanish track from the container; the next
+        // session's first plan lists the same server track as a sidecar.
+        fun row(index: Int, language: String) = PlayerSubtitleInfo(
+            index = index,
+            language = language,
+            codec = "subrip",
+            label = "$language SRT",
+            source = "embedded",
+            url = "/api/v2/stream/fresh/subtitles/$index.vtt",
+            serverTrackId = "file:9:subtitle:$index",
+            serverDelivery = "sidecar",
+        )
+        val rows = listOf(row(0, "en"), row(1, "es"))
+        fun remembered(trackId: String) = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.Embedded(
+                serverIndex = 1,
+                media = SubtitleMediaIdentity(
+                    trackId = trackId, label = "es SRT", language = "es", codecFamily = "subrip", forced = false,
+                ),
+            ),
+        )
+
+        val restored = prepareMobileFreshSubtitleRestore(
+            mediaFileId = 9,
+            mountedSubtitles = rows,
+            sessionId = "fresh",
+            persistedPreference = remembered("file:9:subtitle:1"),
+            authoritativeInventory = true,
+            loadDownloadedSubtitles = { error("not hydrated") },
+        )
+        assertEquals(1, restored.persistedSelectionOrdinal)
+        assertIs<SubtitleIdentity.ServerSidecar>(restored.persistedSelectionIdentity)
+
+        // Another file's track id is not this track, whatever its metadata.
+        val stranger = prepareMobileFreshSubtitleRestore(
+            mediaFileId = 9,
+            mountedSubtitles = rows,
+            sessionId = "fresh",
+            persistedPreference = remembered("file:8:subtitle:1"),
+            authoritativeInventory = true,
+            loadDownloadedSubtitles = { error("not hydrated") },
+        )
+        assertNull(stranger.persistedSelectionOrdinal)
+    }
+
     private fun serverTrack() = PlayerSubtitleInfo(
         index = 0,
         language = "fr",
