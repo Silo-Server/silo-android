@@ -155,6 +155,8 @@ class ItemDetailViewModel(
     savedStateHandle: SavedStateHandle,
     private val userItemState: org.siloserver.silo.repository.port.UserItemStatePort =
         org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
 ) : ViewModel() {
     /** Access changes this ViewModel has applied, kept while its screen is away. */
     val accessChanges = org.siloserver.silo.network.AccessChangeCursor()
@@ -1195,6 +1197,7 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesSubtitleChoice(index)
     }
 
     /** Back to Auto — distinct from an explicit -1 ("Off") selection. */
@@ -1206,6 +1209,32 @@ class ItemDetailViewModel(
             )
         }
         persistTrackSelection()
+        rememberSeriesSubtitleChoice(null)
+    }
+
+    /**
+     * A pick here applies to the whole series (or the movie) and the
+     * profile's other devices, like a pick in the player: a track or Off
+     * ([ordinal] -1) is saved on the server, and Auto (null) deletes it.
+     */
+    private fun rememberSeriesSubtitleChoice(ordinal: Int?) {
+        val writer = seriesSubtitleChoiceWriter ?: return
+        val state = _uiState.value
+        val detail = state.detail ?: return
+        if (detail.type != "movie" && detail.type != "episode") return
+        val key = org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(detail.seriesId, detail.contentId) ?: return
+        val choice = when (ordinal) {
+            null -> null
+            -1 -> org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
+            else -> {
+                val tracks = detail.versions.getOrNull(state.selectedVersionIndex)?.subtitleTracks.orEmpty()
+                val track = tracks.getOrNull(ordinal) ?: return
+                val selectionIndex = org.siloserver.silo.model.playback.combinedSubtitleSelectionIndexes(tracks)
+                    .getOrNull(ordinal) ?: return
+                org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(track, selectionIndex)
+            }
+        }
+        viewModelScope.launch { writer.save(key, choice) }
     }
 
     /**
@@ -1253,9 +1282,15 @@ class ItemDetailViewModel(
         val version = detail.versions.getOrNull(state.selectedVersionIndex) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(detail.contentId, version.fileId) ?: return@launch
+            // The series choice on the server outranks this device's per-file
+            // memory; the player starts from it when nothing is picked here.
             val subtitleOrdinal = resolveSubtitleTrackOrdinal(
                 version.subtitleTracks.orEmpty(),
-                saved.subtitleFingerprint,
+                org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                    localPreference = saved.subtitleFingerprint,
+                    serverChoiceKnown = true,
+                    signature = detail.effectiveSubtitleTrackSignature,
+                ),
             )
             val audioOrdinal = resolveAudioTrackOrdinal(
                 version.audioTracks.orEmpty(),

@@ -343,6 +343,8 @@ class PlayerViewModel(
     // When the video's requests last received a byte, so the buffering-quality
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
 ) : ViewModel() {
 
     // Last load request, replayed by the "Can't reach server" Retry / Try Anyway.
@@ -1815,12 +1817,19 @@ class PlayerViewModel(
         } else {
             null
         }
+        // The series choice saved on the server is the truth while online;
+        // this device's per-file memory only fills in for it offline, or to
+        // re-find that same choice where the signature alone cannot.
+        val seriesSubtitleSignature = watchDetail?.effectiveSubtitleTrackSignature
         val freshSubtitleRestore = prepareMobileFreshSubtitleRestore(
             mediaFileId = version?.fileId ?: playbackState.fileId,
             mountedSubtitles = playbackState.subtitleUrls,
             sessionId = playbackState.sessionId.orEmpty(),
-            persistedPreference = localTrackSelection
-                ?.subtitleFingerprint
+            persistedPreference = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                localPreference = localTrackSelection?.subtitleFingerprint,
+                serverChoiceKnown = watchDetail != null,
+                signature = seriesSubtitleSignature,
+            )
                 ?.takeUnless { explicitSubtitlePickResolved || isSessionRenewal },
             authoritativeInventory = playbackState.playbackPlan != null,
             loadDownloadedSubtitles = subtitlesRepository::list,
@@ -1844,6 +1853,7 @@ class PlayerViewModel(
                 preferredLanguage = playbackState.preferredTextLanguage,
                 subtitleMode = playbackState.preferredSubtitleMode,
                 showForcedSubtitles = playbackState.showForcedSubtitles,
+                trackSignature = seriesSubtitleSignature,
             )
         } else {
             MobileSubtitleAutoSelection.NoChange
@@ -4736,6 +4746,25 @@ class PlayerViewModel(
             mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(current))
             mobileSubtitleTransactions.select(identity)
         }
+        rememberSeriesSubtitleChoice(state, index)
+    }
+
+    /**
+     * A manual pick (a track or Off) applies to the whole series — or the
+     * movie — and to the profile's other devices: it is saved on the server,
+     * which hands it back as `effective_subtitle_*` on every later load.
+     */
+    private fun rememberSeriesSubtitleChoice(state: PlayerUiState, index: Int) {
+        val writer = seriesSubtitleChoiceWriter ?: return
+        val key = org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(state.seriesId, state.contentId) ?: return
+        val choice = if (index == -1) {
+            org.siloserver.silo.model.playback.SeriesSubtitleChoice.Off
+        } else {
+            state.subtitleTracks.getOrNull(index)
+                ?.let { org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(it) }
+                ?: return
+        }
+        viewModelScope.launch { writer.save(key, choice) }
     }
 
     internal fun isCurrentSubtitleMount(mount: MobileSubtitleMount?): Boolean =

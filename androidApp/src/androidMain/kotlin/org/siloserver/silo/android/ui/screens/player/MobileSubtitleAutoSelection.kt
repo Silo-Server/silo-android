@@ -5,6 +5,7 @@ import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.playback.AutoSubtitleCandidate
 import org.siloserver.silo.model.playback.AutoSubtitleContext
 import org.siloserver.silo.model.playback.AutoSubtitleResolution
+import org.siloserver.silo.model.playback.SubtitleTrackSignature
 import org.siloserver.silo.model.playback.resolveAutoSubtitle
 import org.siloserver.silo.model.playback.PlayerSubtitleInfo
 import org.siloserver.silo.model.playback.SubtitleIdentity
@@ -93,6 +94,8 @@ internal fun resolveMobileSubtitleOrdinal(
  * (product owner call, 2026-08-16); the phone used to let a forced text track
  * jump the queue.
  *
+ * [trackSignature] is the series choice saved on the server: the track it
+ * describes is picked outright, else it breaks ties within the language.
  * Candidates keep the phone's own SDH reading (label, source and URL).
  */
 internal fun resolveMobileAutoSubtitleSelection(
@@ -102,6 +105,7 @@ internal fun resolveMobileAutoSubtitleSelection(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForcedSubtitles: Boolean,
+    trackSignature: SubtitleTrackSignature? = null,
 ): MobileSubtitleAutoSelection {
     if (subtitles.isEmpty()) return MobileSubtitleAutoSelection.NoChange
     // An ORDINAL into audioTracks: audio carries no index on the wire.
@@ -115,6 +119,7 @@ internal fun resolveMobileAutoSubtitleSelection(
             mode = subtitleMode,
             showForced = showForcedSubtitles,
             audioLanguage = audioLanguage,
+            trackSignature = trackSignature,
         ),
     )
     return when (resolution) {

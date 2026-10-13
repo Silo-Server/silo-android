@@ -255,6 +255,17 @@ internal class MobileVideoPlaybackStarter(
                 (request.audioTrackIndex == null || request.subtitleTrackIndex == null)
             ) {
                 userItemStatePort.localTrackSelection(request.contentId, version.fileId)
+                    ?.let { local ->
+                        // The series choice on the server outranks this
+                        // device's per-file memory (see the player's load).
+                        local.copy(
+                            subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                                localPreference = local.subtitleFingerprint,
+                                serverChoiceKnown = true,
+                                signature = watchDetail.effectiveSubtitleTrackSignature,
+                            ),
+                        )
+                    }
             } else {
                 null
             }

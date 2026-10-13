@@ -493,6 +493,7 @@ val androidModule = module {
             shuffleFeatureStore = get(),
             networkEvidenceProvider = get(),
             throughputMeter = get(),
+            seriesSubtitleChoiceWriter = get(),
         )
     }
     viewModel { HomeViewModel(get(), get(), get(), get(), getOrNull(), get(), get(), catalogLanguage = get()) }
@@ -532,6 +533,7 @@ val androidModule = module {
         ItemDetailViewModel(
             get(), get(), get(), get(), get(), get(), get(), params.get(),
             getOrNull<org.siloserver.silo.repository.port.UserItemStatePort>() ?: org.siloserver.silo.repository.port.NoOpUserItemStatePort,
+            seriesSubtitleChoiceWriter = get(),
         )
     }
     viewModel { params -> PersonDetailViewModel(get(), params.get(), get()) }

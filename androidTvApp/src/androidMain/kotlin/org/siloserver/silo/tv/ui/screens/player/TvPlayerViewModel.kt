@@ -519,6 +519,7 @@ internal fun resolveTvAutoSubtitleIdentity(
     preferredLanguage: String?,
     subtitleMode: String?,
     showForced: Boolean,
+    trackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
     /**
      * Language of the audio this playback is set to play (the planned or
      * chosen track). Media3's first snapshot still shows the file's default
@@ -535,6 +536,7 @@ internal fun resolveTvAutoSubtitleIdentity(
         showForced = showForced,
         audioLanguage = intendedAudioLanguage?.takeIf { it.isNotBlank() }
             ?: audioTracks.firstOrNull { it.isSelected }?.language,
+        trackSignature = trackSignature,
     )
     if (subtitleRows.isNotEmpty()) {
         val winner = resolveAutoSubtitle(
@@ -807,6 +809,8 @@ class TvPlayerViewModel(
     // When the video's requests last received a byte, so the buffering-quality
     // adapter can tell a dead link from a slow one. Optional for the same reason.
     private val throughputMeter: org.siloserver.silo.common.player.PlaybackThroughputMeter? = null,
+    /** Remembers a manual subtitle choice for the whole series on the server. */
+    private val seriesSubtitleChoiceWriter: org.siloserver.silo.common.settings.SeriesSubtitleChoiceWriter? = null,
 ) : ViewModel() {
 
     companion object {
@@ -1217,6 +1221,8 @@ class TvPlayerViewModel(
         val preferredTextLanguage: String? = null,
         val preferredSubtitleMode: String? = null,
         val showForcedSubtitles: Boolean = true,
+        /** The series' remembered subtitle track, from the watch detail. */
+        val preferredSubtitleTrackSignature: org.siloserver.silo.model.playback.SubtitleTrackSignature? = null,
         // Intro / credits ranges — populated from `WatchDetail`. Used by the
         // intro auto-skip observer and (eventually) the next-up promote.
         val intro: TimeRange? = null,
@@ -2466,7 +2472,14 @@ class TvPlayerViewModel(
                             pendingInitialSubtitleIndex == null &&
                             !subtitleSelection.suppressDurableSubtitleRestore
                         ) {
-                            localTrackSelection?.subtitleFingerprint
+                            // The series choice on the server outranks this
+                            // device's per-file memory: it is what every other
+                            // device sees, and Auto elsewhere deletes it.
+                            org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
+                                localPreference = localTrackSelection?.subtitleFingerprint,
+                                serverChoiceKnown = true,
+                                signature = result.preferredSubtitleTrackSignature,
+                            )
                         } else {
                             null
                         }
@@ -2610,6 +2623,7 @@ class TvPlayerViewModel(
                                 preferredTextLanguage = result.preferredTextLanguage,
                                 preferredSubtitleMode = result.preferredSubtitleMode,
                                 showForcedSubtitles = result.showForcedSubtitles,
+                                preferredSubtitleTrackSignature = result.preferredSubtitleTrackSignature,
                                 intro = result.intro,
                                 credits = result.credits,
                                 recap = result.recap,
@@ -4685,6 +4699,7 @@ class TvPlayerViewModel(
             launchSubtitleTransaction(_uiState.value) {
                 subtitleTransactions.select(identity)
             }
+            rememberSeriesSubtitleChoice(identity)
         } else {
             _pendingRemoteSubtitleIndex.value = index
         }
@@ -5498,6 +5513,7 @@ class TvPlayerViewModel(
             preferredLanguage = state.preferredTextLanguage,
             subtitleMode = state.preferredSubtitleMode,
             showForced = state.showForcedSubtitles,
+            trackSignature = state.preferredSubtitleTrackSignature,
             intendedAudioLanguage = state.desiredAudioOrdinal
                 ?.let { catalogAudioTracks(state).getOrNull(it) }
                 ?.language,
@@ -5732,6 +5748,20 @@ class TvPlayerViewModel(
         launchSubtitleTransaction(_uiState.value) {
             subtitleTransactions.select(identity)
         }
+        rememberSeriesSubtitleChoice(identity)
+    }
+
+    /**
+     * A manual pick (a track or Off) applies to the whole series — or the
+     * movie — and to the profile's other devices: it is saved on the server,
+     * which hands it back as `effective_subtitle_*` on every later load.
+     */
+    private fun rememberSeriesSubtitleChoice(identity: SubtitleIdentity) {
+        val writer = seriesSubtitleChoiceWriter ?: return
+        val state = _uiState.value
+        val key = org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(state.seriesId, state.contentId) ?: return
+        val choice = org.siloserver.silo.model.playback.SeriesSubtitleChoice.of(identity, state.subtitleUrls) ?: return
+        viewModelScope.launch { writer.save(key, choice) }
     }
 
     fun selectSubtitleOption(serverIndex: Int) {

@@ -415,6 +415,7 @@ class TvVideoPlaybackStarter(
                 showForcedSubtitles = watchDetail.effectiveShowForcedSubtitles
                     ?: activeProfile?.showForcedSubtitles
                     ?: true,
+                preferredSubtitleTrackSignature = watchDetail.effectiveSubtitleTrackSignature,
                 intro = effectiveVersion?.intro,
                 credits = effectiveVersion?.credits,
                 recap = effectiveVersion?.recap,

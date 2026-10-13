@@ -1501,10 +1501,8 @@ private fun TvDetailPlaybackSelectionSummary(
             version = version,
             selectedSubtitleTrackIndex = selectedSubtitleIndex,
             autoContext = if (selectedAudioIndex != null || automaticAudioResolutionKnown) {
-                TvPlaybackFormatting.SubtitleAutoContext(
-                    preferredLanguage = state.preferredSubtitleLanguage,
-                    mode = state.subtitleMode,
-                    showForced = state.showForcedSubtitles,
+                state.subtitleAutoContext(
+                    playbackDetail = playbackDetail,
                     audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                         version,
                         selectedAudioIndex,
@@ -1785,10 +1783,8 @@ private fun HeroActionRow(
         autoContext = selectedVersion?.takeIf {
             selectorAudioIndex != null || automaticAudioResolutionKnown
         }?.let { version ->
-            TvPlaybackFormatting.SubtitleAutoContext(
-                preferredLanguage = state.preferredSubtitleLanguage,
-                mode = state.subtitleMode,
-                showForced = state.showForcedSubtitles,
+            state.subtitleAutoContext(
+                playbackDetail = if (isSeriesOrSeason) nextUpDetail else detail,
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     version,
                     selectorAudioIndex,
@@ -2112,10 +2108,8 @@ internal fun seriesEpisodePlaybackLaunch(
         autoContext = selectedVersion?.takeIf {
             audioTrackIndex != null || automaticAudioResolutionKnown
         }?.let { version ->
-            TvPlaybackFormatting.SubtitleAutoContext(
-                preferredLanguage = state.preferredSubtitleLanguage,
-                mode = state.subtitleMode,
-                showForced = state.showForcedSubtitles,
+            state.subtitleAutoContext(
+                playbackDetail = playbackDetail,
                 audioLanguage = TvPlaybackFormatting.resolvedAudioLanguage(
                     version,
                     audioTrackIndex,

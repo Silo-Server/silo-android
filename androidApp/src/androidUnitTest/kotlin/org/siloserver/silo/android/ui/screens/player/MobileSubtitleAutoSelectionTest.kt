@@ -730,6 +730,44 @@ class MobileSubtitleAutoSelectionTest {
     }
 
     @Test
+    fun theSeriesChoiceSignaturePicksTheRememberedTrack() {
+        // The viewer chose English SDH for the series; this episode lists the
+        // tracks in another order. The signature finds SDH, not plain English.
+        val rows = listOf(
+            subtitle(index = 0, label = "English", language = "en"),
+            subtitle(index = 1, label = "English SDH", language = "en"),
+        )
+        val signature = org.siloserver.silo.model.playback.SubtitleTrackSignature(
+            language = "en", codec = "srt", label = "English SDH", hearingImpaired = true,
+        )
+        assertEquals(
+            MobileSubtitleAutoSelection.Select(1),
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "en",
+                subtitleMode = "always",
+                showForcedSubtitles = false,
+                trackSignature = signature,
+            ),
+        )
+        // Off for the series stays off, whatever the signature says.
+        assertEquals(
+            MobileSubtitleAutoSelection.Disable,
+            resolveMobileAutoSubtitleSelection(
+                audioTracks = listOf(audio(language = "ja")),
+                selectedAudioIndex = 0,
+                subtitles = rows,
+                preferredLanguage = "",
+                subtitleMode = "off",
+                showForcedSubtitles = false,
+                trackSignature = signature,
+            ),
+        )
+    }
+
+    @Test
     fun initialDetailOrdinalTranslatesFromCatalogToMountedList() {
         // Catalog order: [Signs (forced), English] with demux indices 3/5;
         // mounted order is reversed — the detail pick must land by match,

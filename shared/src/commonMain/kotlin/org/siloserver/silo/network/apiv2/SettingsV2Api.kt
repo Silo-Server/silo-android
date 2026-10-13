@@ -171,6 +171,37 @@ class SettingsV2Api(
         client.delete("/api/v2/library-playback-prefs/$libraryId") { authScope(owner); requireSiloAuth() }
     }) { _, _ -> }
 
+    // ---- per-series subtitle choice ----
+
+    /**
+     * PUT /api/v2/subtitle-prefs/{series_id} (204): replaces the profile's
+     * remembered subtitle choice for a series (or a movie, keyed by its own
+     * content id). Pinned to [expected] — the profile that made the choice —
+     * so a write never lands on a profile switched to meanwhile.
+     */
+    suspend fun putSubtitlePreference(
+        seriesId: String,
+        choice: org.siloserver.silo.model.playback.SeriesSubtitleChoice,
+        expected: AuthScopeSnapshot? = null,
+    ): ApiResult<Unit> = exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+        client.put("/api/v2/subtitle-prefs/${seriesId.encodeURLPathPart()}") {
+            authScope(owner); requireSiloAuth()
+            contentType(ContentType.Application.Json)
+            setBody(
+                SiloJson.encodeToJsonElement(
+                    org.siloserver.silo.model.playback.SeriesSubtitleChoice.serializer(),
+                    choice,
+                ),
+            )
+        }
+    }) { _, _ -> }
+
+    /** DELETE /api/v2/subtitle-prefs/{series_id} (204, also when none was stored): back to automatic. */
+    suspend fun deleteSubtitlePreference(seriesId: String, expected: AuthScopeSnapshot? = null): ApiResult<Unit> =
+        exchange<Unit, Unit>(expected, HttpStatusCode.NoContent, block = { owner ->
+            client.delete("/api/v2/subtitle-prefs/${seriesId.encodeURLPathPart()}") { authScope(owner); requireSiloAuth() }
+        }) { _, _ -> }
+
     private fun stringID(value: JsonElement): String {
         val primitive = value.jsonPrimitive
         require(primitive.isString && primitive.content.isNotBlank())
