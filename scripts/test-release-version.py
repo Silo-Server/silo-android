@@ -53,9 +53,19 @@ class NextReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "bump=minor"):
             release.next_release(tags, "build")
 
-    def test_build_without_any_tester_build_asks_for_a_bump(self):
-        with self.assertRaisesRegex(release.ReleaseError, "bump=minor"):
+    def test_build_without_any_tester_build_asks_for_a_version(self):
+        with self.assertRaisesRegex(release.ReleaseError, "Pass the version"):
             release.next_release(LEGACY_TAGS, "build")
+
+    def test_tags_with_build_metadata_are_not_store_releases(self):
+        # With the July v1.0.0 and v1.0.1 releases renamed to +N tags, 1.0.0
+        # can still become the first store release.
+        tags = [t for t in LEGACY_TAGS if t not in ("v1.0.0", "v1.0.1")] + ["v1.0.0+1", "v1.0.1+0"]
+        result = release.next_release(tags, "build", "1.0.0")
+        self.assertEqual("v1.0.0-beta.22", result["tag"])
+        self.assertEqual("v1.0.0+21", result["previous_tag"])
+        # One above v1.0.0+21 (base 110000021), the highest code Play has seen.
+        self.assertEqual("110000022", result["version_code"])
 
     def test_minor_and_patch_bump_the_latest_release(self):
         tags = LEGACY_TAGS + ["v1.1.0-beta.22", "v1.1.0"]

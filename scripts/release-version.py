@@ -77,7 +77,9 @@ def version_code(version, build):
 def next_release(tags, bump, version=None, drafts=()):
     tags = [*tags, *drafts]
     parsed = {name: tag for name in tags if (tag := parse_tag(name))}
-    released = {tag[0] for tag in parsed.values() if tag[1] is None}
+    # Only an exact vX.Y.Z tag marks a store release. Older tags with build
+    # metadata (v1.0.0+21) were tester builds.
+    released = {tag[0] for name, tag in parsed.items() if tag[1] is None and "+" not in name}
     latest_release = max(released, default=None)
     with_builds = [(tag[2], name) for name, tag in parsed.items() if tag[2] is not None]
     previous_build, previous_tag = max(with_builds, default=(0, None))
@@ -89,7 +91,9 @@ def next_release(tags, bump, version=None, drafts=()):
             raise ReleaseError(f"Version must look like 1.2.0, got {version!r}.")
         target = tuple(int(part) for part in match.groups())
     elif bump == "build":
-        if not betas or max(betas)[1] in released:
+        if not betas:
+            raise ReleaseError("There is no tester build to continue yet. Pass the version to start with, for example 1.0.0.")
+        if max(betas)[1] in released:
             raise ReleaseError(
                 "There is no unreleased version to add a build to. "
                 "Run with bump=minor (new features) or bump=patch (fixes only) to start the next version."
