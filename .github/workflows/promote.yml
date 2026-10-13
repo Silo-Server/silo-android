@@ -1,0 +1,121 @@
+name: Promote
+
+# Turns a tester build into a store release without rebuilding it: copies the
+# build from the Google Play beta track to production as a draft, and drafts
+# the GitHub release vX.Y.Z on the same commit with the same APKs. A
+# maintainer then sends the Play draft for review, and publishes the GitHub
+# release once Play approves it (published.yml takes it from there).
+# See docs/releasing.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tester build to release, for example v1.1.0-beta.22"
+        required: true
+        type: string
+
+# Shares release.yml's group: both open Play edits.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.tag }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # draft the release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BETA_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          bundler-cache: true
+
+      - name: Check the tester build
+        id: build
+        run: |
+          python3 scripts/release-version.py beta "${BETA_TAG}" > build.txt
+          cat build.txt >> "${GITHUB_OUTPUT}"
+          release_tag="$(sed -n 's/^release_tag=//p' build.txt)"
+          version_code="$(sed -n 's/^version_code=//p' build.txt)"
+          # The phone App Bundle's versionCode (base*2) picks the Play release.
+          echo "phone_version_code=$((version_code * 2))" >> "${GITHUB_OUTPUT}"
+          if [[ "$(gh release view "${BETA_TAG}" --json isPrerelease --jq .isPrerelease 2>/dev/null)" != "true" ]]; then
+            echo "::error::${BETA_TAG} has no published tester build on GitHub."
+            exit 1
+          fi
+          # Play's beta track holds only the newest tester build, so only that
+          # one can be promoted.
+          newest="$(gh release list --limit 100 --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-beta[.][0-9]+$")))][0].tagName')"
+          if [[ "${newest}" != "${BETA_TAG}" ]]; then
+            echo "::error::Play's beta track now holds ${newest}, not ${BETA_TAG}. Promote ${newest}, or make a new tester build of the commit you want."
+            exit 1
+          fi
+          if gh release view "${release_tag}" > /dev/null 2>&1; then
+            echo "::error::${release_tag} already exists (possibly as a draft). Delete the draft to promote again."
+            exit 1
+          fi
+          echo "commit=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${BETA_TAG}" --jq .sha)" >> "${GITHUB_OUTPUT}"
+          # Notes cover everything since the last store release.
+          echo "previous_release=$(gh release view --json tagName --jq .tagName)" >> "${GITHUB_OUTPUT}"
+
+      - name: Write release notes
+        env:
+          RELEASE_TAG: ${{ steps.build.outputs.release_tag }}
+          COMMIT: ${{ steps.build.outputs.commit }}
+          PREVIOUS_RELEASE: ${{ steps.build.outputs.previous_release }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${RELEASE_TAG}" -f target_commitish="${COMMIT}" \
+            -f previous_tag_name="${PREVIOUS_RELEASE}" --jq .body > notes.md
+          notes_dir=fastlane/metadata/android/en-US/changelogs
+          mkdir -p "${notes_dir}"
+          python3 scripts/release-version.py store-notes 500 < notes.md > "${notes_dir}/default.txt"
+          cat "${notes_dir}/default.txt"
+
+      - name: Copy the build to Play production as a draft
+        run: bundle exec fastlane android promote
+        env:
+          PLAY_TRACK: beta
+          PLAY_PROMOTE_TO: production
+          PLAY_VERSION_CODE: ${{ steps.build.outputs.phone_version_code }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+      - name: Draft the GitHub release
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          BUILD: ${{ steps.build.outputs.build }}
+          RELEASE_TAG: ${{ steps.build.outputs.release_tag }}
+          COMMIT: ${{ steps.build.outputs.commit }}
+        run: |
+          gh release download "${BETA_TAG}" --dir apks --pattern '*.apk'
+          {
+            echo "Silo Android ${VERSION}, build ${BUILD}: the tester build ${BETA_TAG}, on Google Play."
+            echo
+            cat notes.md
+            echo
+            echo "### Install"
+            echo
+            echo "Get the app on Google Play, or install the APK with Downloader by AFTVnews: code 1051382 for phones and tablets, 1636227 for Android TV."
+            echo "To download an APK yourself: \`silo-android-${VERSION}-${BUILD}-universal.apk\` for phones and tablets, \`silo-android-tv-${VERSION}-${BUILD}-universal.apk\` for Android TV."
+          } > body.md
+          gh release create "${RELEASE_TAG}" --draft --target "${COMMIT}" \
+            --title "Silo Android ${VERSION}" --notes-file body.md apks/*.apk
+          echo "Drafted ${RELEASE_TAG}. Next: send the Play production draft for review, then publish this release once Play approves it." >> "${GITHUB_STEP_SUMMARY}"

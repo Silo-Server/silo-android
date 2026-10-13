@@ -14,19 +14,20 @@ if (file("google-services.json").isFile) {
     apply(plugin = "com.google.gms.google-services")
 }
 
-// Play's own track vocabulary, plus the two ways a build reaches a device
-// without Play. Validated so a typo can't reach the server as a header value.
-val siloReleaseChannels = listOf("internal", "alpha", "beta", "production", "sideload", "dev")
+// How a build reaches a device: Google Play, an APK from a GitHub release, or a
+// local debug build. Validated so a typo can't reach the server as a header value.
+val siloReleaseChannels = listOf("release", "sideload", "dev")
 
 val siloVersionName = providers
     .gradleProperty("siloVersionName")
     .orElse(providers.environmentVariable("SILO_VERSION_NAME"))
-    // Release builds override this from the validated Git tag in
-    // android-build.yml. Keep local/dev builds aligned with the latest release.
-    .orElse("0.3.11")
+    // Release builds get the store version from scripts/release-version.py
+    // (release.yml). Local builds are 0.0.0 so they never pass for a release.
+    .orElse("0.0.0")
 
-// The per-marketing-version build counter (TestFlight-style). It is folded into
-// the versionCode by CI, but the app also reports it verbatim to the server
+// The build number: one counter for the repository, never reset (see
+// scripts/release-version.py). It is folded into the versionCode by CI, but the
+// app also reports it verbatim to the server
 // (X-Silo-Client-Build) and shows it on the About row, so it has to survive as
 // its own value rather than being reverse-engineered from the versionCode.
 val siloBuildNumber = providers
@@ -34,9 +35,9 @@ val siloBuildNumber = providers
     .orElse(providers.environmentVariable("SILO_BUILD_NUMBER"))
     .map { value ->
         val build = value.toIntOrNull() ?: error("siloBuildNumber must be an integer.")
-        // The same 0..999 window release.yml and the Fastfile enforce, so a
-        // hand-run build can't stamp a counter the release scheme could never
-        // produce. 0 is the unstamped local default; CI itself requires 1..999.
+        // The same window scripts/release-version.py enforces, so a hand-run
+        // build can't stamp a counter the release scheme could never produce.
+        // 0 is the unstamped local default; releases use 1..999.
         require(build in 0..999) {
             "siloBuildNumber must be between 0 and 999 (0 marks an unstamped local build)."
         }
@@ -45,11 +46,10 @@ val siloBuildNumber = providers
     // Local/dev builds have no CI build number; 0 marks "not a release build".
     .orElse("0")
 
-// How the artifact reaches a user, reported as X-Silo-Client-Channel. Release
-// pipelines state it: the Fastfile passes the Play track it is actually
-// uploading to, so a beta-track tester and a production user are told apart
-// rather than both reporting "release". Everything else is a hand-built or
-// sideloaded artifact, which is not on any track.
+// How the artifact reaches a user, reported as X-Silo-Client-Channel: release.yml
+// stamps "release" on the Google Play bundles and "sideload" on the APKs. Play
+// builds don't name their track, because a store release promotes the tested
+// beta build to production without rebuilding it. Matches silo-apple's channels.
 val siloReleaseChannel = providers
     .gradleProperty("siloReleaseChannel")
     .orElse(providers.environmentVariable("SILO_RELEASE_CHANNEL"))
@@ -76,9 +76,9 @@ val siloVersionCode = providers
         }
         code
     }
-    // Bump this per release. base -> phone = base*2, TV = base*2+1. base 6 was
-    // the 12/13 build; base 7 -> phone 14, TV 15.
-    .orElse(7)
+    // Release builds get the base code from scripts/release-version.py
+    // (release.yml); phone = base*2, TV = base*2+1. Local builds use base 1.
+    .orElse(1)
 
 // APK ABI splits (below) are incompatible with the App Bundle build:
 // PerModuleBundleTask.getResourcesFile() expects a single processed-resources

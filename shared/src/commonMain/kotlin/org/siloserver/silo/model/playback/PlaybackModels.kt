@@ -382,12 +382,12 @@ data class ClientPlaybackContext(
     @SerialName("form_factor") val formFactor: String,
     @SerialName("app_version") val appVersion: String,
     /**
-     * CI's per-marketing-version build counter behind [appVersion], so two
-     * builds sharing a version name are still distinguishable in the server's
-     * session/activity views. Null where the platform has no such value.
+     * CI's build counter behind [appVersion], so two builds sharing a version
+     * name are still distinguishable in the server's session/activity views.
+     * Null where the platform has no such value.
      */
     @SerialName("app_build") val appBuild: String? = null,
-    /** How this build was distributed — "release" / "beta" / "sideload" / "dev". */
+    /** How this build was distributed — "release" / "sideload" / "dev". */
     @SerialName("app_channel") val appChannel: String? = null,
     val device: PlaybackDeviceContext = PlaybackDeviceContext(),
     val output: PlaybackOutputContext = PlaybackOutputContext(),

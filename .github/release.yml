@@ -1,0 +1,15 @@
+# Groups the release notes GitHub generates by the labels silo-triage puts on
+# pull requests. Store notes keep only the Features and Fixes sections
+# (scripts/release-version.py). See docs/releasing.md.
+changelog:
+  categories:
+    - title: 🚀 Features
+      labels: [enhancement]
+    - title: 🐛 Fixes
+      labels: [bug]
+    - title: 📚 Documentation
+      labels: [documentation]
+    - title: 📦 Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]

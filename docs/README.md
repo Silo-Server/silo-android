@@ -29,6 +29,10 @@ Start with the root [README](../README.md) for architecture/build instructions a
   profiles are excluded.
   No third-party observability SDK is part of the Android implementation.
 
+## Releasing
+
+- How to make tester builds and store releases: [`releasing.md`](releasing.md)
+
 ## API v2
 
 - Status: [`api-v2/android-migration-status.md`](api-v2/android-migration-status.md)

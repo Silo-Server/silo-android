@@ -49,12 +49,12 @@ Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Vide
 
 ## Install APKs
 
-Latest debug APKs are published on each tagged release.
+Each store release publishes release-signed APKs, and these links always serve the latest one. Tester builds are GitHub prereleases; see [docs/releasing.md](docs/releasing.md).
 
 | App | Downloader code | Downloader link | Direct APK |
 |---|---:|---|---|
-| Android | `1051382` | <http://aftv.news/1051382> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-latest-universal-debug.apk> |
-| Android TV | `1636227` | <http://aftv.news/1636227> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-tv-latest-universal-debug.apk> |
+| Android | `1051382` | <http://aftv.news/1051382> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-latest-universal-release.apk> |
+| Android TV | `1636227` | <http://aftv.news/1636227> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-tv-latest-universal-release.apk> |
 
 Install **Downloader by AFTVnews** on Android TV / Google TV, enter the code for the app you want, then allow APK installs from Downloader when prompted.
 

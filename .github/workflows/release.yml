@@ -1,203 +1,143 @@
 name: Release
 
-# One release pipeline, playing the role of silo-apple's TestFlight
-# (release.yml) and sideload (sideload-ipa.yml) workflows combined: a version
-# tag or a manual dispatch prepares both App Bundles for Google Play and
-# signed sideload APKs in parallel, then attaches the APKs to a GitHub release for
-# the same version. Dispatch runs mint the v<version> tag when creating the
-# GitHub release — no manual tagging is necessary (apple's sideload pattern).
-#
-# Versioning mirrors silo-apple's marketing-version + build-number split.
-# Play itself has no such split — versionCode is the only monotonic counter,
-# and versionName is a free-form display string that may repeat. So a build
-# number is folded into the versionCode while versionName stays put, letting
-# 1.0.0 ship repeatedly as build 1, 2, 3 the way TestFlight does.
-#
-#   base = VERSION_CODE_EPOCH + (major*10000 + minor*100 + patch)*1000 + build
-#
-# Gradle then ships phone = base*2 and TV = base*2+1. VERSION_CODE_EPOCH
-# (100_000_000) lifts every code produced by this scheme above the largest
-# code the previous major*1e6+minor*1e3+patch scheme could emit, so the
-# switchover stays strictly increasing — Play rejects any code it has seen.
-# Bounds: major <= 94, minor/patch <= 99, build <= 999 (enforced below and
-# again in the Fastfile), keeping base under Gradle's 1_049_999_999 cap.
-#
-#   - Prerelease-suffixed tags (v1.2.3-rc.1) still skip the Play publish but
-#     produce sideload APKs and a GitHub release.
-#   - No per-platform selection: phone and TV share one applicationId, and a
-#     new Play track release supersedes the previous one, so both artifacts
-#     always ship together in a single Play edit.
-#
-# APKs are only released when the Play publish succeeded (or was skipped for
-# a prerelease tag), so the Play track and the GitHub release never diverge.
+# Makes a tester build of the phone and TV apps: tags the commit
+# vX.Y.Z-beta.B, uploads both App Bundles to the Google Play beta track, and
+# publishes the APKs on a GitHub prerelease with notes on what changed since
+# the last build. promote.yml turns a tester build into a store release.
+# See docs/releasing.md.
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: "Marketing version (e.g. 1.4.0)"
-        required: true
-        type: string
-      build_number:
-        description: "Build number for this version (1-999; bump to re-release the same version)"
-        required: false
-        default: "1"
-        type: string
-      track:
-        description: "Play track to publish to"
+      bump:
+        description: "build = another build of the unreleased version. minor or patch = start the next version after a store release."
         required: true
         type: choice
-        default: beta
+        default: build
         options:
-          - internal
-          - alpha
-          - beta
+          - build
+          - minor
+          - patch
+      version:
+        description: "Optional: use this version (for example 1.2.0) instead of bump."
+        required: false
+        type: string
 
-# Serialize releases: each run opens a Play edit against the same package,
-# and overlapping edits conflict. Let an in-flight release finish.
+# One release at a time: each run takes the next build number and opens a Play
+# edit, and overlapping Play edits conflict.
 concurrency:
   group: release
   cancel-in-progress: false
 
-# Least privilege by default; only publish-release writes (GitHub release).
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  # Resolve version + build number once so every job agrees on them, and gate
-  # prerelease tags out of Play publishing. See the versionCode scheme at the
-  # top of this file; Gradle ships phone = base*2, TV = base*2+1.
-  setup:
+  prepare:
+    name: Choose version and build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag
+      actions: read # check CI on the commit
     outputs:
-      version: ${{ steps.ver.outputs.version }}
-      version_name: ${{ steps.ver.outputs.version_name }}
-      build_number: ${{ steps.ver.outputs.build_number }}
-      version_code: ${{ steps.ver.outputs.version_code }}
-      play_publish: ${{ steps.ver.outputs.play_publish }}
-      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      build: ${{ steps.version.outputs.build }}
+      tag: ${{ steps.version.outputs.tag }}
+      previous_tag: ${{ steps.version.outputs.previous_tag }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      play_notes: ${{ steps.notes.outputs.play_notes }}
     steps:
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main."
+          exit 1
+
       - name: Check out sources
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          fetch-depth: 0 # all tags
           persist-credentials: false
 
-      - name: Check build supply chain
-        run: |
-          ./scripts/test-release-workflow.sh
-          ./scripts/test-check-build-supply-chain.sh
-          ./scripts/check-build-supply-chain.sh
-
-      - id: ver
-        shell: bash
+      - name: Require CI to have passed on this commit
         env:
-          GH_EVENT_NAME: ${{ github.event_name }}
-          GH_REF_NAME: ${{ github.ref_name }}
-          INPUT_VERSION: ${{ inputs.version }}
-          INPUT_BUILD_NUMBER: ${{ inputs.build_number }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-
-          # Lifts this scheme above every code the old
-          # major*1e6+minor*1e3+patch scheme could emit, so codes stay
-          # strictly increasing across the switchover.
-          epoch=100000000
-
-          if [[ "${GH_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            version="${INPUT_VERSION#v}"
-            # Dispatch runs always publish to Play. The version is a display
-            # string, but it also feeds the versionCode, so keep it strict —
-            # this doubles as the gate against shell/property injection.
-            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::Version must look like 1.4.0 (no prerelease suffix for Play releases)."
-              exit 1
-            fi
-            build="${INPUT_BUILD_NUMBER:-1}"
-            if [[ ! "${build}" =~ ^[0-9]+$ ]]; then
-              echo "::error::Build number must be a plain integer (got '${build}')."
-              exit 1
-            fi
-            play_publish=true
-            # Build 1 keeps the bare vX.Y.Z tag; later builds of the same
-            # version get their own tag so GitHub releases never collide.
-            if (( 10#$build == 1 )); then
-              tag="v${version}"
-            else
-              tag="v${version}+${build}"
-            fi
-          else
-            version="${GH_REF_NAME#v}"
-            # -suffix marks a prerelease (no Play publish); +N is build
-            # metadata and still publishes.
-            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9]+)?$ ]]; then
-              echo "::error::Tag must look like v1.2.3, v1.2.3+2, or v1.2.3-rc.1."
-              exit 1
-            fi
-            # A prerelease suffix deliberately does NOT feed the build counter.
-            # The counter is folded into the versionCode, so deriving it from
-            # -rc.N would make a sideloaded v1.2.3-rc.2 (base+2) outrank the
-            # official v1.2.3 (base+1) and block that upgrade on the device —
-            # and it would still not tell -rc.2 apart from +2, which resolve to
-            # the same counter. Prerelease artifacts are distinguished by their
-            # tag; see the note in the PR for the reporting limitation.
-            if [[ "${version}" == *+* ]]; then
-              build="${version##*+}"
-            else
-              build=1
-            fi
-            if [[ "${version}" == *-* ]]; then
-              echo "Prerelease tag ${GH_REF_NAME} — skipping Play publish (sideload-only release)."
-              play_publish=false
-            else
-              play_publish=true
-            fi
-            tag="${GH_REF_NAME}"
-          fi
-
-          base_version="${version%%[-+]*}"
-          IFS=. read -r major minor patch <<< "${base_version}"
-          if (( 10#$major > 94 )); then
-            echo "::error::Major version must be <= 94 to stay under Play's versionCode ceiling."
-            exit 1
-          fi
-          if (( 10#$minor > 99 || 10#$patch > 99 )); then
-            echo "::error::Minor and patch must each be <= 99 (the versionCode packs them into two digits each)."
-            exit 1
-          fi
-          if (( 10#$build < 1 || 10#$build > 999 )); then
-            echo "::error::Build number must be between 1 and 999."
+          conclusion="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow android-build.yml \
+            --commit "${GITHUB_SHA}" --event push --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+          if [[ "${conclusion}" != "success" ]]; then
+            echo "::error::Android Builds has not passed on ${GITHUB_SHA::9} (${conclusion:-still running or missing}). Release once it is green."
             exit 1
           fi
 
-          version_part=$((10#$major * 10000 + 10#$minor * 100 + 10#$patch))
-          version_code=$((epoch + version_part * 1000 + 10#$build))
-          if (( version_code <= 0 || version_code > 1049999999 )); then
-            echo "::error::Version code ${version_code} is out of range."
+      # A promoted version waiting for Play review (a draft vX.Y.Z release)
+      # counts as released.
+      - name: Choose version and build
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          drafts=()
+          while read -r draft; do
+            drafts+=(--draft "${draft}")
+          done < <(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,isDraft \
+            --jq '.[] | select(.isDraft) | .tagName')
+          python3 scripts/release-version.py next --bump "${BUMP}" --version "${VERSION}" "${drafts[@]}" |
+            tee -a "${GITHUB_OUTPUT}"
+
+      # A tag without a release comes from a run that failed before publishing.
+      # Starting this build's notes there would leave out changes no tester got.
+      - name: Require the previous build to have shipped
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          if [[ -n "${PREVIOUS_TAG}" ]] && ! gh release view "${PREVIOUS_TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null; then
+            echo "::error::${PREVIOUS_TAG} has no release, so its run failed. Re-run that run's failed jobs, or delete the tag, then run Release again."
             exit 1
           fi
 
+      # Play's "What's new": the Features and Fixes since the last build. Written
+      # here because generating notes needs contents: write.
+      - name: Write Play release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+        run: |
+          delimiter="play_notes_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
           {
-            echo "version=${version}"
-            # The plain major.minor.patch that Gradle and Play see as the
-            # versionName; ${version} may still carry a -rc/+build suffix.
-            echo "version_name=${base_version}"
-            echo "build_number=${build}"
-            echo "version_code=${version_code}"
-            echo "play_publish=${play_publish}"
-            echo "tag=${tag}"
+            echo "play_notes<<${delimiter}"
+            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="${TAG}" -f target_commitish="${GITHUB_SHA}" \
+              ${PREVIOUS_TAG:+-f previous_tag_name="${PREVIOUS_TAG}"} --jq .body |
+              python3 scripts/release-version.py store-notes 500
+            echo "${delimiter}"
           } >> "${GITHUB_OUTPUT}"
-          echo "Releasing ${version} build ${build} (base code ${version_code}, phone $((version_code * 2)), TV $((version_code * 2 + 1)), tag ${tag}, play_publish=${play_publish})."
 
-  # Releases stay gated on unit tests, as they were when android-build.yml
-  # owned the APK release path.
-  unit-tests:
-    name: Unit tests
-    needs: [setup]
+      # Tagging last in this job reserves the build number once everything
+      # above succeeded. A later failure keeps the tag: re-run the run's failed
+      # jobs (see docs/releasing.md).
+      - name: Tag the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" --silent
+
+  play:
+    name: Upload to Google Play beta
+    needs: prepare
     runs-on: ubuntu-latest
-
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD: ${{ needs.prepare.outputs.build }}
     steps:
       - name: Check out sources
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -213,8 +153,22 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
 
-      # Robolectric downloads its Android runtimes outside Gradle's cache.
-      # Share the normal CI key so releases reuse those runtime downloads.
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
+        with:
+          bundler-cache: true
+
+      - name: Decode signing key and Firebase config
+        run: scripts/decode-release-secrets.sh
+        env:
+          SILO_RELEASE_KEYSTORE_B64: ${{ secrets.SILO_RELEASE_KEYSTORE_B64 }}
+          SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
+          SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
+          SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
+
+      # All unit tests, debug and release variants, on this exact commit before
+      # anything reaches Play. CI's run on main can skip them (a docs-only
+      # change after a cancelled run) and only covers the debug variant.
       - name: Cache Robolectric Android runtimes
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -224,10 +178,7 @@ jobs:
             robolectric-${{ runner.os }}-
 
       - name: Run unit tests
-        shell: bash
         run: |
-          set -euo pipefail
-
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             test \
@@ -238,23 +189,48 @@ jobs:
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: unit-test-reports
-          path: |
-            **/build/reports/tests/**
+          path: "**/build/reports/tests/**"
           if-no-files-found: ignore
 
-  # Prepare final signed bundles while tests run. Publication consumes these
-  # exact bytes only after both preparation and tests succeed.
-  play-bundles:
-    name: Prepare Google Play bundles
-    needs: [setup]
-    if: ${{ needs.setup.outputs.play_publish == 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      artifact_id: ${{ steps.bundles.outputs.artifact-id }}
-      artifact_name: ${{ steps.identity.outputs.artifact_name }}
-      producer_attempt: ${{ steps.identity.outputs.producer_attempt }}
-      manifest_sha256: ${{ steps.identity.outputs.manifest_sha256 }}
+      - name: Build App Bundles
+        env:
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+          SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
+          SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
+          SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
+        run: |
+          ./gradlew \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
+            :androidApp:bundleRelease :androidTvApp:bundleRelease \
+            "-PsiloVersionName=${VERSION}" \
+            "-PsiloBuildNumber=${BUILD}" \
+            "-PsiloVersionCode=${VERSION_CODE}" \
+            -PsiloReleaseChannel=release \
+            --max-workers=2
 
+      - name: Write Play release notes
+        env:
+          PLAY_NOTES: ${{ needs.prepare.outputs.play_notes }}
+        run: |
+          notes_dir=fastlane/metadata/android/en-US/changelogs
+          mkdir -p "${notes_dir}"
+          printf '%s\n' "${PLAY_NOTES}" > "${notes_dir}/default.txt"
+          cat "${notes_dir}/default.txt"
+
+      - name: Upload to the beta track
+        run: bundle exec fastlane android upload
+        env:
+          PLAY_TRACK: beta
+          PLAY_RELEASE_NAME: ${{ env.VERSION }} (${{ env.BUILD }})
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+
+  apks:
+    name: Build APKs
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD: ${{ needs.prepare.outputs.build }}
     steps:
       - name: Check out sources
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -270,310 +246,93 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
 
-      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
-        with:
-          bundler-cache: true
-
-      - name: Prepare signed Google Play bundles
-        run: bundle exec fastlane android prepare_bundles
+      - name: Decode signing key and Firebase config
+        run: scripts/decode-release-secrets.sh
         env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
-          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
-          PLAY_TRACK: ${{ inputs.track || 'beta' }}
           SILO_RELEASE_KEYSTORE_B64: ${{ secrets.SILO_RELEASE_KEYSTORE_B64 }}
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
-          SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
           SILO_GOOGLE_SERVICES_JSON_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
 
-      - name: Identify bundle artifact
-        id: identity
-        shell: bash
-        run: |
-          set -euo pipefail
-          manifest_sha256="$(sha256sum build/play-bundles-manifest.json | cut -d ' ' -f1)"
-          {
-            echo "artifact_name=android-play-bundles-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-            echo "producer_attempt=${GITHUB_RUN_ATTEMPT}"
-            echo "manifest_sha256=${manifest_sha256}"
-          } >> "${GITHUB_OUTPUT}"
-
-      - name: Upload prepared Play bundles
-        id: bundles
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: ${{ steps.identity.outputs.artifact_name }}
-          path: |
-            androidApp/build/outputs/bundle/release/androidApp-release.aab
-            androidTvApp/build/outputs/bundle/release/androidTvApp-release.aab
-            build/play-bundles-manifest.json
-          if-no-files-found: error
-          compression-level: 0
-
-  play:
-    name: Publish to Google Play
-    needs: [setup, unit-tests, play-bundles]
-    if: ${{ needs.setup.outputs.play_publish == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - name: Check out sources
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1
-        with:
-          bundler-cache: true
-
-      - name: Verify bundle artifact provenance
-        shell: bash
+      # A separate Gradle run from the bundles: per-ABI APK splits are switched
+      # off whenever a bundle task runs (see isBuildingBundle).
+      - name: Build APKs
         env:
-          GH_TOKEN: ${{ github.token }}
-          PLAY_BUNDLE_ARTIFACT_ID: ${{ needs.play-bundles.outputs.artifact_id }}
-          PLAY_BUNDLE_ARTIFACT_NAME: ${{ needs.play-bundles.outputs.artifact_name }}
-          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
-          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
-        run: |
-          set -euo pipefail
-          [[ "${GITHUB_REPOSITORY}" == 'Silo-Server/silo-android' ]]
-          [[ "${PLAY_BUNDLE_ARTIFACT_ID}" =~ ^[1-9][0-9]*$ ]]
-          [[ "${SILO_PLAY_BUNDLE_MANIFEST_SHA256}" =~ ^[0-9a-f]{64}$ ]]
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${PLAY_BUNDLE_ARTIFACT_ID}" |
-            ruby fastlane/play_bundle_manifest.rb verify-artifact
-
-      - name: Download prepared Play bundles
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          artifact-ids: ${{ needs.play-bundles.outputs.artifact_id }}
-          path: .
-
-      - name: Upload verified bundles to Google Play
-        run: bundle exec fastlane android upload_bundles
-        env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
-          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
-          PLAY_TRACK: ${{ inputs.track || 'beta' }}
-          SILO_PLAY_BUNDLE_ATTEMPT: ${{ needs.play-bundles.outputs.producer_attempt }}
-          SILO_PLAY_BUNDLE_MANIFEST_SHA256: ${{ needs.play-bundles.outputs.manifest_sha256 }}
-          PLAY_RELEASE_NOTES: ${{ vars.PLAY_RELEASE_NOTES }}
-          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-
-  # Prepare signed sideload APKs alongside Play after setup and tests succeed.
-  # publish-release waits for both paths before exposing the APKs.
-  apks:
-    name: ${{ matrix.name }}
-    needs: [setup, unit-tests]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Android phone release APK
-            module: androidApp
-            artifact-name: android-phone-release-apks
-            apk-path: androidApp/build/outputs/apk/release/*.apk
-            release-prefix: silo-android
-          - name: Android TV release APK
-            module: androidTvApp
-            artifact-name: android-tv-release-apks
-            apk-path: androidTvApp/build/outputs/apk/release/*.apk
-            release-prefix: silo-android-tv
-
-    steps:
-      - name: Check out sources
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
-
-      - name: Decode release keystore
-        shell: bash
-        env:
-          KEYSTORE_B64: ${{ secrets.SILO_RELEASE_KEYSTORE_B64 }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${KEYSTORE_B64}" ]]; then
-            echo "::error::SILO_RELEASE_KEYSTORE_B64 secret is not set."
-            exit 1
-          fi
-
-          keystore_path="${RUNNER_TEMP}/silo-release.jks"
-          printf '%s' "${KEYSTORE_B64}" | base64 -d > "${keystore_path}"
-          echo "SILO_RELEASE_KEYSTORE=${keystore_path}" >> "${GITHUB_ENV}"
-
-      # Optional: FCM config for push notifications. The app degrades
-      # gracefully without it (push registration is skipped), but release
-      # builds should ship with push working. Encode with:
-      #   base64 < androidApp/google-services.json | tr -d '\n'
-      - name: Decode google-services.json
-        shell: bash
-        env:
-          GOOGLE_SERVICES_B64: ${{ secrets.SILO_GOOGLE_SERVICES_JSON_B64 }}
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${GOOGLE_SERVICES_B64}" ]]; then
-            echo "::warning::SILO_GOOGLE_SERVICES_JSON_B64 is not set; building without FCM push support."
-            exit 0
-          fi
-
-          printf '%s' "${GOOGLE_SERVICES_B64}" | base64 -d > androidApp/google-services.json
-          echo "Wrote androidApp/google-services.json."
-
-      - name: Build release APK
-        shell: bash
-        env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version_name }}
-          SILO_DISPLAY_VERSION: ${{ needs.setup.outputs.version }}
-          SILO_VERSION_CODE: ${{ needs.setup.outputs.version_code }}
+          VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
           SILO_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.SILO_RELEASE_KEYSTORE_PASSWORD }}
           SILO_RELEASE_KEY_PASSWORD: ${{ secrets.SILO_RELEASE_KEY_PASSWORD }}
           SILO_RELEASE_KEY_ALIAS: ${{ secrets.SILO_RELEASE_KEY_ALIAS }}
-          SILO_BUILD_NUMBER: ${{ needs.setup.outputs.build_number }}
         run: |
-          set -euo pipefail
-
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
-            ":${{ matrix.module }}:assembleRelease" \
-            "-PsiloVersionName=${SILO_VERSION_NAME}" \
-            "-PsiloDisplayVersion=${SILO_DISPLAY_VERSION}" \
-            "-PsiloVersionCode=${SILO_VERSION_CODE}" \
-            "-PsiloBuildNumber=${SILO_BUILD_NUMBER}" \
-            "-PsiloReleaseChannel=sideload" \
+            :androidApp:assembleRelease :androidTvApp:assembleRelease \
+            "-PsiloVersionName=${VERSION}" \
+            "-PsiloBuildNumber=${BUILD}" \
+            "-PsiloVersionCode=${VERSION_CODE}" \
+            -PsiloReleaseChannel=sideload \
             --max-workers=2
 
-      - name: Collect release APKs
-        shell: bash
-        env:
-          SILO_VERSION_NAME: ${{ needs.setup.outputs.version }}
+      # androidApp-arm64-v8a-release.apk -> silo-android-1.1.0-22-arm64-v8a.apk
+      - name: Name the APKs
         run: |
-          set -euo pipefail
-
-          version_label="${SILO_VERSION_NAME:-dev}"
-          artifact_dir="release-artifacts/${{ matrix.artifact-name }}"
-          mkdir -p "${artifact_dir}"
-
-          for apk in ${{ matrix.apk-path }}; do
-            apk_name="$(basename "${apk}")"
-            variant="${apk_name#${{ matrix.module }}-}"
-            cp "${apk}" "${artifact_dir}/${{ matrix.release-prefix }}-${version_label}-${variant}"
+          mkdir apks
+          for module in androidApp androidTvApp; do
+            prefix=silo-android
+            [[ "${module}" == androidTvApp ]] && prefix=silo-android-tv
+            for apk in "${module}"/build/outputs/apk/release/"${module}"-*-release.apk; do
+              variant="${apk##*/"${module}"-}"
+              cp "${apk}" "apks/${prefix}-${VERSION}-${BUILD}-${variant%-release.apk}.apk"
+            done
           done
-
-      - name: Upload release APKs
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: release-artifacts/${{ matrix.artifact-name }}/*.apk
-          if-no-files-found: error
-
-  # Create or update the GitHub release and attach the APKs. For dispatch
-  # runs the tag does not exist yet — gh release create mints it at the
-  # released commit (--target), mirroring silo-apple's sideload workflow, so
-  # no manual tagging is necessary. Tags created with GITHUB_TOKEN do not
-  # re-trigger workflows, so this cannot recurse.
-  publish-release:
-    name: Publish GitHub Release
-    needs: [setup, unit-tests, play-bundles, play, apks]
-    if: >-
-      ${{ !cancelled() &&
-          needs.setup.result == 'success' &&
-          needs.unit-tests.result == 'success' &&
-          needs.apks.result == 'success' &&
-          ((needs.setup.outputs.play_publish == 'true' && needs.play-bundles.result == 'success' && needs.play.result == 'success') ||
-           (needs.setup.outputs.play_publish == 'false' && needs.play-bundles.result == 'skipped' && needs.play.result == 'skipped')) }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download APK artifacts
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
-        with:
-          pattern: android-*-release-apks
-          path: release-artifacts
-
-      - name: Create or update release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.setup.outputs.tag }}
-          RELEASE_VERSION: ${{ needs.setup.outputs.version }}
-        run: |
-          set -euo pipefail
-          shopt -s globstar nullglob
-
-          # Transfer each APK once, then recreate the universal aliases here.
-          # Downloader by AFTVnews still redirects to the debug-named aliases.
-          for prefix in silo-android silo-android-tv; do
-            universal_apks=(release-artifacts/**/"${prefix}-${RELEASE_VERSION}-universal-release.apk")
-            if (( ${#universal_apks[@]} != 1 )) || [[ ! -s "${universal_apks[0]}" ]]; then
-              echo "::error::Expected one nonempty universal APK for ${prefix}."
-              exit 1
-            fi
-            universal_apk="${universal_apks[0]}"
-            artifact_dir="$(dirname "${universal_apk}")"
-            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-release.apk"
-            cp "${universal_apk}" "${artifact_dir}/${prefix}-latest-universal-debug.apk"
-          done
-
-          release_title="Silo Android ${RELEASE_TAG}"
-          android_latest_url="https://github.com/${GH_REPO}/releases/latest/download/silo-android-latest-universal-release.apk"
-          android_tv_latest_url="https://github.com/${GH_REPO}/releases/latest/download/silo-android-tv-latest-universal-release.apk"
-          android_downloader_url="http://aftv.news/1051382"
-          android_tv_downloader_url="http://aftv.news/1636227"
-          release_notes="$(cat <<EOF
-          Release APK builds for ${RELEASE_TAG}.
-
-          Note: builds are now release-signed. Updating from an older
-          debug-signed install requires uninstalling the app once.
-
-          Install with Downloader by AFTVnews:
-
-          Android:
-          Code 1051382
-          ${android_downloader_url}
-
-          Android TV:
-          Code 1636227
-          ${android_tv_downloader_url}
-
-          Latest Android APK:
-          ${android_latest_url}
-
-          Latest Android TV APK:
-          ${android_tv_latest_url}
-          EOF
-          )"
-          apk_files=(release-artifacts/**/*.apk)
-
-          if (( ${#apk_files[@]} == 0 )); then
-            echo "::error::No APK files were downloaded for release upload."
+          ls apks
+          if [[ "$(find apks -name '*.apk' | wc -l)" -ne 8 ]]; then
+            echo "::error::Expected 8 APKs: phone and TV, each per ABI and universal."
             exit 1
           fi
 
-          if ! gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            gh release create "${RELEASE_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "${release_title}" \
-              --notes "${release_notes}"
-          else
-            gh release edit "${RELEASE_TAG}" \
-              --title "${release_title}" \
-              --notes "${release_notes}"
-          fi
+      - name: Upload APKs
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: apks
+          path: apks/*.apk
+          if-no-files-found: error
 
-          gh release upload "${RELEASE_TAG}" "${apk_files[@]}" --clobber
+  publish:
+    name: Publish the GitHub prerelease
+    needs: [prepare, play, apks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      BUILD: ${{ needs.prepare.outputs.build }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: apks
+          path: apks
+
+      - name: Publish the prerelease
+        run: |
+          {
+            echo "Tester build ${VERSION} (${BUILD}), also on the Google Play beta track."
+            echo
+            gh api "repos/${GH_REPO}/releases/generate-notes" \
+              -f tag_name="${TAG}" ${PREVIOUS_TAG:+-f previous_tag_name="${PREVIOUS_TAG}"} --jq .body
+            echo
+            echo "### Install"
+            echo
+            echo "Phones and tablets: \`silo-android-${VERSION}-${BUILD}-universal.apk\`."
+            echo "Android TV: \`silo-android-tv-${VERSION}-${BUILD}-universal.apk\`."
+            echo
+            echo "The Downloader codes (1051382 for phones, 1636227 for Android TV) install the latest store release, not this tester build."
+          } > notes.md
+          # A prerelease never becomes Latest, so the Downloader codes and the
+          # releases/latest links keep pointing at the store release.
+          gh release create "${TAG}" --verify-tag --prerelease \
+            --title "Silo Android ${VERSION} (${BUILD})" --notes-file notes.md apks/*.apk

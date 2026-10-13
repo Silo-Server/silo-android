@@ -645,7 +645,7 @@ private fun SettingsRail(
             onFocused = { railActionHasFocus = true },
         )
         Text(
-            text = "Silo ${clientVersionLabel(BuildConfig.DISPLAY_VERSION, BuildConfig.BUILD_NUMBER)}",
+            text = "Silo ${clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER)}",
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier.padding(start = 12.dp, top = 6.dp),
@@ -2196,7 +2196,7 @@ private fun TvServerSettingsPane(
                 // report names the build the server's admin Activity page shows.
                 SettingsInfoRow(
                     label = "App Version",
-                    value = clientVersionLabel(BuildConfig.DISPLAY_VERSION, BuildConfig.BUILD_NUMBER),
+                    value = clientVersionLabel(BuildConfig.VERSION_NAME, BuildConfig.BUILD_NUMBER),
                 )
                 // tvOS About: the policy as a QR code, for a device with a browser.
                 SettingsActionRow(

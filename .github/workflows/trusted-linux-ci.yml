@@ -61,7 +61,8 @@ jobs:
         run: |
           ./scripts/test-check-build-supply-chain.sh
           ./scripts/check-build-supply-chain.sh
-          ./scripts/test-release-workflow.sh
+          python3 scripts/test-release-version.py -v
+          ruby scripts/test-fastlane-lanes.rb
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
 
@@ -263,8 +264,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # CI exercises debug variants; release.yml retains the host tests for
-          # distinct release behavior and BuildConfig values.
+          # CI exercises debug variants; release.yml runs the release variant's
+          # host tests (release behavior and BuildConfig values) before Play.
           ./gradlew \
             -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             testDebugUnitTest \
