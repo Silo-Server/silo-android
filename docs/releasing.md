@@ -20,8 +20,9 @@ The very first run has no tester build to continue from: enter `1.0.0` as
 `version`.
 
 If a run fails, use **Re-run failed jobs**: it keeps the same tag and build
-number. Delete the tag instead only if the run failed before **Upload to Google
-Play beta** finished: once Play has a build number, a new run must not reuse it.
+number. Delete the tag instead only if that run never uploaded to Play. If Play
+received the build, or you can't tell, keep the tag: a new run must not reuse a
+build number Play has seen.
 The next run refuses to start while the newest tag has no release, so its notes
 don't skip changes no tester got.
 
