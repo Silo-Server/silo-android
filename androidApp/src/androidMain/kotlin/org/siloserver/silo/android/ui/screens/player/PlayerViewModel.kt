@@ -3528,7 +3528,6 @@ class PlayerViewModel(
     ) {
         if (!inRoom) return
         roomEngineSeekable = currentItemSeekable
-        roomEngineSpeed = playbackSpeed?.takeIf { it.isFinite() && it > 0.0 }
         roomEnginePlayWhenReady = playWhenReady
         roomEngineIsPlaying = isPlaying
         roomEngineState = roomPlayerState(playbackState)
@@ -3540,6 +3539,8 @@ class PlayerViewModel(
             val serverDuration = state.serverDuration.takeIf { it > 0.0 }
             roomEnginePlayerSec = playerSec
             roomEngineSampledAtMs = SystemClock.elapsedRealtime()
+            // Speed of the media the room sees, not of media being replaced.
+            roomEngineSpeed = playbackSpeed?.takeIf { it.isFinite() && it > 0.0 }
             roomEngineBufferedPlayerSec = bufferedPositionMs.coerceAtLeast(0L) / 1000.0
             // onPositionChanged's source mapping, without the presentation
             // guard that holds the scrubber on a pending seek target.
@@ -3556,6 +3557,7 @@ class PlayerViewModel(
         roomEngineSourceSec = state.position
         roomEngineSampledAtMs = null
         roomEngineSeekable = false
+        roomEngineSpeed = null
         refreshRoomObservation()
     }
 

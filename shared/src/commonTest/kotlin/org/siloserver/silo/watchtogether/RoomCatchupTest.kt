@@ -169,6 +169,21 @@ class RoomCatchupTest {
     }
 
     @Test
+    fun `an expired reload admits a replacement at once and keeps growing the backoff`() {
+        val budget = RoomReloadBudget()
+        budget.begin(10.0, nowMs = 0)
+        budget.expire(nowMs = 30_000)
+        assertFalse(budget.inFlight)
+        assertTrue(budget.allowed(30_000))
+
+        // The attempt count stood: the second attempt backs off 20 s, not 10 s.
+        budget.begin(20.0, nowMs = 30_000)
+        budget.abandon(nowMs = 31_000)
+        assertFalse(budget.allowed(50_999))
+        assertTrue(budget.allowed(51_000))
+    }
+
+    @Test
     fun `an unlanded reload stops blocking after thirty seconds and settling resets backoff`() {
         val budget = RoomReloadBudget()
         budget.begin(10.0, nowMs = 0)

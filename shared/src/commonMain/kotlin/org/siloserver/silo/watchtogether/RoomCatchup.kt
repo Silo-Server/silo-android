@@ -235,6 +235,18 @@ class RoomReloadBudget(
         nextAllowedAtMs = nowMs + backoffMs()
     }
 
+    /**
+     * The reload went stale without landing: it is over, and a replacement
+     * may start at once. Unlike [abandon] this adds no backoff, so a viewer
+     * left behind by a load that never arrived is not held back further.
+     * The attempt count stands, so later backoffs keep growing.
+     */
+    fun expire(nowMs: Long) {
+        targetSeconds = null
+        loadStarted = false
+        nextAllowedAtMs = nowMs
+    }
+
     /** The viewer reached the room: the next drift starts a fresh backoff. */
     fun settle() {
         attempts = 0

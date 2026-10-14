@@ -622,6 +622,51 @@ class RoomPlaybackBindingTest {
         assertTrue(player.rates.isEmpty())
         advanceTimeBy(2_000)
         assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        // The expired reload adds no backoff: the next large correction reloads at once.
+        command(room, "r2", TransportAction.Play, 140.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        assertEquals(2, player.seeks.size)
+    }
+
+    @Test
+    fun `rate support is not judged while a command is pending`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        // The engine still says 1x past the confirmation window, but a
+        // command is scheduled: the rate stands until it executes.
+        command(room, "later", TransportAction.Play, 101.5, RoomPlaybackState.Playing, executeInMs = 1_500)
+        advanceTimeBy(1_400)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+    }
+
+    @Test
+    fun `a seek or remount measures rate support again`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 2.0, forMs = 1_200)
+        assertEquals(1, player.seeks.size, "rate support was never ruled out")
+
+        // A same-session remount (server seek recovery) replaces the media.
+        player.update { copy(seekPending = true) }
+        advanceTimeBy(100)
+        player.update { copy(seekPending = false, playbackSpeed = 1.04) }
+        follow(player, drift = 0.0, forMs = 100)
+        player.update { copy(sourcePositionSeconds = sourcePositionSeconds - 2.0) }
+        command(room, "again", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertEquals(1, player.seeks.size)
     }
 
     @Test

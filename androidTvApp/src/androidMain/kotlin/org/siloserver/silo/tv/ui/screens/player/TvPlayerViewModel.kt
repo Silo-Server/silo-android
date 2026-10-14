@@ -993,6 +993,11 @@ class TvPlayerViewModel(
     )
 
     private var roomPlayerSample: TvRoomPlayerSample? = null
+
+    // When the latest transport mount was applied. A sample read before it
+    // describes the replaced item and must not be mapped through the new
+    // plan's timeline.
+    private var roomMountAppliedAtMs = Long.MIN_VALUE
     private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
 
     /** What the player is actually doing, for the room binding. */
@@ -2001,6 +2006,7 @@ class TvPlayerViewModel(
             // absent, which at worst costs an unnecessary reanchor.
             playerWindowIsSeekable = false
             playerWindowEndPlayerMs = -1L
+            roomMountAppliedAtMs = SystemClock.elapsedRealtime()
             pendingNativeSeekAfterMount?.let { targetSeconds ->
                 pendingNativeSeekAfterMount = null
                 // Re-evaluate against the plan that actually won the load;
@@ -4155,6 +4161,7 @@ class TvPlayerViewModel(
         if (roomId == null || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return false
         val sample = roomPlayerSample ?: return false
         if (SystemClock.elapsedRealtime() - sample.sampledAtMs > ROOM_SAMPLE_MAX_AGE_MS) return false
+        if (sample.sampledAtMs <= roomMountAppliedAtMs) return false
         if (sample.playbackState != androidx.media3.common.Player.STATE_READY &&
             sample.playbackState != androidx.media3.common.Player.STATE_BUFFERING
         ) {
@@ -4292,7 +4299,8 @@ class TvPlayerViewModel(
         // Engine truth mapped to source time. While a new mount takes over, the
         // old item's position cannot be mapped through the new timeline, so
         // the last known value stands (and seekPending says it is not a decision).
-        val sampled = sample != null && hasMedia && !transportMountGate.suppressPositionReports
+        val sampled = sample != null && hasMedia && !transportMountGate.suppressPositionReports &&
+            sample.sampledAtMs > roomMountAppliedAtMs
         val position = if (sample != null && sampled) {
             val raw = sample.positionMs.coerceAtLeast(0L) / 1000.0
             val mapped = state.playbackPlan?.timeline?.sourcePositionForPlayer(raw) ?: raw
@@ -4311,7 +4319,7 @@ class TvPlayerViewModel(
             seekPending = roomSeekPending(state),
             suspended = roomHolds.isNotEmpty() || sample?.suppressed == true,
             sampledAtMs = sample?.sampledAtMs?.takeIf { sampled },
-            playbackSpeed = sample?.playbackSpeed,
+            playbackSpeed = sample?.playbackSpeed?.takeIf { sampled },
         )
     }
 

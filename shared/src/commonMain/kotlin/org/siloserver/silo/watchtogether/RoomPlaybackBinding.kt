@@ -492,15 +492,21 @@ class RoomPlaybackBinding(
             stallReported = false
         }
 
-        // Reload pacing and the continuous drift loop.
-        if (obs.seekPending) lastBusyMs = now
+        // Reload pacing and the continuous drift loop. A seek or mount may
+        // put new media under the player (a server seek recovery keeps the
+        // session id), so rate support is measured again afterwards.
+        if (obs.seekPending) {
+            lastBusyMs = now
+            rateUnsupported = false
+        }
         if (obs.sessionId != mountSessionId) {
             mountSessionId = obs.sessionId
             rateUnsupported = false
         }
         if (reloads.inFlight && obs.isPlaying && reloads.landed(obs.sourcePositionSeconds)) reloads.land(now)
-        // A reload that never lands must not hold corrections off for good.
-        if (reloads.stale(now)) reloads.abandon(now)
+        // A reload that never lands must not hold corrections off for good,
+        // nor delay its replacement.
+        if (reloads.stale(now)) reloads.expire(now)
         checkRateHonoured(now, obs)
         retryDeferredReload(now, obs)
         driftLoop(now, snapshot, obs, stalled)
@@ -724,6 +730,8 @@ class RoomPlaybackBinding(
      * speed only to PCM output that is not tunneled). Stop asking.
      */
     private fun checkRateHonoured(now: Long, obs: RoomPlayerObservation) {
+        // A pending command owns the next change; its lead must not reset the rate.
+        if (pending != null) return
         val requested = rateApplied ?: return
         val speed = obs.playbackSpeed ?: return
         if (!obs.isPlaying || obs.state != RoomPlayerState.Ready || obs.seekPending) return

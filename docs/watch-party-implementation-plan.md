@@ -209,7 +209,7 @@ strings; socket frames send several of them as numbers.
 | Server | Waiting deadline 10 s, and only once at least one attached member is ready; past it, the first `ready` resumes the room. Seek tolerance: guest 1 s, host 15 s (a host more than 1 s away re-anchors the room). Maximum command lead 5 s |
 | Server | Buffering pauses the room only if the viewer has not stalled in 5 min, the room has not paused for buffering in 1 min, and the viewer is not already catching up. A lone viewer's stall always pauses and waits past the deadline. A buffering member gets no corrections for up to 30 s. A `state_report` within 1 s of the room with the same pause state marks the member ready. A host drifting 2 s or less is corrected like a guest; a larger jump or a pause mismatch moves the room |
 | Server | `max_member_state_ids` = 200. Picker rows are capped at 20 and 30. Suggestion pages default to 50 |
-| Client (web reference; tune only with evidence) | State reports every 1.5 s. Readiness retry every 500 ms. Ping every 2 s until 4 clock samples, then every 15 s. Command quiet period 250 ms. Buffering report after 2 s of unplayable media. Deadband 0.4 s, settle 0.1 s, hard seek 5 s, paused seek 1 s (in place only), rate 0.96–1.04x at `1 + sign(d) * clamp(|d| / 25 s, 0.01, 0.04)` in 0.005 steps, drift loop every 0.5 s after a 1 s settle. Reload budget: one at a time, 10 s doubling to 60 s, 30 s stale limit, lead ≤ 10 s, capped at the media duration. Reconnect notice after 2 s disconnected. Lower-quality offer after 2 sustained stalls within 5 min |
+| Client (web reference; tune only with evidence) | State reports every 1.5 s. Readiness retry every 500 ms. Ping every 2 s until 4 clock samples, then every 15 s. Command quiet period 250 ms. Buffering report after 2 s of unplayable media. Deadband 0.4 s, settle 0.1 s, hard seek 5 s, paused seek 1 s (in place only), rate 0.96–1.04x at `1 + sign(d) * clamp(abs(d) / 25 s, 0.01, 0.04)` in 0.005 steps, drift loop every 0.5 s after a 1 s settle. Reload budget: one at a time, 10 s doubling to 60 s, 30 s stale limit, lead ≤ 10 s, capped at the media duration. Reconnect notice after 2 s disconnected. Lower-quality offer after 2 sustained stalls within 5 min |
 
 ### Errors
 
@@ -416,7 +416,7 @@ arrives. Rate and play state change only at execution.
 A drift loop runs every 0.5 s while the room, the reference, and the player
 are all playing and ready, no command is pending, the last command finished at
 least 1 s ago, and no reload is in flight. It starts a nudge beyond 0.4 s and
-ends it within 0.1 s. The rate is `1 + sign(d) * clamp(|d| / 25 s, 0.01, 0.04)`,
+ends it within 0.1 s. The rate is `1 + sign(d) * clamp(abs(d) / 25 s, 0.01, 0.04)`,
 quantized to 0.005. On a mount that honours rate it never seeks. It returns
 to exactly 1x when its conditions stop holding; a pending command freezes it, rate included. Drift
 above 5 s is left to the server's correction. A reload older than its 30 s
