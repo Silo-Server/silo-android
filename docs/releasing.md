@@ -71,14 +71,15 @@ released.
 
 ## Downloader and APK links
 
-Downloader by AFTVnews codes 1051382 (phones) and 1636227 (Android TV), the
+Downloader by AFTVnews codes 1141108 (phones) and 2249835 (Android TV), the
 README, and the user manual link to
 `releases/latest/download/silo-android-latest-universal-release.apk` and
 `releases/latest/download/silo-android-tv-latest-universal-release.apk`. When a
 store release is published, `published.yml` copies its APKs to those names.
 Tester builds are prereleases, so they never move these links.
 
-The beta Downloader codes link to the newest tester build instead:
+The beta Downloader codes, 2988950 (phones) and 6033910 (Android TV), link to
+the newest tester build instead:
 `releases/download/beta-latest/silo-android-latest-beta.apk` and
 `releases/download/beta-latest/silo-android-tv-latest-beta.apk`. Every Release
 run moves the `beta-latest` tag to its commit and replaces those two files on

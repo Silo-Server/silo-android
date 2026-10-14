@@ -49,12 +49,19 @@ Android 7.0 and 7.1 (API 24/25) are supported on both phone and Android TV. Vide
 
 ## Install APKs
 
-Each store release publishes release-signed APKs, and these links always serve the latest one. Tester builds are GitHub prereleases; see [docs/releasing.md](docs/releasing.md).
+Each store release publishes release-signed APKs, and these links always serve the latest one.
 
 | App | Downloader code | Downloader link | Direct APK |
 |---|---:|---|---|
-| Android | `1051382` | <http://aftv.news/1051382> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-latest-universal-release.apk> |
-| Android TV | `1636227` | <http://aftv.news/1636227> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-tv-latest-universal-release.apk> |
+| Android | `1141108` | <http://aftv.news/1141108> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-latest-universal-release.apk> |
+| Android TV | `2249835` | <http://aftv.news/2249835> | <https://github.com/Silo-Server/silo-android/releases/latest/download/silo-android-tv-latest-universal-release.apk> |
+
+To test upcoming changes, these links always serve the newest tester build instead. Tester builds have higher version codes than the store build, so going back to the store build means uninstalling first. See [docs/releasing.md](docs/releasing.md).
+
+| App | Downloader code | Downloader link | Direct APK |
+|---|---:|---|---|
+| Android beta | `2988950` | <http://aftv.news/2988950> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-latest-beta.apk> |
+| Android TV beta | `6033910` | <http://aftv.news/6033910> | <https://github.com/Silo-Server/silo-android/releases/download/beta-latest/silo-android-tv-latest-beta.apk> |
 
 Install **Downloader by AFTVnews** on Android TV / Google TV, enter the code for the app you want, then allow APK installs from Downloader when prompted.
 

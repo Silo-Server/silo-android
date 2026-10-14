@@ -3,7 +3,7 @@ name: Store release published
 # When a store release (vX.Y.Z) is published, copy its APKs to the fixed names
 # silo-android-latest-universal-release.apk and
 # silo-android-tv-latest-universal-release.apk. Downloader by AFTVnews codes
-# 1051382 (phones) and 1636227 (Android TV), the README, and the user manual
+# 1141108 (phones) and 2249835 (Android TV), the README, and the user manual
 # reach them through releases/latest/download/, so they always serve the newest
 # store release. Tester builds are prereleases, so they never move these links.
 
