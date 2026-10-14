@@ -67,9 +67,10 @@ data class ItemDetailUiState(
     /** Episode selected inside a series page. Its full detail powers the hero play target and selectors. */
     val selectedEpisodeContentId: String? = null,
     /**
-     * Set when a series opened for one of its episodes cannot load. The page
-     * shows that episode's own detail instead, as the episode-to-series
-     * redirect keeps the episode when its parent cannot open.
+     * Set when a series opened for one of its episodes cannot load (refused,
+     * missing, or offline with nothing cached). The page shows that episode's
+     * own detail instead, as the episode-to-series redirect keeps the episode
+     * when its parent cannot open.
      */
     val episodeFallbackContentId: String? = null,
     val selectedEpisodeDetail: ItemDetail? = null,
@@ -502,10 +503,12 @@ class ItemDetailViewModel(
                     }
                 }
                 is ApiResult.NetworkError -> {
-                    _uiState.update {
-                        it.copy(
+                    _uiState.update { state ->
+                        state.copy(
                             isLoading = false,
                             error = "Network error. Check your connection.",
+                            // Offline, the episode may still be cached when its series is not.
+                            episodeFallbackContentId = initialEpisodeContentId.takeIf { state.detail == null },
                         )
                     }
                 }
