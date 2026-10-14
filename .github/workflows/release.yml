@@ -83,8 +83,9 @@ jobs:
           BUMP: ${{ inputs.bump }}
           VERSION: ${{ inputs.version }}
         run: |
-          draft_tags="$(gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,isDraft \
-            --jq '.[] | select(.isDraft) | .tagName')"
+          # Read every page: a draft can be older than the newest 100 releases.
+          draft_tags="$(gh api "repos/${GITHUB_REPOSITORY}/releases" --paginate \
+            --jq '.[] | select(.draft) | .tag_name')"
           drafts=()
           for draft in ${draft_tags}; do
             drafts+=(--draft "${draft}")
