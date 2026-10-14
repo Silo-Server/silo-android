@@ -992,10 +992,16 @@ class ItemDetailViewModel(
                             episodes.map { row -> current[row.contentId]?.let(row::withTranslatedDescription) ?: row }
                         } else episodes
                         val cache = it.episodesBySeason + (seasonNumber to rows)
+                        // A route's episode is selected before its season loads, so
+                        // its detail can arrive first. Give it the row's description,
+                        // as a detail loaded after the rows gets.
+                        val selectedRow = rows.firstOrNull { row -> row.contentId == it.selectedEpisodeContentId }
                         it.copy(
                             isLoadingEpisodes = false,
                             episodesBySeason = cache,
                             episodes = if (it.selectedSeasonNumber == seasonNumber) rows else it.episodes,
+                            selectedEpisodeDetail = selectedRow?.let { row -> it.selectedEpisodeDetail?.withEpisodeDescription(row) }
+                                ?: it.selectedEpisodeDetail,
                         )
                     }
                     ensureSeriesEpisodeSelection(episodes)
