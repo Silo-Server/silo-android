@@ -132,6 +132,56 @@ class SeriesSubtitleChoiceWriterTest {
     }
 
     @Test
+    fun `a pick that lands during the load's flush still applies to the detail read before it`() = runTest {
+        // The first attempt failed; the load's flush sends the retry, and it
+        // lands. The detail was read before that, so it still carries English.
+        val recorder = Recorder().apply { results += ApiResult.NetworkError(IllegalStateException("offline")) }
+        val writer = writer(recorder) { profileA }
+        writer.save("series-1", SeriesSubtitleChoice.Off)
+        runCurrent()
+
+        val stale = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+        )
+        val reconciled = writer.reconcile(stale)
+
+        assertEquals(null, writer.pendingChoice("series-1"), "the retry landed")
+        assertEquals("off", reconciled.effectiveSubtitleMode)
+    }
+
+    @Test
+    fun `a flush cut short by the load timeout keeps the pick queued`() = runTest {
+        var puts = 0
+        val writer = DefaultSeriesSubtitleChoiceWriter(
+            put = { _, _, _ ->
+                puts++
+                when (puts) {
+                    1 -> ApiResult.NetworkError(IllegalStateException("offline"))
+                    // The load's flush: slower than its 1.5 s budget.
+                    2 -> { kotlinx.coroutines.delay(5_000); ApiResult.Success(Unit) }
+                    else -> ApiResult.Success(Unit)
+                }
+            },
+            delete = { _, _ -> ApiResult.Success(Unit) },
+            captureOwner = { profileA },
+            scope = this,
+        )
+        writer.save("series-1", SeriesSubtitleChoice.Off)
+        runCurrent()
+
+        val detail = org.siloserver.silo.model.catalog.WatchDetail(
+            contentId = "episode-2", type = "episode", title = "E2", seriesId = "series-1",
+        )
+        writer.reconcile(detail)
+        assertEquals(setOf("series-1"), writer.pendingSeries("profile-a"), "the cut-short send is queued again")
+        advanceUntilIdle()
+
+        assertEquals(3, puts)
+        assertEquals(null, writer.pendingChoice("series-1"))
+    }
+
+    @Test
     fun `a pending choice belongs to the profile that made it`() = runTest {
         var active: AuthScopeSnapshot = profileA
         val recorder = Recorder().apply {

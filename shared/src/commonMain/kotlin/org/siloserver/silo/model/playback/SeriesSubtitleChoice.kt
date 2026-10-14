@@ -6,6 +6,7 @@ import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
 import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.playback.decodeSubtitleIdentityPreference
+import org.siloserver.silo.playback.subtitleLabelIndicatesHearingImpaired
 
 /**
  * How playback recognizes a chosen subtitle track when indexes shift between
@@ -116,12 +117,13 @@ data class EffectiveSubtitleFields(
 /**
  * [this] with a not-yet-landed choice laid over it: a track becomes its
  * language, mode "always" and signature; Off becomes mode "off". Automatic
- * drops the series signature only — the lower-scope values it falls back to
- * are the server's to resolve, so the language and mode are left as answered.
+ * clears all three: the answered language and mode may be the series choice
+ * being deleted (an Off would keep subtitles off), and with none the starters
+ * fall back to the profile's, the scope automatic returns to.
  */
 fun EffectiveSubtitleFields.withPending(pending: PendingSeriesSubtitleChoice?): EffectiveSubtitleFields {
     pending ?: return this
-    val choice = pending.choice ?: return copy(signature = null)
+    val choice = pending.choice ?: return EffectiveSubtitleFields(language = null, mode = null, signature = null)
     return if (choice.subtitleMode == "off") {
         copy(mode = "off", signature = null)
     } else {
@@ -253,7 +255,26 @@ fun localSubtitleMemoryForSeriesChoice(
     val sameLanguage = autoSubtitleLanguageKey(language) != null &&
         autoSubtitleLanguageKey(language) == autoSubtitleLanguageKey(signature.language)
     val sameForced = forced == null || forced == signature.forced
-    return localPreference.takeIf { sameLanguage && sameForced }
+    // An SDH track and the plain one share language and forced flag; a known
+    // SDH flag must agree too. The label is not compared: it differs between
+    // files and deliveries of the same choice.
+    val hearingImpaired = localHearingImpaired(localPreference)
+    val sameSdh = hearingImpaired == null || hearingImpaired == signature.hearingImpaired
+    return localPreference.takeIf { sameLanguage && sameForced && sameSdh }
+}
+
+/** Whether the remembered track is SDH, or null when the memory cannot say. */
+private fun localHearingImpaired(localPreference: String): Boolean? {
+    val media = when (val identity = decodeSubtitleIdentityPreference(localPreference)) {
+        is SubtitleIdentity.ServerSidecar -> identity.media
+        is SubtitleIdentity.ServerBurnIn -> identity.media
+        is SubtitleIdentity.Embedded -> identity.media
+        is SubtitleIdentity.Downloaded -> identity.media
+        is SubtitleIdentity.LocalMedia3 -> identity.media
+        SubtitleIdentity.Off, null -> null
+    } ?: return null
+    if (media.hearingImpaired == true || subtitleLabelIndicatesHearingImpaired(media.label)) return true
+    return if (media.hearingImpaired == false) false else null
 }
 
 /**

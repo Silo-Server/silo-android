@@ -113,7 +113,13 @@ class SeriesSubtitleChoiceTest {
 
         val automatic = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(null))
         assertNull(automatic.effectiveSubtitleTrackSignature)
-        assertEquals("en", automatic.effectiveSubtitleLanguage)
+        assertNull(automatic.effectiveSubtitleLanguage, "the starters fall back to the profile's")
+        assertNull(automatic.effectiveSubtitleMode)
+
+        // The served Off is the series choice being deleted: it must not keep
+        // subtitles off while the reset waits to land.
+        val servedOff = served.copy(effectiveSubtitleMode = "off", effectiveSubtitleLanguage = "")
+        assertNull(servedOff.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(null)).effectiveSubtitleMode)
 
         assertEquals(served, served.withPendingSeriesSubtitleChoice(null))
     }
@@ -203,5 +209,20 @@ class SeriesSubtitleChoiceTest {
         assertNull(localSubtitleMemoryForSeriesChoice(SUBTITLE_OFF_FINGERPRINT, true, signature))
         val legacy = subtitleTrackFingerprint(SubtitleTrack(index = 1, language = "en", codec = "srt", title = "English"))
         assertEquals(legacy, localSubtitleMemoryForSeriesChoice(legacy, true, signature))
+    }
+
+    @Test
+    fun `online the local memory of an SDH track does not restore a plain series choice`() {
+        val plain = SubtitleTrackSignature(language = "en", label = "English", hearingImpaired = false)
+        val sdh = plain.copy(label = "English SDH", hearingImpaired = true)
+        val localSdh = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.Downloaded(downloadId = 7, media = SubtitleMediaIdentity(language = "en", forced = false, hearingImpaired = true)),
+        )
+        val localSdhByLabel = encodeSubtitleIdentityPreference(
+            SubtitleIdentity.ServerSidecar(3, SubtitleMediaIdentity(language = "en", label = "English SDH")),
+        )
+        assertNull(localSubtitleMemoryForSeriesChoice(localSdh, true, plain))
+        assertNull(localSubtitleMemoryForSeriesChoice(localSdhByLabel, true, plain))
+        assertEquals(localSdh, localSubtitleMemoryForSeriesChoice(localSdh, true, sdh))
     }
 }

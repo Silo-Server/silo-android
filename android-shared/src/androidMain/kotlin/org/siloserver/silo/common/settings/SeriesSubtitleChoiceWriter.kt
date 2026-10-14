@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.settings
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -60,8 +61,12 @@ interface SeriesSubtitleChoiceWriter {
  */
 suspend fun SeriesSubtitleChoiceWriter.reconcile(detail: WatchDetail): WatchDetail {
     val key = seriesSubtitleChoiceKey(detail.seriesId, detail.contentId) ?: return detail
+    // [detail] was read before this flush, so a choice that lands during it
+    // is not in it yet: it still applies, as the one now on the server. (One
+    // the server refused applies to this start too; the next read corrects it.)
+    val unsentBeforeFlush = pendingChoice(key)
     withTimeoutOrNull(LOAD_FLUSH_TIMEOUT_MS) { flushNow() }
-    return detail.withPendingSeriesSubtitleChoice(pendingChoice(key))
+    return detail.withPendingSeriesSubtitleChoice(pendingChoice(key) ?: unsentBeforeFlush)
 }
 
 /** [detail] with a choice still unsent laid over it; no flush. */
@@ -157,19 +162,37 @@ class DefaultSeriesSubtitleChoiceWriter(
     private suspend fun drain() {
         sendMutex.withLock {
             val retry = LinkedHashMap<Key, Op>()
-            while (true) {
-                val batch = synchronized(lock) {
-                    pending.toMap().also { pending.clear() }
-                }
-                if (batch.isEmpty()) break
-                for ((key, op) in batch) {
-                    if (send(key, op)) {
-                        retry[key] = op
-                    } else {
-                        retry.remove(key)
-                        settle(key, op)
+            // Taken out of `pending` but not sent yet (or in flight).
+            val unfinished = LinkedHashMap<Key, Op>()
+            try {
+                while (true) {
+                    val batch = synchronized(lock) {
+                        pending.toMap().also { pending.clear() }
+                    }
+                    if (batch.isEmpty()) break
+                    unfinished.putAll(batch)
+                    for ((key, op) in batch) {
+                        if (send(key, op)) {
+                            retry[key] = op
+                        } else {
+                            retry.remove(key)
+                            settle(key, op)
+                        }
+                        unfinished.remove(key)
                     }
                 }
+            } catch (e: CancellationException) {
+                // The caller gave up waiting (a load's flush timeout): put
+                // back what this drain still owed, a newer choice winning, and
+                // let the retry send it — otherwise it stays "unsent" with
+                // nothing left to send it.
+                synchronized(lock) {
+                    for ((key, op) in retry + unfinished) {
+                        if (key !in pending) pending[key] = op
+                    }
+                    if (pending.isNotEmpty()) scheduleRetry(attempt = 1)
+                }
+                throw e
             }
             if (retry.isEmpty()) {
                 synchronized(lock) { retryAttempts = 0 }
@@ -182,13 +205,16 @@ class DefaultSeriesSubtitleChoiceWriter(
                 }
                 if (retryAttempts >= MAX_AUTO_RETRIES) null else ++retryAttempts
             } ?: return
-            synchronized(lock) {
-                retryJob?.cancel()
-                retryJob = scope.launch {
-                    delay((RETRY_BASE_DELAY_MS shl (attempt - 1).coerceIn(0, 6)).coerceAtMost(RETRY_MAX_DELAY_MS))
-                    scope.launch { drain() }
-                }
-            }
+            synchronized(lock) { scheduleRetry(attempt) }
+        }
+    }
+
+    /** Call with [lock] held. */
+    private fun scheduleRetry(attempt: Int) {
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            delay((RETRY_BASE_DELAY_MS shl (attempt - 1).coerceIn(0, 6)).coerceAtMost(RETRY_MAX_DELAY_MS))
+            scope.launch { drain() }
         }
     }
 
@@ -197,7 +223,7 @@ class DefaultSeriesSubtitleChoiceWriter(
         val result = try {
             val choice = op.choice
             if (choice == null) delete(key.seriesKey, op.owner) else put(key.seriesKey, choice, op.owner)
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             ApiResult.NetworkError(e)
