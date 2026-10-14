@@ -254,6 +254,12 @@ class DefaultServerSettingsFlusher(
             // catch that case: the very pass that sent the newer op already
             // cleared `pending`.
             val retryable = LinkedHashMap<PendingKey, PendingOp>()
+            // The pass each retryable op failed in, and the last pass that
+            // handled a device-level op per (profile, key): a device intent
+            // handled after a profile save failed is newer than that save.
+            val failedInPass = HashMap<PendingKey, Int>()
+            val deviceHandledInPass = HashMap<PendingKey, Int>()
+            var pass = 0
             while (true) {
                 val snapshot: Map<PendingKey, PendingOp> = synchronized(lock) {
                     val copy = pending.toMap()
@@ -261,9 +267,12 @@ class DefaultServerSettingsFlusher(
                     copy
                 }
                 if (snapshot.isEmpty()) break
+                pass += 1
                 snapshot.forEach { (composite, op) ->
+                    if (!composite.profileLevel) deviceHandledInPass[composite] = pass
                     if (flushOne(composite.profileId, composite.key, op)) {
                         retryable[composite] = op
+                        failedInPass[composite] = pass
                     } else {
                         retryable.remove(composite)
                     }
@@ -277,7 +286,14 @@ class DefaultServerSettingsFlusher(
                 for ((composite, op) in retryable) {
                     // A newer op enqueued during the flush wins over the
                     // failed one — it is newer content with its own id.
-                    if (composite !in pending) pending[composite] = op
+                    if (composite in pending) continue
+                    pending[composite] = op.withoutStaleDeviceClear(
+                        newerDeviceIntent = composite.profileLevel && run {
+                            val deviceKey = composite.copy(profileLevel = false)
+                            deviceKey in pending ||
+                                (deviceHandledInPass[deviceKey] ?: 0) > (failedInPass[composite] ?: 0)
+                        },
+                    )
                 }
                 if (retryAttempts >= MAX_AUTO_RETRIES) {
                     // Out of automatic retries: the ops stay queued and the
@@ -290,6 +306,18 @@ class DefaultServerSettingsFlusher(
             }
             if (attempt != null) scheduleRetry(attempt)
         }
+    }
+
+    /**
+     * A profile save that failed while this device wrote its own value for
+     * the key (the toggle turned on mid-flight) must not delete that newer
+     * device value when it is retried: it keeps the profile write and drops
+     * the device clear, as [scheduleDebounced] does for an op still queued.
+     */
+    private fun PendingOp.withoutStaleDeviceClear(newerDeviceIntent: Boolean): PendingOp {
+        if (!newerDeviceIntent || this !is PendingOp.Set) return this
+        val profile = scope as? SettingWriteScope.Profile ?: return this
+        return if (profile.clearDevice) copy(scope = profile.copy(clearDevice = false)) else this
     }
 
     private fun scheduleRetry(attempt: Int) {

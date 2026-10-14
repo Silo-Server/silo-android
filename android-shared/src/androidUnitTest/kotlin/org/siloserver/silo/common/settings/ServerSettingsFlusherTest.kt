@@ -767,6 +767,36 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a retried profile save does not delete a device value written while it was in flight`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        val deviceValue = SubtitleAppearance.DEFAULT.toJsonString()
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+        var deviceWritten = false
+        api.onPut = { call ->
+            // "Only on This Device" turned on while the profile save is on the wire.
+            if (call.scope == SettingScopeIdentity.profile() && !deviceWritten) {
+                deviceWritten = true
+                flusher.enqueue("p1", objectKey, deviceValue, serverUrl)
+            }
+        }
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertTrue(
+            api.calls.none { it.kind == RecordingSettingsApi.Call.Kind.DELETE },
+            "the retry must not clear the newer device value: ${api.calls}",
+        )
+        assertEquals(
+            listOf(SettingScopeIdentity.profile(), SettingScopeIdentity.profileDevice(), SettingScopeIdentity.profile()),
+            api.calls.map { it.scope },
+        )
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
     fun `profile writes for two profiles keep their own profile and scope`() = runTest {
         val api = RecordingSettingsApi()
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
