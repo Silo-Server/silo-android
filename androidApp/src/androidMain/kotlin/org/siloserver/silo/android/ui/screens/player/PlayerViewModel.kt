@@ -3668,6 +3668,7 @@ class PlayerViewModel(
             suspended = roomSuspensions.isNotEmpty(),
             sampledAtMs = roomEngineSampledAtMs,
             playbackSpeed = roomEngineSpeed,
+            mountGeneration = state.mediaMountGeneration,
         )
     }
 

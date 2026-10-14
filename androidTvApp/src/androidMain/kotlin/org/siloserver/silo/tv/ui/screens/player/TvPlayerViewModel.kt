@@ -998,6 +998,10 @@ class TvPlayerViewModel(
     // describes the replaced item and must not be mapped through the new
     // plan's timeline.
     private var roomMountAppliedAtMs = Long.MIN_VALUE
+
+    // Counts applied transport mounts, so the room can tell new media from a
+    // native seek within the mounted item.
+    private var roomMountGeneration = 0L
     private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
 
     /** What the player is actually doing, for the room binding. */
@@ -2007,6 +2011,7 @@ class TvPlayerViewModel(
             playerWindowIsSeekable = false
             playerWindowEndPlayerMs = -1L
             roomMountAppliedAtMs = SystemClock.elapsedRealtime()
+            roomMountGeneration++
             pendingNativeSeekAfterMount?.let { targetSeconds ->
                 pendingNativeSeekAfterMount = null
                 // Re-evaluate against the plan that actually won the load;
@@ -4320,6 +4325,7 @@ class TvPlayerViewModel(
             suspended = roomHolds.isNotEmpty() || sample?.suppressed == true,
             sampledAtMs = sample?.sampledAtMs?.takeIf { sampled },
             playbackSpeed = sample?.playbackSpeed?.takeIf { sampled },
+            mountGeneration = roomMountGeneration,
         )
     }
 

@@ -87,6 +87,12 @@ data class RoomPlayerObservation(
      * and keeps reporting 1x.
      */
     val playbackSpeed: Double? = null,
+    /**
+     * Identifies the media currently mounted in the engine, or null when
+     * unknown. It changes only when new media replaces the item (a load,
+     * re-anchor, or seek recovery), never for a native seek within it.
+     */
+    val mountGeneration: Long? = null,
 )
 
 /** The player side of the binding, implemented by each platform's player. */
@@ -247,6 +253,7 @@ class RoomPlaybackBinding(
     private var rateRequestedAtMs = NEVER_MS
     private var lastLoopSeekMs = NEVER_MS
     private var mountSessionId: String? = null
+    private var mountGeneration: Long? = null
     private var readiness: Readiness? = null
     private var lastCatchUpAckMs = NEVER_MS
     private var stallStartedAtMs: Long? = null
@@ -502,15 +509,15 @@ class RoomPlaybackBinding(
             stallReported = false
         }
 
-        // Reload pacing and the continuous drift loop. A seek or mount may
-        // put new media under the player (a server seek recovery keeps the
-        // session id), so rate support is measured again afterwards.
-        if (obs.seekPending) {
-            lastBusyMs = now
-            rateUnsupported = false
-        }
-        if (obs.sessionId != mountSessionId) {
+        // Reload pacing and the continuous drift loop. New media (a new
+        // session, or a same-session remount such as a server seek recovery)
+        // may honour a rate again, so rate support is measured afresh. A
+        // native seek within the mounted item, including the fallback's own
+        // in-place seeks, changes nothing.
+        if (obs.seekPending) lastBusyMs = now
+        if (obs.sessionId != mountSessionId || obs.mountGeneration != mountGeneration) {
             mountSessionId = obs.sessionId
+            mountGeneration = obs.mountGeneration
             rateUnsupported = false
         }
         if (reloads.inFlight && obs.isPlaying && reloads.landed(obs.sourcePositionSeconds)) reloads.land(now)

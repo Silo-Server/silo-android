@@ -660,18 +660,18 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
-    fun `a seek or remount measures rate support again`() = runTest {
+    fun `a same-session remount measures rate support again`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()
         bind(room, player)
-        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0) }
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0, mountGeneration = 1) }
         command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
         advanceTimeBy(50)
         follow(player, drift = 2.0, forMs = 1_200)
         assertEquals(1, player.seeks.size, "rate support was never ruled out")
 
-        // A same-session remount (server seek recovery) replaces the media.
-        player.update { copy(seekPending = true) }
+        // A server seek recovery mounts new media under the same session.
+        player.update { copy(seekPending = true, mountGeneration = 2) }
         advanceTimeBy(100)
         player.update { copy(seekPending = false, playbackSpeed = 1.04) }
         follow(player, drift = 0.0, forMs = 100)
@@ -680,6 +680,29 @@ class RoomPlaybackBindingTest {
         advanceTimeBy(50)
         assertEquals(1.04, player.rates.last()!!, 0.0001)
         assertEquals(1, player.seeks.size)
+    }
+
+    @Test
+    fun `the fallback's own in-place seek keeps seek-only correction`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0, mountGeneration = 1) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 2.0, forMs = 1_200)
+        assertEquals(1, player.seeks.size, "rate support was never ruled out")
+
+        // That seek is native within the mounted item: seeking, same mount.
+        player.update { copy(seekPending = true) }
+        advanceTimeBy(100)
+        player.update { copy(seekPending = false) }
+        follow(player, drift = 0.0, forMs = 100)
+        player.update { copy(sourcePositionSeconds = sourcePositionSeconds - 2.0) }
+        command(room, "again", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(2, player.seeks.size, "a nudge was tried again on a mount that ignores rate")
+        assertNull(player.rates.last())
     }
 
     @Test
