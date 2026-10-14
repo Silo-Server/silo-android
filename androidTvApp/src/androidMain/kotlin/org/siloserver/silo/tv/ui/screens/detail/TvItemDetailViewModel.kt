@@ -2493,6 +2493,7 @@ private fun BrowseItem.toSectionItem(): SectionItem = SectionItem(
     ratingTmdb = ratingTmdb,
     contentRating = contentRating,
     overlaySummary = overlaySummary,
+    availability = availability,
     overview = overview,
     posterUrl = posterUrl,
     posterThumbhash = posterThumbhash,
