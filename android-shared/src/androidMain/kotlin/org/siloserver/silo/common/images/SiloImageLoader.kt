@@ -32,7 +32,7 @@ import java.io.File
  *   artwork shares the API clients' warm connection pool instead of a
  *   service-loader-built default client.
  * - Concurrent requests for the same URL share one download
- *   ([SharedDownloadInterceptor]).
+ *   ([SharedDownloadFetcherFactory]).
  * - Memory cache stays at Coil's heap-proportional default.
  *
  * API decoding resolves artwork against its supplying response origin before
@@ -45,8 +45,7 @@ fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader 
         .crossfade(true)
         .eventListenerFactory { DiagnosticsImageEventListener() }
         .components {
-            add(SharedDownloadInterceptor())
-            add(OkHttpNetworkFetcherFactory(callFactory = { SiloOkHttp.imageClient }))
+            add(SharedDownloadFetcherFactory(OkHttpNetworkFetcherFactory(callFactory = { SiloOkHttp.imageClient })))
         }
         .diskCache {
             DiskCache.Builder()

@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import androidx.test.core.app.ApplicationProvider
 import coil3.ImageLoader
+import coil3.decode.DataSource
+import coil3.request.CachePolicy
 import coil3.request.ErrorResult
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -28,7 +30,7 @@ import kotlin.test.assertIs
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
-class SharedDownloadInterceptorTest {
+class SharedDownloadFetcherFactoryTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val server = MockWebServer()
     private lateinit var loader: ImageLoader
@@ -89,13 +91,36 @@ class SharedDownloadInterceptorTest {
         assertEquals(2, server.requestCount)
     }
 
-    private fun slowPng(): MockResponse {
+    @Test
+    fun memoryCacheHitDoesNotWaitForAnotherDownload() = runBlocking<Unit> {
+        // In memory only, so the next fetch for this URL must download.
+        server.enqueue(png())
+        server.enqueue(slowPng(bodyDelayMillis = 3_000))
+        val url = server.url("/backdrop.png").toString()
+        assertIs<SuccessResult>(
+            loader.execute(ImageRequest.Builder(context).data(url).diskCachePolicy(CachePolicy.DISABLED).build()),
+        )
+
+        val download = async {
+            loader.execute(ImageRequest.Builder(context).data(url).memoryCacheKey("other-size").build())
+        }
+        withTimeout(5_000) { while (server.requestCount < 2) delay(10) }
+
+        val fromMemory = withTimeout(1_000) { loader.execute(ImageRequest.Builder(context).data(url).build()) }
+        assertIs<SuccessResult>(fromMemory)
+        assertEquals(DataSource.MEMORY_CACHE, fromMemory.dataSource)
+        download.cancel()
+    }
+
+    private fun png(): MockResponse {
         val png = ByteArrayOutputStream().apply {
             Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, this)
         }.toByteArray()
         return MockResponse()
             .setHeader("Content-Type", "image/png")
             .setBody(Buffer().write(png))
-            .setBodyDelay(400, TimeUnit.MILLISECONDS)
     }
+
+    private fun slowPng(bodyDelayMillis: Long = 400): MockResponse =
+        png().setBodyDelay(bodyDelayMillis, TimeUnit.MILLISECONDS)
 }
