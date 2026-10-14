@@ -117,7 +117,17 @@ data class RoomPlaybackTiming(
     val attachEchoTimeoutMs: Long = 2_000L,
     val mountDeferMs: Long = 5_000L,
     val maxLeadMs: Long = 5_000L,
-    val guestSeekToleranceSeconds: Double = 1.0,
+    /**
+     * How close a guest must land to a waiting seek before sending `ready`
+     * (with that seek's `command_id`). This is only the client's gate: the
+     * server applies the per-command tolerance, accepting a stalled guest's
+     * own catch-up seek within 5 s and a room seek only within 1 s. A room
+     * seek that lands 1-5 s off is acknowledged and simply keeps waiting
+     * server-side. Android has no pre-roll, so a rebuilt stream that lands a
+     * few seconds short must still be able to acknowledge.
+     */
+    val guestSeekToleranceSeconds: Double = 5.0,
+    /** The host is the authority on position; the server re-anchors to it within this distance. */
     val hostSeekToleranceSeconds: Double = 15.0,
     val stallWindowMs: Long = 5 * 60_000L,
     /** A requested rate the engine still reports as 1x this long later is unsupported on the mount. */

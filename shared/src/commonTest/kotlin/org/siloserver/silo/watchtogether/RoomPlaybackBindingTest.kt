@@ -296,19 +296,32 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
-    fun `a guest outside the seek tolerance does not acknowledge but a host within fifteen seconds does`() = runTest {
+    fun `a guest acknowledges a waiting seek within five seconds and a host within fifteen`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()
         bind(room, player)
         room.roomSnapshot.value = playing(state = RoomPlaybackState.Waiting)
         command(room, "cmd-g", TransportAction.Seek, 300.0, RoomPlaybackState.Waiting)
-        player.update { copy(sourcePositionSeconds = 294.0) }
+        player.update { copy(sourcePositionSeconds = 294.9) }
+        advanceTimeBy(1_000)
+        assertTrue(room.sent.none { it.kind == "ready" }, "a guest 5.1 s off acknowledged")
+
+        // A rebuilt stream that lands 4.9 s short still acknowledges, naming the seek.
+        player.update { copy(sourcePositionSeconds = 295.1) }
+        advanceTimeBy(600)
+        assertEquals("cmd-g", room.sent.first { it.kind == "ready" }.commandId)
+        assertTrue(room.sent.any { it.kind == "report_ready" && it.commandId == "cmd-g" })
+
+        // Beyond the guest gate only the host acknowledges.
+        room.sent.clear()
+        command(room, "cmd-h", TransportAction.Seek, 400.0, RoomPlaybackState.Waiting)
+        player.update { copy(sourcePositionSeconds = 386.0) }
         advanceTimeBy(1_000)
         assertTrue(room.sent.none { it.kind == "ready" })
 
         room.roomSnapshot.value = playing(state = RoomPlaybackState.Waiting, role = MemberRole.Host)
         advanceTimeBy(300)
-        assertEquals("cmd-g", room.sent.first { it.kind == "ready" }.commandId)
+        assertEquals("cmd-h", room.sent.first { it.kind == "ready" }.commandId)
     }
 
     @Test
