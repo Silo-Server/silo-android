@@ -1,7 +1,6 @@
 package org.siloserver.silo.common.images
 
 import coil3.intercept.Interceptor
-import coil3.memory.MemoryCache
 import coil3.request.ImageResult
 import kotlinx.coroutines.CompletableDeferred
 
@@ -12,13 +11,14 @@ import kotlinx.coroutines.CompletableDeferred
  * hero and blurred page surface all ask for the backdrop downloads that file
  * three times at once. Here the first request for a URL goes ahead; later ones
  * wait for it, then proceed and resolve from the disk (or memory) cache it
- * filled. A request the memory cache can already answer never waits, and if
- * the first request fails or is cancelled, the waiters make their own
- * requests.
+ * filled. If the first request fails or is cancelled, the waiters make their
+ * own requests.
+ *
+ * Memory-cache hits are not exempt: only Coil's engine, after the
+ * interceptors, knows whether a cached bitmap is large enough for a request.
+ * A hit waits only while another request for the same URL is in flight.
  */
-internal class SharedDownloadInterceptor(
-    private val memoryCache: () -> MemoryCache?,
-) : Interceptor {
+internal class SharedDownloadInterceptor : Interceptor {
     private val inFlight = HashMap<String, CompletableDeferred<Unit>>()
 
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
@@ -28,10 +28,6 @@ internal class SharedDownloadInterceptor(
         // Waiting only pays off when the first download lands in the disk cache.
         if (url == null || !request.diskCachePolicy.readEnabled || !request.diskCachePolicy.writeEnabled) {
             return chain.proceed()
-        }
-        if (request.memoryCachePolicy.readEnabled) {
-            val memoryKey = MemoryCache.Key(request.memoryCacheKey ?: url, request.memoryCacheKeyExtras)
-            if (memoryCache()?.get(memoryKey) != null) return chain.proceed()
         }
 
         val key = request.diskCacheKey ?: url

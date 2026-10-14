@@ -66,6 +66,12 @@ data class ItemDetailUiState(
     val episodes: List<EpisodeListItem> = emptyList(),
     /** Episode selected inside a series page. Its full detail powers the hero play target and selectors. */
     val selectedEpisodeContentId: String? = null,
+    /**
+     * Set when a series opened for one of its episodes cannot load. The page
+     * shows that episode's own detail instead, as the episode-to-series
+     * redirect keeps the episode when its parent cannot open.
+     */
+    val episodeFallbackContentId: String? = null,
     val selectedEpisodeDetail: ItemDetail? = null,
     val isLoadingSelectedEpisodeDetail: Boolean = false,
     /** Parent-series portrait art used when an episode's own artwork is a wide still. */
@@ -483,13 +489,15 @@ class ItemDetailViewModel(
                 }
                 is ApiResult.Error -> {
                     _uiState.update {
+                        // The durable cache still holds a title the server
+                        // now refuses; drop the copy seedCachedDetail painted
+                        // so the screen shows the error, not stale actions.
+                        val detail = if (dropsDetailOn(result)) null else it.detail
                         it.copy(
                             isLoading = false,
-                            // The durable cache still holds a title the server
-                            // now refuses; drop the copy seedCachedDetail painted
-                            // so the screen shows the error, not stale actions.
-                            detail = if (dropsDetailOn(result)) null else it.detail,
+                            detail = detail,
                             error = result.message.ifBlank { "Failed to load details" },
+                            episodeFallbackContentId = initialEpisodeContentId.takeIf { detail == null },
                         )
                     }
                 }

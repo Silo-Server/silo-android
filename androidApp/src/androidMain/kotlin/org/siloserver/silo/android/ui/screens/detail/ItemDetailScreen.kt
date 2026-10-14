@@ -132,6 +132,10 @@ fun ItemDetailScreen(
     onPersonClick: (String) -> Unit,
     onSeriesClick: (String) -> Unit,
     onSeriesDetailReplace: (String, Int, String?) -> Unit,
+    /** A series opened for this episode cannot load; show the episode instead. */
+    onEpisodeFallback: (String) -> Unit = {},
+    /** False once this page fell back from its series, so it does not redirect there again. */
+    allowSeriesRedirect: Boolean = true,
     onAudiobookPlayClick: (contentId: String, fileId: Int?, fromStart: Boolean, startPosition: Double?) -> Unit = { _, _, _, _ -> },
     onBookReadClick: (String, Int?) -> Unit = { _, _ -> },
     /** The route's library, staged with a Watch Party item. */
@@ -150,7 +154,9 @@ fun ItemDetailScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val shuffleLauncher = org.siloserver.silo.android.ui.screens.shuffle.rememberShuffleLauncher(onShuffleStarted)
-    val seriesRedirect = remember(state.detail) { state.detail?.let(::seriesDetailRedirect) }
+    val seriesRedirect = remember(state.detail, allowSeriesRedirect) {
+        state.detail?.takeIf { allowSeriesRedirect }?.let(::seriesDetailRedirect)
+    }
     var seriesRedirectFailed by rememberSaveable(state.detail?.contentId) { mutableStateOf(false) }
     LaunchedEffect(seriesRedirect) {
         val redirect = seriesRedirect ?: return@LaunchedEffect
@@ -161,6 +167,9 @@ fun ItemDetailScreen(
             // Keep the original detail usable if its parent cannot be opened.
             seriesRedirectFailed = true
         }
+    }
+    LaunchedEffect(state.episodeFallbackContentId) {
+        state.episodeFallbackContentId?.let(onEpisodeFallback)
     }
     val siloCastController: SiloCastController = koinInject()
     val siloCastState by siloCastController.state.collectAsState()
@@ -372,6 +381,8 @@ fun ItemDetailScreen(
             // with the parent series. Hold the skeleton rather than dissolving
             // into a season or episode detail that is on its way out.
             seriesRedirect != null && !seriesRedirectFailed -> "loading"
+            // Likewise while a series that cannot load hands over to its episode.
+            state.episodeFallbackContentId != null -> "loading"
             state.detail != null -> "detail"
             state.error != null -> "error"
             else -> "loading"

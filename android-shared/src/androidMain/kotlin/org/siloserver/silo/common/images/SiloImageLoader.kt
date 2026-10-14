@@ -40,13 +40,12 @@ import java.io.File
  * keeps cache keys tied to that server when the active session changes.
  * The image client carries no Silo login or profile credentials.
  */
-fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader {
-    lateinit var loader: ImageLoader
-    loader = ImageLoader.Builder(context)
+fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader =
+    ImageLoader.Builder(context)
         .crossfade(true)
         .eventListenerFactory { DiagnosticsImageEventListener() }
         .components {
-            add(SharedDownloadInterceptor { loader.memoryCache })
+            add(SharedDownloadInterceptor())
             add(OkHttpNetworkFetcherFactory(callFactory = { SiloOkHttp.imageClient }))
         }
         .diskCache {
@@ -56,8 +55,6 @@ fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader 
                 .build()
         }
         .build()
-    return loader
-}
 
 private class DiagnosticsImageEventListener : EventListener() {
     private var stage = DiagnosticsImageStage.UNKNOWN
