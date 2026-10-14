@@ -40,8 +40,9 @@ don't skip changes no tester got.
 
 While the draft exists, version 1.0.0 counts as released: Release refuses
 `bump: build`, and `bump: minor` starts 1.1.0. If Play rejects the build, delete
-the GitHub draft, fix the problem, make another tester build of the same
-version, and promote that one.
+the GitHub draft and fix the problem. Then run Release with `version: 1.0.0`,
+because once 1.1.0 has started, `bump: build` continues that one. Promote the
+new build.
 
 ## After a store release
 
