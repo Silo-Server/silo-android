@@ -11,7 +11,13 @@ The run tags the commit `v1.0.0-beta.23`, uploads both apps to the Google Play
 beta track as `1.0.0 (23)`, and publishes one APK per app on a GitHub
 prerelease (`silo-android-1.0.0-23.apk`, `silo-android-tv-1.0.0-23.apk`). Its
 notes list the pull requests merged since the previous build, grouped by label.
-The same list, shortened, becomes Play's "What's new".
+
+Play's "What's new" (500 characters at most) is Claude's short summary of those
+pull request titles: what's new, and where to test. The run sends Claude only
+the section names and titles, never pull request bodies, comments, or code. If
+the summary fails, or the `ANTHROPIC_API_KEY` repository secret isn't set, the
+run uses the plain list of Features and Fixes instead. Either way the run's
+summary page shows the text.
 
 It requires **Android Builds** to have passed on the commit, so run it once
 `main` is green. It also runs every unit test on that commit before uploading.

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       bump:
-        description: "build = another build of the unreleased version. minor or patch = start the next version after a store release."
+        description: "build = another build of the unreleased version. minor or patch = start the next version once the current one is promoted."
         required: true
         type: choice
         default: build
@@ -105,22 +105,43 @@ jobs:
             exit 1
           fi
 
-      # Play's "What's new": the Features and Fixes since the last build. Written
-      # here because generating notes needs contents: write.
+      # Play's "What's new" (500 characters at most): Claude's summary of the
+      # pull request titles since the last build, or the plain list of Features
+      # and Fixes when that fails or ANTHROPIC_API_KEY isn't set. Written here
+      # because generating notes needs contents: write. The key exists only in
+      # this step, on a GitHub-hosted runner, and the workflow only runs by
+      # manual dispatch.
       - name: Write Play release notes
         id: notes
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           PREVIOUS_TAG: ${{ steps.version.outputs.previous_tag }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${TAG}" -f target_commitish="${GITHUB_SHA}" \
+            ${PREVIOUS_TAG:+-f previous_tag_name="${PREVIOUS_TAG}"} --jq .body > "${RUNNER_TEMP}/notes.md"
+          play_notes="${RUNNER_TEMP}/play-notes.txt"
+          if scripts/summarize-release-notes.sh "${RUNNER_TEMP}/notes.md" 500 > "${play_notes}"; then
+            source="Claude's summary of the merged pull requests"
+          else
+            echo "::warning::What's new uses the plain list because the summary failed (see above)."
+            python3 scripts/release-version.py store-notes 500 < "${RUNNER_TEMP}/notes.md" > "${play_notes}"
+            source="the plain list of Features and Fixes"
+          fi
+          {
+            echo "### Play \"What's new\""
+            echo
+            echo "From ${source}:"
+            echo
+            # Indented, so the text shows as a code block whatever it contains.
+            sed 's/^/    /' "${play_notes}"
+          } >> "${GITHUB_STEP_SUMMARY}"
           delimiter="play_notes_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
           {
             echo "play_notes<<${delimiter}"
-            gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-              -f tag_name="${TAG}" -f target_commitish="${GITHUB_SHA}" \
-              ${PREVIOUS_TAG:+-f previous_tag_name="${PREVIOUS_TAG}"} --jq .body |
-              python3 scripts/release-version.py store-notes 500
+            cat "${play_notes}"
             echo "${delimiter}"
           } >> "${GITHUB_OUTPUT}"
 

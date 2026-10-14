@@ -121,6 +121,20 @@ GENERATED = """## What's Changed
 """
 
 
+class TitlesTest(unittest.TestCase):
+    def test_keeps_sections_and_titles_only(self):
+        self.assertEqual(
+            "Features:\n"
+            "- feat(requests): let viewers get notified about requests\n"
+            "Fixes:\n"
+            "- fix(tv)!: let Down leave the search field\n"
+            "Other changes:\n"
+            "- ci: cache builds\n"
+            "- feat(profiles): ask who's watching at launch",
+            release.pr_titles(GENERATED),
+        )
+
+
 class StoreNotesTest(unittest.TestCase):
     def test_keeps_features_and_fixes_as_plain_text(self):
         self.assertEqual(

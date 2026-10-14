@@ -62,6 +62,7 @@ jobs:
           ./scripts/test-check-build-supply-chain.sh
           ./scripts/check-build-supply-chain.sh
           python3 scripts/test-release-version.py -v
+          ./scripts/test-summarize-release-notes.sh
           ruby scripts/test-fastlane-lanes.rb
           python3 scripts/test-ci-routing.py -v
           python3 scripts/test-ci-result.py -v
