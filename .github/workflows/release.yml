@@ -337,10 +337,19 @@ jobs:
       - name: Publish the prerelease
         run: |
           # "Re-run failed jobs" re-runs this whole job. When this run already
-          # published the prerelease, only make sure both APKs are on it.
+          # created the prerelease, upload only the APKs it lacks (--clobber
+          # would delete a good copy first), then publish it: gh release create
+          # leaves a draft when an upload fails.
           if gh release view "${TAG}" > /dev/null 2>&1; then
-            echo "${TAG} is already published; re-uploading its APKs."
-            gh release upload "${TAG}" --clobber apks/*.apk
+            uploaded="$(gh release view "${TAG}" --json assets --jq '.assets[] | select(.state == "uploaded") | .name')"
+            for apk in apks/*.apk; do
+              if ! grep -qxF "$(basename "${apk}")" <<< "${uploaded}"; then
+                # A failed upload can leave a broken asset under this name.
+                gh release upload "${TAG}" --clobber "${apk}"
+              fi
+            done
+            gh release edit "${TAG}" --draft=false --prerelease
+            echo "${TAG} is published with both APKs."
             exit 0
           fi
           {
@@ -386,22 +395,49 @@ jobs:
           fi
 
           # Upload each APK under a staging name, then swap it in, so a failed
-          # upload never leaves the Downloader links without a file. Every step
-          # is safe to repeat on a re-run.
+          # upload never leaves the Downloader links without a file. The old
+          # file steps aside as previous-<name> and comes back if the swap
+          # fails. Every step is safe to repeat on a re-run.
           release_id="$(gh release view "${BETA_LATEST}" --json databaseId --jq .databaseId)"
           asset_id() {
             gh api "repos/${GH_REPO}/releases/${release_id}/assets" --paginate \
               --jq ".[] | select(.name == \"$1\") | .id"
           }
+          rename_asset() {
+            gh api -X PATCH "repos/${GH_REPO}/releases/assets/$1" -f name="$2" --silent
+          }
+          delete_asset() {
+            gh api -X DELETE "repos/${GH_REPO}/releases/assets/$1" --silent
+          }
           for app in silo-android silo-android-tv; do
             name="${app}-latest-beta.apk"
-            cp "apks/${app}-${VERSION}-${BUILD}.apk" "apks/next-${name}"
-            gh release upload "${BETA_LATEST}" --clobber "apks/next-${name}"
-            old="$(asset_id "${name}")"
-            if [[ -n "${old}" ]]; then
-              gh api -X DELETE "repos/${GH_REPO}/releases/assets/${old}" --silent
+            staged="next-${name}"
+            previous="previous-${name}"
+            cp "apks/${app}-${VERSION}-${BUILD}.apk" "apks/${staged}"
+            gh release upload "${BETA_LATEST}" --clobber "apks/${staged}"
+            staged_id="$(asset_id "${staged}")"
+            current_id="$(asset_id "${name}")"
+            if [[ -n "${current_id}" ]]; then
+              # The live file is safe, so a copy left by an interrupted run can go.
+              stale_id="$(asset_id "${previous}")"
+              if [[ -n "${stale_id}" ]]; then
+                delete_asset "${stale_id}"
+              fi
+              rename_asset "${current_id}" "${previous}"
             fi
-            gh api -X PATCH "repos/${GH_REPO}/releases/assets/$(asset_id "next-${name}")" -f name="${name}" --silent
+            if ! rename_asset "${staged_id}" "${name}"; then
+              # Put the old file back, whether this run or an interrupted one
+              # moved it aside.
+              restore_id="$(asset_id "${previous}")"
+              if [[ -n "${restore_id}" ]]; then
+                rename_asset "${restore_id}" "${name}"
+              fi
+              echo "::error::Couldn't swap in ${name}; the previous file is still served. Re-run failed jobs."
+              exit 1
+            fi
+            for old_id in $(asset_id "${previous}"); do
+              delete_asset "${old_id}"
+            done
           done
 
           # Point the tag and title at this build only once its files are live.
