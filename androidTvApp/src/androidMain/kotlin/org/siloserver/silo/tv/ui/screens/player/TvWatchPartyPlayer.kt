@@ -211,6 +211,7 @@ internal class TvWatchPartyScreenController(
             isPlaying = player.isPlaying,
             playbackState = player.playbackState,
             suppressed = player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE,
+            playbackSpeed = player.playbackParameters.speed.toDouble(),
         )
     }
 }

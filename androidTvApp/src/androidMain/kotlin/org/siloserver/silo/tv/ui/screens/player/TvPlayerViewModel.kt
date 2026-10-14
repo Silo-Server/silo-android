@@ -989,6 +989,7 @@ class TvPlayerViewModel(
         val playbackState: Int,
         val suppressed: Boolean,
         val sampledAtMs: Long,
+        val playbackSpeed: Double?,
     )
 
     private var roomPlayerSample: TvRoomPlayerSample? = null
@@ -4183,6 +4184,7 @@ class TvPlayerViewModel(
         isPlaying: Boolean,
         playbackState: Int,
         suppressed: Boolean,
+        playbackSpeed: Double? = null,
     ) {
         if (roomId == null) return
         roomPlayerSample = TvRoomPlayerSample(
@@ -4193,6 +4195,7 @@ class TvPlayerViewModel(
             playbackState = playbackState,
             suppressed = suppressed,
             sampledAtMs = SystemClock.elapsedRealtime(),
+            playbackSpeed = playbackSpeed?.takeIf { it.isFinite() && it > 0.0 },
         )
         publishRoomObservation()
     }
@@ -4289,7 +4292,8 @@ class TvPlayerViewModel(
         // Engine truth mapped to source time. While a new mount takes over, the
         // old item's position cannot be mapped through the new timeline, so
         // the last known value stands (and seekPending says it is not a decision).
-        val position = if (sample != null && hasMedia && !transportMountGate.suppressPositionReports) {
+        val sampled = sample != null && hasMedia && !transportMountGate.suppressPositionReports
+        val position = if (sample != null && sampled) {
             val raw = sample.positionMs.coerceAtLeast(0L) / 1000.0
             val mapped = state.playbackPlan?.timeline?.sourcePositionForPlayer(raw) ?: raw
             state.serverDuration.takeIf { it > 0.0 }?.let(mapped::coerceAtMost) ?: mapped
@@ -4306,6 +4310,8 @@ class TvPlayerViewModel(
             state = tvRoomPlayerState(sample?.playbackState, hasMedia),
             seekPending = roomSeekPending(state),
             suspended = roomHolds.isNotEmpty() || sample?.suppressed == true,
+            sampledAtMs = sample?.sampledAtMs?.takeIf { sampled },
+            playbackSpeed = sample?.playbackSpeed,
         )
     }
 

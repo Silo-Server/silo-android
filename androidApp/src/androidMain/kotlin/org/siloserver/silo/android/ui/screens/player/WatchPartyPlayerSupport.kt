@@ -41,7 +41,9 @@ internal fun roomPlayerState(playbackState: Int): RoomPlayerState = when (playba
  * Whether the mounted stream can reach [targetSourceSeconds] without loading
  * new media: the target maps natively onto the current plan's timeline (no
  * re-anchor) and lands between just behind the playhead and the buffered
- * position. False whenever that cannot be shown.
+ * position. False whenever that cannot be shown. [mountedSeekableSourceRange]
+ * is the extent the mounted stream provably holds; pass the same range to the
+ * seek that follows, so a target judged reachable is not re-anchored.
  */
 internal fun roomTargetBufferedLocally(
     timeline: PlaybackTimeline?,
@@ -49,12 +51,14 @@ internal fun roomTargetBufferedLocally(
     playerPositionSeconds: Double,
     bufferedPlayerSeconds: Double,
     backwardSlackSeconds: Double = 1.0,
+    mountedSeekableSourceRange: ClosedRange<Double>? = null,
 ): Boolean {
     if (timeline == null) return false
     if (!targetSourceSeconds.isFinite() || targetSourceSeconds < 0.0) return false
     if (!playerPositionSeconds.isFinite() || !bufferedPlayerSeconds.isFinite()) return false
     if (bufferedPlayerSeconds < playerPositionSeconds) return false
-    val native = timeline.decideSeek(targetSourceSeconds) as? PlaybackSeekDecision.NativeSeek ?: return false
+    val native = timeline.decideSeek(targetSourceSeconds, mountedSeekableSourceRange) as? PlaybackSeekDecision.NativeSeek
+        ?: return false
     val target = native.targetPlayerPositionSeconds
     return target >= playerPositionSeconds - backwardSlackSeconds && target <= bufferedPlayerSeconds
 }

@@ -193,6 +193,24 @@ class WatchPartyWireTest {
     }
 
     @Test
+    fun `clock uses only the last eight samples`() {
+        val clock = RoomClockEstimator()
+        // Offset 500, round trip 10: the best sample.
+        assertTrue(clock.record(0, 505, 505, 10, monotonicNowMs = 10))
+        // Seven samples at offset 200, round trip 100.
+        for (i in 1..7) {
+            val t = i * 1_000L
+            assertTrue(clock.record(t, t + 250, t + 250, t + 100, monotonicNowMs = t + 100))
+        }
+        assertEquals(500L, clock.estimate.offsetMs)
+
+        // An eighth newer sample pushes the best one out.
+        assertTrue(clock.record(8_000, 8_250, 8_250, 8_100, monotonicNowMs = 8_100))
+        assertEquals(200L, clock.estimate.offsetMs)
+        assertEquals(100L, clock.estimate.rttMs)
+    }
+
+    @Test
     fun `clock rejects impossible or implausible samples`() {
         val clock = RoomClockEstimator()
         assertFalse(clock.record(100, 0, 0, 50, monotonicNowMs = 50))

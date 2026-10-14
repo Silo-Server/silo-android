@@ -2769,7 +2769,11 @@ class PlayerViewModel(
         quickSkipAccumulator.cancel()
     }
 
-    private fun beginAndExecuteSeek(position: Double, immediate: Boolean = false) {
+    private fun beginAndExecuteSeek(
+        position: Double,
+        immediate: Boolean = false,
+        mountedSeekableSourceRange: ClosedRange<Double>? = null,
+    ) {
         val state = _uiState.value
         val target = position
             .takeIf { it.isFinite() }
@@ -2785,7 +2789,7 @@ class PlayerViewModel(
             nowMs = nowMs,
         )
         _uiState.update { it.copy(position = target) }
-        executeSeekTarget(target, immediate)
+        executeSeekTarget(target, immediate, mountedSeekableSourceRange)
     }
 
     private fun armSeekPresentation(originSourceMs: Long, targetSourceMs: Long, nowMs: Long) {
@@ -2799,7 +2803,11 @@ class PlayerViewModel(
         if (activeSeekId == null) activeSeekId = ++seekSequence
     }
 
-    private fun executeSeekTarget(targetSourceSec: Double, immediate: Boolean = false) {
+    private fun executeSeekTarget(
+        targetSourceSec: Double,
+        immediate: Boolean = false,
+        mountedSeekableSourceRange: ClosedRange<Double>? = null,
+    ) {
         val state = _uiState.value
         val mountPending = positionReportsBlockedForPendingLoad || awaitingMediaMountGeneration != null
         if (mountPending && (state.sessionId == null || state.playbackPlan == null)) {
@@ -2834,7 +2842,7 @@ class PlayerViewModel(
             return
         }
         val timeline = state.playbackPlan?.timeline
-        val decision = timeline?.decideSeek(targetSourceSec)
+        val decision = timeline?.decideSeek(targetSourceSec, mountedSeekableSourceRange)
         when (decision) {
             is PlaybackSeekDecision.ServerReanchor -> {
                 Log.i(
@@ -3362,6 +3370,9 @@ class PlayerViewModel(
     private var roomEnginePlayWhenReady = false
     private var roomEngineIsPlaying = false
     private var roomEngineState = RoomPlayerState.Idle
+    private var roomEngineSampledAtMs: Long? = null
+    private var roomEngineSeekable = false
+    private var roomEngineSpeed: Double? = null
 
     // The session the current room epoch committed. Cleared at every room
     // load so the binding never attaches the outgoing session under the new
@@ -3445,7 +3456,14 @@ class PlayerViewModel(
             Log.i(TAG, "room_seek action=ignore_during_load target_source_seconds=$sourceSeconds")
             return
         }
-        seekImmediate(sourceSeconds)
+        // A target the binding saw as buffered stays a plain Media3 seek even
+        // when the published seek window is open-ended, as on TV.
+        cancelPendingQuickSkip()
+        beginAndExecuteSeek(
+            sourceSeconds,
+            immediate = true,
+            mountedSeekableSourceRange = roomBufferedSourceRange(_uiState.value),
+        )
     }
 
     /** Applies the room's play or pause. A local suspension holds a Play until the viewer resumes. */
@@ -3470,18 +3488,47 @@ class PlayerViewModel(
             targetSourceSeconds = sourceSeconds,
             playerPositionSeconds = roomEnginePlayerSec,
             bufferedPlayerSeconds = roomEngineBufferedPlayerSec,
+            mountedSeekableSourceRange = roomBufferedSourceRange(state),
         )
     }
 
-    /** A Media3 sample while in a room: position, buffer, and play state as the engine reports them. */
+    /**
+     * The source-time extent the mounted stream provably holds: from just
+     * behind the playhead to the buffered position. Room seeks and
+     * [isRoomPositionBuffered] pass it to `decideSeek` so a target inside it
+     * is a plain seek even when the published window is open-ended. Null
+     * while media is changing or nothing is known.
+     */
+    private fun roomBufferedSourceRange(state: PlayerUiState): ClosedRange<Double>? {
+        if (roomMediaTransitioning(state) || roomEngineState == RoomPlayerState.Idle) return null
+        // A growing progressive copy-remux is not seekable as a whole; its
+        // buffer says nothing about where a native seek may land (TV guards
+        // the same way through the window's seekability).
+        if (!roomEngineSeekable) return null
+        val timeline = state.playbackPlan?.timeline ?: return null
+        if (roomEngineBufferedPlayerSec < roomEnginePlayerSec) return null
+        val start = timeline.sourcePositionForPlayer((roomEnginePlayerSec - ROOM_BACKWARD_SLACK_SECONDS).coerceAtLeast(0.0))
+            ?: return null
+        val end = timeline.sourcePositionForPlayer(roomEngineBufferedPlayerSec) ?: return null
+        return if (end >= start) start..end else null
+    }
+
+    /**
+     * A Media3 sample while in a room: position, buffer, play state,
+     * seekability, and actual speed as the engine reports them.
+     */
     fun onRoomEngineSample(
         positionMs: Long,
         bufferedPositionMs: Long,
         playWhenReady: Boolean,
         isPlaying: Boolean,
         playbackState: Int,
+        currentItemSeekable: Boolean = false,
+        playbackSpeed: Double? = null,
     ) {
         if (!inRoom) return
+        roomEngineSeekable = currentItemSeekable
+        roomEngineSpeed = playbackSpeed?.takeIf { it.isFinite() && it > 0.0 }
         roomEnginePlayWhenReady = playWhenReady
         roomEngineIsPlaying = isPlaying
         roomEngineState = roomPlayerState(playbackState)
@@ -3492,6 +3539,7 @@ class PlayerViewModel(
             val playerSec = positionMs / 1000.0
             val serverDuration = state.serverDuration.takeIf { it > 0.0 }
             roomEnginePlayerSec = playerSec
+            roomEngineSampledAtMs = SystemClock.elapsedRealtime()
             roomEngineBufferedPlayerSec = bufferedPositionMs.coerceAtLeast(0L) / 1000.0
             // onPositionChanged's source mapping, without the presentation
             // guard that holds the scrubber on a pending seek target.
@@ -3506,6 +3554,8 @@ class PlayerViewModel(
         roomEnginePlayerSec = state.startPosition
         roomEngineBufferedPlayerSec = state.startPosition
         roomEngineSourceSec = state.position
+        roomEngineSampledAtMs = null
+        roomEngineSeekable = false
         refreshRoomObservation()
     }
 
@@ -3614,6 +3664,8 @@ class PlayerViewModel(
             state = roomEngineState,
             seekPending = roomMediaTransitioning(state),
             suspended = roomSuspensions.isNotEmpty(),
+            sampledAtMs = roomEngineSampledAtMs,
+            playbackSpeed = roomEngineSpeed,
         )
     }
 
@@ -5876,6 +5928,9 @@ private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
 /** Snapshots to let a local audio switch take before asking the server. */
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
+
+/** How far behind the playhead a room target still counts as held by the mounted stream. */
+private const val ROOM_BACKWARD_SLACK_SECONDS = 1.0
 
 /**
  * A downloaded file mounted by the offline-first path: a local URI with no

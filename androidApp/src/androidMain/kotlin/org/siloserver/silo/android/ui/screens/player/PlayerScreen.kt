@@ -651,6 +651,8 @@ fun PlayerScreen(
             playWhenReady = player.playWhenReady,
             isPlaying = player.isPlaying,
             playbackState = player.playbackState,
+            currentItemSeekable = player.isCurrentMediaItemSeekable,
+            playbackSpeed = player.playbackParameters.speed.toDouble(),
         )
     }
     // service. The video PlayerView binds its SurfaceView directly to this (NOT the
@@ -1524,7 +1526,7 @@ fun PlayerScreen(
 
     // Party only: sample the engine often enough that the room sees where
     // the player really is. The display ticker above is too coarse for the
-    // binding's 0.35 s drift decisions and stays as it is.
+    // binding's 0.1-0.4 s drift decisions and stays as it is.
     LaunchedEffect(mediaController, lifecycleOwner, watchParty) {
         val controller = mediaController ?: return@LaunchedEffect
         if (watchParty == null) return@LaunchedEffect

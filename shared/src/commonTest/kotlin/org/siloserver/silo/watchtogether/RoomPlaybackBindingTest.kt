@@ -430,32 +430,256 @@ class RoomPlaybackBindingTest {
 
     // ---- corrections -----------------------------------------------------------------
 
+    /**
+     * Keep the playing member [drift] seconds behind a room that started at
+     * 100 s at time zero, publishing the position every 50 ms for [forMs].
+     */
+    private fun TestScope.follow(player: FakePlayer, drift: Double, forMs: Long) {
+        repeat((forMs / 50).toInt()) {
+            player.update { copy(sourcePositionSeconds = 100.0 + testScheduler.currentTime / 1000.0 - drift) }
+            advanceTimeBy(50)
+        }
+    }
+
     @Test
-    fun `small unbuffered drift converges by rate and returns to exactly 1x`() = runTest {
+    fun `a playing member's drift is nudged without a seek, even when buffered, and settles at exactly 1x`() = runTest {
         val room = FakeRoom()
-        val player = FakePlayer().apply { buffered = { false } }
+        val player = FakePlayer()
         bind(room, player)
         player.update { copy(sourcePositionSeconds = 99.0) }
         command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
         advanceTimeBy(50)
-        assertEquals(1.125, player.rates.last()!!, 0.001)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
         assertTrue(player.seeks.isEmpty())
 
-        // 300 ms later the room is at about 100.3.
-        player.update { copy(sourcePositionSeconds = 100.3) }
+        follow(player, drift = 0.0, forMs = 1_500)
+        assertNull(player.rates.last())
+        assertTrue(player.seeks.isEmpty())
+    }
+
+    @Test
+    fun `the drift loop starts a nudge beyond the deadband and holds it until within the settle band`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        command(room, "play", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+
+        follow(player, drift = 0.3, forMs = 1_500)
+        assertTrue(player.rates.isEmpty(), "nudged inside the deadband: ${player.rates}")
+
+        follow(player, drift = 0.6, forMs = 600)
+        assertEquals(1.025, player.rates.last()!!, 0.0001)
+
+        // Back inside the deadband but outside the settle band: keep nudging.
+        follow(player, drift = 0.25, forMs = 600)
+        assertEquals(1.01, player.rates.last()!!, 0.0001)
+
+        follow(player, drift = 0.0, forMs = 600)
+        assertNull(player.rates.last())
+        assertTrue(player.seeks.isEmpty(), "the loop never seeks")
+    }
+
+    @Test
+    fun `the drift loop never seeks a large drift and waits a second after each command`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        command(room, "play", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 9.0, forMs = 900)
+        assertTrue(player.rates.isEmpty(), "the loop ran before the command settled")
+
+        follow(player, drift = 9.0, forMs = 600)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertTrue(player.seeks.isEmpty())
+    }
+
+    @Test
+    fun `a received command changes nothing until it executes`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        val playCalls = player.playing.size
+
+        command(room, "later", TransportAction.Pause, 101.0, RoomPlaybackState.Paused, executeInMs = 1_500)
+        follow(player, drift = 0.0, forMs = 1_400)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertEquals(playCalls, player.playing.size)
+
+        advanceTimeBy(200)
+        assertNull(player.rates.last())
+        assertEquals(false, player.playing.last())
+    }
+
+    @Test
+    fun `the drift loop returns to 1x when local playback stops and never resumes it`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        val playCalls = player.playing.size
+
+        player.update { copy(isPlaying = false, state = RoomPlayerState.Buffering) }
         advanceTimeBy(300)
+        assertNull(player.rates.last())
+        assertEquals(playCalls, player.playing.size)
+    }
+
+    @Test
+    fun `a pause seeks a large drift even when it must reload, but leaves a small unbuffered one`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer().apply { buffered = { false } }
+        bind(room, player)
+        command(room, "p1", TransportAction.Pause, 103.0, RoomPlaybackState.Paused)
+        advanceTimeBy(100)
+        assertTrue(player.seeks.isEmpty())
+        assertEquals(false, player.playing.last())
+
+        command(room, "p2", TransportAction.Pause, 140.0, RoomPlaybackState.Paused)
+        advanceTimeBy(100)
+        assertEquals(listOf(140.0), player.seeks)
+    }
+
+    @Test
+    fun `a play from rest seeks a reachable one second gap and plays at exactly 1x`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(isPlaying = false, playWhenReady = false, sourcePositionSeconds = 98.5) }
+        command(room, "play", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(100.0, player.seeks.single(), 0.1)
+        assertEquals(true, player.playing.last())
+        assertTrue(player.rates.all { it == null })
+    }
+
+    @Test
+    fun `a playing sample is projected forward by its age before deciding`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        advanceTimeBy(1_000)
+        // Read 800 ms ago at 99.5: the player is at about 100.3 now, inside the deadband.
+        player.update { copy(sourcePositionSeconds = 99.5, sampledAtMs = testScheduler.currentTime - 800) }
+        command(room, "play", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertTrue(player.rates.isEmpty(), "nudged from a stale position: ${player.rates}")
+        assertTrue(player.seeks.isEmpty())
+    }
+
+    @Test
+    fun `a held reload keeps the drift loop from nudging`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer().apply { buffered = { false } }
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 50.0) }
+        command(room, "r1", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        command(room, "r2", TransportAction.Play, 110.0, RoomPlaybackState.Playing)
+        advanceTimeBy(3_000)
+        assertEquals(1, player.seeks.size)
+        assertTrue(player.rates.isEmpty(), "nudged while a reload was held: ${player.rates}")
+    }
+
+    @Test
+    fun `the drift loop stays frozen while a command is pending, even after the snapshot flips`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        command(room, "pause", TransportAction.Pause, 101.5, RoomPlaybackState.Paused, executeInMs = 1_500)
+        room.roomSnapshot.value = playing(state = RoomPlaybackState.Paused, paused = true)
+        advanceTimeBy(1_000)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        advanceTimeBy(600)
+        assertNull(player.rates.last())
+        assertEquals(false, player.playing.last())
+    }
+
+    @Test
+    fun `a reload that never lands stops blocking the drift loop after thirty seconds`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer().apply { buffered = { false } }
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 50.0) }
+        command(room, "r1", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        assertEquals(1, player.seeks.size)
+
+        advanceTimeBy(29_000)
+        assertTrue(player.rates.isEmpty())
+        advanceTimeBy(2_000)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+    }
+
+    @Test
+    fun `a mount that ignores the rate falls back to spaced in-place seeks`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        // The engine keeps reporting 1x whatever is asked (tunneling, passthrough).
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        follow(player, drift = 2.0, forMs = 1_200)
+        assertNull(player.rates.last())
+        assertEquals(1, player.seeks.size)
+        val firstSeek = player.seeks.single()
+        assertTrue(firstSeek in 100.9..101.3, "seeked to $firstSeek")
+
+        // No second seek within a second of the first (at about 1 s).
+        follow(player, drift = 2.0, forMs = 700)
+        assertEquals(1, player.seeks.size)
+        follow(player, drift = 2.0, forMs = 400)
+        assertEquals(2, player.seeks.size)
+        assertNull(player.rates.last(), "nudged again on a mount without rate support")
+
+        // A command's nudge becomes an in-place seek too.
+        follow(player, drift = 0.0, forMs = 100)
+        player.update { copy(sourcePositionSeconds = sourcePositionSeconds - 2.0) }
+        command(room, "again", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(3, player.seeks.size)
         assertNull(player.rates.last())
     }
 
     @Test
-    fun `an unbuffered pause correction never reloads media`() = runTest {
+    fun `a member buffering toward play reloads a large gap through the budget`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer().apply { buffered = { false } }
         bind(room, player)
-        command(room, "p", TransportAction.Pause, 140.0, RoomPlaybackState.Paused)
+        player.update { copy(sourcePositionSeconds = 50.0, isPlaying = false, state = RoomPlayerState.Buffering) }
+        command(room, "r1", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
         advanceTimeBy(100)
-        assertTrue(player.seeks.isEmpty())
-        assertEquals(false, player.playing.last())
+        assertEquals(1, player.seeks.size)
+
+        command(room, "r2", TransportAction.Play, 110.0, RoomPlaybackState.Playing)
+        advanceTimeBy(100)
+        assertEquals(1, player.seeks.size, "an unpaced rebuild while buffering toward play")
+    }
+
+    @Test
+    fun `ordinary reports name the last applied command`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        command(room, "c1", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(1_600)
+        assertEquals("c1", room.sent.last { it.kind == "report" }.commandId)
     }
 
     @Test
@@ -505,7 +729,7 @@ class RoomPlaybackBindingTest {
         player.update { copy(sourcePositionSeconds = 99.0) }
         command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
         advanceTimeBy(50)
-        assertEquals(1.125, player.rates.last()!!, 0.001)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
 
         room.connectionState.value = connection.copy(writable = false)
         advanceTimeBy(300)

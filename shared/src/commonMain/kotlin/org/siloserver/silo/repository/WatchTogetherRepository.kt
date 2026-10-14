@@ -124,8 +124,9 @@ enum class WatchPartyPendingAction {
 /** Client timing choices; the web client's values unless evidence says otherwise. */
 data class WatchPartyTiming(
     val pingIntervalMs: Long = 15_000L,
-    val initialPings: Int = 3,
-    val initialPingSpacingMs: Long = 1_000L,
+    /** Ping at [initialPingSpacingMs] until this many clock samples were accepted on the connection. */
+    val initialSamples: Int = 4,
+    val initialPingSpacingMs: Long = 2_000L,
     /** Renew the room proof this long before it expires: a socket lifetime plus a ticket. */
     val proofRenewalMarginMs: Long = 6 * 60_000L,
     val proofUnknownRenewalMs: Long = 60 * 60_000L,
@@ -198,6 +199,10 @@ class WatchTogetherRepository(
     private var lastSuggestionRead: Pair<RoomBinding, ApiResult<List<Suggestion>>>? = null
     private var rawSuggestions: List<Suggestion> = emptyList()
     private val clockEstimator = RoomClockEstimator()
+
+    // Clock samples accepted on the current socket; drives the ping cadence.
+    // Samples themselves survive a reconnect to the same room.
+    private var connectionClockSamples = 0
 
     private val _roomSnapshot = MutableStateFlow<RoomSnapshot?>(null)
     private val _suggestions = MutableStateFlow<List<Suggestion>>(emptyList())
@@ -329,6 +334,7 @@ class WatchTogetherRepository(
             // Offsets measured against another room, possibly on another
             // server, must not schedule this one's commands.
             clockEstimator.reset()
+            connectionClockSamples = 0
             _clock.value = clockEstimator.estimate
             votedIds.clear()
             rawSuggestions = emptyList()
@@ -892,6 +898,7 @@ class WatchTogetherRepository(
                     when (event) {
                         RoomRealtimeEvent.Opened -> {
                             openedAtMs = monotonicNowMs()
+                            stateMutex.withLock { connectionClockSamples = 0 }
                             markOpened(lease, owner, client.currentConnectionId())
                             pings?.cancel()
                             if (timing.backgroundWork) pings = scope.launch { pingLoop(lease, owner, client) }
@@ -1037,12 +1044,23 @@ class WatchTogetherRepository(
         else -> WatchPartyEndReason.Unauthorized
     }
 
+    /**
+     * Ping on open, then every 2 s until the connection has supplied enough
+     * accepted clock samples for a minimum-RTT estimate, then every 15 s.
+     */
     private suspend fun pingLoop(lease: RoomBinding, owner: Long, client: WatchTogetherRealtimeClient) {
-        var sent = 0
         while (isCurrent(lease, owner)) {
             client.ping(formatEpochMillisRfc3339(wallClockMs()))
-            sent++
-            delay(if (sent < timing.initialPings) timing.initialPingSpacingMs else timing.pingIntervalMs)
+            // Wait in short steps, deciding after each, so this ping's own
+            // pong counts and a reset estimate resumes the warm-up at once.
+            var waitedMs = 0L
+            do {
+                val stepMs = minOf(timing.initialPingSpacingMs, timing.pingIntervalMs - waitedMs).coerceAtLeast(1L)
+                delay(stepMs)
+                waitedMs += stepMs
+            } while (waitedMs < timing.pingIntervalMs &&
+                stateMutex.withLock { connectionClockSamples } >= timing.initialSamples
+            )
         }
     }
 
@@ -1194,7 +1212,11 @@ class WatchTogetherRepository(
                         // of that same moment, or the wait reads as a wall-clock
                         // jump and wipes the estimate.
                         val waitedMs = (wallClockMs() - received).coerceAtLeast(0L)
-                        clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs() - waitedMs)
+                        val generation = clockEstimator.estimate.generation
+                        val accepted = clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs() - waitedMs)
+                        // A clock jump wiped the samples: warm up again.
+                        if (clockEstimator.estimate.generation != generation) connectionClockSamples = 0
+                        if (accepted) connectionClockSamples++
                         _clock.value = clockEstimator.estimate
                     }
                 }
@@ -1215,7 +1237,11 @@ class WatchTogetherRepository(
      * the server-time estimate so no timing work uses a stale offset.
      */
     override suspend fun checkClockContinuity(): RoomClockEstimate = stateMutex.withLock {
-        if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) _clock.value = clockEstimator.estimate
+        if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) {
+            // The samples are gone: warm-up pings resume.
+            connectionClockSamples = 0
+            _clock.value = clockEstimator.estimate
+        }
         _clock.value
     }
 
@@ -1237,6 +1263,7 @@ class WatchTogetherRepository(
             _ended.value = null
             votedIds.clear()
             clockEstimator.reset()
+            connectionClockSamples = 0
             _clock.value = clockEstimator.estimate
             realtime = null
             realtimeGeneration = null

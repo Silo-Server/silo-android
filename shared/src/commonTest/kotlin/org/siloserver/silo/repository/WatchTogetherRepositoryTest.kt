@@ -1449,6 +1449,86 @@ class WatchTogetherRepositoryTest {
         job.cancel()
     }
 
+    @Test
+    fun `pings every two seconds until four samples arrive, then every fifteen`() = runTest {
+        val realtime = FakeRealtime()
+        val r = repo(realtime = realtime, timing = testTiming.copy(backgroundWork = true))
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        runCurrent()
+
+        fun answer() {
+            val wall = 1_000_000L + testScheduler.currentTime
+            realtime.events.tryEmit(
+                RoomRealtimeEvent.Pong(
+                    clientSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall - 81),
+                    serverReceivedAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 159),
+                    serverSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 160),
+                    clientReceivedMs = wall,
+                ),
+            )
+            runCurrent()
+        }
+
+        // Unanswered pings keep the short cadence.
+        advanceTimeBy(4_001)
+        assertEquals(3, realtime.pings)
+
+        // Pings at 6, 8 and 10 s; the fourth sample lands just after the last.
+        repeat(4) {
+            answer()
+            advanceTimeBy(2_000)
+        }
+        assertEquals(6, realtime.pings)
+        // The next ping is 15 s after the one at 10 s.
+        advanceTimeBy(12_900)
+        assertEquals(6, realtime.pings, "still pinging every 2 s after four samples")
+        advanceTimeBy(200)
+        assertEquals(7, realtime.pings)
+        job.cancel()
+    }
+
+    @Test
+    fun `a clock jump resumes the two second warm-up pings`() = runTest {
+        var monotonicJumpMs = 0L
+        val realtime = FakeRealtime()
+        val r = repo(
+            realtime = realtime,
+            timing = testTiming.copy(backgroundWork = true),
+            now = { testScheduler.currentTime + monotonicJumpMs },
+        )
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        runCurrent()
+        advanceTimeBy(4_001)
+        repeat(4) {
+            val wall = 1_000_000L + testScheduler.currentTime
+            realtime.events.tryEmit(
+                RoomRealtimeEvent.Pong(
+                    clientSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall - 81),
+                    serverReceivedAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 159),
+                    serverSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 160),
+                    clientReceivedMs = wall,
+                ),
+            )
+            runCurrent()
+            advanceTimeBy(2_000)
+        }
+        assertEquals(6, realtime.pings)
+
+        // The wall clock moves a minute against the monotonic clock.
+        monotonicJumpMs = 60_000L
+        r.checkClockContinuity()
+        assertNull(r.clock.value.offsetMs)
+        advanceTimeBy(2_100)
+        assertEquals(7, realtime.pings, "warm-up did not resume after the samples were wiped")
+        job.cancel()
+    }
+
     // ---- suggestions -------------------------------------------------------------
 
     @Test

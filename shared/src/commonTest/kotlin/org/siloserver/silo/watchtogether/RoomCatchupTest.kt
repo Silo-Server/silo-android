@@ -7,44 +7,146 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class RoomCatchupTest {
-    private fun decide(action: TransportAction, target: Double, local: Double, reachable: Boolean) =
-        RoomCatchup.decide(action, target, local, reachable)
+    private fun decide(
+        action: TransportAction,
+        drift: Double,
+        memberPlaying: Boolean = true,
+        commandPlays: Boolean = action == TransportAction.Play,
+        reachable: Boolean = false,
+        intendsToPlay: Boolean = memberPlaying,
+        rateCapable: Boolean = true,
+    ) = RoomCatchup.decideCommand(action, drift, memberPlaying, commandPlays, reachable, intendsToPlay, rateCapable)
+
+    // ---- room position ---------------------------------------------------------------
 
     @Test
-    fun `explicit seeks always seek`() {
-        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Seek, 10.0, 10.0, reachable = false))
+    fun `a playing reference advances at 1x from execute_at and a late execution projects forward`() {
+        val ref = RoomReference(positionSeconds = 100.0, executeAtServerMs = 10_000, playing = true)
+        assertEquals(100.0, ref.positionAt(9_000), "never before execute_at")
+        assertEquals(100.0, ref.positionAt(10_000))
+        assertEquals(103.5, ref.positionAt(13_500))
     }
 
     @Test
-    fun `drift inside the deadband needs nothing`() {
-        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Play, 10.3, 10.0, reachable = false))
+    fun `a paused reference holds its position`() {
+        val ref = RoomReference(positionSeconds = 42.0, executeAtServerMs = 10_000, playing = false)
+        assertEquals(42.0, ref.positionAt(60_000))
+    }
+
+    // ---- command application -------------------------------------------------------------
+
+    @Test
+    fun `a seek always seeks, even with no drift`() {
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Seek, 0.0))
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Seek, 0.0, memberPlaying = false))
     }
 
     @Test
-    fun `a locally reachable target is a seek`() {
-        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Play, 11.5, 10.0, reachable = true))
-        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Pause, 11.5, 10.0, reachable = true))
+    fun `a play for a playing member nudges up to the hard seek limit, even when the target is buffered`() {
+        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Play, 0.4, reachable = true))
+        assertEquals(RoomCatchup.Decision.Nudge(1.02), decide(TransportAction.Play, 0.5, reachable = true))
+        assertEquals(RoomCatchup.Decision.Nudge(0.96), decide(TransportAction.Play, -5.0, reachable = true))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, decide(TransportAction.Play, 5.01))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, decide(TransportAction.Play, -8.0, reachable = true))
     }
 
     @Test
-    fun `an unreachable pause target is left for the next play`() {
-        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Pause, 15.0, 10.0, reachable = false))
+    fun `a play for a member at rest seeks only for a large gap or a cheap one`() {
+        val play = { drift: Double, reachable: Boolean ->
+            decide(TransportAction.Play, drift, memberPlaying = false, reachable = reachable)
+        }
+        assertEquals(RoomCatchup.Decision.None, play(1.0, true))
+        assertEquals(RoomCatchup.Decision.Seek, play(1.1, true))
+        assertEquals(RoomCatchup.Decision.None, play(4.9, false))
+        assertEquals(RoomCatchup.Decision.Seek, play(-5.1, false))
     }
 
     @Test
-    fun `small unreachable drift converges by a bounded rate and large drift seeks`() {
-        assertEquals(RoomCatchup.Decision.Rate(1.125), decide(TransportAction.Play, 11.0, 10.0, reachable = false))
-        assertEquals(RoomCatchup.Decision.Rate(0.9), decide(TransportAction.Play, 8.5, 10.0, reachable = false))
-        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Play, 12.5, 10.0, reachable = false))
-        assertEquals(RoomCatchup.MAX_RATE, RoomCatchup.rateFor(10.0))
+    fun `a pause seeks under the same rule as a member at rest`() {
+        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Pause, 0.9, reachable = true))
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Pause, -1.5, reachable = true))
+        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Pause, 3.0, reachable = false))
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Pause, 40.0, reachable = false))
     }
 
     @Test
-    fun `convergence tracks the advancing room position`() {
-        assertEquals(12.0, RoomCatchup.expectedPosition(10.0, executeAtMs = 1_000, nowMs = 3_000))
-        assertTrue(RoomCatchup.converged(10.0, 1_000, localSeconds = 11.8, nowMs = 3_000))
-        assertFalse(RoomCatchup.converged(10.0, 1_000, localSeconds = 11.0, nowMs = 3_000))
+    fun `a member that wants to play but is not advancing reloads a large gap through the budget`() {
+        val buffering = { drift: Double, reachable: Boolean ->
+            decide(TransportAction.Play, drift, memberPlaying = false, intendsToPlay = true, reachable = reachable)
+        }
+        assertEquals(RoomCatchup.Decision.SeekOrReload, buffering(5.1, false))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, buffering(-40.0, true))
+        assertEquals(RoomCatchup.Decision.Seek, buffering(2.0, true))
+        assertEquals(RoomCatchup.Decision.None, buffering(2.0, false))
+        // Truly stopped: the stopped rule seeks a large gap directly.
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Play, 40.0, memberPlaying = false, intendsToPlay = false))
     }
+
+    @Test
+    fun `without rate support a nudge becomes an in-place seek beyond one second`() {
+        val play = { drift: Double, reachable: Boolean ->
+            decide(TransportAction.Play, drift, reachable = reachable, rateCapable = false)
+        }
+        assertEquals(RoomCatchup.Decision.None, play(0.8, true))
+        assertEquals(RoomCatchup.Decision.Seek, play(1.5, true))
+        assertEquals(RoomCatchup.Decision.None, play(3.0, false))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, play(6.0, false))
+    }
+
+    @Test
+    fun `a play that leaves the room waiting does not nudge a playing member`() {
+        assertEquals(
+            RoomCatchup.Decision.None,
+            decide(TransportAction.Play, 2.0, memberPlaying = true, commandPlays = false, reachable = false),
+        )
+    }
+
+    // ---- rate --------------------------------------------------------------------------
+
+    @Test
+    fun `the rate is clamped to one to four percent in the direction of the drift`() {
+        assertEquals(1.0, RoomCatchup.rateFor(0.0))
+        assertEquals(1.01, RoomCatchup.rateFor(0.05))
+        assertEquals(0.99, RoomCatchup.rateFor(-0.05))
+        assertEquals(1.04, RoomCatchup.rateFor(10.0))
+        assertEquals(0.96, RoomCatchup.rateFor(-300.0))
+        assertEquals(1.0, RoomCatchup.rateFor(Double.NaN))
+    }
+
+    @Test
+    fun `the rate is quantized to half-percent steps`() {
+        // 0.6 / 25 = 0.024 -> 0.025; 0.55 / 25 = 0.022 -> 0.02.
+        assertEquals(1.025, RoomCatchup.rateFor(0.6))
+        assertEquals(1.02, RoomCatchup.rateFor(0.55))
+        assertEquals(0.975, RoomCatchup.rateFor(-0.6))
+        // Equal drift magnitudes give one exact value, so an unchanged rate is never re-applied.
+        assertEquals(RoomCatchup.rateFor(0.61), RoomCatchup.rateFor(0.62))
+    }
+
+    @Test
+    fun `the loop starts a nudge beyond the deadband and keeps it until within the settle band`() {
+        val loop = { drift: Double, nudging: Boolean -> RoomCatchup.loopDecision(drift, nudging) }
+        assertEquals(RoomCatchup.Decision.None, loop(0.3, false))
+        assertEquals(RoomCatchup.Decision.Nudge(1.02), loop(0.5, false))
+        // Hysteresis: the same drift continues a running nudge.
+        assertEquals(RoomCatchup.Decision.Nudge(1.01), loop(0.3, true))
+        assertEquals(RoomCatchup.Decision.Nudge(0.99), loop(-0.11, true))
+        assertEquals(RoomCatchup.Decision.None, loop(0.1, true))
+        assertEquals(RoomCatchup.Decision.None, loop(-0.05, true))
+    }
+
+    @Test
+    fun `without rate support the loop seeks in place beyond one second and never nudges`() {
+        val loop = { drift: Double, reachable: Boolean ->
+            RoomCatchup.loopDecision(drift, nudging = false, rateCapable = false, targetReachableInPlace = reachable)
+        }
+        assertEquals(RoomCatchup.Decision.None, loop(0.6, true))
+        assertEquals(RoomCatchup.Decision.None, loop(1.0, true))
+        assertEquals(RoomCatchup.Decision.Seek, loop(-1.2, true))
+        assertEquals(RoomCatchup.Decision.None, loop(8.0, false))
+    }
+
+    // ---- reload budget -------------------------------------------------------------------
 
     @Test
     fun `one reload at a time with doubling backoff and a capped lead`() {
@@ -71,6 +173,8 @@ class RoomCatchupTest {
         val budget = RoomReloadBudget()
         budget.begin(10.0, nowMs = 0)
         assertFalse(budget.landed(10.0))
+        assertFalse(budget.stale(29_999))
+        assertTrue(budget.stale(30_000))
         assertTrue(budget.allowed(30_000))
         budget.abandon(30_000)
         budget.settle()

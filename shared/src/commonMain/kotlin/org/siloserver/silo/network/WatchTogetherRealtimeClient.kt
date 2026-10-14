@@ -357,7 +357,8 @@ class DefaultWatchTogetherRealtimeClient private constructor(
                 sessionId = sessionId,
                 positionSeconds = positionSeconds,
                 isPaused = isPaused,
-                commandId = commandId?.takeIf { isReady && it.isNotBlank() },
+                // The last completed command; with isReady it acknowledges that command.
+                commandId = commandId?.takeIf { it.isNotBlank() },
                 isReady = isReady.takeIf { it && !commandId.isNullOrBlank() },
             ),
         ),

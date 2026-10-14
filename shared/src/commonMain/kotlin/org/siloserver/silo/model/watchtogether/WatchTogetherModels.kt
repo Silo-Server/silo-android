@@ -212,8 +212,9 @@ data class Suggestion(
 
 /**
  * Discrete transport directive broadcast on the room WS. [executeAt]/[issuedAt]
- * are RFC3339Nano strings (server clock); the RoomSyncEngine converts [executeAt]
- * to a local schedule via the offset.
+ * are RFC3339Nano strings (server clock); the RoomPlaybackBinding converts [executeAt]
+ * to a local schedule via the offset. [positionSeconds] is the room position
+ * at [executeAt].
  */
 @Serializable
 data class TransportCommand(
@@ -359,9 +360,10 @@ data class WsTransportRequest(
 )
 
 /**
- * Periodic position report. While the room waits, [commandId] with
- * [isReady] = true acknowledges that command exactly like a `ready` frame, so a
- * lost acknowledgement heals on the next report.
+ * Periodic position report. [commandId] names the last command this client
+ * completed. While the room waits, [commandId] with [isReady] = true
+ * acknowledges that command exactly like a `ready` frame, so a lost
+ * acknowledgement heals on the next report.
  */
 @Serializable
 data class WsStateReport(

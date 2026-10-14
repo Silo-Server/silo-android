@@ -75,6 +75,18 @@ data class RoomPlayerObservation(
      * timer, subtitle preparation). Nothing is reported while it lasts.
      */
     val suspended: Boolean = false,
+    /**
+     * When [sourcePositionSeconds] was read from the engine, on the binding's
+     * monotonic clock, or null when unknown. A playing position is projected
+     * forward from it so decisions use where the player is now.
+     */
+    val sampledAtMs: Long? = null,
+    /**
+     * The speed the engine reports it is actually playing at, or null when
+     * unknown. A tunneled or passthrough audio path ignores a requested rate
+     * and keeps reporting 1x.
+     */
+    val playbackSpeed: Double? = null,
 )
 
 /** The player side of the binding, implemented by each platform's player. */
@@ -108,6 +120,8 @@ data class RoomPlaybackTiming(
     val guestSeekToleranceSeconds: Double = 1.0,
     val hostSeekToleranceSeconds: Double = 15.0,
     val stallWindowMs: Long = 5 * 60_000L,
+    /** A requested rate the engine still reports as 1x this long later is unsupported on the mount. */
+    val rateConfirmMs: Long = 1_000L,
 )
 
 /** Something the viewer should be told. */
@@ -145,11 +159,13 @@ enum class RoomTransportResult { Sent, Denied, Reconnecting, NotInRoom, Ignored 
  * It attaches the committed playback session on every socket epoch and waits
  * for the server's echo before reporting; reports what the player is actually
  * doing every 1.5 s and stays quiet while stalled, seeking, or suspended;
- * schedules accepted commands on the server clock and advances a late Play;
- * acknowledges readiness for the exact waiting command until a fresh snapshot
- * confirms it; reports buffering after a 2 s stall; acknowledges recovery
- * while catching up; and converges small drift by a temporary rate with media
- * reloads paced by [RoomReloadBudget].
+ * schedules accepted commands on the server clock and applies them only when
+ * they execute, projected to that moment; acknowledges readiness for the exact
+ * waiting command until a fresh snapshot confirms it; reports buffering after a
+ * 2 s stall; acknowledges recovery while catching up; and keeps a playing
+ * member on the room reference (the latest applied command) with a small
+ * temporary rate, leaving large drift to seeks and reloads paced by
+ * [RoomReloadBudget]. See [RoomCatchup] for the shared constants.
  *
  * Everything runs on one event loop, so no state is shared between coroutines.
  */
@@ -204,18 +220,33 @@ class RoomPlaybackBinding(
     private var executionJob: Job? = null
     private var nextToken = 0L
     private var applied: TransportCommand? = null
-    private var appliedAtMs = 0L
+    private var appliedAtMs = NEVER_MS
+
+    // The room position this member follows: the latest applied command.
+    private var reference: RoomReference? = null
+    private var lastLoopMs = NEVER_MS
+
+    // Last moment the player was seeking or mounting; the drift loop waits
+    // for a command's seek to finish, not only for the command itself.
+    private var lastBusyMs = NEVER_MS
+
+    // This mount plays on at 1x whatever rate is asked (tunneling,
+    // passthrough audio). Sticky until the next mount, epoch, quality change,
+    // or reload; the loop then corrects with in-place seeks instead.
+    private var rateUnsupported = false
+    private var rateRequestedAtMs = NEVER_MS
+    private var lastLoopSeekMs = NEVER_MS
+    private var mountSessionId: String? = null
     private var readiness: Readiness? = null
     private var lastCatchUpAckMs = NEVER_MS
     private var stallStartedAtMs: Long? = null
     private var stallReported = false
     private val sustainedStalls = ArrayDeque<Long>()
-    private var convergence: Convergence? = null
 
     // A Play correction that needs new media while the reload budget is
     // spacing reloads. It runs once the budget allows, unless the viewer
-    // reaches the room first or a newer command replaces it.
-    private var deferredReload: Convergence? = null
+    // comes within reach of the room first or a newer command replaces it.
+    private var reloadDeferred = false
     private var rateApplied: Double? = null
     private val reloads = RoomReloadBudget()
     private var wasSuspended = false
@@ -237,8 +268,6 @@ class RoomPlaybackBinding(
         val armedWith: RoomSnapshot?,
         var lastSentMs: Long = NEVER_MS,
     )
-
-    private data class Convergence(val targetSeconds: Double, val executeAtMonotonicMs: Long)
 
     fun start() {
         scope.launch { loop() }
@@ -322,6 +351,7 @@ class RoomPlaybackBinding(
                 Event.QualityChanged -> {
                     sustainedStalls.clear()
                     reloads.reset()
+                    rateUnsupported = false
                     _offerLowerQuality.value = false
                 }
                 Event.Tick, Event.Changed -> Unit
@@ -462,9 +492,18 @@ class RoomPlaybackBinding(
             stallReported = false
         }
 
-        // Rate convergence and reload pacing.
-        converge(now, obs)
+        // Reload pacing and the continuous drift loop.
+        if (obs.seekPending) lastBusyMs = now
+        if (obs.sessionId != mountSessionId) {
+            mountSessionId = obs.sessionId
+            rateUnsupported = false
+        }
+        if (reloads.inFlight && obs.isPlaying && reloads.landed(obs.sourcePositionSeconds)) reloads.land(now)
+        // A reload that never lands must not hold corrections off for good.
+        if (reloads.stale(now)) reloads.abandon(now)
+        checkRateHonoured(now, obs)
         retryDeferredReload(now, obs)
+        driftLoop(now, snapshot, obs, stalled)
 
         // Ordinary reports: only positions that are decisions.
         val readinessPending = readiness != null || (catchingUp && snapshot.selfMember?.isReady != true)
@@ -473,7 +512,7 @@ class RoomPlaybackBinding(
             now - lastReportMs >= timing.reportIntervalMs
         ) {
             lastReportMs = now
-            room.stateReport(sessionId, obs.sourcePositionSeconds, paused, null, isReady = false)
+            room.stateReport(sessionId, obs.sourcePositionSeconds, paused, applied?.commandId, isReady = false)
         }
     }
 
@@ -482,8 +521,10 @@ class RoomPlaybackBinding(
         pending = null
         executionJob?.cancel()
         applied = null
+        reference = null
         readiness = null
-        deferredReload = null
+        reloadDeferred = false
+        rateUnsupported = false
         stallStartedAtMs = null
         stallReported = false
         _catchingUp.value = false
@@ -502,7 +543,10 @@ class RoomPlaybackBinding(
         ) return
         lastSeenCommandId = command.commandId
         lastCommandConnection = commandConnection
-        stopCorrections(monotonicNowMs())
+        // Rate and play state change only when the command executes. A held
+        // or running reload is superseded by the newer room position.
+        reloadDeferred = false
+        if (reloads.inFlight) reloads.abandon(monotonicNowMs())
         val token = ++nextToken
         val queued = PendingCommand(token, scheduled, scheduled.executeAtMs)
         pending = queued
@@ -570,44 +614,54 @@ class RoomPlaybackBinding(
         }
         pending = null
         val now = monotonicNowMs()
-        val advancing = command.action != TransportAction.Pause && command.playbackState == RoomPlaybackState.Playing
-        val lateMs = (serverNow - (scheduled.executeAtServerMs ?: serverNow)).coerceAtLeast(0L)
-        val target = command.positionSeconds + if (advancing) lateMs / 1000.0 else 0.0
-        val playing = when (command.action) {
+        val commandPlays = when (command.action) {
             TransportAction.Play -> command.playbackState != RoomPlaybackState.Waiting
             TransportAction.Pause -> false
             else -> command.playbackState == RoomPlaybackState.Playing
         }
-        when (val decision = RoomCatchup.decide(
+        val next = RoomReference(
+            positionSeconds = command.positionSeconds,
+            executeAtServerMs = scheduled.executeAtServerMs ?: serverNow,
+            playing = command.action != TransportAction.Pause && command.playbackState == RoomPlaybackState.Playing,
+        )
+        // Late execution projects forward: the room kept playing meanwhile.
+        val target = next.positionAt(serverNow)
+        val memberPlaying = obs.isPlaying && !obs.seekPending && !obs.suspended
+        val drift = target - localPositionNow(obs, now)
+        val decision = RoomCatchup.decideCommand(
             action = command.action,
-            targetSeconds = target,
-            localSeconds = obs.sourcePositionSeconds,
-            targetReachableLocally = player.isBuffered(target),
-        )) {
-            RoomCatchup.Decision.Seek -> {
-                if (command.action == TransportAction.Seek || player.isBuffered(target)) {
-                    player.seekTo(target)
-                } else if (reloads.allowed(now)) {
-                    // A Play correction that must load new media is paced.
-                    beginReload(target, now, obs)
-                } else {
-                    // Held until the budget allows, so the viewer is not left
-                    // playing at the wrong position with nothing to fix it.
-                    deferredReload = Convergence(target, now)
-                }
+            driftSeconds = drift,
+            memberPlaying = memberPlaying,
+            commandPlays = commandPlays,
+            targetReachableInPlace = command.action != TransportAction.Seek && player.isBuffered(target),
+            memberIntendsToPlay = obs.playWhenReady && !obs.suspended,
+            rateCapable = !rateUnsupported,
+        )
+        // Only a playing member keeps or starts a nudge; everything else runs
+        // at exactly 1x. A pause drops the rate while still playing.
+        val keepsRate = decision is RoomCatchup.Decision.Nudge ||
+            (decision == RoomCatchup.Decision.None && memberPlaying && commandPlays)
+        if (!keepsRate) setRate(null)
+        if (!commandPlays) player.setPlaying(false)
+        when (decision) {
+            RoomCatchup.Decision.Seek -> player.seekTo(target)
+            RoomCatchup.Decision.SeekOrReload -> when {
+                player.isBuffered(target) -> player.seekTo(target)
+                // A correction that must load new media is paced.
+                reloads.allowed(now) -> beginReload(target, now, obs)
+                // Held until the budget allows, so the viewer is not left
+                // playing at the wrong position with nothing to fix it.
+                else -> reloadDeferred = true
             }
-            is RoomCatchup.Decision.Rate -> {
-                // [target] already includes the late start, so it advances from now.
-                convergence = Convergence(target, now)
-                setRate(decision.rate)
-            }
-            RoomCatchup.Decision.None -> if (command.action == TransportAction.Play) reloads.settle()
+            is RoomCatchup.Decision.Nudge -> setRate(decision.rate)
+            RoomCatchup.Decision.None -> if (memberPlaying && abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
         }
         // A local suspension holds playback: the viewer resumes on their own and
         // the binding re-attaches, so the server resends the room position.
-        if (!playing || !obs.suspended) player.setPlaying(playing)
+        if (commandPlays && !obs.suspended) player.setPlaying(true)
         applied = command
         appliedAtMs = now
+        reference = next
         if (command.playbackState == RoomPlaybackState.Waiting) {
             readiness = Readiness(
                 commandId = command.commandId,
@@ -617,56 +671,104 @@ class RoomPlaybackBinding(
         }
     }
 
-    private fun converge(now: Long, obs: RoomPlayerObservation) {
-        if (reloads.inFlight && obs.isPlaying && reloads.landed(obs.sourcePositionSeconds)) reloads.land(now)
-        val target = convergence ?: return
-        if (obs.seekPending || !obs.isPlaying || obs.suspended) {
-            stopCorrections(now)
+    /**
+     * Keep a playing member on the room reference with a small temporary
+     * rate. It runs every [RoomCatchup.LOOP_INTERVAL_MS] once the last command
+     * (or its own last seek) has settled and returns the rate to exactly 1x
+     * whenever its conditions stop holding. Drift beyond
+     * [RoomCatchup.HARD_SEEK_SECONDS] is still nudged; the server's correction
+     * command fixes it properly. It seeks only on a mount that ignores rate,
+     * and then only to a buffered target.
+     */
+    private fun driftLoop(now: Long, snapshot: RoomSnapshot, obs: RoomPlayerObservation, stalled: Boolean) {
+        // A pending command owns the next change; until it executes the
+        // current rate stands, even if a snapshot already describes it.
+        if (pending != null) return
+        val ref = reference
+        val serverNow = serverNowMs()
+        val reloading = reloads.inFlight && !reloads.stale(now)
+        val holds = snapshot.playbackState == RoomPlaybackState.Playing &&
+            obs.isPlaying && obs.state == RoomPlayerState.Ready &&
+            !obs.seekPending && !obs.suspended && !stalled &&
+            !reloading && !reloadDeferred
+        if (ref == null || !ref.playing || serverNow == null || !holds) {
+            setRate(null)
             return
         }
-        val expected = RoomCatchup.expectedPosition(target.targetSeconds, target.executeAtMonotonicMs, now)
-        val drift = expected - obs.sourcePositionSeconds
-        if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS || abs(drift) > RoomCatchup.BAND_SECONDS) {
-            convergence = null
+        if (now - maxOf(appliedAtMs, lastBusyMs, lastLoopSeekMs) < RoomCatchup.LOOP_SETTLE_MS) return
+        if (now - lastLoopMs < RoomCatchup.LOOP_INTERVAL_MS) return
+        lastLoopMs = now
+        val target = ref.positionAt(serverNow)
+        val drift = target - localPositionNow(obs, now)
+        if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
+        val decision = RoomCatchup.loopDecision(
+            driftSeconds = drift,
+            nudging = rateApplied != null,
+            rateCapable = !rateUnsupported,
+            targetReachableInPlace = rateUnsupported && player.isBuffered(target),
+        )
+        when (decision) {
+            is RoomCatchup.Decision.Nudge -> setRate(decision.rate)
+            RoomCatchup.Decision.Seek -> {
+                setRate(null)
+                lastLoopSeekMs = now
+                player.seekTo(target)
+            }
+            else -> setRate(null)
+        }
+    }
+
+    /**
+     * A nudge the engine still reports as 1x after [RoomPlaybackTiming.rateConfirmMs]
+     * of ready playback means this mount cannot change rate (Media3 applies
+     * speed only to PCM output that is not tunneled). Stop asking.
+     */
+    private fun checkRateHonoured(now: Long, obs: RoomPlayerObservation) {
+        val requested = rateApplied ?: return
+        val speed = obs.playbackSpeed ?: return
+        if (!obs.isPlaying || obs.state != RoomPlayerState.Ready || obs.seekPending) return
+        if ((obs.sampledAtMs ?: now) - rateRequestedAtMs < timing.rateConfirmMs) return
+        if (abs(speed - requested) > RATE_TOLERANCE && abs(speed - 1.0) <= RATE_TOLERANCE) {
+            rateUnsupported = true
             setRate(null)
-            if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
-        } else {
-            setRate(RoomCatchup.rateFor(drift))
         }
     }
 
     /**
      * Run a held Play correction once the reload budget allows, aimed at where
-     * the room is now. Drift that shrank in the meantime is settled the
-     * cheaper way: nothing, a buffered seek, or a rate.
+     * the room is now. Drift that shrank within reach of a nudge is left to
+     * the drift loop; a target that became buffered is a plain seek.
      */
     private fun retryDeferredReload(now: Long, obs: RoomPlayerObservation) {
-        val held = deferredReload ?: return
+        if (!reloadDeferred) return
         if (obs.seekPending || !obs.isPlaying || obs.suspended) return
-        val expected = RoomCatchup.expectedPosition(held.targetSeconds, held.executeAtMonotonicMs, now)
-        val drift = expected - obs.sourcePositionSeconds
+        val ref = reference
+        val serverNow = serverNowMs() ?: return
+        if (ref == null || !ref.playing) {
+            reloadDeferred = false
+            return
+        }
+        val expected = ref.positionAt(serverNow)
+        val drift = expected - localPositionNow(obs, now)
         when {
-            abs(drift) <= RoomCatchup.DEADBAND_SECONDS -> {
-                deferredReload = null
-                reloads.settle()
+            abs(drift) <= RoomCatchup.HARD_SEEK_SECONDS -> {
+                reloadDeferred = false
+                if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
             }
             player.isBuffered(expected) -> {
-                deferredReload = null
+                reloadDeferred = false
                 player.seekTo(expected)
             }
-            abs(drift) <= RoomCatchup.BAND_SECONDS -> {
-                deferredReload = null
-                convergence = held
-                setRate(RoomCatchup.rateFor(drift))
-            }
             reloads.allowed(now) -> {
-                deferredReload = null
+                reloadDeferred = false
                 beginReload(expected, now, obs)
             }
         }
     }
 
     private fun beginReload(target: Double, now: Long, obs: RoomPlayerObservation) {
+        // A reload mounts new media, which may honour a rate again.
+        rateUnsupported = false
         val aimed = reloads.begin(target, now, obs.durationSeconds.takeIf { it > 0.0 })
         player.seekTo(aimed)
         reloads.noteLoading()
@@ -674,27 +776,41 @@ class RoomPlaybackBinding(
 
     private fun stopCorrections(now: Long) {
         clearRate()
-        deferredReload = null
+        reloadDeferred = false
         if (reloads.inFlight) reloads.abandon(now)
     }
 
-    private fun clearRate() {
-        if (convergence != null || rateApplied != null) {
-            convergence = null
-            setRate(null)
+    private fun clearRate() = setRate(null)
+
+    /**
+     * The local position now. A playing engine sample is projected forward
+     * by the time since it was read, at the current rate, so a decision does
+     * not use a position up to one sample interval old.
+     */
+    private fun localPositionNow(obs: RoomPlayerObservation, now: Long): Double {
+        val sampledAt = obs.sampledAtMs
+        if (sampledAt == null || !obs.isPlaying || obs.seekPending || obs.state != RoomPlayerState.Ready) {
+            return obs.sourcePositionSeconds
         }
+        val elapsedMs = (now - sampledAt).coerceIn(0L, MAX_SAMPLE_PROJECTION_MS)
+        return obs.sourcePositionSeconds + elapsedMs / 1000.0 * (rateApplied ?: 1.0)
     }
 
     private fun setRate(rate: Double?) {
         val normalized = rate?.takeIf { abs(it - 1.0) > 0.001 }
         if (normalized == rateApplied) return
+        // The confirmation window starts when a nudge starts; adjusting a
+        // running nudge must not keep restarting it.
+        if (normalized != null && rateApplied == null) rateRequestedAtMs = monotonicNowMs()
         rateApplied = normalized
         player.setCorrectionRate(normalized)
     }
 
     private fun alignPausedToAnchor(snapshot: RoomSnapshot, obs: RoomPlayerObservation) {
-        val anchor = snapshot.anchorPositionSeconds
-        if (abs(anchor - obs.sourcePositionSeconds) > RoomCatchup.DEADBAND_SECONDS && player.isBuffered(anchor)) {
+        // The applied command is the room reference; the snapshot anchor is
+        // only a fallback when this epoch has applied none.
+        val anchor = reference?.takeIf { !it.playing }?.positionSeconds ?: snapshot.anchorPositionSeconds
+        if (abs(anchor - obs.sourcePositionSeconds) > RoomCatchup.PAUSED_SEEK_SECONDS && player.isBuffered(anchor)) {
             player.seekTo(anchor)
         }
         player.setPlaying(false)
@@ -713,6 +829,12 @@ class RoomPlaybackBinding(
     private companion object {
         /** A "last sent" time far enough in the past that any interval has elapsed, without overflow. */
         const val NEVER_MS = -1_000_000_000_000L
+
+        /** A sample older than this is not projected further; the engine sampler has stalled. */
+        const val MAX_SAMPLE_PROJECTION_MS = 1_000L
+
+        /** Speeds closer than this are the same rate. */
+        const val RATE_TOLERANCE = 0.001
     }
 
     private fun expectedLocalExecuteMs(pending: PendingCommand): Long {
