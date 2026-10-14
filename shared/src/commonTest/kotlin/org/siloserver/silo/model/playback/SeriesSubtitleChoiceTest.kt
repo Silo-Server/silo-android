@@ -96,6 +96,28 @@ class SeriesSubtitleChoiceTest {
         )
     }
 
+    @Test
+    fun `a pending choice overlays the server's effective fields`() {
+        val served = WatchDetail(
+            contentId = "e2", type = "episode", title = "E2", seriesId = "s",
+            effectiveSubtitleLanguage = "en", effectiveSubtitleMode = "always",
+            effectiveSubtitleTrackSignature = SubtitleTrackSignature(language = "en"),
+        )
+        val track = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(SeriesSubtitleChoice.of(englishSdh)))
+        assertEquals("always", track.effectiveSubtitleMode)
+        assertEquals(SeriesSubtitleChoice.of(englishSdh).trackSignature, track.effectiveSubtitleTrackSignature)
+
+        val off = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(SeriesSubtitleChoice.Off))
+        assertEquals("off", off.effectiveSubtitleMode)
+        assertNull(off.effectiveSubtitleTrackSignature)
+
+        val automatic = served.withPendingSeriesSubtitleChoice(PendingSeriesSubtitleChoice(null))
+        assertNull(automatic.effectiveSubtitleTrackSignature)
+        assertEquals("en", automatic.effectiveSubtitleLanguage)
+
+        assertEquals(served, served.withPendingSeriesSubtitleChoice(null))
+    }
+
     // ---- resolver --------------------------------------------------------
 
     private val tracks = listOf(

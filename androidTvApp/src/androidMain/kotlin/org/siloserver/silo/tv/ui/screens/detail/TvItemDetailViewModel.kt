@@ -2,6 +2,7 @@
 
 package org.siloserver.silo.tv.ui.screens.detail
 
+import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
 import kotlinx.coroutines.flow.stateIn
 
 import androidx.lifecycle.ViewModel
@@ -159,6 +160,12 @@ data class TvItemDetailUiState(
     val preferredSubtitleLanguage: String? = null,
     val subtitleMode: String? = null,
     val showForcedSubtitles: Boolean = true,
+    /**
+     * Series subtitle choices this profile made that have not reached the
+     * server yet, by series key. They outrank the details' effective fields,
+     * which still describe the older choice.
+     */
+    val pendingSeriesSubtitleChoices: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
 )
 
 /**
@@ -169,11 +176,15 @@ data class TvItemDetailUiState(
  */
 internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesSubtitleChoice(
     detail: ItemDetail,
+    pending: Map<String, org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice> = emptyMap(),
 ): org.siloserver.silo.repository.port.LocalTrackSelection = copy(
     subtitleFingerprint = org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
         localPreference = subtitleFingerprint,
         serverChoiceKnown = true,
-        signature = detail.effectiveSubtitleTrackSignature,
+        signature = detail.withPendingSeriesSubtitleChoice(
+            org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(detail.seriesId, detail.contentId)
+                ?.let(pending::get),
+        ).effectiveSubtitleTrackSignature,
     ),
 )
 
@@ -186,14 +197,20 @@ internal fun org.siloserver.silo.repository.port.LocalTrackSelection.withSeriesS
 internal fun TvItemDetailUiState.subtitleAutoContext(
     playbackDetail: ItemDetail?,
     audioLanguage: String?,
-): TvPlaybackFormatting.SubtitleAutoContext = TvPlaybackFormatting.SubtitleAutoContext(
-    preferredLanguage = playbackDetail?.effectiveSubtitleLanguage?.takeIf { it.isNotBlank() }
-        ?: preferredSubtitleLanguage,
-    mode = playbackDetail?.effectiveSubtitleMode?.takeIf { it.isNotBlank() } ?: subtitleMode,
-    showForced = playbackDetail?.effectiveShowForcedSubtitles ?: showForcedSubtitles,
-    audioLanguage = audioLanguage,
-    trackSignature = playbackDetail?.effectiveSubtitleTrackSignature,
-)
+): TvPlaybackFormatting.SubtitleAutoContext {
+    val detail = playbackDetail?.withPendingSeriesSubtitleChoice(
+        org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(playbackDetail.seriesId, playbackDetail.contentId)
+            ?.let(pendingSeriesSubtitleChoices::get),
+    )
+    return TvPlaybackFormatting.SubtitleAutoContext(
+        preferredLanguage = detail?.effectiveSubtitleLanguage?.takeIf { it.isNotBlank() }
+            ?: preferredSubtitleLanguage,
+        mode = detail?.effectiveSubtitleMode?.takeIf { it.isNotBlank() } ?: subtitleMode,
+        showForced = detail?.effectiveShowForcedSubtitles ?: showForcedSubtitles,
+        audioLanguage = audioLanguage,
+        trackSignature = detail?.effectiveSubtitleTrackSignature,
+    )
+}
 
 internal data class TvTrackSelectionPersistence(
     val contentId: String,
@@ -1321,7 +1338,7 @@ class TvItemDetailViewModel(
         val version = selectedVersionFor(state, detail) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(contentId, version.fileId)
-                ?.withSeriesSubtitleChoice(detail)
+                ?.withSeriesSubtitleChoice(detail, _uiState.value.pendingSeriesSubtitleChoices)
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             val subOrdinal = restored.subtitleIndex
@@ -2428,7 +2445,7 @@ class TvItemDetailViewModel(
         ) ?: return
         viewModelScope.launch {
             val saved = userItemState.localTrackSelection(targetContentId, version.fileId)
-                ?.withSeriesSubtitleChoice(playbackDetail)
+                ?.withSeriesSubtitleChoice(playbackDetail, _uiState.value.pendingSeriesSubtitleChoices)
                 ?: return@launch
             val restored = restoreTrackSelection(version, saved)
             var remembered: TvDetailTrackSelectionSession.Saved? = null
@@ -2514,6 +2531,13 @@ class TvItemDetailViewModel(
         }
         observePreferredQuality()
         capabilityDetector?.let(::observeAutomaticAudioPolicy)
+        seriesSubtitleChoiceWriter?.let { writer ->
+            viewModelScope.launch {
+                writer.pendingChoices.collect { pending ->
+                    _uiState.update { it.copy(pendingSeriesSubtitleChoices = pending) }
+                }
+            }
+        }
         if (contentId.isNotBlank()) {
             // Restore this title's pre-play track choices (QA 2026-07-08: a
             // manual subtitle selection reset on every return to the page —

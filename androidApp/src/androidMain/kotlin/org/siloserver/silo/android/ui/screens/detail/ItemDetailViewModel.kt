@@ -35,6 +35,7 @@ import org.siloserver.silo.repository.PersonalDataRepository
 import org.siloserver.silo.repository.RecommendationRepository
 import org.siloserver.silo.viewmodel.applyLocalPlaybackProgress
 import org.siloserver.silo.model.download.DownloadQuality
+import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
 import org.siloserver.silo.playback.SUBTITLE_OFF_FINGERPRINT
 import org.siloserver.silo.playback.audioTrackFingerprint
 import org.siloserver.silo.playback.resolveAudioTrackOrdinal
@@ -1284,12 +1285,17 @@ class ItemDetailViewModel(
             val saved = userItemState.localTrackSelection(detail.contentId, version.fileId) ?: return@launch
             // The series choice on the server outranks this device's per-file
             // memory; the player starts from it when nothing is picked here.
+            // A choice still waiting to land outranks the server's older one.
+            val pending = seriesSubtitleChoiceWriter?.let { writer ->
+                org.siloserver.silo.model.playback.seriesSubtitleChoiceKey(detail.seriesId, detail.contentId)
+                    ?.let { writer.pendingChoice(it) }
+            }
             val subtitleOrdinal = resolveSubtitleTrackOrdinal(
                 version.subtitleTracks.orEmpty(),
                 org.siloserver.silo.model.playback.localSubtitleMemoryForSeriesChoice(
                     localPreference = saved.subtitleFingerprint,
                     serverChoiceKnown = true,
-                    signature = detail.effectiveSubtitleTrackSignature,
+                    signature = detail.withPendingSeriesSubtitleChoice(pending).effectiveSubtitleTrackSignature,
                 ),
             )
             val audioOrdinal = resolveAudioTrackOrdinal(

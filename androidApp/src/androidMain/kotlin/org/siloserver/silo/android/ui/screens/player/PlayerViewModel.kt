@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.player
 
+import org.siloserver.silo.common.settings.overlayPendingChoice
 import org.siloserver.silo.common.diagnostics.DiagnosticsPlaybackLogger
 import org.siloserver.silo.common.diagnostics.DiagnosticsSeekEvent
 import org.siloserver.silo.common.player.dolbyVisionTransformClassification
@@ -1747,7 +1748,11 @@ class PlayerViewModel(
         val watchMetadata = ReadyWatchMetadata(
             catalogRepository, watchOwner, playbackState.contentId, playbackState.serverUrl, browseLibraryId,
         ) { ownsLoad(loadOwner) }
-        val watchDetail = watchMetadata.read()
+        // A series subtitle choice still waiting to land outranks the
+        // server's older answer (the starter already gave it a chance to).
+        val watchDetail = watchMetadata.read()?.let { detail ->
+            seriesSubtitleChoiceWriter?.overlayPendingChoice(detail) ?: detail
+        }
         if (!watchMetadata.current()) {
             stopStaleReadySession(playbackState.sessionId)
             return

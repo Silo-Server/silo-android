@@ -389,6 +389,7 @@ val androidModule = module {
             reachabilityMonitor = get(),
             userItemStatePort = get(),
             networkEvidenceProvider = get(),
+            seriesSubtitleChoiceWriter = get(),
         )
     }
     factory {

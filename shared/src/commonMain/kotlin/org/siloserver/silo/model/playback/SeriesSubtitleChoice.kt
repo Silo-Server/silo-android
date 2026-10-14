@@ -2,7 +2,9 @@ package org.siloserver.silo.model.playback
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import org.siloserver.silo.model.catalog.ItemDetail
 import org.siloserver.silo.model.catalog.SubtitleTrack
+import org.siloserver.silo.model.catalog.WatchDetail
 import org.siloserver.silo.playback.decodeSubtitleIdentityPreference
 
 /**
@@ -96,6 +98,61 @@ data class SeriesSubtitleChoice(
             trackSignature = track.subtitleTrackSignature(),
         )
     }
+}
+
+/**
+ * A series choice this device made that the server may not hold yet;
+ * [choice] null is "back to automatic".
+ */
+data class PendingSeriesSubtitleChoice(val choice: SeriesSubtitleChoice?)
+
+/** The effective subtitle fields a watch or item detail carries. */
+data class EffectiveSubtitleFields(
+    val language: String?,
+    val mode: String?,
+    val signature: SubtitleTrackSignature?,
+)
+
+/**
+ * [this] with a not-yet-landed choice laid over it: a track becomes its
+ * language, mode "always" and signature; Off becomes mode "off". Automatic
+ * drops the series signature only — the lower-scope values it falls back to
+ * are the server's to resolve, so the language and mode are left as answered.
+ */
+fun EffectiveSubtitleFields.withPending(pending: PendingSeriesSubtitleChoice?): EffectiveSubtitleFields {
+    pending ?: return this
+    val choice = pending.choice ?: return copy(signature = null)
+    return if (choice.subtitleMode == "off") {
+        copy(mode = "off", signature = null)
+    } else {
+        EffectiveSubtitleFields(
+            language = choice.subtitleLanguage.ifBlank { null } ?: language,
+            mode = choice.subtitleMode,
+            signature = choice.trackSignature,
+        )
+    }
+}
+
+fun WatchDetail.withPendingSeriesSubtitleChoice(pending: PendingSeriesSubtitleChoice?): WatchDetail {
+    pending ?: return this
+    val fields = EffectiveSubtitleFields(effectiveSubtitleLanguage, effectiveSubtitleMode, effectiveSubtitleTrackSignature)
+        .withPending(pending)
+    return copy(
+        effectiveSubtitleLanguage = fields.language,
+        effectiveSubtitleMode = fields.mode,
+        effectiveSubtitleTrackSignature = fields.signature,
+    )
+}
+
+fun ItemDetail.withPendingSeriesSubtitleChoice(pending: PendingSeriesSubtitleChoice?): ItemDetail {
+    pending ?: return this
+    val fields = EffectiveSubtitleFields(effectiveSubtitleLanguage, effectiveSubtitleMode, effectiveSubtitleTrackSignature)
+        .withPending(pending)
+    return copy(
+        effectiveSubtitleLanguage = fields.language,
+        effectiveSubtitleMode = fields.mode,
+        effectiveSubtitleTrackSignature = fields.signature,
+    )
 }
 
 /**

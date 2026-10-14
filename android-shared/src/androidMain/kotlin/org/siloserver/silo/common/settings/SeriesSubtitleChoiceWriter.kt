@@ -1,6 +1,15 @@
 package org.siloserver.silo.common.settings
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withTimeoutOrNull
+import org.siloserver.silo.model.catalog.WatchDetail
+import org.siloserver.silo.model.playback.PendingSeriesSubtitleChoice
+import org.siloserver.silo.model.playback.seriesSubtitleChoiceKey
+import org.siloserver.silo.model.playback.withPendingSeriesSubtitleChoice
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -29,7 +38,40 @@ interface SeriesSubtitleChoiceWriter {
 
     /** Send whatever is still queued (a failed write retried), and wait for it. */
     suspend fun flushNow()
+
+    /**
+     * The choice the active profile made for [seriesKey] that has not landed
+     * yet (queued, in flight, or waiting to retry), or null when there is
+     * none. Until it lands the server still answers with the older choice.
+     */
+    suspend fun pendingChoice(seriesKey: String): PendingSeriesSubtitleChoice? = null
+
+    /** [pendingChoice] for every series of the active profile, as it changes. */
+    val pendingChoices: Flow<Map<String, PendingSeriesSubtitleChoice>>
+        get() = flowOf(emptyMap())
 }
+
+/**
+ * [detail] as playback should start it: a queued write gets a short chance to
+ * land, and a choice still unsent is laid over the server's effective
+ * subtitle fields. Without this, reopening an item while a pick waited to
+ * retry started from the server's older choice — and the per-file memory of
+ * the new one was filtered out against it.
+ */
+suspend fun SeriesSubtitleChoiceWriter.reconcile(detail: WatchDetail): WatchDetail {
+    val key = seriesSubtitleChoiceKey(detail.seriesId, detail.contentId) ?: return detail
+    withTimeoutOrNull(LOAD_FLUSH_TIMEOUT_MS) { flushNow() }
+    return detail.withPendingSeriesSubtitleChoice(pendingChoice(key))
+}
+
+/** [detail] with a choice still unsent laid over it; no flush. */
+suspend fun SeriesSubtitleChoiceWriter.overlayPendingChoice(detail: WatchDetail): WatchDetail {
+    val key = seriesSubtitleChoiceKey(detail.seriesId, detail.contentId) ?: return detail
+    return detail.withPendingSeriesSubtitleChoice(pendingChoice(key))
+}
+
+/** How long opening an item waits for a queued subtitle choice to land. */
+private const val LOAD_FLUSH_TIMEOUT_MS = 1_500L
 
 /**
  * Application-scoped, in-memory queue: the latest intent per (profile, series)
@@ -53,6 +95,9 @@ class DefaultSeriesSubtitleChoiceWriter(
 
     private val lock = Any()
     private val pending = LinkedHashMap<Key, Op>()
+
+    /** Every op not yet settled — queued, in flight or held for retry. */
+    private val unsent = MutableStateFlow<Map<Key, Op>>(emptyMap())
     private val sendMutex = Mutex()
     private var retryJob: Job? = null
     private var retryAttempts = 0
@@ -63,8 +108,10 @@ class DefaultSeriesSubtitleChoiceWriter(
         val profileId = owner.profileId?.takeIf { it.isNotBlank() } ?: return
         synchronized(lock) {
             val key = Key(profileId, owner.serverUrl, seriesKey)
+            val op = Op(owner, choice)
             pending.remove(key)
-            pending[key] = Op(owner, choice)
+            pending[key] = op
+            unsent.value = unsent.value + (key to op)
             retryAttempts = 0
             retryJob?.cancel()
             retryJob = null
@@ -81,6 +128,27 @@ class DefaultSeriesSubtitleChoiceWriter(
         drain()
     }
 
+    override suspend fun pendingChoice(seriesKey: String): PendingSeriesSubtitleChoice? {
+        val owner = captureOwner() ?: return null
+        val profileId = owner.profileId?.takeIf { it.isNotBlank() } ?: return null
+        return unsent.value[Key(profileId, owner.serverUrl, seriesKey)]
+            ?.let { PendingSeriesSubtitleChoice(it.choice) }
+    }
+
+    override val pendingChoices: Flow<Map<String, PendingSeriesSubtitleChoice>> =
+        unsent.map { ops ->
+            val owner = captureOwner()
+            ops.filterKeys { it.profileId == owner?.profileId && it.serverUrl == owner.serverUrl }
+                .entries.associate { (key, op) -> key.seriesKey to PendingSeriesSubtitleChoice(op.choice) }
+        }
+
+    /** Settles [op]: it stops counting as unsent unless a newer op replaced it. */
+    private fun settle(key: Key, op: Op) {
+        synchronized(lock) {
+            if (unsent.value[key] === op) unsent.value = unsent.value - key
+        }
+    }
+
     /** For tests: the series keys still queued for [profileId]. */
     internal fun pendingSeries(profileId: String): Set<String> = synchronized(lock) {
         pending.keys.filter { it.profileId == profileId }.map { it.seriesKey }.toSet()
@@ -95,7 +163,12 @@ class DefaultSeriesSubtitleChoiceWriter(
                 }
                 if (batch.isEmpty()) break
                 for ((key, op) in batch) {
-                    if (send(key, op)) retry[key] = op else retry.remove(key)
+                    if (send(key, op)) {
+                        retry[key] = op
+                    } else {
+                        retry.remove(key)
+                        settle(key, op)
+                    }
                 }
             }
             if (retry.isEmpty()) {
@@ -104,7 +177,9 @@ class DefaultSeriesSubtitleChoiceWriter(
             }
             val attempt = synchronized(lock) {
                 // A newer choice queued meanwhile wins over the failed one.
-                for ((key, op) in retry) if (key !in pending) pending[key] = op
+                for ((key, op) in retry) {
+                    if (key !in pending) pending[key] = op else settle(key, op)
+                }
                 if (retryAttempts >= MAX_AUTO_RETRIES) null else ++retryAttempts
             } ?: return
             synchronized(lock) {
