@@ -37,45 +37,41 @@ internal class SiloMediaLoadErrorHandlingPolicy(
     private val nowMs: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) : DefaultLoadErrorHandlingPolicy() {
     private val attemptBytesTracker = MediaLoadAttemptBytesTracker()
-
-    /**
-     * When this load task first failed, so the retry window can be measured
-     * rather than inferred.
-     *
-     * `mediaLoadElapsedBeforeRetryMs` reconstructs elapsed time from the retry
-     * count alone — it counts the delays *between* attempts and nothing spent
-     * inside them. With a 30s socket timeout per attempt the real elapsed time
-     * runs several times the 90s window, so a dead server kept a spinner up far
-     * longer than intended before surfacing an error.
-     */
-    private val firstErrorAtByLoadTask = ConcurrentHashMap<Long, Long>()
+    private val outageTracker = MediaLoadOutageTracker()
 
     override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
         val invalidResponse = loadErrorInfo.exception as? HttpDataSource.InvalidResponseCodeException
-        val cumulativeBytesLoaded = loadErrorInfo.loadEventInfo.bytesLoaded
+        val loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId
         val bytesLoaded = attemptBytesTracker.bytesLoadedForAttempt(
-            loadTaskId = loadErrorInfo.loadEventInfo.loadTaskId,
-            cumulativeBytesLoaded = cumulativeBytesLoaded,
+            loadTaskId = loadTaskId,
+            cumulativeBytesLoaded = loadErrorInfo.loadEventInfo.bytesLoaded,
         )
         val resumableDirectPlay = isResumableProgressiveDirectPlay(
             loadErrorInfo.loadEventInfo.dataSpec.uri,
         )
-        val firstErrorAt = firstErrorAtByLoadTask.computeIfAbsent(
-            loadErrorInfo.loadEventInfo.loadTaskId,
-        ) { nowMs() }
+        val resumeOffset = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) + bytesLoaded
+        val now = nowMs()
+        val outage = outageTracker.onFailure(
+            loadTaskId = loadTaskId,
+            nowMs = now,
+            bytesSincePreviousFailure = bytesLoaded,
+            resumeOffset = resumeOffset,
+        )
         val delayMs = siloMediaLoadRetryDelayMs(
             responseCode = invalidResponse?.responseCode,
             retryAfterHeaders = invalidResponse?.retryAfterHeaders().orEmpty(),
             cause = loadErrorInfo.exception,
-            errorCount = loadErrorInfo.errorCount,
+            errorCount = minOf(loadErrorInfo.errorCount, outage.failureCount),
             isResumableProgressiveDirectPlay = resumableDirectPlay,
             bytesLoaded = bytesLoaded,
-            observedElapsedMs = (nowMs() - firstErrorAt).coerceAtLeast(0L),
+            observedElapsedMs = (now - outage.startedAtMs).coerceAtLeast(0L),
         )
         logProgressiveResumeDecision(
             loadErrorInfo = loadErrorInfo,
             resumableDirectPlay = resumableDirectPlay,
             bytesLoaded = bytesLoaded,
+            resumeOffset = resumeOffset,
+            outageFailureCount = outage.failureCount,
             delayMs = delayMs,
         )
         return delayMs
@@ -83,7 +79,7 @@ internal class SiloMediaLoadErrorHandlingPolicy(
 
     override fun onLoadTaskConcluded(loadTaskId: Long) {
         attemptBytesTracker.onLoadTaskConcluded(loadTaskId)
-        firstErrorAtByLoadTask.remove(loadTaskId)
+        outageTracker.onLoadTaskConcluded(loadTaskId)
         super.onLoadTaskConcluded(loadTaskId)
     }
 
@@ -94,12 +90,12 @@ internal class SiloMediaLoadErrorHandlingPolicy(
         loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo,
         resumableDirectPlay: Boolean,
         bytesLoaded: Long,
+        resumeOffset: Long,
+        outageFailureCount: Int,
         delayMs: Long,
     ) {
         if (!resumableDirectPlay) return
         val transportFailure = loadErrorInfo.exception.findResumableTransportFailure() ?: return
-        val resumeOffset = loadErrorInfo.loadEventInfo.dataSpec.position.coerceAtLeast(0L) +
-            bytesLoaded.coerceAtLeast(0L)
         val errorDescription = buildString {
             append(transportFailure.javaClass.simpleName)
             transportFailure.message?.takeIf(String::isNotBlank)?.let {
@@ -113,7 +109,7 @@ internal class SiloMediaLoadErrorHandlingPolicy(
                 TAG,
                 "progressive direct-play retry error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount} retry_delay_ms=$delayMs",
+                    "attempt=$outageFailureCount retry_delay_ms=$delayMs",
             )
         } else {
             SiloLog.w(
@@ -121,13 +117,71 @@ internal class SiloMediaLoadErrorHandlingPolicy(
                 TAG,
                 "progressive direct-play retry exhausted error=$errorDescription " +
                     "bytes_loaded=$bytesLoaded resume_offset=$resumeOffset " +
-                    "attempt=${loadErrorInfo.errorCount}",
+                    "attempt=$outageFailureCount",
             )
         }
     }
 
     private companion object {
         const val TAG = "MediaLoadRetry"
+    }
+}
+
+/**
+ * The failures one load task has seen since its current outage began.
+ *
+ * The retry window is measured from [startedAtMs] rather than inferred from a
+ * retry count: `mediaLoadElapsedBeforeRetryMs` counts only the delays between
+ * attempts, and with a 30s socket timeout per attempt a dead server kept a
+ * spinner up for several times the 90s window. [failureCount] caps backoff:
+ * Media3 resets its own count after extraction progress, but only after the
+ * policy has already been asked for a delay, so the first failure of a new
+ * outage arrives with the count the previous outage left behind.
+ * [lastResumeOffset] is where the failed attempt stopped: the position it
+ * opened at plus the bytes delivered since the previous failure.
+ */
+internal data class MediaLoadOutage(
+    val startedAtMs: Long,
+    val failureCount: Int,
+    val lastResumeOffset: Long,
+)
+
+/**
+ * Tracks one [MediaLoadOutage] per load task.
+ *
+ * A progressive load (direct play, or a PGS sidecar that reads a bounded
+ * stretch ahead) is one load task for the whole file, so several server
+ * outages can land on it. A failure after the server delivered
+ * [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES] since the previous one proves the server
+ * came back in between, and starts a new outage with its own window. Smaller
+ * partial bodies stay in the current outage, so a server that keeps failing
+ * still exhausts it. A failure at the same offset as the previous one also
+ * stays: a response cut at the same point every time, however many bytes it
+ * carries, never gets playback past that point.
+ */
+internal class MediaLoadOutageTracker {
+    private val outagesByLoadTask = ConcurrentHashMap<Long, MediaLoadOutage>()
+
+    fun onFailure(
+        loadTaskId: Long,
+        nowMs: Long,
+        bytesSincePreviousFailure: Long,
+        resumeOffset: Long,
+    ): MediaLoadOutage = checkNotNull(
+        outagesByLoadTask.compute(loadTaskId) { _, current ->
+            val serverCameBack = current != null &&
+                bytesSincePreviousFailure >= MEDIA_LOAD_OUTAGE_RECOVERY_BYTES &&
+                resumeOffset != current.lastResumeOffset
+            if (current == null || serverCameBack) {
+                MediaLoadOutage(startedAtMs = nowMs, failureCount = 1, lastResumeOffset = resumeOffset)
+            } else {
+                current.copy(failureCount = current.failureCount + 1, lastResumeOffset = resumeOffset)
+            }
+        },
+    )
+
+    fun onLoadTaskConcluded(loadTaskId: Long) {
+        outagesByLoadTask.remove(loadTaskId)
     }
 }
 
@@ -284,3 +338,10 @@ private fun HttpDataSource.InvalidResponseCodeException.retryAfterHeaders(): Lis
         .orEmpty()
 
 internal const val MEDIA_LOAD_RETRY_WINDOW_MS: Long = 90_000L
+
+/**
+ * Bytes the server must deliver between two failures of one load task before
+ * the second counts as a new outage. Well under the 1 MiB Media3 reads before
+ * a full buffer parks the loader, and far above a few KiB of a partial body.
+ */
+internal const val MEDIA_LOAD_OUTAGE_RECOVERY_BYTES: Long = 512L shl 10
