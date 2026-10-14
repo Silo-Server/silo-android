@@ -57,6 +57,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
 import org.siloserver.silo.common.ui.marquee.MarqueeBackdrop
@@ -243,10 +246,15 @@ fun AppNavigation(
     val profileSwitchTeardown: org.siloserver.silo.android.auth.ProfileSwitchTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
     val siloCastContext = LocalContext.current
-    // App-wide so the notice shows with only the mini bar up, too.
-    LaunchedEffect(siloCastController) {
-        siloCastController.endedByTv.collect { notice ->
-            Toast.makeText(siloCastContext, notice, Toast.LENGTH_SHORT).show()
+    val siloCastLifecycle = LocalLifecycleOwner.current.lifecycle
+    // App-wide so the notice shows with only the mini bar up, too. Only while
+    // Silo is on screen: the TV also ends sessions nobody is watching (an idle
+    // profile hand-back), and the toast must not land over another app.
+    LaunchedEffect(siloCastController, siloCastLifecycle) {
+        siloCastLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            siloCastController.endedByTv.collect { notice ->
+                Toast.makeText(siloCastContext, notice, Toast.LENGTH_SHORT).show()
+            }
         }
     }
     // Lives as long as the nav host, so work started from a destination that is
@@ -1315,8 +1323,16 @@ fun AppNavigation(
                 onBackClick = { navController.popBackStack() },
             )
         }
-        composable(Route.SiloCastRemote.route) {
-            SiloCastRemoteScreen(onBack = { navController.popBackStack() })
+        composable(Route.SiloCastRemote.route) { backStackEntry ->
+            SiloCastRemoteScreen(
+                onBack = {
+                    // Only while the remote is on top: a TV goodbye during its
+                    // exit fade must not pop the screen underneath.
+                    if (navController.currentBackStackEntry?.id == backStackEntry.id) {
+                        navController.popBackStack()
+                    }
+                },
+            )
         }
         composable(
             route = Route.Search.ROUTE,

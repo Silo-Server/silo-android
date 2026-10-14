@@ -344,9 +344,14 @@ class TvSiloCastReceiver(
      * goodbye and lets go without reconnecting. A borrowed profile is handed
      * back once the player's session stop has landed (see [scheduleIdentityEnd]).
      */
+    @Synchronized
     fun returnControlToTv() {
-        if (activeSession == null) return
-        DiagnosticsCastLogger.event("TV cast control returned to the TV")
+        if (activeSession != null) DiagnosticsCastLogger.event("TV cast control returned to the TV")
+        // A title the phone sent just before Back must not open after it; if
+        // navigation already took it, confirmLaunch now refuses its player.
+        pendingLaunch?.let { clearPendingLaunch(it.id, dropQueued = true) }
+        // Even with no session: the epoch bump turns away a phone still
+        // handshaking, which would otherwise bring the standby back.
         closePreviousController()
     }
 
@@ -869,14 +874,15 @@ class TvSiloCastReceiver(
         val owner = scope ?: return
         identityEndJob = owner.launch {
             delay(delayMs)
+            // The exited player's final progress report and stopSession ride
+            // on this identity; ending it first revokes the session under
+            // them (401). Bounded, so the identity is always ended. Before the
+            // lender check, so a phone back during the wait keeps it.
+            withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
             if (keepIfLenderReturns && isLenderConnected(generationId) && isIdentityIdle()) {
                 scheduleIdentityEnd(generationId, IDENTITY_IDLE_MS)
                 return@launch
             }
-            // The exited player's final progress report and stopSession ride
-            // on this identity; ending it first revokes the session under
-            // them (401). Bounded, so the identity is always ended.
-            withTimeoutOrNull(PLAYBACK_TEARDOWN_TIMEOUT_MS) { awaitPlaybackTeardown() }
             // Commit under the lock launch admission uses: a launch admitted
             // first keeps the identity (its player schedules the next end);
             // once committed, a later launch is refused.

@@ -579,9 +579,10 @@ fun TvPlayerScreen(
     val stopPlaybackAndExit = { exitPlayer(true, null) }
     // The viewer chose to leave with the TV's own remote: a phone controlling
     // the TV lets go first, so the screen they return to is not covered by
-    // the "Ready for <phone>" standby. A phone's Stop exits without this.
+    // the "Ready for <phone>" standby. A phone's Stop exits without this, and
+    // a Back during that exit's fade must not drop the phone either.
     val leavePlayerOnTv = {
-        siloCastReceiver.returnControlToTv()
+        if (!exitRequested) siloCastReceiver.returnControlToTv()
         stopPlaybackAndExit()
     }
     val latestOnPlayOnDeckItem by rememberUpdatedState(onPlayOnDeckItem)
