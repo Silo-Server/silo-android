@@ -326,6 +326,7 @@ jobs:
       BUILD: ${{ needs.prepare.outputs.build }}
       TAG: ${{ needs.prepare.outputs.tag }}
       PREVIOUS_TAG: ${{ needs.prepare.outputs.previous_tag }}
+      BETA_LATEST: beta-latest
     steps:
       - name: Download APKs
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
@@ -346,9 +347,41 @@ jobs:
             echo "Phones and tablets: \`silo-android-${VERSION}-${BUILD}.apk\`."
             echo "Android TV: \`silo-android-tv-${VERSION}-${BUILD}.apk\`."
             echo
-            echo "The Downloader codes (1051382 for phones, 1636227 for Android TV) install the latest store release, not this tester build."
+            echo "The Downloader codes 1051382 (phones) and 1636227 (Android TV) install the latest store release, not this tester build. The [latest tester build](https://github.com/${GH_REPO}/releases/tag/${BETA_LATEST}) release always holds the newest one."
           } > notes.md
           # A prerelease never becomes Latest, so the Downloader codes and the
           # releases/latest links keep pointing at the store release.
           gh release create "${TAG}" --verify-tag --prerelease \
             --title "Silo Android ${VERSION} (${BUILD})" --notes-file notes.md apks/*.apk
+
+      # One prerelease, tag beta-latest, always holds the newest tester build
+      # under fixed names, so the beta Downloader codes can point at
+      # releases/download/beta-latest/silo-android-latest-beta.apk and
+      # silo-android-tv-latest-beta.apk. GitHub's releases/latest links skip
+      # prereleases, so they can't do this. Version tags start with v, so the
+      # version script and Promote never see this one.
+      - name: Update the latest tester build
+        run: |
+          # A re-run of an older build must not replace a newer one.
+          newest="$(gh release list --limit 100 --json tagName,isPrerelease \
+            --jq '[.[] | select(.isPrerelease and (.tagName | test("-beta[.][0-9]+$")))][0].tagName')"
+          if [[ "${newest}" != "${TAG}" ]]; then
+            echo "${newest} is newer than ${TAG}; leaving ${BETA_LATEST} alone."
+            exit 0
+          fi
+          cp "apks/silo-android-${VERSION}-${BUILD}.apk" apks/silo-android-latest-beta.apk
+          cp "apks/silo-android-tv-${VERSION}-${BUILD}.apk" apks/silo-android-tv-latest-beta.apk
+          if gh api "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" > /dev/null 2>&1; then
+            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" -f sha="${GITHUB_SHA}" -F force=true --silent
+          else
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${BETA_LATEST}" -f sha="${GITHUB_SHA}" --silent
+          fi
+          title="Latest tester build: ${VERSION} (${BUILD})"
+          notes="The newest tester build, ${TAG}, under fixed file names for the beta Downloader codes. Release notes and versioned APKs are on [${TAG}](https://github.com/${GH_REPO}/releases/tag/${TAG})."
+          if gh release view "${BETA_LATEST}" > /dev/null 2>&1; then
+            gh release edit "${BETA_LATEST}" --prerelease --title "${title}" --notes "${notes}"
+          else
+            gh release create "${BETA_LATEST}" --verify-tag --prerelease --title "${title}" --notes "${notes}"
+          fi
+          gh release upload "${BETA_LATEST}" --clobber \
+            apks/silo-android-latest-beta.apk apks/silo-android-tv-latest-beta.apk
