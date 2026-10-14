@@ -2,6 +2,8 @@ package org.siloserver.silo.common.ui.components
 
 import android.util.Base64
 import android.util.LruCache
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.ScrollableState
@@ -25,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -233,7 +237,8 @@ fun ThumbhashImage(
     // whatever the request's placeholder is. With no thumbhash to stand in
     // (hero backdrops and title logos frequently have none) that is
     // transparent: the artwork appeared, then dissolved up from the page
-    // behind it over the crossfade. Reveal it in one frame instead.
+    // behind it over the crossfade. Instead the image fades in over the cover,
+    // which stays drawn until the fade completes.
     val gatedModel = remember(model) {
         model.newBuilder().crossfade(false).build()
     }
@@ -245,6 +250,9 @@ fun ThumbhashImage(
     // Once committed, the artwork stays committed through later gestures.
     var fullImageReady by remember(url) { mutableStateOf(false) }
     var fullImagePresented by remember(url) { mutableStateOf(false) }
+    val requestedAtNanos = remember(url) { System.nanoTime() }
+    val revealAlpha = remember(url) { Animatable(0f) }
+    val revealComplete by remember(revealAlpha) { derivedStateOf { revealAlpha.value >= 1f } }
     val currentOnSuccess by rememberUpdatedState(onSuccess)
     val presentFullImage = {
         if (!fullImagePresented) {
@@ -259,8 +267,21 @@ fun ThumbhashImage(
         presentFullImage()
     }
 
+    LaunchedEffect(url, fullImagePresented) {
+        if (!fullImagePresented || revealComplete) return@LaunchedEffect
+        // Artwork that resolves before the cover has been seen (a memory-cache
+        // hit on scroll-back) appears at once, as it always has. Anything the
+        // viewer waited on fades in instead of cutting over.
+        val waitedNanos = System.nanoTime() - requestedAtNanos
+        if (crossfadeMillis <= 0 || waitedNanos < InstantRevealWindowNanos) {
+            revealAlpha.snapTo(1f)
+        } else {
+            revealAlpha.animateTo(1f, tween(crossfadeMillis))
+        }
+    }
+
     Box(modifier = modifier) {
-        if (!fullImagePresented) {
+        if (!revealComplete) {
             when {
                 placeholder != null -> Image(
                     painter = placeholder,
@@ -302,9 +323,24 @@ fun ThumbhashImage(
             },
             modifier = Modifier
                 .fillMaxSize()
+                .then(
+                    if (revealComplete) {
+                        Modifier
+                    } else {
+                        // ModulateAlpha fades the single bitmap draw without an
+                        // offscreen layer.
+                        Modifier.graphicsLayer {
+                            alpha = revealAlpha.value
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                        }
+                    },
+                )
                 .drawWithContent {
                     if (fullImagePresented) drawContent()
                 },
         )
     }
 }
+
+/** A result this soon after the request was never visibly waited on. */
+private const val InstantRevealWindowNanos = 100_000_000L

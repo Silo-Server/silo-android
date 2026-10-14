@@ -91,7 +91,7 @@ import org.siloserver.silo.repository.CatalogRepository
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 
-private data class ContinueWatchingWarmTarget(
+private data class SeriesWarmTarget(
     val seriesId: String,
     val seasonNumber: Int?,
     val episodeContentId: String,
@@ -159,12 +159,13 @@ fun HomeScreen(
     val catalogLanguage: CatalogLanguageRevision = koinInject()
     val languageRevision by catalogLanguage.revision.collectAsState()
     val heroHandoff = LocalHeroSourceHandoff.current
-    val continueWatchingWarmTargets = remember(regularSections) {
+    val seriesWarmTargets = remember(regularSections) {
         regularSections
             .asSequence()
             .filter { section ->
                 section.sectionType == "continue_watching" ||
-                    section.sectionType == "in_progress"
+                    section.sectionType == "in_progress" ||
+                    section.sectionType == "next_up"
             }
             .flatMap { it.items.asSequence() }
             .mapNotNull { item ->
@@ -172,7 +173,7 @@ fun HomeScreen(
                 if (!item.type.equals("episode", ignoreCase = true) || seriesId == null) {
                     null
                 } else {
-                    ContinueWatchingWarmTarget(
+                    SeriesWarmTarget(
                         seriesId = seriesId,
                         seasonNumber = item.seasonNumber,
                         episodeContentId = item.contentId,
@@ -188,12 +189,12 @@ fun HomeScreen(
     var warmedSeriesArtwork by remember(activeServerId, profileScopeId, languageRevision) {
         mutableStateOf<Map<String, WarmedSeriesArtwork>>(emptyMap())
     }
-    LaunchedEffect(activeServerId, profileScopeId, languageRevision, continueWatchingWarmTargets) {
-        // Warm each Continue Watching destination in row order. Within one
+    LaunchedEffect(activeServerId, profileScopeId, languageRevision, seriesWarmTargets) {
+        // Warm each Continue Watching and Next Up series in row order. Within one
         // title, its parent detail, exact episode and selector data run in
         // parallel. CatalogRepository keeps these calls alive/single-flight if
         // the user taps while this effect is still awaiting them.
-        for (target in continueWatchingWarmTargets) {
+        for (target in seriesWarmTargets) {
             coroutineScope {
                 val parentDetail = async {
                     catalogRepository.warmItemDetail(target.seriesId)
@@ -389,34 +390,39 @@ fun HomeScreen(
                                 section = section,
                                 onItemClick = { contentId ->
                                     val item = section.items.firstOrNull { it.contentId == contentId }
-                                    if (opensUnifiedSeriesDetail && item != null) {
-                                        item.seriesId
-                                            ?.takeIf {
-                                                item.type.equals("episode", ignoreCase = true) &&
-                                                    it.isNotBlank()
+                                    val seriesId = item
+                                        ?.takeIf { it.type.equals("episode", ignoreCase = true) }
+                                        ?.seriesId
+                                        ?.takeIf { it.isNotBlank() }
+                                    // An episode page only redirects to its series
+                                    // (seriesDetailRedirect), so open the series
+                                    // directly. Outside Continue Watching this needs
+                                    // the season number, which the redirect requires too.
+                                    if (
+                                        item != null && seriesId != null &&
+                                        (opensUnifiedSeriesDetail || item.seasonNumber != null)
+                                    ) {
+                                        val knownParent = regularSections
+                                            .asSequence()
+                                            .flatMap { it.items.asSequence() }
+                                            .firstOrNull { it.contentId == seriesId }
+                                        val artwork = warmedSeriesArtwork[seriesId]
+                                            ?: knownParent?.let {
+                                                WarmedSeriesArtwork(
+                                                    url = it.backdropUrl ?: it.posterUrl,
+                                                    thumbhash = it.backdropThumbhash
+                                                        ?: it.posterThumbhash,
+                                                )
                                             }
-                                            ?.let { seriesId ->
-                                                val knownParent = regularSections
-                                                    .asSequence()
-                                                    .flatMap { it.items.asSequence() }
-                                                    .firstOrNull { it.contentId == seriesId }
-                                                val artwork = warmedSeriesArtwork[seriesId]
-                                                    ?: knownParent?.let {
-                                                        WarmedSeriesArtwork(
-                                                            url = it.backdropUrl ?: it.posterUrl,
-                                                            thumbhash = it.backdropThumbhash
-                                                                ?: it.posterThumbhash,
-                                                        )
-                                                    }
-                                                // MediaRow initially hands off the episode
-                                                // still. Replace it with the actual parent
-                                                // series artwork before navigation so the
-                                                // loading frame matches a direct series tap.
-                                                artwork?.let {
-                                                    heroHandoff?.pendingArtworkUrl = it.url
-                                                    heroHandoff?.pendingArtworkThumbhash = it.thumbhash
-                                                }
-                                            }
+                                        // MediaRow hands off the episode still, which
+                                        // the series page never shows. Load with the
+                                        // series artwork instead, or with none until
+                                        // Home knows it, so the hero never swaps
+                                        // one picture for another.
+                                        heroHandoff?.pendingArtworkUrl = artwork?.url
+                                        heroHandoff?.pendingArtworkThumbhash = artwork?.thumbhash
+                                        onContinueWatchingItemClick(item)
+                                    } else if (opensUnifiedSeriesDetail && item != null) {
                                         onContinueWatchingItemClick(item)
                                     } else {
                                         onItemClick(contentId)

@@ -166,7 +166,10 @@ class ItemDetailViewModel(
         savedStateHandle.get<String>("episodeContentId")?.takeIf { it.isNotBlank() }
     private var pendingInitialEpisodeContentId: String? = initialEpisodeContentId
 
-    private val _uiState = MutableStateFlow(ItemDetailUiState())
+    // A route that names its episode starts with it selected, so the series
+    // hero opens on that episode instead of showing the series overview until
+    // the season's episodes arrive.
+    private val _uiState = MutableStateFlow(ItemDetailUiState(selectedEpisodeContentId = initialEpisodeContentId))
     val uiState: StateFlow<ItemDetailUiState> = kotlinx.coroutines.flow.combine(_uiState, personalDataRepository.memberships.actions) { state, actions ->
         var projected = state
         actions.values.filter { it.baseline != null && it.intent.key.itemId == contentId && personalDataRepository.memberships.current(it.intent) }.forEach {
@@ -174,7 +177,7 @@ class ItemDetailViewModel(
                 projected.copy(isFavorite = it.baseline!!.present) else projected.copy(isInWatchlist = it.baseline!!.present)
         }
         projected
-    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, ItemDetailUiState())
+    }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, _uiState.value)
     private var episodeLoadJob: Job? = null
     private var selectedEpisodeLoadJob: Job? = null
     private var allEpisodeFileIdsJob: Job? = null

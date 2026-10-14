@@ -103,18 +103,27 @@ private fun TitlePlaceholder(shimmer: Float) {
     Box(Modifier.fillMaxWidth(0.68f).height(38.dp).skeleton(shimmer))
 }
 
+/** The facts row over the ratings row, spaced like [DetailHero]'s metadata column. */
 @Composable
 private fun MetadataPlaceholder(shimmer: Float) {
-    Box(Modifier.fillMaxWidth(0.72f).height(20.dp).skeleton(shimmer))
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.fillMaxWidth(0.72f).height(22.dp).skeleton(shimmer))
+        Box(Modifier.fillMaxWidth(0.32f).height(20.dp).skeleton(shimmer))
+    }
 }
 
+/** Play pill and the five equal-width circle columns of [HeroActionStack]. */
 @Composable
 private fun ActionPlaceholders(shimmer: Float) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(Modifier.fillMaxWidth().height(52.dp).skeleton(shimmer, CircleShape))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-            repeat(4) {
+        Row(Modifier.fillMaxWidth()) {
+            repeat(5) {
                 Column(
+                    modifier = Modifier.weight(1f),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {

@@ -31,6 +31,8 @@ import java.io.File
  * - An explicitly registered OkHttp fetcher on [SiloOkHttp.imageClient] so
  *   artwork shares the API clients' warm connection pool instead of a
  *   service-loader-built default client.
+ * - Concurrent requests for the same URL share one download
+ *   ([SharedDownloadInterceptor]).
  * - Memory cache stays at Coil's heap-proportional default.
  *
  * API decoding resolves artwork against its supplying response origin before
@@ -38,11 +40,13 @@ import java.io.File
  * keeps cache keys tied to that server when the active session changes.
  * The image client carries no Silo login or profile credentials.
  */
-fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader =
-    ImageLoader.Builder(context)
+fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader {
+    lateinit var loader: ImageLoader
+    loader = ImageLoader.Builder(context)
         .crossfade(true)
         .eventListenerFactory { DiagnosticsImageEventListener() }
         .components {
+            add(SharedDownloadInterceptor { loader.memoryCache })
             add(OkHttpNetworkFetcherFactory(callFactory = { SiloOkHttp.imageClient }))
         }
         .diskCache {
@@ -52,6 +56,8 @@ fun buildSiloImageLoader(context: PlatformContext, cacheDir: File): ImageLoader 
                 .build()
         }
         .build()
+    return loader
+}
 
 private class DiagnosticsImageEventListener : EventListener() {
     private var stage = DiagnosticsImageStage.UNKNOWN
