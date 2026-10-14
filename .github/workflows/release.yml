@@ -336,6 +336,13 @@ jobs:
 
       - name: Publish the prerelease
         run: |
+          # "Re-run failed jobs" re-runs this whole job. When this run already
+          # published the prerelease, only make sure both APKs are on it.
+          if gh release view "${TAG}" > /dev/null 2>&1; then
+            echo "${TAG} is already published; re-uploading its APKs."
+            gh release upload "${TAG}" --clobber apks/*.apk
+            exit 0
+          fi
           {
             echo "Tester build ${VERSION} (${BUILD}), also on the Google Play beta track."
             echo
@@ -369,19 +376,36 @@ jobs:
             echo "${newest} is newer than ${TAG}; leaving ${BETA_LATEST} alone."
             exit 0
           fi
-          cp "apks/silo-android-${VERSION}-${BUILD}.apk" apks/silo-android-latest-beta.apk
-          cp "apks/silo-android-tv-${VERSION}-${BUILD}.apk" apks/silo-android-tv-latest-beta.apk
-          if gh api "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" > /dev/null 2>&1; then
-            gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" -f sha="${GITHUB_SHA}" -F force=true --silent
-          else
+
+          # The first run creates the tag and the release.
+          if ! gh api "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" > /dev/null 2>&1; then
             gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${BETA_LATEST}" -f sha="${GITHUB_SHA}" --silent
           fi
-          title="Latest tester build: ${VERSION} (${BUILD})"
-          notes="The newest tester build, ${TAG}, under fixed file names for the beta Downloader codes. Release notes and versioned APKs are on [${TAG}](https://github.com/${GH_REPO}/releases/tag/${TAG})."
-          if gh release view "${BETA_LATEST}" > /dev/null 2>&1; then
-            gh release edit "${BETA_LATEST}" --prerelease --title "${title}" --notes "${notes}"
-          else
-            gh release create "${BETA_LATEST}" --verify-tag --prerelease --title "${title}" --notes "${notes}"
+          if ! gh release view "${BETA_LATEST}" > /dev/null 2>&1; then
+            gh release create "${BETA_LATEST}" --verify-tag --prerelease --title "Latest tester build" --notes "Being updated."
           fi
-          gh release upload "${BETA_LATEST}" --clobber \
-            apks/silo-android-latest-beta.apk apks/silo-android-tv-latest-beta.apk
+
+          # Upload each APK under a staging name, then swap it in, so a failed
+          # upload never leaves the Downloader links without a file. Every step
+          # is safe to repeat on a re-run.
+          release_id="$(gh release view "${BETA_LATEST}" --json databaseId --jq .databaseId)"
+          asset_id() {
+            gh api "repos/${GH_REPO}/releases/${release_id}/assets" --paginate \
+              --jq ".[] | select(.name == \"$1\") | .id"
+          }
+          for app in silo-android silo-android-tv; do
+            name="${app}-latest-beta.apk"
+            cp "apks/${app}-${VERSION}-${BUILD}.apk" "apks/next-${name}"
+            gh release upload "${BETA_LATEST}" --clobber "apks/next-${name}"
+            old="$(asset_id "${name}")"
+            if [[ -n "${old}" ]]; then
+              gh api -X DELETE "repos/${GH_REPO}/releases/assets/${old}" --silent
+            fi
+            gh api -X PATCH "repos/${GH_REPO}/releases/assets/$(asset_id "next-${name}")" -f name="${name}" --silent
+          done
+
+          # Point the tag and title at this build only once its files are live.
+          gh api -X PATCH "repos/${GH_REPO}/git/refs/tags/${BETA_LATEST}" -f sha="${GITHUB_SHA}" -F force=true --silent
+          gh release edit "${BETA_LATEST}" --prerelease \
+            --title "Latest tester build: ${VERSION} (${BUILD})" \
+            --notes "The newest tester build, ${TAG}, under fixed file names for the beta Downloader codes. Release notes and versioned APKs are on [${TAG}](https://github.com/${GH_REPO}/releases/tag/${TAG})."
