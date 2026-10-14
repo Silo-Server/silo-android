@@ -176,6 +176,18 @@ class SiloCastController(
     )
     val launchFeedback: SharedFlow<SiloCastLaunchFeedback> = _launchFeedback.asSharedFlow()
 
+    private val _endedByTv = MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * The TV ended the session: its viewer took control back with the TV
+     * remote or pressed Disconnect Remote, or another phone took over. Carries
+     * a short notice for the phone to show; the remote screen closes on it.
+     */
+    val endedByTv: SharedFlow<String> = _endedByTv.asSharedFlow()
+
     private var session: SiloCastTlsClientSession? = null
     private var output: OutputStream? = null
     private var readJob: Job? = null
@@ -1046,6 +1058,14 @@ class SiloCastController(
                 // foreground probe silently reattaches.
                 suppressReconnect = true
                 lastTargetStore.clear()
+                val ended = _state.value
+                // An unconfirmed auto-resume never surfaced, so it ends quietly.
+                if (!ended.isAutoResuming) {
+                    // A refusal the TV sent just before its goodbye says more.
+                    _endedByTv.tryEmit(
+                        ended.error ?: "Disconnected from ${ended.connectedTarget?.name ?: "the TV"}.",
+                    )
+                }
                 closeConnection()
             }
             else -> Unit

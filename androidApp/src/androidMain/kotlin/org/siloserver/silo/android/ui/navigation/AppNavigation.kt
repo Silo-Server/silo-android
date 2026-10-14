@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.navigation
 
+import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
@@ -40,6 +41,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import org.siloserver.silo.android.ui.components.LoadingIndicator
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -240,6 +242,13 @@ fun AppNavigation(
     val signOutTeardown: org.siloserver.silo.android.auth.SignOutTeardown = koinInject()
     val profileSwitchTeardown: org.siloserver.silo.android.auth.ProfileSwitchTeardown = koinInject()
     val siloCastController: SiloCastController = koinInject()
+    val siloCastContext = LocalContext.current
+    // App-wide so the notice shows with only the mini bar up, too.
+    LaunchedEffect(siloCastController) {
+        siloCastController.endedByTv.collect { notice ->
+            Toast.makeText(siloCastContext, notice, Toast.LENGTH_SHORT).show()
+        }
+    }
     // Lives as long as the nav host, so work started from a destination that is
     // popped in the same gesture (re-hydrating after a profile switch) is not
     // cancelled with that destination's own scope.
