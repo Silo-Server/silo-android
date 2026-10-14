@@ -103,6 +103,7 @@ class CatalogRepositoryDetailCacheTest {
         requestEntered: CompletableDeferred<Unit>,
         releaseResponse: CompletableDeferred<Unit>,
         onRequest: () -> Unit,
+        cache: CatalogCachePort? = null,
     ): CatalogRepository {
         val client = HttpClient(
             MockEngine {
@@ -118,10 +119,12 @@ class CatalogRepositoryDetailCacheTest {
         ) {
             install(ContentNegotiation) { json(SiloJson) }
         }
-        return CatalogRepository(
-            catalogApi = CatalogApi(client),
-            requestDispatcher = requestDispatcher,
-        )
+        val catalogApi = CatalogApi(client)
+        return if (cache == null) {
+            CatalogRepository(catalogApi = catalogApi, requestDispatcher = requestDispatcher)
+        } else {
+            CatalogRepository(catalogApi = catalogApi, catalogCache = cache, requestDispatcher = requestDispatcher)
+        }
     }
 
     @Test
@@ -174,6 +177,30 @@ class CatalogRepositoryDetailCacheTest {
 
         assertTrue(repository.getSeasonsForPrefetch("series-1") is ApiResult.Success)
         assertTrue(repository.getEpisodesForPrefetch("series-1", 3) is ApiResult.Success)
+    }
+
+    @Test
+    fun prefetchJoinsAnActiveWarmupBeforeTheCache() = runTest {
+        var calls = 0
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val repository = gatedRepository(
+            requestDispatcher = StandardTestDispatcher(testScheduler),
+            requestEntered = entered,
+            releaseResponse = release,
+            onRequest = { calls += 1 },
+            cache = FakeCache(preset = ItemDetail(contentId = "c1", type = "movie", title = "Stale")),
+        )
+
+        val warmup = async { repository.warmItemDetail("c1") }
+        entered.await()
+        val prefetch = async { repository.getItemDetailForPrefetch("c1") }
+        repeat(10) { yield() }
+        release.complete(Unit)
+        warmup.await()
+
+        assertEquals("A", (prefetch.await() as ApiResult.Success).data.title)
+        assertEquals(1, calls)
     }
 
     @Test

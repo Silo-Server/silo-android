@@ -223,9 +223,12 @@ class CatalogRepository(
     /**
      * Cache-first detail for speculative UI enrichment. Unlike a detail screen,
      * prefetch must not re-download metadata that is already durable locally.
+     * A warm-up still in flight is newer than that copy, so it joins one.
      */
     suspend fun getItemDetailForPrefetch(contentId: String, libraryId: Int? = null): ApiResult<ItemDetail> {
         if (libraryId != null) return catalogApi.getItemDetail(contentId, libraryId)
+        inFlight(itemDetailInFlight, DetailRequestKey(identityTransitions.generation.value, currentLanguageRevision, contentId))
+            ?.let { return it.await() }
         getCachedItemDetail(contentId)?.let { return ApiResult.Success(it) }
         return getItemDetail(contentId)
     }
@@ -272,9 +275,11 @@ class CatalogRepository(
     suspend fun getCachedSeasons(seriesId: String, libraryId: Int? = null): SeasonsResponse? =
         if (libraryId != null) null else readLocalizedCache { catalogCache.getCachedSeasons(seriesId) }
 
-    /** Cache-first season list for speculative detail navigation. */
+    /** Cache-first season list for speculative detail navigation; joins a warm-up still in flight. */
     suspend fun getSeasonsForPrefetch(seriesId: String, libraryId: Int? = null): ApiResult<SeasonsResponse> {
         if (libraryId != null) return catalogApi.getSeasons(seriesId, libraryId)
+        inFlight(seasonsInFlight, DetailRequestKey(identityTransitions.generation.value, currentLanguageRevision, seriesId))
+            ?.let { return it.await() }
         getCachedSeasons(seriesId)?.let { return ApiResult.Success(it) }
         return getSeasons(seriesId)
     }
@@ -318,13 +323,15 @@ class CatalogRepository(
     suspend fun getCachedEpisodes(seriesId: String, seasonNumber: Int, libraryId: Int? = null): EpisodesResponse? =
         if (libraryId != null) null else readLocalizedCache { catalogCache.getCachedEpisodes(seriesId, seasonNumber) }
 
-    /** Cache-first episode list for speculative detail navigation. */
+    /** Cache-first episode list for speculative detail navigation; joins a warm-up still in flight. */
     suspend fun getEpisodesForPrefetch(
         seriesId: String,
         seasonNumber: Int,
         libraryId: Int? = null,
     ): ApiResult<EpisodesResponse> {
         if (libraryId != null) return catalogApi.getEpisodes(seriesId, seasonNumber, libraryId)
+        val key = EpisodesRequestKey(identityTransitions.generation.value, currentLanguageRevision, seriesId, seasonNumber)
+        inFlight(episodesInFlight, key)?.let { return it.await() }
         getCachedEpisodes(seriesId, seasonNumber)?.let {
             return ApiResult.Success(it)
         }
@@ -490,6 +497,9 @@ class CatalogRepository(
             write(CatalogCacheWriteLease(requestGeneration))
         }
     }
+
+    private suspend fun <K, T> inFlight(requests: MutableMap<K, Deferred<T>>, key: K): Deferred<T>? =
+        detailRequestMutex.withLock { requests[key] }
 
     private suspend fun <K, T> coalescedDetailRequest(
         requests: MutableMap<K, Deferred<T>>,

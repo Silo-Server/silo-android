@@ -41,6 +41,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
@@ -62,8 +63,11 @@ import org.siloserver.silo.android.ui.theme.siloPageBackdrop
 import org.siloserver.silo.android.ui.components.SiloWordmark
 import org.siloserver.silo.android.ui.components.TabTopBarActions
 import org.siloserver.silo.android.ui.components.TopBarIconButton
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import org.siloserver.silo.android.ui.components.EmptyStateView
 import org.siloserver.silo.android.ui.components.ErrorView
@@ -159,6 +163,7 @@ fun HomeScreen(
     val catalogLanguage: CatalogLanguageRevision = koinInject()
     val languageRevision by catalogLanguage.revision.collectAsState()
     val heroHandoff = LocalHeroSourceHandoff.current
+    val tapWarmupScope = rememberCoroutineScope()
     val seriesWarmTargets = remember(regularSections) {
         regularSections
             .asSequence()
@@ -421,6 +426,14 @@ fun HomeScreen(
                                         // one picture for another.
                                         heroHandoff?.pendingArtworkUrl = artwork?.url
                                         heroHandoff?.pendingArtworkThumbhash = artwork?.thumbhash
+                                        // The series page reads this route cache-first,
+                                        // which only Home's warm-up keeps fresh. For a
+                                        // row it has not warmed, start those reads now
+                                        // so the page joins them.
+                                        val target = SeriesWarmTarget(seriesId, item.seasonNumber, item.contentId)
+                                        if (warmedSeriesArtwork[seriesId] == null || target !in seriesWarmTargets) {
+                                            tapWarmupScope.startSeriesWarmup(catalogRepository, target)
+                                        }
                                         onContinueWatchingItemClick(item)
                                     } else if (opensUnifiedSeriesDetail && item != null) {
                                         onContinueWatchingItemClick(item)
@@ -591,4 +604,19 @@ private fun HomeFloatingChrome(
             )
         }
     }
+}
+
+/**
+ * Starts [target]'s live reads ahead of navigation, so its series page joins
+ * them instead of reading an older cached copy. Each read registers before
+ * its first suspension unless another request holds the repository's lock,
+ * and the repository keeps it running after Home leaves composition.
+ */
+private fun CoroutineScope.startSeriesWarmup(catalogRepository: CatalogRepository, target: SeriesWarmTarget) {
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmItemDetail(target.seriesId) }
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmSeasons(target.seriesId) }
+    target.seasonNumber?.let { seasonNumber ->
+        launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmEpisodes(target.seriesId, seasonNumber) }
+    }
+    launch(start = CoroutineStart.UNDISPATCHED) { catalogRepository.warmItemDetail(target.episodeContentId) }
 }
