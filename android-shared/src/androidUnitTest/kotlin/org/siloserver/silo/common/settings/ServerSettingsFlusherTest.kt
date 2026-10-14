@@ -664,7 +664,7 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
-    fun `a failed device clear retries the whole profile save`() = runTest {
+    fun `a failed device clear retries only the clear`() = runTest {
         val api = RecordingSettingsApi()
         api.failNextDeletes(1, ApiResult.Error(503, "unavailable", "busy"))
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
@@ -675,8 +675,117 @@ class ServerSettingsFlusherTest {
         advanceUntilIdle()
 
         assertTrue(flusher.pendingKeys("p1").isEmpty())
-        assertEquals(SettingScopeIdentity.profileDevice(), api.calls.last().scope)
+        // Replaying the landed PUT could overwrite a newer profile value
+        // saved from another device during the retry delay.
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+        )
+    }
+
+    @Test
+    fun `a second profile edit inside the debounce keeps the first one's device clear`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        // The store drops its device marker with the first edit, so the
+        // second arrives without the clear.
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.enqueue("p1", syncKey, "200", serverUrl, scope = SettingWriteScope.Profile(clearDevice = false))
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(
+                RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profile(),
+                RecordingSettingsApi.Call.Kind.DELETE to SettingScopeIdentity.profileDevice(),
+            ),
+            api.calls.map { it.kind to it.scope },
+        )
+        assertEquals(JsonPrimitive(200L), api.calls.first().value)
+    }
+
+    @Test
+    fun `a profile edit made while a failed save waits keeps that save's device clear`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+        var edited = false
+        api.onPut = {
+            if (!edited) {
+                edited = true
+                flusher.enqueue("p1", syncKey, "200", serverUrl, scope = SettingWriteScope.Profile(clearDevice = false))
+            }
+        }
+
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.flushNow()
+        advanceUntilIdle()
+
         assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.last().kind)
+        assertEquals(SettingScopeIdentity.profileDevice(), api.calls.last().scope)
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a revision-gated clear waits for the revision and clears from revision 18`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+        assertEquals(setOf(syncKey), flusher.pendingKeys("p1"), "an unknown revision holds the clear")
+
+        api.manifestRevision(18)
+        flusher.flushNow()
+        assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.single().kind)
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a revision-gated clear leaves the device row alone below revision 18`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.flushNow()
+
+        assertTrue(api.calls.isEmpty(), "below 18 the device row is the only timing")
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a failed timing save that fell back to the device row does not overwrite a newer device write`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+        var edited = false
+        api.onPut = {
+            // Queued once the store knows the revision is 17: a device write.
+            if (!edited) {
+                edited = true
+                flusher.enqueue("p1", syncKey, "200", serverUrl)
+            }
+        }
+
+        // Queued before the revision was known: a profile intent.
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(JsonPrimitive(100L), JsonPrimitive(200L)),
+            api.calls.map { it.value },
+            "the older value must not be replayed over the newer one",
+        )
+        assertTrue(api.calls.all { it.scope == SettingScopeIdentity.profileDevice() })
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
     }
 
     @Test

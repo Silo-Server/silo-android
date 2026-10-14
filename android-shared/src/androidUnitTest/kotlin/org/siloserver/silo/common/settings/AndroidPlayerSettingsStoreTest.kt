@@ -711,6 +711,58 @@ class AndroidPlayerSettingsStoreTest {
     }
 
     @Test
+    fun `turning the device toggle off while the revision is unknown still clears the timing row`() = runTest {
+        // Offline: the probe cannot answer, so the store cannot tell whether
+        // the server keeps timing per profile. The clear is queued gated on
+        // revision 18 for the flusher to settle once the revision is known.
+        val contractRevision = SettingsContractRevision(
+            { ApiResult.NetworkError(IllegalStateException("offline")) },
+            { serverUrl },
+        )
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff.preferences_pb") }) },
+        )
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+
+        val clear = fakeFlusher.calls.single { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs }
+        assertEquals(PlaybackSettingsKeys.SubtitleSyncProfileMinRevision, clear.minRevision)
+        assertFalse(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
+    fun `turning the device toggle off below revision 18 keeps the timing row`() = runTest {
+        val contractRevision = SettingsContractRevision({ capabilitiesAt(17) }, { serverUrl })
+        contractRevision.revisionFor(serverUrl)
+        val store = AndroidPlayerSettingsStore(
+            context = mockContextStub(),
+            legacyCache = fakeLegacyCache,
+            getActiveProfileId = { activeProfileId },
+            getServerUrl = { serverUrl },
+            serverSettingsFlusher = fakeFlusher,
+            getDeviceId = { null },
+            contractRevision = contractRevision,
+            dataStoreFactory = { PreferenceDataStoreFactory.create(produceFile = { File(tempFolder.root, "ds_syncoff17.preferences_pb") }) },
+        )
+        store.setSubtitleDeviceOverrideEnabled(true)
+        store.setSubtitleSyncMs(300)
+
+        store.setSubtitleDeviceOverrideEnabled(false)
+
+        assertTrue(fakeFlusher.calls.none { it.isDelete && it.key == PlaybackSettingsKeys.SubtitleSyncMs })
+        assertTrue(PlaybackSettingsKeys.SubtitleSyncMs in store.deviceOverrideKeysFlow.first())
+    }
+
+    @Test
     fun `an appearance edit saves to the profile and leaves the device toggle off`() = runTest {
         val store = newStore()
 
@@ -1711,6 +1763,7 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         val isDelete: Boolean,
         val serverUrl: String,
         val scope: SettingWriteScope = SettingWriteScope.Device,
+        val minRevision: Int = 0,
     )
     val calls = mutableListOf<Call>()
     var flushNowCount: Int = 0
@@ -1725,8 +1778,14 @@ private class FakeServerSettingsFlusher : ServerSettingsFlusher {
         calls.add(Call(profileId, key, value, isDelete = false, serverUrl = serverUrl, scope = scope))
     }
 
-    override fun enqueueDelete(profileId: String, key: String, serverUrl: String, authority: org.siloserver.silo.network.AuthScopeSnapshot?) {
-        calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl))
+    override fun enqueueDelete(
+        profileId: String,
+        key: String,
+        serverUrl: String,
+        authority: org.siloserver.silo.network.AuthScopeSnapshot?,
+        minRevision: Int,
+    ) {
+        calls.add(Call(profileId, key, value = null, isDelete = true, serverUrl = serverUrl, minRevision = minRevision))
     }
 
     override suspend fun flushNow() {
