@@ -423,6 +423,21 @@ object OverlayRegistry {
         }
     }
 
+    private const val ATTENTION_ACCENT = "#f59e0b"
+    private const val COMPLETE_ACCENT = "#21c452"
+
+    private fun formatAvailability(have: Int?, total: Int?): String? {
+        if (have == null || total == null || total <= 0) return null
+        if (have >= total) return "Complete"
+        return "$have/$total"
+    }
+
+    private fun availabilityComplete(data: OverlayData): Boolean {
+        val have = data.availabilityHave
+        val total = data.availabilityTotal
+        return have != null && total != null && total > 0 && have >= total
+    }
+
     private val ribbons: List<OverlayDef> = listOf(
         OverlayDef(
             id = OverlayId.ShowStatus,
@@ -435,6 +450,22 @@ object OverlayRegistry {
             iconCapable = true,
             availabilityNote = "Populated by metadata plugins (TMDB/TVDB updates pending)",
             getValue = { formatShowStatus(it.showStatus) },
+        ),
+        OverlayDef(
+            id = OverlayId.Availability,
+            category = OverlayCategory.Ribbons,
+            label = "Availability",
+            description = "On a series, complete seasons out of seasons that have aired. On a season, episodes in the library out of the season",
+            defaultPosition = OverlayPosition.TopLeft,
+            defaultEnabled = false,
+            iconCapable = true,
+            getValue = { formatAvailability(it.availabilityHave, it.availabilityTotal) },
+            getIcon = { if (availabilityComplete(it)) OverlayIconId.Check else null },
+            getAccent = { data ->
+                if (formatAvailability(data.availabilityHave, data.availabilityTotal) == null) null
+                else if (availabilityComplete(data)) COMPLETE_ACCENT
+                else ATTENTION_ACCENT
+            },
         ),
         OverlayDef(
             id = OverlayId.ImdbTop250,

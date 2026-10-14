@@ -47,6 +47,7 @@ enum class OverlayId(val raw: String) {
 
     // ribbons
     @SerialName("show_status") ShowStatus("show_status"),
+    @SerialName("availability") Availability("availability"),
     @SerialName("imdb_top_250") ImdbTop250("imdb_top_250"),
     @SerialName("rt_certified_fresh") RtCertifiedFresh("rt_certified_fresh"),
     ;
@@ -194,6 +195,7 @@ enum class OverlayIconId(val raw: String) {
     Volume("volume"),
     Calendar("calendar"),
     Globe("globe"),
+    Check("check"),
 
     // brand marks
     Hdr10("hdr10"),
