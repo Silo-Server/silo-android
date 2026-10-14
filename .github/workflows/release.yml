@@ -409,12 +409,16 @@ jobs:
           delete_asset() {
             gh api -X DELETE "repos/${GH_REPO}/releases/assets/$1" --silent
           }
+          # Upload both staged files before swapping either, so a failed upload
+          # leaves the phone and TV links on the same build.
+          for app in silo-android silo-android-tv; do
+            cp "apks/${app}-${VERSION}-${BUILD}.apk" "apks/next-${app}-latest-beta.apk"
+            gh release upload "${BETA_LATEST}" --clobber "apks/next-${app}-latest-beta.apk"
+          done
           for app in silo-android silo-android-tv; do
             name="${app}-latest-beta.apk"
             staged="next-${name}"
             previous="previous-${name}"
-            cp "apks/${app}-${VERSION}-${BUILD}.apk" "apks/${staged}"
-            gh release upload "${BETA_LATEST}" --clobber "apks/${staged}"
             staged_id="$(asset_id "${staged}")"
             current_id="$(asset_id "${name}")"
             if [[ -n "${current_id}" ]]; then
