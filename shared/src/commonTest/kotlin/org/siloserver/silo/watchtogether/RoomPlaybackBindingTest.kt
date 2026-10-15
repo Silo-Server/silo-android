@@ -884,6 +884,28 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a rate-incapable member a few seconds off with the target out of reach reloads`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0, mountGeneration = 1) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 2.0, forMs = 1_200)
+        assertEquals(1, player.seeks.size, "rate support was never ruled out")
+
+        // 3 s ahead of the room on a mount that cannot seek back in place:
+        // no nudge and no in-place seek can close it, so it reloads.
+        player.buffered = { false }
+        follow(player, drift = -3.0, forMs = 100)
+        command(room, "ahead", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(2, player.seeks.size)
+        assertEquals(100.0 + testScheduler.currentTime / 1000.0, player.seeks.last(), 0.2)
+        assertNull(player.rates.last())
+    }
+
+    @Test
     fun `slow fallback seeks aim ahead by their measured shortfall`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()

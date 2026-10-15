@@ -432,7 +432,8 @@ Media3 applies speed only to PCM output that is not tunneled. When the engine
 still reports 1x a second after a nudge starts, the mount is rate-unsupported
 until the next mount, epoch, quality change, or reload; a native seek within
 the mounted item does not clear it. Nudges then become in-place seeks beyond
-1 s, from commands and from the loop alike. Each seek aims ahead by the
+1 s, from commands and from the loop alike; a command whose target is out of
+reach in place reloads through the budget instead. Each seek aims ahead by the
 shortfall the previous one left once it landed (at most 3 s). A seek that
 leaves more than 1 s doubles the wait before the next, from 1 s up to 16 s;
 one that converges resets it. A member that wants to play but is still

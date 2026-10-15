@@ -912,8 +912,9 @@ class RoomPlaybackBinding(
 
     /**
      * Run a held Play correction once the reload budget allows, aimed at where
-     * the room is now. Drift that shrank within reach of a nudge is left to
-     * the drift loop; a target that became buffered is a plain seek.
+     * the room is now. The Play command's own rule decides again:
+     * drift that shrank within reach of a nudge is left to the drift loop,
+     * and a target that became buffered is a plain seek.
      */
     private fun retryDeferredReload(now: Long, obs: RoomPlayerObservation) {
         if (!reloadDeferred) return
@@ -926,8 +927,17 @@ class RoomPlaybackBinding(
         }
         val expected = ref.positionAt(serverNow)
         val drift = expected - localPositionNow(obs, now)
+        val decision = RoomCatchup.decideCommand(
+            action = TransportAction.Play,
+            driftSeconds = drift,
+            memberPlaying = obs.isPlaying,
+            commandPlays = true,
+            targetReachableInPlace = player.isBuffered(expected),
+            memberIntendsToPlay = true,
+            rateCapable = !rateUnsupported,
+        )
         when {
-            abs(drift) <= RoomCatchup.HARD_SEEK_SECONDS -> {
+            decision != RoomCatchup.Decision.SeekOrReload && decision != RoomCatchup.Decision.Seek -> {
                 reloadDeferred = false
                 if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
             }

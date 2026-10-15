@@ -107,8 +107,9 @@ object RoomCatchup {
      * - [targetReachableInPlace]: the player can take the target without
      *   rebuilding its stream.
      * - [rateCapable]: this mount honours a playback rate. A tunneled or
-     *   passthrough audio path plays on at 1x, so a nudge there becomes an
-     *   in-place seek beyond [PAUSED_SEEK_SECONDS].
+     *   passthrough audio path plays on at 1x, so a nudge there becomes a
+     *   seek beyond [PAUSED_SEEK_SECONDS]: in place when the target is
+     *   reachable, otherwise through the reload budget.
      */
     fun decideCommand(
         action: TransportAction,
@@ -129,6 +130,9 @@ object RoomCatchup {
                 drift > HARD_SEEK_SECONDS -> Decision.SeekOrReload
                 rateCapable -> Decision.Nudge(rateFor(driftSeconds))
                 inPlaceSeek -> Decision.Seek
+                // A mount that cannot nudge or seek in place would never
+                // converge; the reload budget paces the rebuild.
+                drift > PAUSED_SEEK_SECONDS -> Decision.SeekOrReload
                 else -> Decision.None
             }
         }

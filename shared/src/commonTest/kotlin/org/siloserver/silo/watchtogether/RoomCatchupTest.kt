@@ -83,13 +83,17 @@ class RoomCatchupTest {
     }
 
     @Test
-    fun `without rate support a nudge becomes an in-place seek beyond one second`() {
+    fun `without rate support a nudge becomes a seek beyond one second`() {
         val play = { drift: Double, reachable: Boolean ->
             decide(TransportAction.Play, drift, reachable = reachable, rateCapable = false)
         }
         assertEquals(RoomCatchup.Decision.None, play(0.8, true))
+        assertEquals(RoomCatchup.Decision.None, play(0.8, false))
         assertEquals(RoomCatchup.Decision.Seek, play(1.5, true))
-        assertEquals(RoomCatchup.Decision.None, play(3.0, false))
+        // Out of reach in place: nothing else would ever converge it, so
+        // the reload budget paces a rebuild.
+        assertEquals(RoomCatchup.Decision.SeekOrReload, play(3.0, false))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, play(-3.0, false))
         assertEquals(RoomCatchup.Decision.SeekOrReload, play(6.0, false))
     }
 
