@@ -89,6 +89,9 @@ fun PlayerOverlay(
     // The party's current status line (waiting, catching up, host away,
     // reconnecting); null shows the member count.
     roomStatus: String? = null,
+    // This member's unanswered room seek target: skips start from it and the
+    // timeline holds on it until the room's command lands.
+    roomPendingSeekSeconds: Double? = null,
     isFastForwardHoldActive: Boolean = false,
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
@@ -158,6 +161,7 @@ fun PlayerOverlay(
     // In a party, Back opens the party panel (PlayerScreen); solo backs out.
     val handleBack: () -> Unit = onBack
     val gatedSeek: (Double) -> Unit = { pos -> if (seekEnabled) onSeek(pos) }
+    val shownPosition = roomPendingSeekSeconds?.takeIf { inRoom } ?: state.position
     // Resolved profile-wide video intervals; read at press time so a change
     // made in settings applies to the next skip without restarting playback.
     val seekIntervals by viewModel.seekIntervals.collectAsState()
@@ -165,7 +169,7 @@ fun PlayerOverlay(
         if (seekEnabled) {
             val step = viewModel.seekIntervals.value.forwardSeconds.toDouble()
             if (inRoom) {
-                val forward = state.position + step
+                val forward = shownPosition + step
                 gatedSeek(if (state.duration > 0.0) forward.coerceAtMost(state.duration) else forward)
             } else {
                 viewModel.onSkipBy(step)
@@ -175,7 +179,7 @@ fun PlayerOverlay(
     val gatedSkipBackward: () -> Unit = {
         if (seekEnabled) {
             val step = viewModel.seekIntervals.value.backSeconds.toDouble()
-            if (inRoom) gatedSeek((state.position - step).coerceAtLeast(0.0))
+            if (inRoom) gatedSeek((shownPosition - step).coerceAtLeast(0.0))
             else viewModel.onSkipBy(-step)
         }
     }
@@ -432,13 +436,13 @@ fun PlayerOverlay(
                 subtitle = state.subtitle,
                 eyebrow = playerEyebrow(state),
                 tracksValue = playerTracksValue(state),
-                chapterValue = chapterTitleAt(state.chapters, state.position),
+                chapterValue = chapterTitleAt(state.chapters, shownPosition),
                 qualityValue = playerQualityLabel(qualityOptions, activeQualityId),
                 pictureInPictureAvailable = pictureInPictureAvailable,
                 onEnterPictureInPicture = onEnterPictureInPicture,
                 isPlaying = state.isPlaying,
                 isPaused = state.isPaused,
-                position = state.position,
+                position = shownPosition,
                 duration = state.duration,
                 bufferedPosition = state.bufferedPosition,
                 chapters = state.chapters,

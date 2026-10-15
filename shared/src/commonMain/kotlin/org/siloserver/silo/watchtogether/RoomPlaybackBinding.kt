@@ -140,6 +140,8 @@ data class RoomPlaybackTiming(
     val rateConfirmMs: Long = 1_000L,
     /** Reports held after a command resume after this long even if the player never shows its state. */
     val reportHoldMaxMs: Long = 3_000L,
+    /** A seek request the room has not answered within this long no longer holds the timeline. */
+    val pendingSeekTimeoutMs: Long = 5_000L,
 )
 
 /** Something the viewer should be told. */
@@ -228,6 +230,24 @@ class RoomPlaybackBinding(
     /** Two sustained stalls within five minutes: offer one step down the same file's ladder. */
     val offerLowerQuality: StateFlow<Boolean> = _offerLowerQuality.asStateFlow()
 
+    private val _pendingSeekSeconds = MutableStateFlow<Double?>(null)
+
+    @kotlin.concurrent.Volatile
+    private var pendingSeekRequestedAtMs = NEVER_MS
+
+    /**
+     * The target of this member's last seek request that the room has not
+     * answered yet, or null. Until the room's command executes here the
+     * player still shows the old position, so relative skips start from this
+     * ([relativeSeekOrigin]) and the timeline holds on it instead of snapping
+     * back. Cleared when a command that arrived after the request executes,
+     * on a new epoch or a disconnect, and after [RoomPlaybackTiming.pendingSeekTimeoutMs].
+     */
+    val pendingSeekSeconds: StateFlow<Double?> = _pendingSeekSeconds.asStateFlow()
+
+    /** Where a relative skip starts: the pending seek target, else [liveSeconds]. */
+    fun relativeSeekOrigin(liveSeconds: Double): Double = _pendingSeekSeconds.value ?: liveSeconds
+
     // ---- loop state (touched only by the event loop) ----
     private var attachedKey: RoomDeliveryKey? = null
     private var lastAttachAttemptMs = NEVER_MS
@@ -288,6 +308,8 @@ class RoomPlaybackBinding(
         val token: Long,
         val scheduled: ScheduledTransportCommand,
         val executeAtServerMs: Long?,
+        /** When this binding accepted the command, on its monotonic clock. */
+        val acceptedAtMs: Long,
     ) {
         /** When execution was first held for a media mount in flight. */
         var deferredSinceMs: Long? = null
@@ -349,7 +371,19 @@ class RoomPlaybackBinding(
     fun requestSeek(sourceSeconds: Double): RoomTransportResult {
         if (!sourceSeconds.isFinite() || sourceSeconds < 0.0) return RoomTransportResult.Ignored
         val paused = room.roomSnapshot.value?.isPaused ?: true
-        return request(RoomTransportIntent.Seek, TransportAction.Seek, sourceSeconds, paused)
+        val result = request(RoomTransportIntent.Seek, TransportAction.Seek, sourceSeconds, paused)
+        if (result == RoomTransportResult.Sent) {
+            pendingSeekRequestedAtMs = monotonicNowMs()
+            _pendingSeekSeconds.value = sourceSeconds
+        }
+        return result
+    }
+
+    /** Drop the pending seek target when it predates [beforeMs] (any target when null). */
+    private fun clearPendingSeek(beforeMs: Long? = null) {
+        val target = _pendingSeekSeconds.value ?: return
+        if (beforeMs != null && pendingSeekRequestedAtMs > beforeMs) return
+        _pendingSeekSeconds.compareAndSet(target, null)
     }
 
     private fun request(
@@ -433,6 +467,9 @@ class RoomPlaybackBinding(
             sustainedStalls.clear()
             _offerLowerQuality.value = false
         }
+        // A seek request the room never answered (dropped, refused
+        // server-side) stops holding the timeline.
+        if (now - pendingSeekRequestedAtMs >= timing.pendingSeekTimeoutMs) clearPendingSeek(beforeMs = now - timing.pendingSeekTimeoutMs)
         if (now - lastContinuityCheckMs >= 1_000L) {
             lastContinuityCheckMs = now
             room.checkClockContinuity()
@@ -471,6 +508,7 @@ class RoomPlaybackBinding(
             // No room to converge toward while detached or reconnecting; a
             // correction rate left running would carry this viewer past it.
             clearRate()
+            if (!connection.writable) clearPendingSeek()
             return
         }
 
@@ -572,6 +610,7 @@ class RoomPlaybackBinding(
         stallStartedAtMs = null
         stallReported = false
         _catchingUp.value = false
+        clearPendingSeek()
         clearRate()
     }
 
@@ -592,7 +631,7 @@ class RoomPlaybackBinding(
         reloadDeferred = false
         if (reloads.inFlight) reloads.abandon(monotonicNowMs())
         val token = ++nextToken
-        val queued = PendingCommand(token, scheduled, scheduled.executeAtMs)
+        val queued = PendingCommand(token, scheduled, scheduled.executeAtMs, monotonicNowMs())
         pending = queued
         readiness = null
         scheduleExecution(queued)
@@ -718,6 +757,9 @@ class RoomPlaybackBinding(
         applied = command
         appliedAtMs = now
         reference = next
+        // The room has answered any seek this member asked for before the
+        // command arrived; the player now shows the room's position.
+        clearPendingSeek(beforeMs = scheduled.acceptedAtMs)
         reportHold = ReportHold(command.commandId, playing = commandPlays && !obs.suspended, sinceMs = now)
         if (command.playbackState == RoomPlaybackState.Waiting) {
             readiness = Readiness(

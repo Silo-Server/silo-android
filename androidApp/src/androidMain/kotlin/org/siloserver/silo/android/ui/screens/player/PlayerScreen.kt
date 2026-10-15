@@ -391,6 +391,10 @@ fun PlayerScreen(
             subtitle = subtitle,
         )
     }
+    // This member's unanswered room seek: skips build on it and the timeline holds on it.
+    val roomPendingSeekSeconds by remember(watchParty) {
+        watchParty?.pendingSeekSeconds ?: MutableStateFlow<Double?>(null)
+    }.collectAsState()
     DisposableEffect(watchParty) {
         watchParty?.start()
         onDispose {
@@ -1927,6 +1931,7 @@ fun PlayerScreen(
                         inRoom = inRoom,
                         roomSuspended = roomSuspended,
                         roomStatus = roomStatus,
+                        roomPendingSeekSeconds = roomPendingSeekSeconds,
                         orientationLockSupported =
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,

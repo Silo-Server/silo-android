@@ -1108,6 +1108,59 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `quick skips build on the pending request, not the position the player has not left`() = runTest {
+        val room = FakeRoom()
+        val binding = bind(room, FakePlayer())
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        // The player stays at 100 s until the room's command lands.
+        binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
+        binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
+        runCurrent()
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 110.0, "seek" to 120.0), room.requests)
+        assertEquals(120.0, binding.pendingSeekSeconds.value)
+    }
+
+    @Test
+    fun `the pending seek clears when the room answers, and only a refused seek never sets it`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        assertEquals(RoomTransportResult.Denied, binding.requestSeek(130.0))
+        assertNull(binding.pendingSeekSeconds.value)
+
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        // A command accepted before the request executes after it: not the answer.
+        command(room, "earlier", TransportAction.Play, 100.0, RoomPlaybackState.Playing, executeInMs = 500)
+        advanceTimeBy(100)
+        binding.requestSeek(130.0)
+        advanceTimeBy(600)
+        assertEquals(130.0, binding.pendingSeekSeconds.value)
+
+        command(room, "answer", TransportAction.Seek, 130.0, RoomPlaybackState.Playing, executeInMs = 400)
+        advanceTimeBy(300)
+        assertEquals(130.0, binding.pendingSeekSeconds.value, "cleared before the room's command executed")
+        advanceTimeBy(200)
+        assertNull(binding.pendingSeekSeconds.value)
+    }
+
+    @Test
+    fun `an unanswered pending seek expires after five seconds and a disconnect clears it`() = runTest {
+        val room = FakeRoom()
+        val binding = bind(room, FakePlayer())
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        binding.requestSeek(130.0)
+        advanceTimeBy(4_800)
+        assertEquals(130.0, binding.pendingSeekSeconds.value)
+        advanceTimeBy(500)
+        assertNull(binding.pendingSeekSeconds.value)
+
+        binding.requestSeek(140.0)
+        room.connectionState.value = connection.copy(writable = false)
+        advanceTimeBy(300)
+        assertNull(binding.pendingSeekSeconds.value)
+    }
+
+    @Test
     fun `play from the end is not sent to the room`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()

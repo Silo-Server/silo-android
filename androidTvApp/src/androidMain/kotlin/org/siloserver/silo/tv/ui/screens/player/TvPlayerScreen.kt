@@ -471,6 +471,10 @@ fun TvPlayerScreen(
     // The process RoomSession owns the room socket; this screen owns only its
     // playback binding, and disposing it never leaves the room.
     val watchParty = rememberTvWatchParty(roomId, viewModel)
+    // This member's unanswered room seek: skips build on it and the timeline holds on it.
+    val roomPendingSeekSeconds by remember(watchParty) {
+        watchParty?.playback?.pendingSeekSeconds ?: kotlinx.coroutines.flow.MutableStateFlow<Double?>(null)
+    }.collectAsState()
     val roomSnapshot: RoomSnapshot? = watchParty?.playback?.room?.collectAsState()?.value
     // Back in a party opens the party panel over the retained player.
     var showPartyPanel by remember { mutableStateOf(false) }
@@ -725,7 +729,9 @@ fun TvPlayerScreen(
         val targetSec = if (watchParty == null) {
             viewModel.onSkipBy(deltaMs / 1000.0)
         } else {
-            (playerState.position + deltaMs / 1000.0)
+            // Presses inside the room's round trip build on the last request,
+            // not on the position the player has not left yet.
+            (watchParty.playback.relativeSeekOrigin(playerState.position) + deltaMs / 1000.0)
                 .coerceAtLeast(0.0)
                 .let { if (duration > 0.0) it.coerceAtMost(duration) else it }
         }
@@ -794,7 +800,10 @@ fun TvPlayerScreen(
         quickSkipCaptureJob?.cancel()
         quickSkipCaptureJob = null
         quickSkipCaptureActive = false
-        cleanSeekPreviewSec = viewModel.uiState.value.position.coerceAtLeast(0.0)
+        cleanSeekPreviewSec = (
+            watchParty?.playback?.relativeSeekOrigin(viewModel.uiState.value.position)
+                ?: viewModel.uiState.value.position
+            ).coerceAtLeast(0.0)
         val sign = if (direction < 0) -1 else 1
         cleanSeekRate = TvSeekRateLadder.BASE_RATE * sign
 
@@ -2143,7 +2152,7 @@ fun TvPlayerScreen(
                         (mediaController?.bufferedPosition ?: 0L) -
                             (mediaController?.currentPosition ?: 0L)
                     ).coerceAtLeast(0L) / 1000.0
-                    TvPlayerClockScope(viewModel) { clock ->
+                    TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                     TvPlayerIdleOverlay(
                         title = state.title,
                         eyebrow = tvPlayerEyebrow(state),
@@ -2250,7 +2259,7 @@ fun TvPlayerScreen(
                     // the picture stays watchable behind it. The HUD fills the
                     // screen and places itself; mirrors tvOS TVPlayerInfoHUD.
                     Box(modifier = Modifier.fillMaxSize()) {
-                        TvPlayerClockScope(viewModel) { clock ->
+                        TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                         TvPlayerHud(
                             title = state.title,
                             positionSec = clock.position,
@@ -2356,7 +2365,7 @@ fun TvPlayerScreen(
                             .padding(top = 80.dp),
                         contentAlignment = Alignment.TopCenter,
                     ) {
-                        TvPlayerClockScope(viewModel) { clock ->
+                        TvPlayerClockScope(viewModel, roomPendingSeekSeconds) { clock ->
                             TvHoldSeekIndicator(
                                 isVisible = true,
                                 rate = cleanSeekRate,
@@ -3911,13 +3920,15 @@ private fun String.toSiloCastSubtitlePosition(): SubtitlePositionPreset {
     }
 }
 
+/** The playback clock, holding on [pendingSeekSec] (an unanswered room seek) while it is set. */
 @Composable
 private fun TvPlayerClockScope(
     viewModel: TvPlayerViewModel,
+    pendingSeekSec: Double? = null,
     content: @Composable (PlaybackClock) -> Unit,
 ) {
     val clock by viewModel.playbackClock.collectAsState()
-    content(clock)
+    content(pendingSeekSec?.let { clock.copy(position = it) } ?: clock)
 }
 
 /**
