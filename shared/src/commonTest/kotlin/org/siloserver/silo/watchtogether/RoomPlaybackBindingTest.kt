@@ -761,6 +761,61 @@ class RoomPlaybackBindingTest {
         assertNull(player.rates.last())
     }
 
+    /**
+     * Advance the playhead at [speed] for [forMs], sampling the engine every
+     * 200 ms with its timestamp, as the TV sampler does. The engine reports
+     * whatever correction rate was last asked for.
+     */
+    private fun TestScope.advance(player: FakePlayer, speed: Double, forMs: Long) {
+        repeat((forMs / 200).toInt()) {
+            advanceTimeBy(200)
+            player.update {
+                copy(
+                    sourcePositionSeconds = sourcePositionSeconds + 0.2 * speed,
+                    sampledAtMs = testScheduler.currentTime,
+                    playbackSpeed = player.rates.lastOrNull() ?: 1.0,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a nudge the playhead follows keeps nudging`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 98.0, sampledAtMs = testScheduler.currentTime, playbackSpeed = 1.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        // Twelve seconds at the asked rate: the drift closes as it should.
+        advance(player, speed = 1.04, forMs = 12_000)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertTrue(player.seeks.isEmpty(), "a healthy player fell back to seeks: ${player.seeks}")
+    }
+
+    @Test
+    fun `a player that reports the rate but cannot keep up falls back to in-place seeks`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 98.0, sampledAtMs = testScheduler.currentTime, playbackSpeed = 1.0) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+
+        // The engine says 1.04x but the playhead advances at 1.01x: too slow
+        // a device. Not judged before five seconds of samples.
+        advance(player, speed = 1.01, forMs = 4_800)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertTrue(player.seeks.isEmpty())
+
+        advance(player, speed = 1.01, forMs = 2_400)
+        assertNull(player.rates.last())
+        assertEquals(1, player.seeks.size, "the drift was never corrected")
+    }
+
     @Test
     fun `a member buffering toward play reloads a large gap through the budget`() = runTest {
         val room = FakeRoom()

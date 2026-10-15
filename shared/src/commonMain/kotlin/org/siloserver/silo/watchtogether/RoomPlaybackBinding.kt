@@ -138,6 +138,11 @@ data class RoomPlaybackTiming(
     val stallWindowMs: Long = 5 * 60_000L,
     /** A requested rate the engine still reports as 1x this long later is unsupported on the mount. */
     val rateConfirmMs: Long = 1_000L,
+    /**
+     * A nudge's measured advance is judged over at least this long, so
+     * sampling jitter cannot read as a player that ignores the rate.
+     */
+    val rateMeasureMs: Long = 5_000L,
     /** Reports held after a command resume after this long even if the player never shows its state. */
     val reportHoldMaxMs: Long = 3_000L,
     /** A seek request the room has not answered within this long no longer holds the timeline. */
@@ -273,10 +278,20 @@ class RoomPlaybackBinding(
     private var lastBusyMs = NEVER_MS
 
     // This mount plays on at 1x whatever rate is asked (tunneling,
-    // passthrough audio). Sticky until the next mount, epoch, quality change,
-    // or reload; the loop then corrects with in-place seeks instead.
+    // passthrough audio), or cannot keep up with it (a device too slow to
+    // decode faster than real time). Sticky until the next mount, epoch,
+    // quality change, or reload; the loop then corrects with in-place seeks
+    // instead.
     private var rateUnsupported = false
     private var rateRequestedAtMs = NEVER_MS
+
+    // The playhead's measured advance during a nudge: engine position and
+    // sample time where the window started, the last sample folded in, and
+    // the gain over 1x the requested rate should have produced since.
+    private var advanceFromSeconds = 0.0
+    private var advanceFromMs: Long? = null
+    private var advanceLastMs = NEVER_MS
+    private var advanceExpectedGainSeconds = 0.0
     private var lastLoopSeekMs = NEVER_MS
 
     // Rate-incapable correction by seeks. A seek takes time to land while
@@ -721,6 +736,8 @@ class RoomPlaybackBinding(
         }
         pending = null
         val now = monotonicNowMs()
+        // A command may seek or change the rate: measure the advance afresh.
+        advanceFromMs = null
         val commandPlays = when (command.action) {
             TransportAction.Play -> command.playbackState != RoomPlaybackState.Waiting
             TransportAction.Pause -> false
@@ -864,6 +881,7 @@ class RoomPlaybackBinding(
 
     private fun clearRateUnsupported() {
         rateUnsupported = false
+        advanceFromMs = null
         fallbackLeadSeconds = 0.0
         fallbackIntervalMs = RoomCatchup.LOOP_SETTLE_MS
         fallbackSeekToMeasure = false
@@ -896,19 +914,67 @@ class RoomPlaybackBinding(
     /**
      * A nudge the engine still reports as 1x after [RoomPlaybackTiming.rateConfirmMs]
      * of ready playback means this mount cannot change rate (Media3 applies
-     * speed only to PCM output that is not tunneled). Stop asking.
+     * speed only to PCM output that is not tunneled). So does a playhead that
+     * does not advance at least halfway from 1x toward the requested rate
+     * over [RoomPlaybackTiming.rateMeasureMs], whatever speed the engine
+     * reports: a device that cannot decode faster than real time reports the
+     * rate but never closes the drift. Stop asking.
      */
     private fun checkRateHonoured(now: Long, obs: RoomPlayerObservation) {
         // A pending command owns the next change; its lead must not reset the rate.
         if (pending != null) return
         val requested = rateApplied ?: return
-        val speed = obs.playbackSpeed ?: return
-        if (!obs.isPlaying || obs.state != RoomPlayerState.Ready || obs.seekPending) return
-        if ((obs.sampledAtMs ?: now) - rateRequestedAtMs < timing.rateConfirmMs) return
-        if (abs(speed - requested) > RATE_TOLERANCE && abs(speed - 1.0) <= RATE_TOLERANCE) {
-            rateUnsupported = true
-            setRate(null)
+        if (!obs.isPlaying || obs.state != RoomPlayerState.Ready || obs.seekPending) {
+            advanceFromMs = null
+            return
         }
+        val speed = obs.playbackSpeed
+        if (speed != null && (obs.sampledAtMs ?: now) - rateRequestedAtMs >= timing.rateConfirmMs &&
+            abs(speed - requested) > RATE_TOLERANCE && abs(speed - 1.0) <= RATE_TOLERANCE
+        ) {
+            markRateUnsupported()
+            return
+        }
+        if (!advanceKeepsUp(obs, requested)) markRateUnsupported()
+    }
+
+    /**
+     * Fold the newest engine sample into the measured advance. False once a
+     * window of at least [RoomPlaybackTiming.rateMeasureMs], long enough to
+     * expect [RATE_MEASURE_MIN_GAIN_SECONDS] over 1x, gained less than half
+     * of that; a window that keeps up starts the next one.
+     */
+    private fun advanceKeepsUp(obs: RoomPlayerObservation, requested: Double): Boolean {
+        val sampledAt = obs.sampledAtMs ?: return true
+        val position = obs.sourcePositionSeconds
+        val from = advanceFromMs
+        if (from == null || sampledAt < advanceLastMs || sampledAt - advanceLastMs > MAX_ADVANCE_SAMPLE_GAP_MS) {
+            startAdvanceWindow(position, sampledAt)
+            return true
+        }
+        if (sampledAt == advanceLastMs) return true
+        advanceExpectedGainSeconds += (requested - 1.0) * (sampledAt - advanceLastMs) / 1000.0
+        advanceLastMs = sampledAt
+        val elapsedMs = sampledAt - from
+        if (elapsedMs < timing.rateMeasureMs || abs(advanceExpectedGainSeconds) < RATE_MEASURE_MIN_GAIN_SECONDS) {
+            return true
+        }
+        val gained = (position - advanceFromSeconds) - elapsedMs / 1000.0
+        val keepsUp = gained / advanceExpectedGainSeconds >= 0.5
+        if (keepsUp) startAdvanceWindow(position, sampledAt)
+        return keepsUp
+    }
+
+    private fun startAdvanceWindow(position: Double, sampledAt: Long) {
+        advanceFromSeconds = position
+        advanceFromMs = sampledAt
+        advanceLastMs = sampledAt
+        advanceExpectedGainSeconds = 0.0
+    }
+
+    private fun markRateUnsupported() {
+        rateUnsupported = true
+        setRate(null)
     }
 
     /**
@@ -991,6 +1057,7 @@ class RoomPlaybackBinding(
         // The confirmation window starts when a nudge starts; adjusting a
         // running nudge must not keep restarting it.
         if (normalized != null && rateApplied == null) rateRequestedAtMs = monotonicNowMs()
+        if (normalized == null || rateApplied == null) advanceFromMs = null
         rateApplied = normalized
         player.setCorrectionRate(normalized)
     }
@@ -1024,6 +1091,15 @@ class RoomPlaybackBinding(
 
         /** Speeds closer than this are the same rate. */
         const val RATE_TOLERANCE = 0.001
+
+        /**
+         * A nudge's measured advance is judged only once the requested rate
+         * should have gained this much over 1x, well above sampling jitter.
+         */
+        const val RATE_MEASURE_MIN_GAIN_SECONDS = 0.25
+
+        /** Engine samples further apart than this (a stalled sampler) restart the measurement. */
+        const val MAX_ADVANCE_SAMPLE_GAP_MS = 2_000L
 
         /**
          * A room seek this close to the pending target answers it. The server
