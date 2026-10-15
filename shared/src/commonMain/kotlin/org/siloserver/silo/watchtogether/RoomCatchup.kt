@@ -61,6 +61,12 @@ object RoomCatchup {
     /** Drift loop cadence. */
     const val LOOP_INTERVAL_MS = 500L
 
+    /** A rate-incapable mount aims its correction seeks at most this far ahead. */
+    const val FALLBACK_MAX_LEAD_SECONDS = 3.0
+
+    /** Correction seeks that keep missing back off up to this interval. */
+    const val FALLBACK_MAX_INTERVAL_MS = 16_000L
+
     private const val STEPS_PER_UNIT = 200 // 1 / RATE_STEP
 
     /**
@@ -138,6 +144,29 @@ object RoomCatchup {
         // Pause, or a play this member starts from rest: the loop corrects
         // any residual once playing, so only a large or cheap gap is a seek.
         return if (drift > HARD_SEEK_SECONDS || inPlaceSeek) Decision.Seek else Decision.None
+    }
+
+    /** How the next correction seek on a rate-incapable mount is aimed and spaced. */
+    data class FallbackStep(val leadSeconds: Double, val intervalMs: Long)
+
+    /**
+     * After a correction seek on a rate-incapable mount has landed: the room
+     * kept playing while it travelled, so [driftSeconds] measured now is the
+     * shortfall the seek left. The next seek aims ahead by the lead so far
+     * plus that shortfall (never behind, at most [FALLBACK_MAX_LEAD_SECONDS]).
+     * A seek that left more than [PAUSED_SEEK_SECONDS] doubles the interval
+     * before the next one, up to [FALLBACK_MAX_INTERVAL_MS]; one that
+     * converged resets it to [LOOP_SETTLE_MS].
+     */
+    fun fallbackAfterSeek(leadSeconds: Double, intervalMs: Long, driftSeconds: Double): FallbackStep {
+        if (!driftSeconds.isFinite()) return FallbackStep(leadSeconds, intervalMs)
+        val lead = (leadSeconds + driftSeconds).coerceIn(0.0, FALLBACK_MAX_LEAD_SECONDS)
+        val interval = if (abs(driftSeconds) <= PAUSED_SEEK_SECONDS) {
+            LOOP_SETTLE_MS
+        } else {
+            (intervalMs * 2).coerceAtMost(FALLBACK_MAX_INTERVAL_MS)
+        }
+        return FallbackStep(lead, interval)
     }
 
     /**

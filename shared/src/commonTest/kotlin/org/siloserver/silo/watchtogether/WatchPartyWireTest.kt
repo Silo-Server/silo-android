@@ -220,16 +220,36 @@ class WatchPartyWireTest {
     }
 
     @Test
-    fun `a wall clock jump discards earlier samples`() {
+    fun `a wall clock step shifts the samples instead of discarding them`() {
         val clock = RoomClockEstimator()
+        // Offset 200 ms, measured with the wall clock equal to the monotonic clock.
         clock.record(0, 220, 220, 40, monotonicNowMs = 40)
+        assertEquals(200L, clock.estimate.offsetMs)
         val generation = clock.estimate.generation
 
+        // The wall clock steps forward by 59 s; the server clock did not move.
         assertTrue(clock.checkContinuity(wallNowMs = 60_000, monotonicNowMs = 1_000))
 
-        assertNull(clock.estimate.offsetMs)
-        assertTrue(clock.estimate.generation > generation)
+        assertEquals(200L - 59_000L, clock.estimate.offsetMs)
+        assertEquals(generation, clock.estimate.generation)
         assertFalse(clock.checkContinuity(wallNowMs = 61_000, monotonicNowMs = 2_000))
+
+        // Samples recorded after the step agree with the shifted ones.
+        assertTrue(clock.record(61_000, 2_220, 2_220, 61_040, monotonicNowMs = 2_040))
+        assertEquals(200L - 59_000L, clock.estimate.offsetMs)
+    }
+
+    @Test
+    fun `clock counts a round trip truncated just below zero as zero and prefers the newer of equals`() {
+        val clock = RoomClockEstimator()
+        // Round trip -1 ms (millisecond truncation): accepted as 0.
+        assertTrue(clock.record(1_000, 1_201, 1_201, 999, monotonicNowMs = 999))
+        assertEquals(0L, clock.estimate.rttMs)
+        // -3 ms is not truncation.
+        assertFalse(clock.record(2_000, 2_201, 2_201, 1_997, monotonicNowMs = 1_997))
+        // A later 0 ms sample with another offset wins the tie.
+        assertTrue(clock.record(3_000, 3_300, 3_300, 3_000, monotonicNowMs = 3_000))
+        assertEquals(300L, clock.estimate.offsetMs)
     }
 
     // ---- proof, time, ranking -----------------------------------------------------

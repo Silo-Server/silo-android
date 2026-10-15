@@ -350,9 +350,11 @@ ready. Room playback must not.
   transport requests, so they are never echoed back as intent.
 - Sample the clock with ping and pong from socket open, before a player
   attaches. Stamp pong receipt at transport ingress and fence samples by
-  connection epoch. Reject invalid samples (round trip below 0 or above 5 s)
-  and detect clock discontinuities. Use the offset of the lowest round trip
-  among the last 8 samples. Ping on open, every 2 s until the connection has
+  connection epoch. Count a round trip of -2 ms to 0 as 0 (millisecond
+  truncation) and reject the rest below 0 or above 5 s. Use the offset of the
+  lowest round trip among the last 8 samples, the newest on a tie. A step in
+  the wall clock relative to the monotonic clock shifts the stored offsets by
+  the step instead of discarding them, so the estimate never goes missing. Ping on open, every 2 s until the connection has
   supplied 4 samples, then every 15 s. Samples survive a reconnect to the same
   room and clear on leave.
 - Schedule with the server-clock estimate and a monotonic delay (at most the
@@ -424,10 +426,22 @@ stale limit counts as finished.
 
 Media3 applies speed only to PCM output that is not tunneled. When the engine
 still reports 1x a second after a nudge starts, the mount is rate-unsupported
-until the next mount, epoch, quality change, or reload. Nudges then become
-in-buffer seeks beyond 1 s, from commands and from the loop alike, and the loop
-waits 1 s after each seek settles. A member that wants to play but is still
+until the next mount, epoch, quality change, or reload; a native seek within
+the mounted item does not clear it. Nudges then become in-place seeks beyond
+1 s, from commands and from the loop alike. Each seek aims ahead by the
+shortfall the previous one left once it landed (at most 3 s). A seek that
+leaves more than 1 s doubles the wait before the next, from 1 s up to 16 s;
+one that converges resets it. A member that wants to play but is still
 buffering reloads a gap above 5 s through the budget, like a playing member.
+
+"In place" means a native seek within the mounted item: ahead of the playhead
+only as far as it is buffered, and behind it anywhere in a seekable item, so a
+member stopped ahead of a paused room seeks back.
+
+After a command executes, ordinary reports wait until the player shows the
+command's play state with no seek or mount in flight (at least 250 ms, at most
+3 s), and name the command only from then on. A host's stale "playing" sample
+must never read as its decision after its own pause.
 
 A Play correction whose target isn't buffered, and so needs a range request or
 a stream rebuild, goes through the reload budget. Only one runs at a time. The
@@ -925,7 +939,7 @@ source-string assertions.
 | T19 | First sustained stall | The room waits up to 10 s; the overlay names the viewer; resumes on recovery | Live shaping |
 | T20 | Deadline passes | `self_ignore_wait`; `ready` in playing and paused rooms, retried every 500 ms; fresh target; no reports while unplayable | Unit, live shaping |
 | T21 | Stall again within 5 min or within 1 min of the last pause; a lone viewer stalls | The room keeps playing; a lone viewer always pauses it and the room waits; a lone catching-up viewer resumes from its own position | Unit, live |
-| T22 | Rate convergence; host drift of 10 s or less | 0.96–1.04x from beyond 0.4 s until within 0.1 s, then exactly 1x; host corrected, not re-anchored; a mount whose engine still reports 1x a second after a nudge starts (tunneling, passthrough audio) is marked rate-unsupported until the next mount, epoch, quality change, or reload, and then corrects with in-buffer seeks beyond 1 s, at most one per second after the last settles; saved speed untouched | Unit, TV and phone |
+| T22 | Rate convergence; host drift of 10 s or less | 0.96–1.04x from beyond 0.4 s until within 0.1 s, then exactly 1x; host corrected, not re-anchored; a mount whose engine still reports 1x a second after a nudge starts (tunneling, passthrough audio) is marked rate-unsupported until the next mount, epoch, quality change, or reload, and then corrects with in-place seeks beyond 1 s that aim ahead by the last seek's measured shortfall (at most 3 s) and back off from 1 s to 16 s while they miss; saved speed untouched | Unit, TV and phone |
 | T23 | Unbuffered corrections on a slow link, including copy remux | One reload at a time; backoff from 10 s to 60 s; lead up to 10 s, capped at duration; explicit seeks bypass; no replan loop ([server #1259](https://github.com/Silo-Server/silo-server/issues/1259)) | Unit, live shaping |
 | T24 | Two sustained stalls within 5 min | Offer one lower quality of the same file, once per quality | Unit, live |
 | T25 | Host local suspensions (focus loss, noisy, sleep timer, TV pause, subtitle preparation, Cast attempt) | Room unaffected; the host resyncs before reporting | Unit, native |

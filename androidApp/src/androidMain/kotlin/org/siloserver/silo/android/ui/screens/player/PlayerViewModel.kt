@@ -3489,12 +3489,13 @@ class PlayerViewModel(
             playerPositionSeconds = roomEnginePlayerSec,
             bufferedPlayerSeconds = roomEngineBufferedPlayerSec,
             mountedSeekableSourceRange = roomBufferedSourceRange(state),
+            seekableBehindPlayhead = roomEngineSeekable,
         )
     }
 
     /**
-     * The source-time extent the mounted stream provably holds: from just
-     * behind the playhead to the buffered position. Room seeks and
+     * The source-time extent the mounted, seekable item provably holds: from
+     * its start to the buffered position. Room seeks and
      * [isRoomPositionBuffered] pass it to `decideSeek` so a target inside it
      * is a plain seek even when the published window is open-ended. Null
      * while media is changing or nothing is known.
@@ -3507,8 +3508,7 @@ class PlayerViewModel(
         if (!roomEngineSeekable) return null
         val timeline = state.playbackPlan?.timeline ?: return null
         if (roomEngineBufferedPlayerSec < roomEnginePlayerSec) return null
-        val start = timeline.sourcePositionForPlayer((roomEnginePlayerSec - ROOM_BACKWARD_SLACK_SECONDS).coerceAtLeast(0.0))
-            ?: return null
+        val start = timeline.sourcePositionForPlayer(0.0) ?: return null
         val end = timeline.sourcePositionForPlayer(roomEngineBufferedPlayerSec) ?: return null
         return if (end >= start) start..end else null
     }
@@ -5931,9 +5931,6 @@ private const val PLAYBACK_PAUSE_GRACE_MS = 1_500L
 
 /** Snapshots to let a local audio switch take before asking the server. */
 private const val MAX_LOCAL_AUDIO_ATTEMPTS = 3
-
-/** How far behind the playhead a room target still counts as held by the mounted stream. */
-private const val ROOM_BACKWARD_SLACK_SECONDS = 1.0
 
 /**
  * A downloaded file mounted by the offline-first path: a local URI with no

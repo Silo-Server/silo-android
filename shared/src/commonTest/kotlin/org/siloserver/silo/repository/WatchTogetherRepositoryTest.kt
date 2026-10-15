@@ -1491,7 +1491,7 @@ class WatchTogetherRepositoryTest {
     }
 
     @Test
-    fun `a clock jump resumes the two second warm-up pings`() = runTest {
+    fun `a clock step keeps the estimate shifted by the step and the warm-up done`() = runTest {
         var monotonicJumpMs = 0L
         val realtime = FakeRealtime()
         val r = repo(
@@ -1520,12 +1520,16 @@ class WatchTogetherRepositoryTest {
         }
         assertEquals(6, realtime.pings)
 
-        // The wall clock moves a minute against the monotonic clock.
+        assertEquals(200L, r.clock.value.offsetMs)
+
+        // The wall clock falls a minute behind the monotonic clock: the
+        // server is now a minute further ahead of it. Nothing is discarded,
+        // so a command arriving now still has a clock.
         monotonicJumpMs = 60_000L
         r.checkClockContinuity()
-        assertNull(r.clock.value.offsetMs)
+        assertEquals(60_200L, r.clock.value.offsetMs)
         advanceTimeBy(2_100)
-        assertEquals(7, realtime.pings, "warm-up did not resume after the samples were wiped")
+        assertEquals(6, realtime.pings, "warm-up restarted although the samples were kept")
         job.cancel()
     }
 

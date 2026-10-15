@@ -138,6 +138,8 @@ data class RoomPlaybackTiming(
     val stallWindowMs: Long = 5 * 60_000L,
     /** A requested rate the engine still reports as 1x this long later is unsupported on the mount. */
     val rateConfirmMs: Long = 1_000L,
+    /** Reports held after a command resume after this long even if the player never shows its state. */
+    val reportHoldMaxMs: Long = 3_000L,
 )
 
 /** Something the viewer should be told. */
@@ -252,6 +254,18 @@ class RoomPlaybackBinding(
     private var rateUnsupported = false
     private var rateRequestedAtMs = NEVER_MS
     private var lastLoopSeekMs = NEVER_MS
+
+    // Rate-incapable correction by seeks. A seek takes time to land while
+    // the room keeps playing, so each aims ahead by the shortfall the last
+    // one left, and seeks that fail to converge back off.
+    private var fallbackLeadSeconds = 0.0
+    private var fallbackIntervalMs = RoomCatchup.LOOP_SETTLE_MS
+    private var fallbackSeekToMeasure = false
+
+    // Reports after a command: none until the player shows the command's
+    // play state, so a stale sample never speaks for the new command.
+    private var reportHold: ReportHold? = null
+    private var reportedCommandId: String? = null
     private var mountSessionId: String? = null
     private var mountGeneration: Long? = null
     private var readiness: Readiness? = null
@@ -278,6 +292,8 @@ class RoomPlaybackBinding(
         /** When execution was first held for a media mount in flight. */
         var deferredSinceMs: Long? = null
     }
+
+    private data class ReportHold(val commandId: String, val playing: Boolean, val sinceMs: Long)
 
     private data class Readiness(
         val commandId: String?,
@@ -368,7 +384,7 @@ class RoomPlaybackBinding(
                 Event.QualityChanged -> {
                     sustainedStalls.clear()
                     reloads.reset()
-                    rateUnsupported = false
+                    clearRateUnsupported()
                     _offerLowerQuality.value = false
                 }
                 Event.Tick, Event.Changed -> Unit
@@ -518,7 +534,7 @@ class RoomPlaybackBinding(
         if (obs.sessionId != mountSessionId || obs.mountGeneration != mountGeneration) {
             mountSessionId = obs.sessionId
             mountGeneration = obs.mountGeneration
-            rateUnsupported = false
+            clearRateUnsupported()
         }
         if (reloads.inFlight && obs.isPlaying && reloads.landed(obs.sourcePositionSeconds)) reloads.land(now)
         // A reload that never lands must not hold corrections off for good,
@@ -532,10 +548,10 @@ class RoomPlaybackBinding(
         val readinessPending = readiness != null || (catchingUp && snapshot.selfMember?.isReady != true)
         val quiet = pending?.let { abs(expectedLocalExecuteMs(it) - now) <= timing.commandQuietMs } ?: false
         if (!obs.suspended && !stalled && !obs.seekPending && !(readinessPending && !playable) && !quiet &&
-            now - lastReportMs >= timing.reportIntervalMs
+            !holdingReportsFor(now, obs, paused) && now - lastReportMs >= timing.reportIntervalMs
         ) {
             lastReportMs = now
-            room.stateReport(sessionId, obs.sourcePositionSeconds, paused, applied?.commandId, isReady = false)
+            room.stateReport(sessionId, obs.sourcePositionSeconds, paused, reportedCommandId, isReady = false)
         }
     }
 
@@ -547,7 +563,9 @@ class RoomPlaybackBinding(
         reference = null
         readiness = null
         reloadDeferred = false
-        rateUnsupported = false
+        clearRateUnsupported()
+        reportHold = null
+        reportedCommandId = null
         stallStartedAtMs = null
         stallReported = false
         _catchingUp.value = false
@@ -624,6 +642,11 @@ class RoomPlaybackBinding(
             command.selectionRevision != snapshot.selectionRevision ||
             obs.selectionRevision != snapshot.selectionRevision ||
             (command.sessionId.isNotBlank() && command.sessionId != sessionId) ||
+            // A command accepted on a socket that has since been replaced is
+            // dropped: the server answers this member's re-attach on the new
+            // socket with a targeted sync (its waiting command again, or a
+            // play/pause at the room position), and running both would apply
+            // the command twice (a second seek rebuilds a copy-remux stream).
             scheduled.scheduled.connection.generation != connection.generation ||
             scheduled.scheduled.connection.epoch != connection.epoch
         ) {
@@ -667,7 +690,14 @@ class RoomPlaybackBinding(
         if (!keepsRate) setRate(null)
         if (!commandPlays) player.setPlaying(false)
         when (decision) {
-            RoomCatchup.Decision.Seek -> player.seekTo(target)
+            RoomCatchup.Decision.Seek -> {
+                // A playing member's in-place correction on a rate-incapable
+                // mount lands late by the seek time; aim ahead by it. Room
+                // seeks are barriers and land exactly.
+                val fallback = rateUnsupported && memberPlaying && commandPlays && next.playing &&
+                    command.action != TransportAction.Seek
+                if (fallback) fallbackSeek(next.positionAt(serverNow), now) else player.seekTo(target)
+            }
             RoomCatchup.Decision.SeekOrReload -> when {
                 player.isBuffered(target) -> player.seekTo(target)
                 // A correction that must load new media is paced.
@@ -685,6 +715,7 @@ class RoomPlaybackBinding(
         applied = command
         appliedAtMs = now
         reference = next
+        reportHold = ReportHold(command.commandId, playing = commandPlays && !obs.suspended, sinceMs = now)
         if (command.playbackState == RoomPlaybackState.Waiting) {
             readiness = Readiness(
                 commandId = command.commandId,
@@ -724,21 +755,68 @@ class RoomPlaybackBinding(
         val target = ref.positionAt(serverNow)
         val drift = target - localPositionNow(obs, now)
         if (abs(drift) <= RoomCatchup.DEADBAND_SECONDS) reloads.settle()
+        if (rateUnsupported && fallbackSeekToMeasure) {
+            // The last fallback seek has landed and settled; at 1x its
+            // shortfall stays put, so measure it now.
+            fallbackSeekToMeasure = false
+            val step = RoomCatchup.fallbackAfterSeek(fallbackLeadSeconds, fallbackIntervalMs, drift)
+            fallbackLeadSeconds = step.leadSeconds
+            fallbackIntervalMs = step.intervalMs
+        }
         val decision = RoomCatchup.loopDecision(
             driftSeconds = drift,
             nudging = rateApplied != null,
             rateCapable = !rateUnsupported,
-            targetReachableInPlace = rateUnsupported && player.isBuffered(target),
+            targetReachableInPlace = rateUnsupported && player.isBuffered(target + fallbackLeadSeconds),
         )
         when (decision) {
             is RoomCatchup.Decision.Nudge -> setRate(decision.rate)
             RoomCatchup.Decision.Seek -> {
-                setRate(null)
-                lastLoopSeekMs = now
-                player.seekTo(target)
+                if (now - maxOf(lastBusyMs, lastLoopSeekMs) >= fallbackIntervalMs) fallbackSeek(target, now)
             }
             else -> setRate(null)
         }
+    }
+
+    /** Seek a rate-incapable mount to the room, aimed ahead by the last measured shortfall. */
+    private fun fallbackSeek(roomSeconds: Double, now: Long) {
+        setRate(null)
+        lastLoopSeekMs = now
+        fallbackSeekToMeasure = true
+        player.seekTo(roomSeconds + fallbackLeadSeconds)
+    }
+
+    private fun clearRateUnsupported() {
+        rateUnsupported = false
+        fallbackLeadSeconds = 0.0
+        fallbackIntervalMs = RoomCatchup.LOOP_SETTLE_MS
+        fallbackSeekToMeasure = false
+    }
+
+    /**
+     * Whether ordinary reports wait after a command. The command executed,
+     * but the player's sample may still show the state it replaced; a report
+     * naming the command with that state would let the server take the old
+     * state for the new decision (a host's own pause undone by its stale
+     * "playing" report). Reports resume once [RoomPlaybackTiming.commandQuietMs]
+     * has passed and the player shows the command's play state with no seek
+     * or mount in flight, and from then on name the command. A player that
+     * never gets there reports again after [RoomPlaybackTiming.reportHoldMaxMs],
+     * still naming only the last command it was seen to follow.
+     */
+    private fun holdingReportsFor(now: Long, obs: RoomPlayerObservation, paused: Boolean): Boolean {
+        val hold = reportHold ?: return false
+        val settled = now - hold.sinceMs >= timing.commandQuietMs && !obs.seekPending && hold.playing == !paused
+        if (settled) {
+            reportedCommandId = hold.commandId
+            reportHold = null
+            return false
+        }
+        if (now - hold.sinceMs >= timing.reportHoldMaxMs) {
+            reportHold = null
+            return false
+        }
+        return true
     }
 
     /**
@@ -793,7 +871,7 @@ class RoomPlaybackBinding(
 
     private fun beginReload(target: Double, now: Long, obs: RoomPlayerObservation) {
         // A reload mounts new media, which may honour a rate again.
-        rateUnsupported = false
+        clearRateUnsupported()
         val aimed = reloads.begin(target, now, obs.durationSeconds.takeIf { it > 0.0 })
         player.seekTo(aimed)
         reloads.noteLoading()

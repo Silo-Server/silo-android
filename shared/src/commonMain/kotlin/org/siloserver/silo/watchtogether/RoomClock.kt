@@ -20,16 +20,19 @@ data class RoomClockEstimate(
  *
  * The estimate is the offset of the lowest round-trip sample among the most
  * recent [maxSamples] within [sampleLifetimeMs], because queueing delay only
- * ever lengthens a round trip. Samples with a negative or implausibly long
- * round trip are rejected. A jump in the local wall clock relative to the
- * monotonic clock invalidates every sample, since offsets measured before the
- * jump no longer describe this device.
+ * ever lengthens a round trip; among equal round trips the newest wins.
+ * Round trips a hair below zero are millisecond truncation and count as 0;
+ * clearly negative or implausibly long ones are rejected. A step in the local
+ * wall clock relative to the monotonic clock has a known size, so stored
+ * offsets are shifted by it rather than discarded: the server clock did not
+ * move, only this device's view of it.
  */
 class RoomClockEstimator(
     private val maxSamples: Int = 8,
     private val maxRttMs: Long = 5_000L,
     private val sampleLifetimeMs: Long = 10 * 60_000L,
     private val discontinuityToleranceMs: Long = 1_000L,
+    private val truncationToleranceMs: Long = 2L,
 ) {
     private data class Sample(val offsetMs: Long, val rttMs: Long, val monotonicMs: Long)
 
@@ -54,8 +57,9 @@ class RoomClockEstimator(
     ): Boolean {
         checkContinuity(clientReceivedMs, monotonicNowMs)
         val serverHoldMs = serverSentMs - serverReceivedMs
-        val rttMs = (clientReceivedMs - clientSentMs) - serverHoldMs
-        if (serverHoldMs < 0 || rttMs < 0 || rttMs > maxRttMs) return false
+        val measuredRttMs = (clientReceivedMs - clientSentMs) - serverHoldMs
+        if (serverHoldMs < 0 || measuredRttMs < -truncationToleranceMs || measuredRttMs > maxRttMs) return false
+        val rttMs = measuredRttMs.coerceAtLeast(0L)
         val offsetMs = (((serverReceivedMs - clientSentMs) + (serverSentMs - clientReceivedMs)) / 2.0).roundToLong()
         samples.addLast(Sample(offsetMs, rttMs, monotonicNowMs))
         while (samples.size > maxSamples) samples.removeFirst()
@@ -65,17 +69,24 @@ class RoomClockEstimator(
     }
 
     /**
-     * Detect a local wall-clock jump. Returns true (and resets the estimate)
-     * when the wall clock moved relative to the monotonic clock by more than
-     * the tolerance since the last check.
+     * Detect a local wall-clock step. Returns true when the wall clock moved
+     * relative to the monotonic clock by more than the tolerance since the
+     * last check; every stored offset is shifted by the step, so the estimate
+     * keeps describing the same server clock and never goes missing.
      */
     fun checkContinuity(wallNowMs: Long, monotonicNowMs: Long): Boolean {
         val skew = wallNowMs - monotonicNowMs
         val previous = wallMinusMonotonicMs
         wallMinusMonotonicMs = skew
-        if (previous == null || abs(skew - previous) <= discontinuityToleranceMs) return false
-        reset()
-        wallMinusMonotonicMs = skew
+        if (previous == null) return false
+        val stepMs = skew - previous
+        if (abs(stepMs) <= discontinuityToleranceMs) return false
+        // server = wall + offset: a wall clock that stepped forward by stepMs
+        // needs an offset that much smaller.
+        val shifted = samples.map { it.copy(offsetMs = it.offsetMs - stepMs) }
+        samples.clear()
+        samples.addAll(shifted)
+        publish()
         return true
     }
 
@@ -87,7 +98,8 @@ class RoomClockEstimator(
     }
 
     private fun publish() {
-        val best = samples.minByOrNull { it.rttMs }
+        // Iterate newest first so the newest of equal round trips wins.
+        val best = samples.asReversed().minByOrNull { it.rttMs }
         estimate = RoomClockEstimate(offsetMs = best?.offsetMs, rttMs = best?.rttMs, generation = generation)
     }
 }

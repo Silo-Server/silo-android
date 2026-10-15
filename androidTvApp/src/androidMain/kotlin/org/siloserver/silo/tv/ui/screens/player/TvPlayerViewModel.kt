@@ -4158,9 +4158,10 @@ class TvPlayerViewModel(
     }
 
     /**
-     * Whether [sourceSeconds] is reachable without new media: a plain native
-     * seek of the mounted item, between a second behind the playhead and the
-     * buffered position. Anything uncertain answers false.
+     * Whether [sourceSeconds] is reachable without rebuilding the stream: a
+     * plain native seek of the mounted item, no further ahead than the
+     * buffered position, and behind the playhead anywhere in a seekable
+     * window (otherwise within a second). Anything uncertain answers false.
      */
     fun isRoomPositionBuffered(sourceSeconds: Double): Boolean {
         if (roomId == null || !sourceSeconds.isFinite() || sourceSeconds < 0.0) return false
@@ -4185,6 +4186,7 @@ class TvPlayerViewModel(
             targetPlayerSeconds = targetPlayerSeconds,
             currentPlayerSeconds = sample.positionMs.coerceAtLeast(0L) / 1000.0,
             bufferedPlayerSeconds = sample.bufferedPositionMs.coerceAtLeast(0L) / 1000.0,
+            seekableBehindPlayhead = playerWindowIsSeekable,
         )
     }
 

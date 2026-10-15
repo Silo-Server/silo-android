@@ -201,6 +201,29 @@ class TvWatchPartyPlayerTest {
     }
 
     @Test
+    fun `a seekable window reaches any earlier point but not past the buffer`() {
+        // A member 3 s ahead of a paused room seeks back in place.
+        assertTrue(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 97.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertTrue(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 0.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertFalse(
+            tvRoomPositionBuffered(
+                targetPlayerSeconds = 131.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+    }
+
+    @Test
     fun `inconsistent or unknown positions are never buffered`() {
         assertFalse(tvRoomPositionBuffered(targetPlayerSeconds = 100.0, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 90.0))
         assertFalse(tvRoomPositionBuffered(targetPlayerSeconds = Double.NaN, currentPlayerSeconds = 100.0, bufferedPlayerSeconds = 130.0))

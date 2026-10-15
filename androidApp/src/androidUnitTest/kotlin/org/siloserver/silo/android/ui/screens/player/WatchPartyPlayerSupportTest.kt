@@ -25,6 +25,36 @@ class WatchPartyPlayerSupportTest {
     }
 
     @Test
+    fun aSeekableItemReachesAnyEarlierPointWithANativeSeek() {
+        // Player at 10 s (source 610): a member 3 s ahead of a paused room seeks back.
+        assertTrue(
+            roomTargetBufferedLocally(
+                offsetTimeline, 607.0, playerPositionSeconds = 10.0, bufferedPlayerSeconds = 40.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertTrue(
+            roomTargetBufferedLocally(
+                offsetTimeline, 600.0, playerPositionSeconds = 10.0, bufferedPlayerSeconds = 40.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        // Ahead of the buffer still needs new media, and before the origin a re-anchor.
+        assertFalse(
+            roomTargetBufferedLocally(
+                offsetTimeline, 641.0, playerPositionSeconds = 10.0, bufferedPlayerSeconds = 40.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+        assertFalse(
+            roomTargetBufferedLocally(
+                offsetTimeline, 30.0, playerPositionSeconds = 10.0, bufferedPlayerSeconds = 40.0,
+                seekableBehindPlayhead = true,
+            ),
+        )
+    }
+
+    @Test
     fun bufferedTargetIsFalseWhenAReanchorWouldBeNeededOrStateIsUnknown() {
         val bounded = PlaybackTimeline(seekWindowStartSeconds = 0.0, seekWindowEndSeconds = 50.0)
         assertFalse(roomTargetBufferedLocally(bounded, 60.0, playerPositionSeconds = 40.0, bufferedPlayerSeconds = 90.0))
