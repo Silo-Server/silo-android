@@ -38,17 +38,26 @@ class MediaLoadOutageRetryTest {
     @Test
     fun `a restart after the server came back gets a fresh window and backoff`() {
         listOf(directPlayUri to 1L, pgsSidecarUri to 2L).forEach { (uri, loadTaskId) ->
-            // First restart: the stream drops 50 MiB in and the loader resumes.
+            // First restart: the stream drops 50 MiB in, and the server is still
+            // down 70 s later.
             assertEquals(
                 1_000L,
                 policy.retryDelay(loadTaskId, uri, atMs = 0, position = 0, cumulativeBytes = 50 * MIB, errorCount = 1),
             )
-            // 130 s later, after another 50 MiB streamed, the second restart drops
-            // it again. Media3 has reset its own count to 1 and incremented it to 2.
+            assertEquals(
+                2_000L,
+                policy.retryDelay(
+                    loadTaskId, uri, atMs = 70_000, position = 50 * MIB, cumulativeBytes = 50 * MIB, errorCount = 2,
+                    error = ConnectException("Connection refused"),
+                ),
+            )
+            // The server comes back and streams another 50 MiB; 40 s after that
+            // last failure a second restart drops it again. Media3 has reset its
+            // own count to 1 and incremented it to 2.
             assertEquals(
                 1_000L,
                 policy.retryDelay(
-                    loadTaskId, uri, atMs = 130_000, position = 50 * MIB, cumulativeBytes = 100 * MIB, errorCount = 2,
+                    loadTaskId, uri, atMs = 110_000, position = 50 * MIB, cumulativeBytes = 100 * MIB, errorCount = 2,
                 ),
                 "$uri second restart",
             )
@@ -56,7 +65,7 @@ class MediaLoadOutageRetryTest {
             assertEquals(
                 2_000L,
                 policy.retryDelay(
-                    loadTaskId, uri, atMs = 131_000, position = 100 * MIB, cumulativeBytes = 100 * MIB, errorCount = 3,
+                    loadTaskId, uri, atMs = 111_000, position = 100 * MIB, cumulativeBytes = 100 * MIB, errorCount = 3,
                     error = ConnectException("Connection refused"),
                 ),
             )
@@ -64,7 +73,7 @@ class MediaLoadOutageRetryTest {
             assertEquals(
                 C.TIME_UNSET,
                 policy.retryDelay(
-                    loadTaskId, uri, atMs = 130_000 + MEDIA_LOAD_RETRY_WINDOW_MS, position = 100 * MIB,
+                    loadTaskId, uri, atMs = 110_000 + MEDIA_LOAD_RETRY_WINDOW_MS, position = 100 * MIB,
                     cumulativeBytes = 100 * MIB, errorCount = 4, error = ConnectException("Connection refused"),
                 ),
             )
@@ -82,9 +91,9 @@ class MediaLoadOutageRetryTest {
 
     @Test
     fun `responses cut every few seconds stay in one outage`() {
-        // A proxy that cuts every response 2 MiB in lets playback advance, but
-        // it may never keep up; running out the window hands the player to a
-        // route that might.
+        // A proxy that cuts every response 2 MiB in, seconds apart, lets
+        // playback advance, but it may never keep up; running out the window
+        // hands the player to a route that might.
         assertWindowExhausts(bytesPerAttempt = 2 * MIB)
     }
 

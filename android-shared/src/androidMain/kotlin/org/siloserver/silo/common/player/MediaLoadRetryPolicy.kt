@@ -363,7 +363,8 @@ internal const val MEDIA_LOAD_OUTAGE_RECOVERY_BYTES: Long = 512L shl 10
 
 /**
  * Time since a load task's previous failure before a new failure can start a
- * new outage. Restarts separated by real playback are minutes apart; a proxy
- * or link that cuts every response fails again within seconds.
+ * new outage. A proxy or link that cuts every response fails again within
+ * seconds. A server restarted again after it came back, or a proxy that ends
+ * each response after a fixed time limit, has served the stream for longer.
  */
-internal const val MEDIA_LOAD_OUTAGE_RECOVERY_MS: Long = 60_000L
+internal const val MEDIA_LOAD_OUTAGE_RECOVERY_MS: Long = 20_000L
