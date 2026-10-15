@@ -240,9 +240,10 @@ class RoomPlaybackBinding(
      * answered yet, or null. Until the room's command executes here the
      * player still shows the old position, so relative skips start from this
      * ([relativeSeekOrigin]) and the timeline holds on it instead of snapping
-     * back. Cleared when the room's seek to that target executes, on a new
-     * epoch or a disconnect, and after [RoomPlaybackTiming.pendingSeekTimeoutMs].
-     * An earlier request's seek does not clear a later target.
+     * back. Cleared when the room's seek to that target executes, or a newer
+     * command that replaced it before it ran; on a new epoch or a disconnect;
+     * and after [RoomPlaybackTiming.pendingSeekTimeoutMs]. An earlier
+     * request's seek does not clear a later target.
      */
     val pendingSeekSeconds: StateFlow<Double?> = _pendingSeekSeconds.asStateFlow()
 
@@ -250,6 +251,8 @@ class RoomPlaybackBinding(
     fun relativeSeekOrigin(liveSeconds: Double): Double = _pendingSeekSeconds.value ?: liveSeconds
 
     // ---- loop state (touched only by the event loop) ----
+    /** The pending seek target whose room seek has arrived. */
+    private var answeredSeekTarget: Double? = null
     private var attachedKey: RoomDeliveryKey? = null
     private var lastAttachAttemptMs = NEVER_MS
     private var lastReportMs = NEVER_MS
@@ -383,13 +386,22 @@ class RoomPlaybackBinding(
         val target = _pendingSeekSeconds.value ?: return
         if (beforeMs != null && pendingSeekRequestedAtMs > beforeMs) return
         _pendingSeekSeconds.compareAndSet(target, null)
+        answeredSeekTarget = null
     }
 
-    /** Drop the pending seek target when [command] is the room's seek to it. */
+    private fun seeksTo(command: TransportCommand, target: Double): Boolean =
+        command.action == TransportAction.Seek && abs(command.positionSeconds - target) <= PENDING_SEEK_MATCH_SECONDS
+
+    /**
+     * Drop the pending seek target when [command] is the room's seek to it, or
+     * runs after that seek arrived: a newer command can replace the seek
+     * before it runs, and then this member's request is behind the room.
+     */
     private fun answerPendingSeek(command: TransportCommand) {
         val target = _pendingSeekSeconds.value ?: return
-        if (command.action != TransportAction.Seek || abs(command.positionSeconds - target) > PENDING_SEEK_MATCH_SECONDS) return
+        if (!seeksTo(command, target) && answeredSeekTarget != target) return
         _pendingSeekSeconds.compareAndSet(target, null)
+        answeredSeekTarget = null
     }
 
     private fun request(
@@ -636,6 +648,7 @@ class RoomPlaybackBinding(
         // or running reload is superseded by the newer room position.
         reloadDeferred = false
         if (reloads.inFlight) reloads.abandon(monotonicNowMs())
+        _pendingSeekSeconds.value?.let { target -> if (seeksTo(command, target)) answeredSeekTarget = target }
         val token = ++nextToken
         val queued = PendingCommand(token, scheduled, scheduled.executeAtMs)
         pending = queued

@@ -1168,6 +1168,20 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a command that replaces the pending target's seek before it runs clears it`() = runTest {
+        val room = FakeRoom()
+        val binding = bind(room, FakePlayer())
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        binding.requestSeek(250.0)
+        runCurrent()
+        command(room, "seek", TransportAction.Seek, 250.0, RoomPlaybackState.Waiting, executeInMs = 500)
+        advanceTimeBy(100)
+        command(room, "pause", TransportAction.Pause, 100.0, RoomPlaybackState.Paused, executeInMs = 200)
+        advanceTimeBy(300)
+        assertNull(binding.pendingSeekSeconds.value)
+    }
+
+    @Test
     fun `an unanswered pending seek expires after five seconds and a disconnect clears it`() = runTest {
         val room = FakeRoom()
         val binding = bind(room, FakePlayer())
