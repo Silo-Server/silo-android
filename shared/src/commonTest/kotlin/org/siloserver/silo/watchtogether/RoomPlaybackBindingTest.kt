@@ -1144,6 +1144,30 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `an earlier skip's seek landing leaves the newer target pending`() = runTest {
+        val room = FakeRoom()
+        val binding = bind(room, FakePlayer())
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
+        binding.requestSeek(binding.relativeSeekOrigin(100.0) + 10.0)
+        runCurrent()
+        // The room's seek for the first skip arrives after the second request.
+        command(room, "first", TransportAction.Seek, 110.0, RoomPlaybackState.Waiting, executeInMs = 200)
+        advanceTimeBy(300)
+        assertEquals(120.0, binding.pendingSeekSeconds.value)
+        binding.requestSeek(binding.relativeSeekOrigin(110.0) + 10.0)
+        runCurrent()
+        assertEquals(listOf<Pair<String, Double?>>("seek" to 110.0, "seek" to 120.0, "seek" to 130.0), room.requests)
+
+        command(room, "second", TransportAction.Seek, 120.0, RoomPlaybackState.Waiting, executeInMs = 200)
+        advanceTimeBy(300)
+        assertEquals(130.0, binding.pendingSeekSeconds.value)
+        command(room, "third", TransportAction.Seek, 130.0, RoomPlaybackState.Waiting, executeInMs = 200)
+        advanceTimeBy(300)
+        assertNull(binding.pendingSeekSeconds.value)
+    }
+
+    @Test
     fun `an unanswered pending seek expires after five seconds and a disconnect clears it`() = runTest {
         val room = FakeRoom()
         val binding = bind(room, FakePlayer())

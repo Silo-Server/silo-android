@@ -240,8 +240,9 @@ class RoomPlaybackBinding(
      * answered yet, or null. Until the room's command executes here the
      * player still shows the old position, so relative skips start from this
      * ([relativeSeekOrigin]) and the timeline holds on it instead of snapping
-     * back. Cleared when a command that arrived after the request executes,
-     * on a new epoch or a disconnect, and after [RoomPlaybackTiming.pendingSeekTimeoutMs].
+     * back. Cleared when the room's seek to that target executes, on a new
+     * epoch or a disconnect, and after [RoomPlaybackTiming.pendingSeekTimeoutMs].
+     * An earlier request's seek does not clear a later target.
      */
     val pendingSeekSeconds: StateFlow<Double?> = _pendingSeekSeconds.asStateFlow()
 
@@ -308,8 +309,6 @@ class RoomPlaybackBinding(
         val token: Long,
         val scheduled: ScheduledTransportCommand,
         val executeAtServerMs: Long?,
-        /** When this binding accepted the command, on its monotonic clock. */
-        val acceptedAtMs: Long,
     ) {
         /** When execution was first held for a media mount in flight. */
         var deferredSinceMs: Long? = null
@@ -383,6 +382,13 @@ class RoomPlaybackBinding(
     private fun clearPendingSeek(beforeMs: Long? = null) {
         val target = _pendingSeekSeconds.value ?: return
         if (beforeMs != null && pendingSeekRequestedAtMs > beforeMs) return
+        _pendingSeekSeconds.compareAndSet(target, null)
+    }
+
+    /** Drop the pending seek target when [command] is the room's seek to it. */
+    private fun answerPendingSeek(command: TransportCommand) {
+        val target = _pendingSeekSeconds.value ?: return
+        if (command.action != TransportAction.Seek || abs(command.positionSeconds - target) > PENDING_SEEK_MATCH_SECONDS) return
         _pendingSeekSeconds.compareAndSet(target, null)
     }
 
@@ -631,7 +637,7 @@ class RoomPlaybackBinding(
         reloadDeferred = false
         if (reloads.inFlight) reloads.abandon(monotonicNowMs())
         val token = ++nextToken
-        val queued = PendingCommand(token, scheduled, scheduled.executeAtMs, monotonicNowMs())
+        val queued = PendingCommand(token, scheduled, scheduled.executeAtMs)
         pending = queued
         readiness = null
         scheduleExecution(queued)
@@ -757,9 +763,10 @@ class RoomPlaybackBinding(
         applied = command
         appliedAtMs = now
         reference = next
-        // The room has answered any seek this member asked for before the
-        // command arrived; the player now shows the room's position.
-        clearPendingSeek(beforeMs = scheduled.acceptedAtMs)
+        // The room's seek to this member's latest target answers it; the
+        // player now shows that position. An earlier skip in the same burst
+        // lands first and leaves the newer target in place.
+        answerPendingSeek(command)
         reportHold = ReportHold(command.commandId, playing = commandPlays && !obs.suspended, sinceMs = now)
         if (command.playbackState == RoomPlaybackState.Waiting) {
             readiness = Readiness(
@@ -991,6 +998,12 @@ class RoomPlaybackBinding(
 
         /** Speeds closer than this are the same rate. */
         const val RATE_TOLERANCE = 0.001
+
+        /**
+         * A room seek this close to the pending target answers it. The server
+         * folds a repeat seek this close to its waiting seek into that seek.
+         */
+        const val PENDING_SEEK_MATCH_SECONDS = 1.0
     }
 
     private fun expectedLocalExecuteMs(pending: PendingCommand): Long {

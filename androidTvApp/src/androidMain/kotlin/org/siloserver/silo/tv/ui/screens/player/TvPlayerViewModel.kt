@@ -5512,8 +5512,11 @@ class TvPlayerViewModel(
         }
     }
 
-    fun beginScrub() {
-        _uiState.update { it.copy(isScrubbing = true, scrubPreviewSec = it.position, showControls = true) }
+    /** Start scrubbing from [originSec], or the playback position when null. */
+    fun beginScrub(originSec: Double? = null) {
+        _uiState.update {
+            it.copy(isScrubbing = true, scrubPreviewSec = originSec ?: it.position, showControls = true)
+        }
     }
 
     fun updateScrubPreview(sec: Double) {

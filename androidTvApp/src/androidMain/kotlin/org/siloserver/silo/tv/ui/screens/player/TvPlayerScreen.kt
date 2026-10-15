@@ -2201,7 +2201,13 @@ fun TvPlayerScreen(
                                 )
                             }
                         },
-                        onBeginScrub = { viewModel.beginScrub() },
+                        onBeginScrub = {
+                            // In a room the scrub starts from a pending seek's
+                            // target, where the overlay already shows the playhead.
+                            viewModel.beginScrub(
+                                watchParty?.playback?.relativeSeekOrigin(viewModel.uiState.value.position),
+                            )
+                        },
                         onUpdateScrub = { sec -> viewModel.updateScrubPreview(sec) },
                         onCommitScrub = {
                             val targetSec = viewModel.commitScrub()
