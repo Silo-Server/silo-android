@@ -4112,7 +4112,6 @@ class PlayerViewModel(
                 mountedAudio,
             ) != null
         ) {
-            if (inRoom) _roomAudioTrackChanges.tryEmit(Unit)
             return
         }
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))
@@ -4199,6 +4198,9 @@ class PlayerViewModel(
                 if (!desired.confirmed) {
                     desiredAudio = desired.copy(confirmed = true)
                     commitLocalAudio(desired)
+                    // The new track is mounted and selected: only now can its
+                    // output path (PCM or passthrough) be measured for rate support.
+                    if (inRoom) _roomAudioTrackChanges.tryEmit(Unit)
                 }
             }
 

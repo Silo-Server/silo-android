@@ -3466,6 +3466,9 @@ class TvPlayerViewModel(
     private fun confirmDesiredAudio(desired: DesiredAudio) {
         if (desired.confirmed) return
         desiredAudio = desired.copy(confirmed = true)
+        // The new track is mounted and selected: only now can its output path
+        // (PCM or passthrough) be measured for rate support.
+        if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
         _uiState.update {
             it.copy(desiredAudioOrdinal = desired.catalogOrdinal, desiredAudioConfirmed = true)
         }
@@ -4388,7 +4391,6 @@ class TvPlayerViewModel(
                     state.audioTracks.map { it.toMountedAudioTrack() },
                 ) != null
             ) {
-                if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
                 return
             }
             playbackMutationFence.beginReplan()
@@ -5430,7 +5432,6 @@ class TvPlayerViewModel(
                 state.audioTracks.map { it.toMountedAudioTrack() },
             ) != null
         ) {
-            if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
             return
         }
 
