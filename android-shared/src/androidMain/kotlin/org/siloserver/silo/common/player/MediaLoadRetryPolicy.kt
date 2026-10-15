@@ -137,13 +137,14 @@ internal class SiloMediaLoadErrorHandlingPolicy(
  * Media3 resets its own count after extraction progress, but only after the
  * policy has already been asked for a delay, so the first failure of a new
  * outage arrives with the count the previous outage left behind.
- * [lastResumeOffset] is where the failed attempt stopped: the position it
- * opened at plus the bytes delivered since the previous failure.
+ * [lastCutOffset] is where the last failure that delivered
+ * [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES] or more stopped: the position it opened
+ * at plus those bytes. Smaller failures, such as a 503, leave it in place.
  */
 internal data class MediaLoadOutage(
     val startedAtMs: Long,
     val failureCount: Int,
-    val lastResumeOffset: Long,
+    val lastCutOffset: Long,
 )
 
 /**
@@ -155,9 +156,9 @@ internal data class MediaLoadOutage(
  * [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES] since the previous one proves the server
  * came back in between, and starts a new outage with its own window. Smaller
  * partial bodies stay in the current outage, so a server that keeps failing
- * still exhausts it. A failure at the same offset as the previous one also
- * stays: a response cut at the same point every time, however many bytes it
- * carries, never gets playback past that point.
+ * still exhausts it. A failure cut at the same offset as the last large one
+ * also stays, even with errors in between: a response cut at the same point
+ * every time, however many bytes it carries, never gets playback past it.
  */
 internal class MediaLoadOutageTracker {
     private val outagesByLoadTask = ConcurrentHashMap<Long, MediaLoadOutage>()
@@ -169,13 +170,13 @@ internal class MediaLoadOutageTracker {
         resumeOffset: Long,
     ): MediaLoadOutage = checkNotNull(
         outagesByLoadTask.compute(loadTaskId) { _, current ->
-            val serverCameBack = current != null &&
-                bytesSincePreviousFailure >= MEDIA_LOAD_OUTAGE_RECOVERY_BYTES &&
-                resumeOffset != current.lastResumeOffset
-            if (current == null || serverCameBack) {
-                MediaLoadOutage(startedAtMs = nowMs, failureCount = 1, lastResumeOffset = resumeOffset)
-            } else {
-                current.copy(failureCount = current.failureCount + 1, lastResumeOffset = resumeOffset)
+            val largeCut = bytesSincePreviousFailure >= MEDIA_LOAD_OUTAGE_RECOVERY_BYTES
+            val serverCameBack = current != null && largeCut && resumeOffset != current.lastCutOffset
+            when {
+                current == null || serverCameBack ->
+                    MediaLoadOutage(startedAtMs = nowMs, failureCount = 1, lastCutOffset = resumeOffset)
+                largeCut -> current.copy(failureCount = current.failureCount + 1, lastCutOffset = resumeOffset)
+                else -> current.copy(failureCount = current.failureCount + 1)
             }
         },
     )
