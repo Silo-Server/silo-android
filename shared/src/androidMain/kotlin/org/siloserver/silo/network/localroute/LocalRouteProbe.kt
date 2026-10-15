@@ -18,6 +18,7 @@ import okhttp3.Callback
 import okhttp3.ConnectionPool
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import org.siloserver.silo.network.HttpOrigin
@@ -43,6 +44,10 @@ class LocalRouteProbe(
     private val probeTimeoutMs: Long = 3_000L,
 ) {
     private val base = client.newBuilder()
+        // HTTP/1.1 only: in the probes' empty pool, a multiplexed HTTP/2
+        // connection can be evicted before its answer is read. The server's
+        // TLS listener speaks HTTP/1.1 anyway.
+        .protocols(listOf(Protocol.HTTP_1_1))
         .followRedirects(false)
         .followSslRedirects(false)
         .retryOnConnectionFailure(false)
