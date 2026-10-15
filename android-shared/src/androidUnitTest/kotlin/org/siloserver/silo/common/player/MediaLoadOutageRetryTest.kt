@@ -73,48 +73,56 @@ class MediaLoadOutageRetryTest {
 
     @Test
     fun `partial bodies stay in one outage`() {
-        // A server that answers a few KiB and then fails is still down, even
-        // though each attempt resumes where the previous one stopped.
-        val delays = assertWindowExhausts(resumesWherePreviousStopped = true) { 2 * KIB }
+        // A server that answers a few KiB and then fails is still down.
+        val delays = assertWindowExhausts(bytesPerAttempt = 2 * KIB)
         // Media3 restarts its count after that extraction progress, so backoff
         // stays at its second step instead of climbing.
         assertEquals(listOf(2_000L), delays.drop(1).distinct())
     }
 
     @Test
-    fun `a response cut before playback can advance stays in one outage`() {
-        // Each attempt resumes at the same position (nothing it read was
-        // committed, as inside an atom or sample larger than the cut). Every
-        // other one is cut 2 MiB later and the rest get a 503. Those bytes
-        // never take playback past the cut.
-        assertWindowExhausts(resumesWherePreviousStopped = false) { attempt ->
-            if (attempt % 2 == 0) 2 * MIB else 0L
-        }
+    fun `responses cut every few seconds stay in one outage`() {
+        // A proxy that cuts every response 2 MiB in lets playback advance, but
+        // it may never keep up; running out the window hands the player to a
+        // route that might.
+        assertWindowExhausts(bytesPerAttempt = 2 * MIB)
+    }
+
+    @Test
+    fun `a response cut at the same offset stays in one outage`() {
+        // Each attempt resumes at 50 MiB (nothing it read was committed, as
+        // inside an atom or sample larger than the cut) and is cut 2 MiB later,
+        // a minute apart, with a 503 in between. Those bytes never take
+        // playback past the cut.
+        assertEquals(1_000L, policy.retryDelay(atMs = 0, position = 50 * MIB, cumulativeBytes = 2 * MIB, errorCount = 1))
+        assertEquals(
+            2_000L,
+            policy.retryDelay(
+                atMs = 60_000,
+                position = 50 * MIB,
+                cumulativeBytes = 2 * MIB,
+                errorCount = 2,
+                error = serviceUnavailable(directPlayUri),
+            ),
+        )
+        assertEquals(
+            C.TIME_UNSET,
+            policy.retryDelay(atMs = 120_000, position = 50 * MIB, cumulativeBytes = 4 * MIB, errorCount = 3),
+        )
     }
 
     /**
-     * Fails every 10 s, attempt n delivering [bytesForAttempt] of n before it is
-     * cut (a 503 when that is nothing), and returns the retry delays before the
-     * window ran out.
+     * Fails every 10 s, each attempt resuming where the previous one stopped and
+     * delivering [bytesPerAttempt] before it is cut. Returns the retry delays
+     * before the window ran out.
      */
-    private fun assertWindowExhausts(
-        resumesWherePreviousStopped: Boolean,
-        bytesForAttempt: (Int) -> Long,
-    ): List<Long> {
+    private fun assertWindowExhausts(bytesPerAttempt: Long): List<Long> {
         var position = 50 * MIB
         var cumulativeBytes = 0L
-        var attempt = 0
         fun failAt(atMs: Long): Long {
-            val bytes = bytesForAttempt(attempt++)
-            cumulativeBytes += bytes
-            val delay = policy.retryDelay(
-                atMs = atMs,
-                position = position,
-                cumulativeBytes = cumulativeBytes,
-                errorCount = 2,
-                error = if (bytes == 0L) serviceUnavailable(directPlayUri) else unexpectedEndOfStream(directPlayUri),
-            )
-            if (resumesWherePreviousStopped) position += bytes
+            cumulativeBytes += bytesPerAttempt
+            val delay = policy.retryDelay(atMs = atMs, position = position, cumulativeBytes = cumulativeBytes, errorCount = 2)
+            position += bytesPerAttempt
             return delay
         }
 

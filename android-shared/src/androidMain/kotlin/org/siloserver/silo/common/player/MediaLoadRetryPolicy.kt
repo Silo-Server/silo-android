@@ -140,11 +140,13 @@ internal class SiloMediaLoadErrorHandlingPolicy(
  * [lastCutOffset] is where the last failure that delivered
  * [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES] or more stopped: the position it opened
  * at plus those bytes. Smaller failures, such as a 503, leave it in place.
+ * [lastFailureAtMs] is when the task last failed.
  */
 internal data class MediaLoadOutage(
     val startedAtMs: Long,
     val failureCount: Int,
     val lastCutOffset: Long,
+    val lastFailureAtMs: Long,
 )
 
 /**
@@ -152,13 +154,15 @@ internal data class MediaLoadOutage(
  *
  * A progressive load (direct play, or a PGS sidecar that reads a bounded
  * stretch ahead) is one load task for the whole file, so several server
- * outages can land on it. A failure after the server delivered
- * [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES] since the previous one proves the server
- * came back in between, and starts a new outage with its own window. Smaller
- * partial bodies stay in the current outage, so a server that keeps failing
- * still exhausts it. A failure cut at the same offset as the last large one
- * also stays, even with errors in between: a response cut at the same point
- * every time, however many bytes it carries, never gets playback past it.
+ * outages can land on it. A failure starts a new outage, with its own window,
+ * when at least [MEDIA_LOAD_OUTAGE_RECOVERY_MS] passed since the task's
+ * previous failure and the server delivered [MEDIA_LOAD_OUTAGE_RECOVERY_BYTES]
+ * in between: it came back and served the stream for a while. Anything else
+ * stays in the current outage, so a server that keeps failing still exhausts
+ * it. That covers partial bodies; responses cut every few seconds, even as they
+ * advance, which may never keep up with playback (exhausting hands the player
+ * to a route that might); and a response cut at the same offset as the last
+ * large one, even with errors in between, which never gets playback past it.
  */
 internal class MediaLoadOutageTracker {
     private val outagesByLoadTask = ConcurrentHashMap<Long, MediaLoadOutage>()
@@ -171,12 +175,22 @@ internal class MediaLoadOutageTracker {
     ): MediaLoadOutage = checkNotNull(
         outagesByLoadTask.compute(loadTaskId) { _, current ->
             val largeCut = bytesSincePreviousFailure >= MEDIA_LOAD_OUTAGE_RECOVERY_BYTES
-            val serverCameBack = current != null && largeCut && resumeOffset != current.lastCutOffset
+            val serverCameBack = current != null && largeCut &&
+                resumeOffset != current.lastCutOffset &&
+                nowMs - current.lastFailureAtMs >= MEDIA_LOAD_OUTAGE_RECOVERY_MS
             when {
-                current == null || serverCameBack ->
-                    MediaLoadOutage(startedAtMs = nowMs, failureCount = 1, lastCutOffset = resumeOffset)
-                largeCut -> current.copy(failureCount = current.failureCount + 1, lastCutOffset = resumeOffset)
-                else -> current.copy(failureCount = current.failureCount + 1)
+                current == null || serverCameBack -> MediaLoadOutage(
+                    startedAtMs = nowMs,
+                    failureCount = 1,
+                    lastCutOffset = resumeOffset,
+                    lastFailureAtMs = nowMs,
+                )
+                largeCut -> current.copy(
+                    failureCount = current.failureCount + 1,
+                    lastCutOffset = resumeOffset,
+                    lastFailureAtMs = nowMs,
+                )
+                else -> current.copy(failureCount = current.failureCount + 1, lastFailureAtMs = nowMs)
             }
         },
     )
@@ -346,3 +360,10 @@ internal const val MEDIA_LOAD_RETRY_WINDOW_MS: Long = 90_000L
  * a full buffer parks the loader, and far above a few KiB of a partial body.
  */
 internal const val MEDIA_LOAD_OUTAGE_RECOVERY_BYTES: Long = 512L shl 10
+
+/**
+ * Time since a load task's previous failure before a new failure can start a
+ * new outage. Restarts separated by real playback are minutes apart; a proxy
+ * or link that cuts every response fails again within seconds.
+ */
+internal const val MEDIA_LOAD_OUTAGE_RECOVERY_MS: Long = 60_000L
