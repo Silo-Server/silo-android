@@ -43,6 +43,14 @@ object RoomCatchup {
     /** Only above this drift does a playing member seek. */
     const val HARD_SEEK_SECONDS = 5.0
 
+    /**
+     * The room host executes a command with a seek above this drift instead
+     * of [HARD_SEEK_SECONDS]. A released server takes a host report more than
+     * 2 s off the room as the host's decision and re-anchors everyone to it,
+     * so a host must not stay that far off while a nudge closes the gap.
+     */
+    const val HOST_COMMAND_SEEK_SECONDS = 2.0
+
     /** Above this a non-playing member seeks, but only to a target reachable in place. */
     const val PAUSED_SEEK_SECONDS = 1.0
 
@@ -110,6 +118,8 @@ object RoomCatchup {
      *   passthrough audio path plays on at 1x, so a nudge there becomes a
      *   seek beyond [PAUSED_SEEK_SECONDS]: in place when the target is
      *   reachable, otherwise through the reload budget.
+     * - [host]: this member is the room host, which seeks above
+     *   [HOST_COMMAND_SEEK_SECONDS] instead of [HARD_SEEK_SECONDS].
      */
     fun decideCommand(
         action: TransportAction,
@@ -119,15 +129,17 @@ object RoomCatchup {
         targetReachableInPlace: Boolean,
         memberIntendsToPlay: Boolean = memberPlaying,
         rateCapable: Boolean = true,
+        host: Boolean = false,
     ): Decision {
         // A seek is a room barrier: everyone lands on the same frame.
         if (action == TransportAction.Seek) return Decision.Seek
         val drift = abs(driftSeconds)
+        val hardSeek = if (host) HOST_COMMAND_SEEK_SECONDS else HARD_SEEK_SECONDS
         val inPlaceSeek = drift > PAUSED_SEEK_SECONDS && targetReachableInPlace
         if (action == TransportAction.Play && commandPlays && memberPlaying) {
             return when {
                 drift <= DEADBAND_SECONDS -> Decision.None
-                drift > HARD_SEEK_SECONDS -> Decision.SeekOrReload
+                drift > hardSeek -> Decision.SeekOrReload
                 rateCapable -> Decision.Nudge(rateFor(driftSeconds))
                 inPlaceSeek -> Decision.Seek
                 // A mount that cannot nudge or seek in place would never
@@ -140,14 +152,14 @@ object RoomCatchup {
         // through the reload budget, never an unpaced stream rebuild.
         if (action == TransportAction.Play && commandPlays && memberIntendsToPlay) {
             return when {
-                drift > HARD_SEEK_SECONDS -> Decision.SeekOrReload
+                drift > hardSeek -> Decision.SeekOrReload
                 inPlaceSeek -> Decision.Seek
                 else -> Decision.None
             }
         }
         // Pause, or a play this member starts from rest: the loop corrects
         // any residual once playing, so only a large or cheap gap is a seek.
-        return if (drift > HARD_SEEK_SECONDS || inPlaceSeek) Decision.Seek else Decision.None
+        return if (drift > hardSeek || inPlaceSeek) Decision.Seek else Decision.None
     }
 
     /** How the next correction seek on a rate-incapable mount is aimed and spaced. */

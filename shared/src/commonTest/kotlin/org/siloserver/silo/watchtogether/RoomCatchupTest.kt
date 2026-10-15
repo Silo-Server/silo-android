@@ -15,7 +15,8 @@ class RoomCatchupTest {
         reachable: Boolean = false,
         intendsToPlay: Boolean = memberPlaying,
         rateCapable: Boolean = true,
-    ) = RoomCatchup.decideCommand(action, drift, memberPlaying, commandPlays, reachable, intendsToPlay, rateCapable)
+        host: Boolean = false,
+    ) = RoomCatchup.decideCommand(action, drift, memberPlaying, commandPlays, reachable, intendsToPlay, rateCapable, host)
 
     // ---- room position ---------------------------------------------------------------
 
@@ -95,6 +96,23 @@ class RoomCatchupTest {
         assertEquals(RoomCatchup.Decision.SeekOrReload, play(3.0, false))
         assertEquals(RoomCatchup.Decision.SeekOrReload, play(-3.0, false))
         assertEquals(RoomCatchup.Decision.SeekOrReload, play(6.0, false))
+    }
+
+    @Test
+    fun `the host seeks above two seconds where a guest nudges`() {
+        // A released server re-anchors the room to a host report more than 2 s off.
+        assertEquals(RoomCatchup.Decision.Nudge(1.04), decide(TransportAction.Play, 2.5))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, decide(TransportAction.Play, 2.5, host = true))
+        assertEquals(RoomCatchup.Decision.SeekOrReload, decide(TransportAction.Play, -2.5, reachable = true, host = true))
+        assertEquals(RoomCatchup.Decision.Nudge(1.04), decide(TransportAction.Play, 1.9, host = true))
+        // Buffering toward play, at rest, and pausing use the same threshold.
+        assertEquals(
+            RoomCatchup.Decision.SeekOrReload,
+            decide(TransportAction.Play, 2.5, memberPlaying = false, intendsToPlay = true, host = true),
+        )
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Play, 2.5, memberPlaying = false, host = true))
+        assertEquals(RoomCatchup.Decision.Seek, decide(TransportAction.Pause, 2.5, host = true))
+        assertEquals(RoomCatchup.Decision.None, decide(TransportAction.Pause, 2.5))
     }
 
     @Test

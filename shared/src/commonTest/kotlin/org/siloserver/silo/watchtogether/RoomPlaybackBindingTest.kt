@@ -471,6 +471,27 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a host seeks a command's drift above two seconds instead of nudging`() = runTest {
+        val room = FakeRoom()
+        room.roomSnapshot.value = playing(role = MemberRole.Host)
+        val player = FakePlayer()
+        bind(room, player)
+        player.update { copy(sourcePositionSeconds = 97.5) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(100.0, player.seeks.single(), 0.1)
+        assertTrue(player.rates.all { it == null }, "nudged: ${player.rates}")
+
+        // Within two seconds the host nudges like a guest.
+        follow(player, drift = 0.0, forMs = 100)
+        player.update { copy(sourcePositionSeconds = sourcePositionSeconds - 1.5) }
+        command(room, "small", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1, player.seeks.size)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+    }
+
+    @Test
     fun `the drift loop starts a nudge beyond the deadband and holds it until within the settle band`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()

@@ -600,7 +600,7 @@ class RoomPlaybackBinding(
         // nor delay its replacement.
         if (reloads.stale(now)) reloads.expire(now)
         checkRateHonoured(now, obs)
-        retryDeferredReload(now, obs)
+        retryDeferredReload(now, snapshot, obs)
         driftLoop(now, snapshot, obs, stalled)
 
         // Ordinary reports: only positions that are decisions.
@@ -743,6 +743,7 @@ class RoomPlaybackBinding(
             targetReachableInPlace = command.action != TransportAction.Seek && player.isBuffered(target),
             memberIntendsToPlay = obs.playWhenReady && !obs.suspended,
             rateCapable = !rateUnsupported,
+            host = snapshot.selfRole == MemberRole.Host,
         )
         // Only a playing member keeps or starts a nudge; everything else runs
         // at exactly 1x. A pause drops the rate while still playing.
@@ -916,7 +917,7 @@ class RoomPlaybackBinding(
      * drift that shrank within reach of a nudge is left to the drift loop,
      * and a target that became buffered is a plain seek.
      */
-    private fun retryDeferredReload(now: Long, obs: RoomPlayerObservation) {
+    private fun retryDeferredReload(now: Long, snapshot: RoomSnapshot, obs: RoomPlayerObservation) {
         if (!reloadDeferred) return
         if (obs.seekPending || !obs.isPlaying || obs.suspended) return
         val ref = reference
@@ -935,6 +936,7 @@ class RoomPlaybackBinding(
             targetReachableInPlace = player.isBuffered(expected),
             memberIntendsToPlay = true,
             rateCapable = !rateUnsupported,
+            host = snapshot.selfRole == MemberRole.Host,
         )
         when {
             decision != RoomCatchup.Decision.SeekOrReload && decision != RoomCatchup.Decision.Seek -> {

@@ -419,6 +419,11 @@ arrives. Rate and play state change only at execution.
    reload through the budget.
 4. Play from rest: seek under the pause rule, then play at 1x.
 
+The host executes commands with 2 s in place of 5 s: a released server
+(before [server #2481](https://github.com/Silo-Server/silo-server/pull/2481))
+takes a host report more than 2 s off the room as the host's decision and
+re-anchors everyone to it. Guests and the drift loop keep 5 s.
+
 A drift loop runs every 0.5 s while the room, the reference, and the player
 are all playing and ready, no command is pending, the last command finished at
 least 1 s ago, and no reload is in flight. It starts a nudge beyond 0.4 s and
