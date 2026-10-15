@@ -27,8 +27,12 @@ class NsdLanServiceBrowser(context: Context) : LanServiceBrowser {
     /** What the current browse sees, by [keyOf]. */
     private val found = mutableMapOf<String, NsdServiceInfo>()
 
-    /** API 34+: one callback per found service, kept until the browse loses it. */
-    private val callbacks = mutableMapOf<String, NsdManager.ServiceInfoCallback>()
+    /**
+     * API 34+: one callback per followed service, oldest first. A callback
+     * stays until the browse loses its service, or until [refresh] hands its
+     * slot to a service that's waiting.
+     */
+    private val callbacks = linkedMapOf<String, NsdManager.ServiceInfoCallback>()
 
     /** Before API 34: services waiting to resolve, and the one resolving now. */
     private val resolveQueue = ArrayDeque<String>()
@@ -131,17 +135,29 @@ class NsdLanServiceBrowser(context: Context) : LanServiceBrowser {
     override fun refresh() {
         synchronized(lock) {
             if (discoveryListener == null) return
-            for ((key, info) in found) {
-                // API 34+ callbacks follow changes themselves; only a failed
-                // registration needs another try.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    if (key !in callbacks) follow(key, info)
-                } else if (key !in resolveQueue) {
-                    resolveQueue.addLast(key)
-                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                rotateFollowed()
+            } else {
+                for (key in found.keys) if (key !in resolveQueue) resolveQueue.addLast(key)
+                resolveNext()
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) resolveNext()
         }
+    }
+
+    /**
+     * API 34+ callbacks follow changes themselves, so only services without
+     * one need work: a failed registration, or a service waiting for a slot.
+     * When more services are found than [MAX_FOLLOWED], the longest-followed
+     * give up their slots, so every service is resolved in turn. A service
+     * that gives up its slot keeps its last result. Called under [lock].
+     */
+    @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    private fun rotateFollowed() {
+        val waiting = found.filterKeys { it !in callbacks }
+        if (waiting.isEmpty()) return
+        val needed = waiting.size - (MAX_FOLLOWED - callbacks.size)
+        callbacks.keys.take(needed.coerceAtLeast(0)).forEach { key -> callbacks.remove(key)?.let(::unregister) }
+        waiting.forEach { (key, info) -> register(key, info) }
     }
 
     /** Starts following [key]. Called under [lock]. */
@@ -169,18 +185,21 @@ class NsdLanServiceBrowser(context: Context) : LanServiceBrowser {
             }
 
             override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
-                val events = synchronized(lock) { if (gen == generation) events else null } ?: return
+                val events = synchronized(lock) { if (owns()) events else null } ?: return
                 events.resolved(key, serviceInfo.toAdvertisement(serviceInfo.hostAddresses.mapNotNull { it.hostAddress }))
             }
 
             // The service may be updated again later, so the callback stays
-            // registered until the browse loses the service.
+            // registered until the browse loses the service or its slot moves on.
             override fun onServiceLost() {
-                val events = synchronized(lock) { if (gen == generation) events else null } ?: return
+                val events = synchronized(lock) { if (owns()) events else null } ?: return
                 events.gone(key)
             }
 
             override fun onServiceInfoCallbackUnregistered() = Unit
+
+            /** False once this callback was replaced, released, or belongs to an earlier browse. */
+            private fun owns() = gen == generation && callbacks[key] === this
         }
         callbacks[key] = callback
         runCatching { nsdManager.registerServiceInfoCallback(info, Runnable::run, callback) }
@@ -201,6 +220,9 @@ class NsdLanServiceBrowser(context: Context) : LanServiceBrowser {
     private fun resolveNext() {
         if (resolving) return
         val key = resolveQueue.removeFirstOrNull() ?: return
+        // This occurrence of the service: if the browse loses it and finds it
+        // again under the same key while this resolve runs, the answer
+        // describes the old one and is dropped.
         val info = found[key] ?: return resolveNext()
         val gen = generation
         resolving = true
@@ -219,7 +241,7 @@ class NsdLanServiceBrowser(context: Context) : LanServiceBrowser {
                     resolving = false
                     busyRetries.remove(key)
                     resolveNext()
-                    if (gen == generation && key in found) events else null
+                    if (gen == generation && found[key] === info) events else null
                 } ?: return
                 events.resolved(key, serviceInfo.toAdvertisement(listOfNotNull(serviceInfo.host?.hostAddress)))
             }
