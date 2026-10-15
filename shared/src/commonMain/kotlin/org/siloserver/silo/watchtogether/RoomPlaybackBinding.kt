@@ -293,7 +293,10 @@ class RoomPlaybackBinding(
         var deferredSinceMs: Long? = null
     }
 
-    private data class ReportHold(val commandId: String, val playing: Boolean, val sinceMs: Long)
+    private data class ReportHold(val commandId: String, val playing: Boolean, val sinceMs: Long) {
+        /** Past the deadline: reports flow again, but the command is named only once the player shows it. */
+        var released: Boolean = false
+    }
 
     private data class Readiness(
         val commandId: String?,
@@ -767,7 +770,10 @@ class RoomPlaybackBinding(
             driftSeconds = drift,
             nudging = rateApplied != null,
             rateCapable = !rateUnsupported,
-            targetReachableInPlace = rateUnsupported && player.isBuffered(target + fallbackLeadSeconds),
+            // Reachable if either the led or the plain target is; the seek
+            // itself takes the led one only when that is reachable too.
+            targetReachableInPlace = rateUnsupported &&
+                (player.isBuffered(target) || (fallbackLeadSeconds > 0.0 && player.isBuffered(target + fallbackLeadSeconds))),
         )
         when (decision) {
             is RoomCatchup.Decision.Nudge -> setRate(decision.rate)
@@ -778,12 +784,19 @@ class RoomPlaybackBinding(
         }
     }
 
-    /** Seek a rate-incapable mount to the room, aimed ahead by the last measured shortfall. */
+    /**
+     * Seek a rate-incapable mount to the room, aimed ahead by the last
+     * measured shortfall when that point is itself reachable in place. A led
+     * target outside the mounted range would rebuild the stream outside the
+     * reload budget, so the plain room position (which the caller found
+     * reachable) is taken instead.
+     */
     private fun fallbackSeek(roomSeconds: Double, now: Long) {
         setRate(null)
         lastLoopSeekMs = now
         fallbackSeekToMeasure = true
-        player.seekTo(roomSeconds + fallbackLeadSeconds)
+        val led = roomSeconds + fallbackLeadSeconds
+        player.seekTo(if (fallbackLeadSeconds > 0.0 && player.isBuffered(led)) led else roomSeconds)
     }
 
     private fun clearRateUnsupported() {
@@ -801,8 +814,9 @@ class RoomPlaybackBinding(
      * "playing" report). Reports resume once [RoomPlaybackTiming.commandQuietMs]
      * has passed and the player shows the command's play state with no seek
      * or mount in flight, and from then on name the command. A player that
-     * never gets there reports again after [RoomPlaybackTiming.reportHoldMaxMs],
-     * still naming only the last command it was seen to follow.
+     * is slower than [RoomPlaybackTiming.reportHoldMaxMs] reports again from
+     * then on, naming only the last command it was seen to follow, until it
+     * does show the command's state.
      */
     private fun holdingReportsFor(now: Long, obs: RoomPlayerObservation, paused: Boolean): Boolean {
         val hold = reportHold ?: return false
@@ -812,11 +826,8 @@ class RoomPlaybackBinding(
             reportHold = null
             return false
         }
-        if (now - hold.sinceMs >= timing.reportHoldMaxMs) {
-            reportHold = null
-            return false
-        }
-        return true
+        if (now - hold.sinceMs >= timing.reportHoldMaxMs) hold.released = true
+        return !hold.released
     }
 
     /**

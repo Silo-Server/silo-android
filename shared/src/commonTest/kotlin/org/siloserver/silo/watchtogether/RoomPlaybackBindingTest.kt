@@ -790,6 +790,63 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `a player slower than the report deadline names the command once it shows it`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        bind(room, player)
+        command(room, "pause", TransportAction.Pause, 100.0, RoomPlaybackState.Paused)
+        advanceTimeBy(4_000)
+        assertTrue(room.sent.none { it.kind == "report" && it.commandId == "pause" })
+
+        player.update { copy(playWhenReady = false, isPlaying = false) }
+        advanceTimeBy(1_600)
+        val last = room.sent.last { it.kind == "report" }
+        assertEquals("pause", last.commandId)
+        assertTrue(last.paused)
+    }
+
+    /** A rate-incapable member 2 s behind whose last fallback seek missed by 2 s: the lead is now 2 s. */
+    private fun TestScope.rateIncapableWithLead(room: FakeRoom, player: FakePlayer) {
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0, mountGeneration = 1) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 2.0, forMs = 1_200) // fallback seek at about 1 s
+        follow(player, drift = 2.0, forMs = 900) // measured at about 2 s: lead 2 s, next seek at 3 s
+        assertEquals(1, player.seeks.size)
+    }
+
+    @Test
+    fun `a command's fallback seek drops the lead when the led target is not reachable in place`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        // Reachable up to 2.5 s ahead of the playhead.
+        player.buffered = { it <= player.observations.value.sourcePositionSeconds + 2.5 }
+        bind(room, player)
+        rateIncapableWithLead(room, player)
+
+        val roomNow = 100.0 + testScheduler.currentTime / 1000.0
+        player.update { copy(sourcePositionSeconds = roomNow - 2.0) }
+        command(room, "again", TransportAction.Play, roomNow, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(2, player.seeks.size)
+        assertEquals(roomNow, player.seeks.last(), 0.1)
+    }
+
+    @Test
+    fun `the loop's fallback seek drops the lead when the led target is not reachable in place`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        player.buffered = { it <= player.observations.value.sourcePositionSeconds + 2.5 }
+        bind(room, player)
+        rateIncapableWithLead(room, player)
+
+        follow(player, drift = 2.0, forMs = 900)
+        assertEquals(2, player.seeks.size, "no seek: only the led target was checked")
+        // At about 3 s the room is at 103; 105 (led) is past what is reachable.
+        assertEquals(103.0, player.seeks.last(), 0.15)
+    }
+
+    @Test
     fun `a member stopped ahead of the room seeks back for a pause and a play from rest`() = runTest {
         val room = FakeRoom()
         // Reachable: anywhere behind the playhead (a seekable item), nothing ahead of it.
