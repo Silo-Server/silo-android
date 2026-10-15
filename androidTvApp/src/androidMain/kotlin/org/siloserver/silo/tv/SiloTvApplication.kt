@@ -73,6 +73,17 @@ class SiloTvApplication : Application(), Configuration.Provider, SingletonImageL
         }.onFailure {
             android.util.Log.w("SiloTvApplication", "WorkManager.initialize failed (already initialised?)", it)
         }
+        // Use the active server's local address at home (LocalRouteController).
+        // Guarded — without it every request stays on the saved address.
+        runCatching {
+            org.siloserver.silo.common.network.LocalRouteStarter.create(
+                context = this@SiloTvApplication,
+                registry = koinApp.koin.get(),
+                tokenManager = koinApp.koin.get(),
+            ).start(androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle)
+        }.onFailure {
+            android.util.Log.w("SiloTvApplication", "Local route starter init failed", it)
+        }
         // Drain the user-state outbox (Track B) on launch + when connectivity
         // returns. Guarded — never load-bearing for cold start.
         runCatching {

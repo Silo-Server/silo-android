@@ -1,5 +1,7 @@
 package org.siloserver.silo.tv.ui.screens.servers
 
+import org.siloserver.silo.network.localroute.LocalRoute
+import org.siloserver.silo.network.localroute.LocalRoutes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.server.ServerEntry
@@ -28,6 +30,8 @@ data class TvServerListUiState(
      * the user back to server setup. One-shot; cleared by [onServerSetupConsumed].
      */
     val needsServerSetup: Boolean = false,
+    /** The server whose requests use its local route right now, if any. */
+    val onLocalNetworkId: String? = null,
 )
 
 /**
@@ -41,6 +45,7 @@ class TvServerListViewModel(
     private val authRepository: AuthRepository,
     private val profileLaunchPreferences: ProfileLaunchPreferences,
     private val activeProfileReset: TvActiveProfileReset,
+    private val localRoute: StateFlow<LocalRoute?> = LocalRoutes.state.active,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TvServerListUiState())
@@ -52,14 +57,15 @@ class TvServerListViewModel(
             combine(
                 serverRegistry.entries,
                 serverRegistry.activeServerId,
-            ) { entries, activeId ->
+                localRoute,
+            ) { entries, activeId, route ->
                 val sorted = entries.sortedWith(
                     compareByDescending<ServerEntry> { it.id == activeId }
                         .thenByDescending { it.lastUsedAtEpochMs },
                 )
-                sorted to activeId
-            }.collect { (sorted, activeId) ->
-                _uiState.update { it.copy(servers = sorted, activeId = activeId) }
+                Triple(sorted, activeId, route?.serverId?.takeIf { it == activeId })
+            }.collect { (sorted, activeId, onLocalNetworkId) ->
+                _uiState.update { it.copy(servers = sorted, activeId = activeId, onLocalNetworkId = onLocalNetworkId) }
             }
         }
     }

@@ -1,5 +1,6 @@
 package org.siloserver.silo.tv.ui.screens.servers
 
+import org.siloserver.silo.network.localroute.LocalRoute
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -163,6 +165,7 @@ fun TvServerListScreen(
                         ServerRow(
                             entry = entry,
                             isActive = entry.id == state.activeId,
+                            isOnLocalNetwork = entry.id == state.onLocalNetworkId,
                             isPending = entry.id == state.pendingSwitchToId,
                             onSelect = { viewModel.onSelect(entry.id) },
                             onRemove = { confirmRemove = entry },
@@ -261,6 +264,7 @@ private fun AddServerTile(
 private fun ServerRow(
     entry: ServerEntry,
     isActive: Boolean,
+    isOnLocalNetwork: Boolean,
     isPending: Boolean,
     onSelect: () -> Unit,
     onRemove: () -> Unit,
@@ -316,6 +320,28 @@ private fun ServerRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (isOnLocalNetwork) {
+                        Spacer(Modifier.height(2.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Home,
+                                contentDescription = null,
+                                tint = foreground.copy(alpha = if (isFocused) 0.68f else 0.62f),
+                                modifier = Modifier.size(14.dp),
+                            )
+                            Text(
+                                text = LocalRoute.STATUS_TEXT,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = InterFamily,
+                                color = foreground.copy(alpha = if (isFocused) 0.68f else 0.62f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
                 if (isActive) {
                     Icon(

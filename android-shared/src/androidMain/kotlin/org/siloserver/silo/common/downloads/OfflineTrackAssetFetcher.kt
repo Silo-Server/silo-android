@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeoutConfig
@@ -101,6 +102,7 @@ internal class OfflineTrackAssetFetcher(
             if (attempt > 0) delay(manifestRetryDelayMs * attempt)
             try {
                 val response = httpClient.get("/api/v2/downloads/${downloadId.encodeURLPathPart()}/manifest") {
+                    stayOnSavedAddress()
                     configure()
                 }
                 val status = response.status
@@ -161,6 +163,7 @@ internal class OfflineTrackAssetFetcher(
         return try {
             if (!directory.isDirectory && !directory.mkdirs()) throw IOException("could not create $directory")
             artworkHttpClient.prepareGet(url.trim()) {
+                stayOnSavedAddress()
                 configure()
                 timeout {
                     requestTimeoutMillis = ARTWORK_REQUEST_TIMEOUT_MS
@@ -313,6 +316,7 @@ internal class OfflineTrackAssetFetcher(
         val partial = File(target.parentFile, "${target.nameWithoutExtension}.part")
         try {
             httpClient.prepareGet(url) {
+                stayOnSavedAddress()
                 configure()
                 // Embedded ASS/PGS sidecars are extracted from the source on
                 // demand, so the first byte can take a while; keep only an idle

@@ -1,5 +1,6 @@
 package org.siloserver.silo.network
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import org.siloserver.silo.model.watchtogether.RoomPlaybackState
 import org.siloserver.silo.model.watchtogether.RoomSnapshot
 import org.siloserver.silo.model.watchtogether.Suggestion
@@ -147,7 +148,7 @@ private class KtorWatchTogetherSocketConnector(
         val ticket = when (val minted = safeApiV2Call<WsTicketResponse>(ApiV2Gate.Unrestricted) {
             client.post {
                 url { encodedPath = "${roomPath(request.roomId)}/ws-ticket" }
-                authScope(request.authScope); requireSiloAuth()
+                authScope(request.authScope); requireSiloAuth(); stayOnSavedAddress()
                 header(ROOM_TOKEN_HEADER, request.roomToken)
             }.also { check(it.status.value !in 200..299 || it.status == HttpStatusCode.OK) }
         }) {

@@ -39,6 +39,9 @@ import androidx.media3.extractor.text.SubtitleExtractor
 import androidx.media3.extractor.text.SubtitleParser
 import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
 import androidx.media3.extractor.ts.TsExtractor
+import org.siloserver.silo.network.httpOrigin
+import org.siloserver.silo.network.localroute.LocalRouteHeaders
+import org.siloserver.silo.network.localroute.LocalRoutes
 import org.siloserver.silo.common.player.audio.DelayAudioProcessor
 import org.siloserver.silo.common.player.audio.HdmiSinkDtsSupport
 import org.siloserver.silo.common.player.audio.PassthroughSuppressingAudioSink
@@ -94,6 +97,22 @@ class SiloPlayerFactory(
     )
 
     @Volatile private var requestHeaderScope: RequestHeaderScope? = null
+
+    /**
+     * Whether the stream on screen travels over the active server's local
+     * route, decided when the stream starts and kept for its whole life: a
+     * remount of the same stream (a subtitle change, a refresh) keeps the
+     * decision, so a stream that started on the saved address never moves onto
+     * a route, and one whose route has gone stays on the saved address.
+     * [generation] is the route it started on, or null for the saved address.
+     */
+    private data class MediaRouteScope(
+        val streamUri: android.net.Uri,
+        val generation: Long?,
+        val isPlaylist: Boolean,
+    )
+
+    @Volatile private var mediaRouteScope: MediaRouteScope? = null
     @Volatile private var resumableDirectPlayUri: android.net.Uri? = null
     private val runtimeCorrectionState = PlaybackRuntimeCorrectionState()
 
@@ -105,12 +124,23 @@ class SiloPlayerFactory(
      */
     val baseLayerDecoderMismatch = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
+    /** Sidecar subtitles: always the address their URL names. */
     private val dataSourceFactory = AuthenticatedDataSourceFactory(
         context = context,
         httpDataSourceFactory = httpDataSourceFactory,
         authSession = mediaAuthSession,
         serverUrlProvider = { serverUrl },
         requestHeadersProvider = ::requestHeadersFor,
+        isResumableDirectPlayUri = ::isResumableDirectPlayUri,
+    )
+
+    /** The video itself (manifest, segments, progressive bytes): may take the local route. */
+    private val contentDataSourceFactory = AuthenticatedDataSourceFactory(
+        context = context,
+        httpDataSourceFactory = httpDataSourceFactory,
+        authSession = mediaAuthSession,
+        serverUrlProvider = { serverUrl },
+        requestHeadersProvider = { uri -> requestHeadersFor(uri).withLocalRoute(localRouteHeadersFor(uri)) },
         isResumableDirectPlayUri = ::isResumableDirectPlayUri,
     )
 
@@ -332,10 +362,10 @@ class SiloPlayerFactory(
                     dolbyVisionBaseLayerRoute = dolbyVisionBaseLayerRoute,
                 ),
             )
-            .setDataSourceFactory(dataSourceFactory)
+            .setDataSourceFactory(contentDataSourceFactory)
             .setSubtitleParserFactory(embeddedSubtitleParserFactory)
             .setLoadErrorHandlingPolicy(mediaLoadErrorHandlingPolicy)
-        val hlsMediaSourceFactory = HlsMediaSource.Factory(dataSourceFactory)
+        val hlsMediaSourceFactory = HlsMediaSource.Factory(contentDataSourceFactory)
             .setExtractorFactory(hlsExtractorFactory)
             .setSubtitleParserFactory(embeddedSubtitleParserFactory)
             .setLoadErrorHandlingPolicy(mediaLoadErrorHandlingPolicy)
@@ -499,6 +529,7 @@ class SiloPlayerFactory(
         transformations: List<String> = emptyList(),
         runtimeCorrections: List<String> = emptyList(),
         activeClaims: List<String> = emptyList(),
+        allowsLocalRoute: Boolean = false,
     ): MediaItem {
         this.serverUrl = serverUrl
         // Runtime corrections and plan-scoped claims share one activation
@@ -515,6 +546,13 @@ class SiloPlayerFactory(
         requestHeaderScope = requestHeaders.takeIf { it.isNotEmpty() }?.let {
             RequestHeaderScope(android.net.Uri.parse(absoluteUrl), it)
         }
+        val mimeType = mediaItemMimeType(playMethod, container, delivery)
+        mediaRouteScope = mediaRouteScopeFor(
+            streamUri = android.net.Uri.parse(absoluteUrl),
+            serverUrl = serverUrl,
+            allowsLocalRoute = allowsLocalRoute,
+            isPlaylist = mimeType == MimeTypes.APPLICATION_M3U8,
+        )
         val subtitleConfigurations =
             subtitleManager.buildSubtitleConfigurations(subtitles, serverUrl)
 
@@ -557,7 +595,7 @@ class SiloPlayerFactory(
             builder.setMediaMetadata(metadataBuilder.build())
         }
 
-        mediaItemMimeType(playMethod, container, delivery)?.let { builder.setMimeType(it) }
+        mimeType?.let { builder.setMimeType(it) }
 
         return builder.build()
     }
@@ -572,20 +610,43 @@ class SiloPlayerFactory(
         val scope = requestHeaderScope ?: return emptyMap()
         val captured = scope.headers as? org.siloserver.silo.network.apiv2.ProxyAuxiliaryRequestHeaders
         if (captured != null) return scopedProxyRequestHeaders(uri.toString(), captured)
-        val issued = scope.streamUri
-        if (!uri.scheme.equals(issued.scheme, ignoreCase = true) ||
-            !uri.host.equals(issued.host, ignoreCase = true) ||
-            uri.port != issued.port
-        ) return emptyMap()
-        val issuedPath = issued.path.orEmpty()
-        val issuedDirectory = issuedPath.substringBeforeLast('/', missingDelimiterValue = issuedPath)
-            .trimEnd('/') + "/"
-        val candidatePath = uri.path.orEmpty()
-        return if (candidatePath == issuedPath || candidatePath.startsWith(issuedDirectory)) {
-            scope.headers
-        } else {
-            emptyMap()
+        return if (uri.isWithinIssued(scope.streamUri, includeDirectory = true)) scope.headers else emptyMap()
+    }
+
+    /**
+     * The route decision for [streamUri]: the one it already has when this is a
+     * remount of the stream on screen, else the active local route when the
+     * stream may take it. Only video on the saved address under `/api/` moves:
+     * its requests carry fresh session credentials each time, which a node or
+     * signed URL does not.
+     */
+    private fun mediaRouteScopeFor(
+        streamUri: android.net.Uri,
+        serverUrl: String,
+        allowsLocalRoute: Boolean,
+        isPlaylist: Boolean,
+    ): MediaRouteScope {
+        mediaRouteScope
+            ?.takeIf { it.streamUri == streamUri && (allowsLocalRoute || it.generation == null) }
+            ?.let { return it }
+        val route = LocalRoutes.state.active.value?.takeIf { route ->
+            allowsLocalRoute &&
+                streamUri.path.orEmpty().startsWith("/api/") &&
+                httpOrigin(serverUrl) == route.savedOrigin &&
+                httpOrigin(streamUri.toString()) == route.savedOrigin
         }
+        return MediaRouteScope(streamUri, route?.generation, isPlaylist)
+    }
+
+    /**
+     * Marks the stream's own requests for the route it started on: the stream
+     * URL itself, and for HLS the playlists and segments beside it.
+     */
+    private fun localRouteHeadersFor(uri: android.net.Uri): Map<String, String> {
+        val scope = mediaRouteScope ?: return emptyMap()
+        val generation = scope.generation ?: return emptyMap()
+        if (!uri.isWithinIssued(scope.streamUri, includeDirectory = scope.isPlaylist)) return emptyMap()
+        return mapOf(LocalRouteHeaders.MEDIA to generation.toString())
     }
 
     private fun isResumableDirectPlayUri(uri: android.net.Uri): Boolean =
@@ -856,3 +917,26 @@ internal fun mediaItemMimeType(
  */
 internal fun shouldSkipTrackReselection(playbackState: Int, timelineEmpty: Boolean): Boolean =
     playbackState == Player.STATE_IDLE || timelineEmpty
+
+/**
+ * [this] plus the local-route marker. Only `/api/` media is ever marked, never a
+ * proxy URL, so captured proxy headers come back as they are.
+ */
+private fun Map<String, String>.withLocalRoute(marker: Map<String, String>): Map<String, String> =
+    if (marker.isEmpty()) this else this + marker
+
+/**
+ * Whether [this] is the [issued] stream URL or, with [includeDirectory], a
+ * playlist or segment beside it, on the same origin.
+ */
+private fun android.net.Uri.isWithinIssued(issued: android.net.Uri, includeDirectory: Boolean): Boolean {
+    if (!scheme.equals(issued.scheme, ignoreCase = true) ||
+        !host.equals(issued.host, ignoreCase = true) ||
+        port != issued.port
+    ) return false
+    val issuedPath = issued.path.orEmpty()
+    val candidatePath = path.orEmpty()
+    if (candidatePath == issuedPath) return true
+    val issuedDirectory = issuedPath.substringBeforeLast('/', missingDelimiterValue = issuedPath).trimEnd('/') + "/"
+    return includeDirectory && candidatePath.startsWith(issuedDirectory)
+}

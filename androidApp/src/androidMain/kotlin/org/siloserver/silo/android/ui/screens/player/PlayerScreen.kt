@@ -1000,6 +1000,8 @@ fun PlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = !inRoom,
         )
         if (!isLocalMedia && uiState.sessionId != null) {
             PlaybackRuntimeCorrectionMetrics.reset()
@@ -1085,6 +1087,8 @@ fun PlayerScreen(
             transformations = plan?.executableMedia3ClientTransformations().orEmpty(),
             runtimeCorrections = plan?.runtimeCorrections.orEmpty(),
             activeClaims = plan?.activeOriginalHttpClaims().orEmpty(),
+            // Watch Party playback stays on the saved address.
+            allowsLocalRoute = !inRoom,
         )
         viewModel.onSubtitleMediaMountChanging()
         backend.refresh(mediaSpec)

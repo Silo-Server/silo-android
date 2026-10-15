@@ -1,5 +1,6 @@
 package org.siloserver.silo.network.apiv2
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import io.ktor.client.HttpClient
 import io.ktor.client.request.*
 import io.ktor.http.*
@@ -49,6 +50,8 @@ class DownloadRegistryV2Api(private val client: HttpClient, private val tokens: 
             if (method == HttpMethod.Delete) HttpStatusCode.NoContent else HttpStatusCode.OK, { owner ->
             client.request(path) {
                 this.method = method; authScope(owner!!); requireSiloAuth()
+                // Downloads stay on the saved address, end to end.
+                stayOnSavedAddress()
                 // The existing auth plugin attaches the installation's device metadata.
                 // A status event retains its revision and timestamp, so replaying
                 // PATCH after an auth refresh is safe. DELETE remains one attempt.

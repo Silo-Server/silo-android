@@ -1,5 +1,7 @@
 package org.siloserver.silo.android.ui.screens.servers
 
+import org.siloserver.silo.network.localroute.LocalRoute
+import org.siloserver.silo.network.localroute.LocalRoutes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.server.ServerEntry
@@ -31,6 +33,8 @@ data class ServerListUiState(
     val activeId: String? = null,
     val pendingSwitchToId: String? = null,
     val switchedTo: ServerSwitchDestination? = null,
+    /** The server whose requests use its local route right now, if any. */
+    val onLocalNetworkId: String? = null,
 )
 
 /**
@@ -49,6 +53,7 @@ class ServerListViewModel(
     private val unregisterPush: suspend (serverEntryId: String) -> PushRemoval? = { null },
     /** Undoes that removal when the server then stays saved ([AndroidPushRegistrar.restoreRegistration]). */
     private val restorePush: suspend (PushRemoval) -> Unit = {},
+    private val localRoute: StateFlow<LocalRoute?> = LocalRoutes.state.active,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ServerListUiState())
@@ -59,14 +64,15 @@ class ServerListViewModel(
             combine(
                 serverRegistry.entries,
                 serverRegistry.activeServerId,
-            ) { entries, activeId ->
+                localRoute,
+            ) { entries, activeId, route ->
                 val sorted = entries.sortedWith(
                     compareByDescending<ServerEntry> { it.id == activeId }
                         .thenByDescending { it.lastUsedAtEpochMs },
                 )
-                sorted to activeId
-            }.collect { (sorted, activeId) ->
-                _uiState.update { it.copy(servers = sorted, activeId = activeId) }
+                Triple(sorted, activeId, route?.serverId?.takeIf { it == activeId })
+            }.collect { (sorted, activeId, onLocalNetworkId) ->
+                _uiState.update { it.copy(servers = sorted, activeId = activeId, onLocalNetworkId = onLocalNetworkId) }
             }
         }
     }

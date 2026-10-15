@@ -1,5 +1,6 @@
 package org.siloserver.silo.android.ui.screens.servers
 
+import org.siloserver.silo.network.localroute.LocalRoute
 import org.siloserver.silo.android.ui.components.SiloDropdownMenuItem
 import org.siloserver.silo.android.ui.components.SiloDropdownMenu
 import org.siloserver.silo.android.ui.components.SiloDialogActionStyle
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -140,6 +143,7 @@ fun ServerListScreen(
                             ServerRow(
                                 entry = entry,
                                 isActive = entry.id == state.activeId,
+                                isOnLocalNetwork = entry.id == state.onLocalNetworkId,
                                 isPending = entry.id == state.pendingSwitchToId,
                                 onClick = { viewModel.onSelect(entry.id) },
                                 onRename = { renameTarget = entry },
@@ -205,6 +209,7 @@ private fun SectionHeader(text: String) {
 private fun ServerRow(
     entry: ServerEntry,
     isActive: Boolean,
+    isOnLocalNetwork: Boolean,
     isPending: Boolean,
     onClick: () -> Unit,
     onRename: () -> Unit,
@@ -254,6 +259,26 @@ private fun ServerRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
+            if (isOnLocalNetwork) {
+                Row(
+                    modifier = Modifier.semantics(mergeDescendants = true) {},
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Home,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Text(
+                        text = LocalRoute.STATUS_TEXT,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
 
         Box {

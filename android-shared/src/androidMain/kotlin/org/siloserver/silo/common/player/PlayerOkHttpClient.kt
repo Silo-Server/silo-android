@@ -11,6 +11,8 @@ import kotlinx.coroutines.runBlocking
 import org.siloserver.silo.network.CleartextOriginConsent
 import org.siloserver.silo.network.CleartextOriginNotApprovedException
 import org.siloserver.silo.network.isSameHttpOrigin
+import org.siloserver.silo.network.localroute.asRoutedFor
+import org.siloserver.silo.network.localroute.localRoute
 import org.siloserver.silo.network.requiresApproval
 import java.util.concurrent.TimeUnit
 
@@ -22,6 +24,10 @@ import java.util.concurrent.TimeUnit
  * the app-level Ktor client — this one only serves media; the auth/refresh
  * chain on the Ktor client must not see media traffic. Media3 auth lives above
  * this transport in [RefreshingHttpDataSource].
+ *
+ * Video requests marked by [SiloPlayerFactory] take the active server's local
+ * route ([org.siloserver.silo.network.localroute.LocalRouteInterceptor]);
+ * everything else here stays on the address it names.
  */
 internal fun buildPlayerOkHttpClient(
     cleartextOriginConsent: CleartextOriginConsent? = null,
@@ -38,9 +44,14 @@ internal fun buildPlayerOkHttpClient(
         // cannot ride an HTTPS→HTTP or approved→unapproved redirect.
         .addNetworkInterceptor(CleartextConsentNetworkInterceptor(cleartextOriginConsent))
         .addNetworkInterceptor { chain ->
-            val initialTarget = chain.call().request().url.toString()
             val networkRequest = chain.request()
-            val safeRequest = if (isSameHttpOrigin(initialTarget, networkRequest.url.toString())) {
+            val callUrl = chain.call().request().url
+            val networkUrl = networkRequest.url.toString()
+            // A request on the local route stands in for the saved address, so
+            // either origin is the call's own.
+            val sameOrigin = isSameHttpOrigin(callUrl.toString(), networkUrl) ||
+                isSameHttpOrigin(callUrl.asRoutedFor(networkRequest).toString(), networkUrl)
+            val safeRequest = if (sameOrigin) {
                 networkRequest
             } else {
                 networkRequest.withoutCrossOriginCredentials()
@@ -50,6 +61,7 @@ internal fun buildPlayerOkHttpClient(
         .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
         .connectionPool(ConnectionPool(maxIdleConnections = 5, keepAliveDuration = 5, timeUnit = TimeUnit.MINUTES))
         .dispatcher(Dispatcher())
+        .localRoute(media = true)
         .build()
 
 internal class CleartextConsentNetworkInterceptor(

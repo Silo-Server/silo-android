@@ -152,6 +152,12 @@ data class VideoPlayerMediaSpec(
      * derived from the plan's decision reason. Drives renderer decoder routing.
      */
     val activeClaims: List<String> = emptyList(),
+    /**
+     * Whether this stream may take the active server's local route. False for
+     * Watch Party playback, which stays on the saved address it can always
+     * remount from.
+     */
+    val allowsLocalRoute: Boolean = false,
 ) {
     val startPositionMs: Long
         get() {

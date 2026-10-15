@@ -1,5 +1,6 @@
 package org.siloserver.silo.common.downloads
 
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
@@ -218,6 +219,9 @@ class DownloadWorker(
             requireOwner()
             httpClient.prepareGet("/api/v2/downloads/${downloadId.encodeURLPathPart()}/file") {
                 transferAuthority?.let { managedDownloadAuth(it.scope) }
+                // Downloads stay on the saved address: a transfer outlives the
+                // network it started on.
+                stayOnSavedAddress()
                 // Streaming download: drop the global 60s TOTAL-request timeout (it
                 // guillotines large files mid-transfer) and keep only a socket/idle
                 // timeout so a genuinely stalled connection still fails → retry.
