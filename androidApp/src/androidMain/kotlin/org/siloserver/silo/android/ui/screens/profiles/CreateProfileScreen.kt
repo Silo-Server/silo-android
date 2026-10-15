@@ -154,19 +154,21 @@ fun CreateProfileScreen(
             // -- Child profile toggle --
             SwitchRow(
                 label = "Child Profile",
-                checked = state.isChild,
+                checked = state.access.isChild,
                 onCheckedChange = viewModel::onChildToggled,
                 subtitle = "Restricts content to kid-friendly ratings",
             )
 
-            // -- Content rating picker (visible for child profiles) --
-            if (state.isChild) {
+            // -- Rating ceiling + library allowlist (child profiles) --
+            if (state.access.isChild) {
                 Spacer(modifier = Modifier.height(16.dp))
-                DropdownField(
-                    label = "Max Content Rating",
-                    selected = state.maxContentRating ?: "PG",
-                    options = CONTENT_RATINGS,
-                    onSelected = viewModel::onContentRatingSelected,
+                ChildAccessControls(
+                    access = state.access,
+                    libraries = state.libraries,
+                    onContentRatingSelected = viewModel::onContentRatingSelected,
+                    onLibraryRestrictionsToggled = viewModel::onLibraryRestrictionsToggled,
+                    onLibraryToggled = viewModel::onLibraryToggled,
+                    onRetryLibraries = viewModel::loadLibraries,
                 )
             }
 

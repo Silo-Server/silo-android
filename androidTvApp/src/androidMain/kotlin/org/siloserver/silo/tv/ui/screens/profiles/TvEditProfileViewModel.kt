@@ -2,10 +2,14 @@ package org.siloserver.silo.tv.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.model.profile.AssignableLibraries
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.profile.canonicalProfileQualityPreference
 import org.siloserver.silo.model.profile.hasProfileNamed
+import org.siloserver.silo.model.profile.withAccessLimits
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,8 +32,8 @@ data class TvEditProfileUiState(
     val avatarStyleId: String = TvProfileAvatarPresets.DefaultStyleId,
     val selectedAvatarSeed: String? = null,
     val avatarBatch: Int = 0,
-    val isChild: Boolean = false,
-    val maxContentRating: String? = null,
+    val access: ProfileAccessLimits = ProfileAccessLimits(),
+    val libraries: AssignableLibraries = AssignableLibraries.Loading,
     val pinEnabled: Boolean = false,
     val pin: String = "",
     val qualityPreference: String? = null,
@@ -59,8 +63,12 @@ class TvEditProfileViewModel(
      */
     private var loadedHasPin: Boolean = false
 
+    /** The loaded profile's limits; the save sends only the ones that changed. */
+    private var loadedAccess = ProfileAccessLimits()
+
     init {
         loadProfile()
+        loadLibraries()
     }
 
     fun loadProfile() {
@@ -73,6 +81,7 @@ class TvEditProfileViewModel(
                     val profile = result.data.find { it.id == profileId }
                     if (profile != null) {
                         loadedHasPin = profile.hasPin
+                        loadedAccess = ProfileAccessLimits.of(profile)
                         val preset = TvProfileAvatarPresets.parseRef(profile.avatar)
                         _uiState.update {
                             it.copy(
@@ -82,8 +91,7 @@ class TvEditProfileViewModel(
                                 selectedAvatarUrl = profile.avatarUrl,
                                 avatarStyleId = preset?.styleId ?: TvProfileAvatarPresets.DefaultStyleId,
                                 selectedAvatarSeed = preset?.seed,
-                                isChild = profile.isChild,
-                                maxContentRating = profile.maxContentRating,
+                                access = loadedAccess,
                                 pinEnabled = profile.hasPin,
                                 qualityPreference = profile.qualityPreference,
                                 subtitleMode = profile.subtitleMode,
@@ -153,17 +161,28 @@ class TvEditProfileViewModel(
         }
     }
 
-    fun onChildToggled(checked: Boolean) {
-        _uiState.update {
-            it.copy(
-                isChild = checked,
-                maxContentRating = if (checked && it.maxContentRating == null) "PG" else it.maxContentRating,
-            )
+    fun loadLibraries() {
+        _uiState.update { it.copy(libraries = it.libraries.loading()) }
+        viewModelScope.launch {
+            val libraries = AssignableLibraries.from(profileRepository.listAssignableLibraries())
+            _uiState.update { it.copy(libraries = libraries) }
         }
     }
 
+    fun onChildToggled(checked: Boolean) {
+        _uiState.update { it.copy(access = it.access.withChild(checked), error = null) }
+    }
+
     fun onContentRatingSelected(rating: String) {
-        _uiState.update { it.copy(maxContentRating = rating) }
+        _uiState.update { it.copy(access = it.access.copy(maxContentRating = rating)) }
+    }
+
+    fun onLibraryRestrictionsToggled(enabled: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibraryRestrictions(enabled), error = null) }
+    }
+
+    fun onLibraryToggled(libraryId: Int, allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibrary(libraryId, allowed), error = null) }
     }
 
     fun onPinToggled(enabled: Boolean) {
@@ -205,6 +224,10 @@ class TvEditProfileViewModel(
             _uiState.update { it.copy(error = "PIN must be 4 digits") }
             return
         }
+        if (current.access.needsLibrary) {
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
+            return
+        }
 
         // Map the PIN state onto the wire value the server expects:
         //  - a freshly entered 4-digit PIN sets/replaces the PIN;
@@ -224,11 +247,9 @@ class TvEditProfileViewModel(
                 name = current.name,
                 avatar = current.effectiveAvatarRef(),
                 pin = pinValue,
-                isChild = current.isChild,
-                maxContentRating = current.maxContentRating,
                 qualityPreference = current.qualityPreference,
                 subtitleMode = current.subtitleMode,
-            )
+            ).withAccessLimits(current.access, loadedAccess, current.libraries.ids)
 
             when (val result = profileRepository.updateProfile(current.profileId, request)) {
                 is ApiResult.Success -> {

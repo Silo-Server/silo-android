@@ -2,7 +2,11 @@ package org.siloserver.silo.android.ui.screens.profiles
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.model.profile.AssignableLibraries
+import org.siloserver.silo.model.profile.CHOOSE_A_LIBRARY_MESSAGE
 import org.siloserver.silo.model.profile.CreateProfileRequest
+import org.siloserver.silo.model.profile.ProfileAccessLimits
+import org.siloserver.silo.model.profile.withAccessLimits
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.hasProfileNamed
 import org.siloserver.silo.network.ApiResult
@@ -16,8 +20,8 @@ import kotlinx.coroutines.launch
 data class CreateProfileUiState(
     val name: String = "",
     val selectedAvatar: String? = null,
-    val isChild: Boolean = false,
-    val maxContentRating: String? = null,
+    val access: ProfileAccessLimits = ProfileAccessLimits(),
+    val libraries: AssignableLibraries = AssignableLibraries.Loading,
     val pinEnabled: Boolean = false,
     val pin: String = "",
     val language: String? = null,
@@ -54,6 +58,15 @@ class CreateProfileViewModel(
                 existingProfiles = it.data
             }
         }
+        loadLibraries()
+    }
+
+    fun loadLibraries() {
+        _uiState.update { it.copy(libraries = it.libraries.loading()) }
+        viewModelScope.launch {
+            val libraries = AssignableLibraries.from(profileRepository.listAssignableLibraries())
+            _uiState.update { it.copy(libraries = libraries) }
+        }
     }
 
     fun onNameChanged(value: String) {
@@ -65,17 +78,19 @@ class CreateProfileViewModel(
     }
 
     fun onChildToggled(checked: Boolean) {
-        _uiState.update {
-            it.copy(
-                isChild = checked,
-                // Default to PG for child profiles.
-                maxContentRating = if (checked && it.maxContentRating == null) "PG" else it.maxContentRating,
-            )
-        }
+        _uiState.update { it.copy(access = it.access.withChild(checked), error = null) }
     }
 
     fun onContentRatingSelected(rating: String) {
-        _uiState.update { it.copy(maxContentRating = rating) }
+        _uiState.update { it.copy(access = it.access.copy(maxContentRating = rating)) }
+    }
+
+    fun onLibraryRestrictionsToggled(enabled: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibraryRestrictions(enabled), error = null) }
+    }
+
+    fun onLibraryToggled(libraryId: Int, allowed: Boolean) {
+        _uiState.update { it.copy(access = it.access.withLibrary(libraryId, allowed), error = null) }
     }
 
     fun onPinToggled(enabled: Boolean) {
@@ -117,6 +132,10 @@ class CreateProfileViewModel(
             _uiState.update { it.copy(error = "PIN must be 4 digits") }
             return
         }
+        if (current.access.needsLibrary) {
+            _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
+            return
+        }
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
@@ -125,12 +144,10 @@ class CreateProfileViewModel(
                 name = current.name,
                 avatar = current.selectedAvatar,
                 pin = if (current.pinEnabled) current.pin else null,
-                isChild = if (current.isChild) true else null,
-                maxContentRating = current.maxContentRating,
                 language = current.language,
                 subtitleLanguage = current.subtitleLanguage,
                 subtitleMode = current.subtitleMode,
-            )
+            ).withAccessLimits(current.access)
 
             when (val result = profileRepository.createProfile(request)) {
                 is ApiResult.Success -> {

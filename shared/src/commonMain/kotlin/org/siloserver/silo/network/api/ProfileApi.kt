@@ -3,6 +3,7 @@ package org.siloserver.silo.network.api
 import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.http.*
+import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.model.profile.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
@@ -19,6 +20,7 @@ import org.siloserver.silo.network.apiv2.ProfileUpdate
 import org.siloserver.silo.network.apiv2.ProfileV2
 import org.siloserver.silo.network.apiv2.QualityPreference
 import org.siloserver.silo.network.apiv2.SubtitleMode
+import org.siloserver.silo.network.apiv2.UserLibrariesV2
 import org.siloserver.silo.network.apiv2.safeApiV2Call
 
 class ProfileApi(
@@ -37,7 +39,16 @@ class ProfileApi(
         actingAs: HouseholdManager? = null,
         withoutProfile: Boolean = false,
         noinline configure: HttpRequestBuilder.() -> Unit = {},
-    ): ApiResult<T> {
+    ): ApiResult<T> = exchange<T, T>(path, method, status, nonRetryable, actingAs, withoutProfile, { it }, configure)
+
+    private suspend inline fun <reified T, R> exchange(
+        path: String, method: HttpMethod, status: HttpStatusCode,
+        nonRetryable: Boolean,
+        actingAs: HouseholdManager?,
+        withoutProfile: Boolean,
+        crossinline project: (T) -> R,
+        noinline configure: HttpRequestBuilder.() -> Unit,
+    ): ApiResult<R> {
         val scope = tokens?.snapshotCurrentScope()
         if (tokens != null && scope == null) return identityChanged()
         // A manager proof belongs to the account it was verified under; never
@@ -51,7 +62,7 @@ class ProfileApi(
             withoutProfile -> scope.copy(profileId = null, profileToken = null)
             else -> scope
         }
-        return ownedV2Call<T, T>(apiV2Gate, tokens, pinned, OwnerPolicy.IDENTITY, status, { owner ->
+        return ownedV2Call<T, R>(apiV2Gate, tokens, pinned, OwnerPolicy.IDENTITY, status, { owner ->
             client.request(path) {
                 this.method = method
                 owner?.let { authScope(it) }
@@ -65,7 +76,7 @@ class ProfileApi(
                 if (nonRetryable) singleAttempt()
                 configure()
             }
-        }) { it }
+        }) { project(it) }
     }
 
     suspend fun listProfiles(): ApiResult<ProfilesResponse> =
@@ -111,6 +122,18 @@ class ProfileApi(
         exchange(
             "/api/v2/profiles/${id.encodeURLPathPart()}", HttpMethod.Delete, HttpStatusCode.NoContent,
             nonRetryable = true, actingAs = actingAs,
+        )
+
+    /**
+     * The libraries a household profile can be given: the account's own, read
+     * with no profile headers so neither the device's selected profile nor the
+     * manager's own restrictions or hidden libraries narrow the list.
+     */
+    suspend fun listAssignableLibraries(): ApiResult<List<UserLibrary>> =
+        exchange<UserLibrariesV2, List<UserLibrary>>(
+            "/api/v2/user/libraries", HttpMethod.Get, HttpStatusCode.OK,
+            nonRetryable = false, actingAs = null, withoutProfile = true,
+            project = { it.project() }, configure = {},
         )
 
     /**
