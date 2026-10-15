@@ -592,6 +592,11 @@ fun PlayerScreen(
         val party = watchParty ?: return@LaunchedEffect
         viewModel.roomQualityChanges.collect { party.binding.onQualityChanged() }
     }
+    // An in-place audio track switch may change the output path: rate support is measured again.
+    LaunchedEffect(watchParty) {
+        val party = watchParty ?: return@LaunchedEffect
+        viewModel.roomAudioTrackChanges.collect { party.binding.onAudioTrackChanged() }
+    }
 
     // Per-session playback control socket (admin remote control). Bound for the
     // lifetime of a sessionId; the loop reconnects on its own and never

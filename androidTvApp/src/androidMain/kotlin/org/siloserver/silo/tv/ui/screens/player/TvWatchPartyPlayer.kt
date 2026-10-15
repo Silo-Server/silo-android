@@ -381,6 +381,11 @@ internal fun TvWatchPartyEffects(
         }
     }
 
+    // An in-place audio track switch may change the output path: rate support is measured again.
+    LaunchedEffect(watchParty) {
+        viewModel.roomAudioTrackChanges.collect { watchParty.playback.binding.onAudioTrackChanged() }
+    }
+
     LaunchedEffect(watchParty) {
         watchParty.playback.notices.collect { notice ->
             viewModel.showPlayerMessage(watchPartyNoticeText(notice))

@@ -3357,6 +3357,17 @@ class PlayerViewModel(
 
     /** Emits when this viewer's quality changed, so the binding restarts its reload pacing. */
     val roomQualityChanges: SharedFlow<Unit> = _roomQualityChanges.asSharedFlow()
+    private val _roomAudioTrackChanges = MutableSharedFlow<Unit>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * Emits when this viewer switched audio track within the mounted stream,
+     * so the binding measures rate support again (a replan mounts new media,
+     * which already does).
+     */
+    val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges.asSharedFlow()
     private val _roomObservation = MutableStateFlow(RoomPlayerObservation())
 
     /** What the player is actually doing, for the room binding. */
@@ -4101,6 +4112,7 @@ class PlayerViewModel(
                 mountedAudio,
             ) != null
         ) {
+            if (inRoom) _roomAudioTrackChanges.tryEmit(Unit)
             return
         }
         mobileSubtitleTransactions.updatePlaybackContext(mobileSubtitleContext(state))

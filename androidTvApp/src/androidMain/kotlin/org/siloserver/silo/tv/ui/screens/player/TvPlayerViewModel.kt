@@ -1397,6 +1397,15 @@ class TvPlayerViewModel(
     // ---- Remote session-control surface (driven by TvPlaybackRealtimeController) ----
     // Stop is screen-local (stopPlaybackAndExit) and the lifecycle `notice` is
     // read-only, so expose thin channels here for the control socket to drive.
+    private val _roomAudioTrackChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * Emits when the viewer switched audio track within the mounted stream in
+     * a room, so the binding measures rate support again (a replan mounts new
+     * media, which already does).
+     */
+    val roomAudioTrackChanges: SharedFlow<Unit> = _roomAudioTrackChanges
+
     private val _remoteStopRequests = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     /** Screen collects this and runs its teardown/exit. */
     val remoteStopRequests: SharedFlow<Unit> = _remoteStopRequests
@@ -4379,6 +4388,7 @@ class TvPlayerViewModel(
                     state.audioTracks.map { it.toMountedAudioTrack() },
                 ) != null
             ) {
+                if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
                 return
             }
             playbackMutationFence.beginReplan()
@@ -5420,6 +5430,7 @@ class TvPlayerViewModel(
                 state.audioTracks.map { it.toMountedAudioTrack() },
             ) != null
         ) {
+            if (roomId != null) _roomAudioTrackChanges.tryEmit(Unit)
             return
         }
 

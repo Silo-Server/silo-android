@@ -438,9 +438,10 @@ too slow to decode faster than real time reports the rate without reaching
 it. When the engine still reports 1x a second after a nudge starts, or the
 playhead's measured advance over at least 5 s (once the rate should have
 gained 0.25 s) gains less than half of what the rate asks, the mount is
-rate-unsupported until the next mount, epoch, quality change, or reload; a native seek within
-the mounted item does not clear it. Nudges then become in-place seeks beyond
-1 s, from commands and from the loop alike; a command whose target is out of
+rate-unsupported until the next mount, epoch, quality change, audio track
+change, or reload; a native seek within the mounted item does not clear it.
+Nudges then become in-place seeks beyond 1 s, from commands and from the loop
+alike; a command whose target is out of
 reach in place reloads through the budget instead. Each seek aims ahead by the
 shortfall the previous one left once it landed (at most 3 s). A seek that
 leaves more than 1 s doubles the wait before the next, from 1 s up to 16 s;
@@ -953,7 +954,7 @@ source-string assertions.
 | T19 | First sustained stall | The room waits up to 10 s; the overlay names the viewer; resumes on recovery | Live shaping |
 | T20 | Deadline passes | `self_ignore_wait`; `ready` in playing and paused rooms, retried every 500 ms; fresh target; no reports while unplayable | Unit, live shaping |
 | T21 | Stall again within 5 min or within 1 min of the last pause; a lone viewer stalls | The room keeps playing; a lone viewer always pauses it and the room waits; a lone catching-up viewer resumes from its own position | Unit, live |
-| T22 | Rate convergence; host drift of 10 s or less | 0.96–1.04x from beyond 0.4 s until within 0.1 s, then exactly 1x; host corrected, not re-anchored; a mount whose engine still reports 1x a second after a nudge starts (tunneling, passthrough audio), or whose playhead gains less than half of the nudge over at least 5 s (a slow decoder), is marked rate-unsupported until the next mount, epoch, quality change, or reload, and then corrects with in-place seeks beyond 1 s that aim ahead by the last seek's measured shortfall (at most 3 s) and back off from 1 s to 16 s while they miss; saved speed untouched | Unit, TV and phone |
+| T22 | Rate convergence; host drift of 10 s or less | 0.96–1.04x from beyond 0.4 s until within 0.1 s, then exactly 1x; host corrected, not re-anchored; a mount whose engine still reports 1x a second after a nudge starts (tunneling, passthrough audio), or whose playhead gains less than half of the nudge over at least 5 s (a slow decoder), is marked rate-unsupported until the next mount, epoch, quality change, audio track change, or reload, and then corrects with in-place seeks beyond 1 s that aim ahead by the last seek's measured shortfall (at most 3 s) and back off from 1 s to 16 s while they miss; saved speed untouched | Unit, TV and phone |
 | T23 | Unbuffered corrections on a slow link, including copy remux | One reload at a time; backoff from 10 s to 60 s; lead up to 10 s, capped at duration; explicit seeks bypass; no replan loop ([server #1259](https://github.com/Silo-Server/silo-server/issues/1259)) | Unit, live shaping |
 | T24 | Two sustained stalls within 5 min | Offer one lower quality of the same file, once per quality | Unit, live |
 | T25 | Host local suspensions (focus loss, noisy, sleep timer, TV pause, subtitle preparation, Cast attempt) | Room unaffected; the host resyncs before reporting | Unit, native |

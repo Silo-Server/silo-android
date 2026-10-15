@@ -208,6 +208,7 @@ class RoomPlaybackBinding(
         data class Command(val scheduled: ScheduledTransportCommand) : Event
         data class Execute(val token: Long) : Event
         data object QualityChanged : Event
+        data object AudioTrackChanged : Event
     }
 
     private val job = SupervisorJob(parentScope.coroutineContext[Job])
@@ -280,8 +281,8 @@ class RoomPlaybackBinding(
     // This mount plays on at 1x whatever rate is asked (tunneling,
     // passthrough audio), or cannot keep up with it (a device too slow to
     // decode faster than real time). Sticky until the next mount, epoch,
-    // quality change, or reload; the loop then corrects with in-place seeks
-    // instead.
+    // quality change, audio track change, or reload; the loop then corrects
+    // with in-place seeks instead.
     private var rateUnsupported = false
     private var rateRequestedAtMs = NEVER_MS
 
@@ -376,6 +377,15 @@ class RoomPlaybackBinding(
         events.trySend(Event.QualityChanged)
     }
 
+    /**
+     * The viewer switched audio track within the mounted media. The new
+     * track may take another output path (PCM instead of passthrough), so
+     * rate support is measured afresh.
+     */
+    fun onAudioTrackChanged() {
+        events.trySend(Event.AudioTrackChanged)
+    }
+
     // ---- user intents ---------------------------------------------------------
 
     /** Ask the room to play or pause. The player changes only when the room's command arrives. */
@@ -457,6 +467,7 @@ class RoomPlaybackBinding(
                     clearRateUnsupported()
                     _offerLowerQuality.value = false
                 }
+                Event.AudioTrackChanged -> clearRateUnsupported()
                 Event.Tick, Event.Changed -> Unit
             }
             step()

@@ -704,6 +704,28 @@ class RoomPlaybackBindingTest {
     }
 
     @Test
+    fun `an audio track change measures rate support again`() = runTest {
+        val room = FakeRoom()
+        val player = FakePlayer()
+        val binding = bind(room, player)
+        player.update { copy(sourcePositionSeconds = 99.0, playbackSpeed = 1.0, mountGeneration = 1) }
+        command(room, "drift", TransportAction.Play, 100.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        follow(player, drift = 2.0, forMs = 1_200)
+        assertEquals(1, player.seeks.size, "rate support was never ruled out")
+
+        // A switch from a passthrough track to a PCM one in the same mount.
+        binding.onAudioTrackChanged()
+        player.update { copy(playbackSpeed = 1.04) }
+        follow(player, drift = 0.0, forMs = 100)
+        player.update { copy(sourcePositionSeconds = sourcePositionSeconds - 2.0) }
+        command(room, "again", TransportAction.Play, 100.0 + testScheduler.currentTime / 1000.0, RoomPlaybackState.Playing)
+        advanceTimeBy(50)
+        assertEquals(1.04, player.rates.last()!!, 0.0001)
+        assertEquals(1, player.seeks.size)
+    }
+
+    @Test
     fun `the fallback's own in-place seek keeps seek-only correction`() = runTest {
         val room = FakeRoom()
         val player = FakePlayer()
