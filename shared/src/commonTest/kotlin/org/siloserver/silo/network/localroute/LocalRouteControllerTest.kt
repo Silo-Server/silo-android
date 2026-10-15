@@ -144,6 +144,25 @@ class LocalRouteControllerTest {
     }
 
     @Test
+    fun anAddressPresentingAnotherKeyRereadsThePinAtOnce() = runControllerTest { controller, state, environment ->
+        start(controller, entry)
+        advanceUntilIdle()
+        // SECRET_KEY rotates while the device is away, soon after the last read.
+        controller.networkChanged(allowsLocal = false)
+        advanceUntilIdle()
+        environment.serverPin = "rotated="
+        environment.offer = LocalRouteOffer.Offered(IDENTITY, "rotated=", "http://192.168.1.20:8080")
+        environment.offerReads.clear()
+
+        controller.networkChanged(allowsLocal = true)
+        advanceUntilIdle()
+
+        assertEquals(listOf(entry.id), environment.offerReads)
+        assertEquals(LAN, state.active.value?.localOrigin)
+        assertEquals("rotated=", state.pinFor(LAN.host, LAN.port))
+    }
+
+    @Test
     fun aRouteThatKeepsFailingIsCheckedOnlyOnceUntilTheNetworkChanges() = runControllerTest { controller, state, environment ->
         start(controller, entry)
         advanceUntilIdle()
@@ -182,6 +201,20 @@ class LocalRouteControllerTest {
 
         assertEquals(listOf("nas.home"), environment.resolutions)
         assertEquals(LAN, state.active.value?.localOrigin)
+    }
+
+    @Test
+    fun aHostNameIsLookedUpOnlyOnceTheKnownAddressesFail() = runControllerTest { controller, state, environment ->
+        environment.records[entry.id] = LocalRouteRecord(
+            pin = PIN, serverId = IDENTITY, localUrl = "http://nas.home:8080", lastLocalOrigin = "https://192.168.1.20:8080",
+        )
+        environment.offer = LocalRouteOffer.Offered(IDENTITY, PIN, "http://nas.home:8080")
+        environment.resolved = mapOf("nas.home" to listOf("192.168.1.21"))
+        start(controller, entry)
+        advanceUntilIdle()
+
+        assertEquals(LAN, state.active.value?.localOrigin)
+        assertEquals(emptyList(), environment.resolutions)
     }
 
     @Test
@@ -236,6 +269,8 @@ class LocalRouteControllerTest {
         var offerGate: CompletableDeferred<Unit>? = null
         val offerReads = mutableListOf<String>()
         var answering = setOf(LAN)
+        /** The key the server presents. */
+        var serverPin = PIN
         val probes = mutableListOf<HttpOrigin>()
         var resolved = emptyMap<String, List<String>>()
         val resolutions = mutableListOf<String>()
@@ -254,9 +289,14 @@ class LocalRouteControllerTest {
             return offer
         }
 
-        override suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): Boolean {
+        override suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): LocalRouteCheck {
             probes += origin
-            return origin in answering && pin == PIN && identity == IDENTITY
+            return when {
+                origin !in answering -> LocalRouteCheck.UNCONFIRMED
+                pin != serverPin -> LocalRouteCheck.OTHER_KEY
+                identity == IDENTITY -> LocalRouteCheck.CONFIRMED
+                else -> LocalRouteCheck.UNCONFIRMED
+            }
         }
 
         override suspend fun privateIPv4Addresses(host: String): List<String> {

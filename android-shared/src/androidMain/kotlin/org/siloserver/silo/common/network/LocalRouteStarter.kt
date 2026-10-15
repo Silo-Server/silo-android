@@ -52,7 +52,7 @@ class LocalRouteStarter private constructor(
             // name, a contract probe) must not start a new check. The profile
             // is set on sign-in and dropped on sign-out.
             registry.activeEntry
-                .distinctUntilChangedBy { entry -> entry?.let { listOf(it.id, it.url, it.verifiedServerId, it.profileId) } }
+                .distinctUntilChangedBy { it.routeKey() }
                 .collect { publishActiveServer() }
         }
         scope.launch {
@@ -97,11 +97,17 @@ class LocalRouteStarter private constructor(
     private suspend fun publishActiveServer() {
         updates.withLock {
             val entry = registry.activeEntry.value
-            controller.update(entry, isSignedIn(entry))
+            val signedIn = isSignedIn(entry)
+            // A switch or sign-out during the lookup publishes itself next.
+            if (registry.activeEntry.value.routeKey() != entry.routeKey()) return@withLock
+            controller.update(entry, signedIn)
         }
     }
 
     private val updates = Mutex()
+
+    /** The entry fields the route depends on. */
+    private fun ServerEntry?.routeKey(): List<String?>? = this?.let { listOf(it.id, it.url, it.verifiedServerId, it.profileId) }
 
     private suspend fun isSignedIn(entry: ServerEntry?): Boolean =
         entry != null && !tokenManager.getAccessTokenForScope(entry.id).isNullOrBlank()

@@ -78,7 +78,7 @@ class AndroidLocalRouteEnvironment(
         return probe.readOffer(server.savedUrl, bearer)
     }
 
-    override suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): Boolean =
+    override suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): LocalRouteCheck =
         probe.confirms(origin, pin, identity)
 
     override suspend fun privateIPv4Addresses(host: String): List<String> = probe.privateIPv4Addresses(host)

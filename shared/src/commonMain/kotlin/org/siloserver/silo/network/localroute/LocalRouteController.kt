@@ -47,6 +47,18 @@ sealed interface LocalRouteOffer {
     data object Unreadable : LocalRouteOffer
 }
 
+/** What checking a candidate local origin found. */
+enum class LocalRouteCheck {
+    /** It presented the pinned key and answered the saved server's identity. */
+    CONFIRMED,
+
+    /** It presented another key: the key may have rotated with `SECRET_KEY`, or it is not the server. */
+    OTHER_KEY,
+
+    /** No answer, or an answer that is not the saved server's. */
+    UNCONFIRMED,
+}
+
 /**
  * Decides when the active server's requests use its local route
  * ([LocalRoute]). It needs no location: a route is used exactly when the server
@@ -58,8 +70,10 @@ sealed interface LocalRouteOffer {
  *   document, read over the saved address and only when that is HTTPS.
  * - Candidates: the local origin in use, the one that worked last, and the
  *   admin-set address (or the private IPv4 addresses its host name resolves
- *   to), each tried as `https` on the same port. Android does not browse
- *   `_silo._tcp` adverts yet.
+ *   to, looked up only once the others fail), each tried as `https` on the
+ *   same port. Android does not browse `_silo._tcp` adverts yet.
+ * - A candidate that presents another key makes it read the connections
+ *   document again at once, since the key may have rotated with `SECRET_KEY`.
  * - It checks while the app is in the foreground on a non-cellular network,
  *   again after every network change and foreground return, and once more
  *   shortly after the route fails, but only once until the network or the app
@@ -87,7 +101,7 @@ class LocalRouteController(
         val store: LocalRouteStore
         suspend fun readOffer(server: Server): LocalRouteOffer
         /** Whether [origin] presents [pin] over TLS and answers [identity] at `/api/v2/system/identity`. */
-        suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): Boolean
+        suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): LocalRouteCheck
         suspend fun privateIPv4Addresses(host: String): List<String>
         fun nowMs(): Long
         val retryDelayMs: Long get() = 5_000L
@@ -203,7 +217,8 @@ class LocalRouteController(
         evaluation?.cancel()
         evaluation = scope.launch {
             val checkedKnownKey = record != null
-            if (checkedKnownKey) evaluate(server)
+            // Another key at a candidate may be a rotated one: re-read the pin now.
+            if (checkedKnownKey && evaluate(server)) lastOfferReadMs = null
             ensureActive()
             val changed = refreshOfferIfDue(server)
             ensureActive()
@@ -249,48 +264,57 @@ class LocalRouteController(
         return true
     }
 
-    private suspend fun evaluate(server: Server) {
+    /**
+     * Uses the first candidate that confirms, best first. Returns whether the
+     * pin may be stale: none confirmed, and one presented another key.
+     */
+    private suspend fun evaluate(server: Server): Boolean {
         val record = record
         if (!allowsLocal || record == null || this.server != server) {
             demote()
-            return
+            return false
         }
-        for (origin in candidates(record)) {
+        val tried = mutableSetOf<HttpOrigin>()
+        var otherKey = false
+        // Whether checking [origin] ends the evaluation: it confirmed, or the server changed.
+        suspend fun settles(origin: HttpOrigin): Boolean {
+            if (!tried.add(origin)) return false
             currentCoroutineContext().ensureActive()
-            if (this.server != server) return
-            if (environment.confirms(origin, record.pin, record.serverId)) {
-                currentCoroutineContext().ensureActive()
-                if (this.server != server || !allowsLocal) return
-                activate(origin, server, record.pin)
-                return
+            if (this.server != server) return true
+            when (environment.confirms(origin, record.pin, record.serverId)) {
+                LocalRouteCheck.CONFIRMED -> {
+                    currentCoroutineContext().ensureActive()
+                    if (this.server == server && allowsLocal) activate(origin, server, record.pin)
+                    return true
+                }
+                LocalRouteCheck.OTHER_KEY -> otherKey = true
+                LocalRouteCheck.UNCONFIRMED -> Unit
             }
+            return false
         }
+        // A host name is looked up only once the known addresses fail, so a
+        // slow lookup never holds up one that works.
+        if (knownCandidates(record).any { settles(it) }) return false
+        if (resolvedCandidates(record).any { settles(it) }) return false
         currentCoroutineContext().ensureActive()
         if (this.server == server) demote()
+        return otherKey
     }
 
-    /** Candidate local origins, best first. */
-    private suspend fun candidates(record: LocalRouteRecord): List<HttpOrigin> {
-        val ordered = mutableListOf<HttpOrigin>()
-        fun add(origin: HttpOrigin?) {
-            if (origin != null && origin !in ordered) ordered += origin
-        }
-        add(activeLocalOrigin)
-        add(record.lastLocalOrigin?.let(LocalRoute::localOriginForAddress))
-        record.localUrl?.let { configured ->
-            val direct = LocalRoute.localOriginForAddress(configured)
-            if (direct != null) {
-                add(direct)
-            } else {
-                // A host name: try each private IPv4 address it resolves to on
-                // this network, on the same port.
-                val origin = httpOrigin(configured.trim()) ?: return@let
-                for (address in environment.privateIPv4Addresses(origin.host)) {
-                    add(LocalRoute.localOriginForAddress("http://$address:${origin.port}"))
-                }
-            }
-        }
-        return ordered
+    /** The local origin in use, the one that worked last, and an admin-set IP address. */
+    private fun knownCandidates(record: LocalRouteRecord): List<HttpOrigin> = listOfNotNull(
+        activeLocalOrigin,
+        record.lastLocalOrigin?.let(LocalRoute::localOriginForAddress),
+        record.localUrl?.let(LocalRoute::localOriginForAddress),
+    )
+
+    /** The private IPv4 addresses an admin-set host name resolves to on this network, on the same port. */
+    private suspend fun resolvedCandidates(record: LocalRouteRecord): List<HttpOrigin> {
+        val configured = record.localUrl ?: return emptyList()
+        if (LocalRoute.localOriginForAddress(configured) != null) return emptyList()
+        val origin = httpOrigin(configured.trim()) ?: return emptyList()
+        return environment.privateIPv4Addresses(origin.host)
+            .mapNotNull { LocalRoute.localOriginForAddress("http://$it:${origin.port}") }
     }
 
     private fun activate(origin: HttpOrigin, server: Server, pin: String) {

@@ -78,7 +78,7 @@ class LocalRouteProbe(
         }
     }
 
-    suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): Boolean {
+    suspend fun confirms(origin: HttpOrigin, pin: String, identity: String): LocalRouteCheck {
         val trust = PinOnlyTrustManager(pin)
         val client = base.newBuilder()
             .sslSocketFactory(SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }.socketFactory, trust)
@@ -91,21 +91,22 @@ class LocalRouteProbe(
             .writeTimeout(probeTimeoutMs, TimeUnit.MILLISECONDS)
             .callTimeout(probeTimeoutMs + 1_000, TimeUnit.MILLISECONDS)
             .build()
-        val url = (LocalRoute.format(origin) + DefaultServerIdentityApi.IDENTITY_PATH).toHttpUrlOrNull() ?: return false
+        val url = (LocalRoute.format(origin) + DefaultServerIdentityApi.IDENTITY_PATH).toHttpUrlOrNull()
+            ?: return LocalRouteCheck.UNCONFIRMED
         val request = Request.Builder()
             .url(url)
             .header("Accept", "application/json")
             .build()
         return try {
             client.newCall(request).await().use { response ->
-                if (response.code != 200) return false
+                if (response.code != 200) return LocalRouteCheck.UNCONFIRMED
                 val body = withContext(Dispatchers.IO) { response.body?.string().orEmpty() }
                 val served = runCatching { SiloJson.decodeFromString(ServerIdentityV2.serializer(), body).serverId.trim() }
                     .getOrNull()
-                served == identity
+                if (served == identity) LocalRouteCheck.CONFIRMED else LocalRouteCheck.UNCONFIRMED
             }
         } catch (_: IOException) {
-            false
+            if (trust.presentedOtherKey) LocalRouteCheck.OTHER_KEY else LocalRouteCheck.UNCONFIRMED
         }
     }
 
@@ -126,8 +127,14 @@ class LocalRouteProbe(
 
 /** Accepts exactly the leaf key [pin] names. */
 private class PinOnlyTrustManager(private val pin: String) : X509TrustManager {
+    /** Whether the candidate presented a key other than [pin]. */
+    @Volatile
+    var presentedOtherKey = false
+        private set
+
     override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
         if (LocalRouteTls.spkiPin(chain.firstOrNull()) != pin) {
+            presentedOtherKey = true
             throw CertificateException("The candidate presented a key other than the pin")
         }
     }

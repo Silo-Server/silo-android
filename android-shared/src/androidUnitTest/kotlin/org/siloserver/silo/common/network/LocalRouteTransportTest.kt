@@ -44,6 +44,7 @@ import org.bouncycastle.asn1.x509.V3TBSCertificateGenerator
 import org.bouncycastle.asn1.x9.X9ObjectIdentifiers
 import org.siloserver.silo.network.HttpOrigin
 import org.siloserver.silo.network.localroute.LocalRoute
+import org.siloserver.silo.network.localroute.LocalRouteCheck
 import org.siloserver.silo.network.localroute.LocalRouteHeaders
 import org.siloserver.silo.network.localroute.LocalRouteOffer
 import org.siloserver.silo.network.localroute.LocalRouteProbe
@@ -224,19 +225,19 @@ class LocalRouteTransportTest {
         val probe = LocalRouteProbe(probeTimeoutMs = 20_000)
         val origin = HttpOrigin("https", "127.0.0.1", lan.port)
         lan.enqueue(MockResponse().setBody("""{"server_id":"deployment-1"}"""))
-        assertTrue(probe.confirms(origin, server.pin, "deployment-1"))
+        assertEquals(LocalRouteCheck.CONFIRMED, probe.confirms(origin, server.pin, "deployment-1"))
 
         lan.enqueue(MockResponse().setBody("""{"server_id":"deployment-2"}"""))
-        assertEquals(false, probe.confirms(origin, server.pin, "deployment-1"))
+        assertEquals(LocalRouteCheck.UNCONFIRMED, probe.confirms(origin, server.pin, "deployment-1"))
 
         // Another key: the handshake fails and no request is sent.
         val count = lan.requestCount
-        assertEquals(false, probe.confirms(origin, impostor.pin, "deployment-1"))
+        assertEquals(LocalRouteCheck.OTHER_KEY, probe.confirms(origin, impostor.pin, "deployment-1"))
         assertEquals(count, lan.requestCount)
 
         // A redirect is not followed.
         lan.enqueue(MockResponse().setResponseCode(302).setHeader("Location", savedUrl("/api/v2/system/identity")))
-        assertEquals(false, probe.confirms(origin, server.pin, "deployment-1"))
+        assertEquals(LocalRouteCheck.UNCONFIRMED, probe.confirms(origin, server.pin, "deployment-1"))
         assertEquals(0, saved.requestCount)
     }
 
