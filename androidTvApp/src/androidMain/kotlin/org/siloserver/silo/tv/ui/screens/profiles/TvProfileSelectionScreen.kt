@@ -92,7 +92,7 @@ private val ProfileColumnGap = 14.dp
 /**
  * "Who's watching?" on Android TV (silo-apple `ProfileSelectionView` on
  * tvOS): round avatars centered over the brand light, "Signed in as", and
- * the utilities (change server, sign out, and for admins, manage) small and
+ * the utilities (change server, sign out, and manage) small and
  * below the people. A PIN prompt opens full screen over the same light,
  * tinted with that person's color.
  */

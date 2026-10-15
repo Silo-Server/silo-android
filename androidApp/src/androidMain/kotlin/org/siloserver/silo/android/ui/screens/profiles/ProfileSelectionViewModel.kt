@@ -104,11 +104,11 @@ class ProfileSelectionViewModel(
     }
 
     /**
-     * The admin lookup in [loadProfiles] is a gated v2 call. On launch the
-     * stored verdict can be a stale UPDATE_REQUIRED (server upgraded since),
-     * which the gate rejects without a request; once the launch probe
-     * records V2 the grid must be reloaded so the manage affordances match
-     * the real answer.
+     * The account and profile lookups in [loadProfiles] are gated v2 calls.
+     * On launch the stored verdict can be a stale UPDATE_REQUIRED (server
+     * upgraded since), which the gate rejects without a request; once the
+     * launch probe records V2 the grid must be reloaded so the manage
+     * affordances match the real answer.
      */
     private fun reloadWhenUpdateRequiredLifts() {
         val contracts = authRepository?.activeServerContractFlow ?: return
@@ -148,7 +148,6 @@ class ProfileSelectionViewModel(
             val activeId = profileRepository.getActiveProfileId()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
             val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
-            val isAdmin = user?.role?.equals("admin", ignoreCase = true) == true
             val result = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -186,7 +185,11 @@ class ProfileSelectionViewModel(
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
-                    if (!isAdmin) profileRepository.householdManagement.end()
+                    // The server lets the household's verified primary profile
+                    // manage it, whatever the account role, so any household
+                    // with a primary can.
+                    val canManage = result.data.householdPrimary() != null
+                    if (!canManage) profileRepository.householdManagement.end()
                     _uiState.update {
                         it.copy(
                             isLoading = false,
@@ -194,9 +197,9 @@ class ProfileSelectionViewModel(
                             accountName = user?.username ?: it.accountName,
                             profiles = result.data,
                             activeProfileId = activeId,
-                            canManageProfiles = isAdmin,
-                            isManageMode = if (isAdmin) it.isManageMode else false,
-                            deleteDialogProfile = if (isAdmin) it.deleteDialogProfile else null,
+                            canManageProfiles = canManage,
+                            isManageMode = if (canManage) it.isManageMode else false,
+                            deleteDialogProfile = if (canManage) it.deleteDialogProfile else null,
                         )
                     }
                     if (only != null) onProfileTapped(only)

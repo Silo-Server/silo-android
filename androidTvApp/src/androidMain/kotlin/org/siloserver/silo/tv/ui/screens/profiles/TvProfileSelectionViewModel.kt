@@ -123,13 +123,13 @@ class TvProfileSelectionViewModel(
     }
 
     /**
-     * The admin lookup in [loadProfiles] is a gated v2 call. On launch the
-     * stored verdict can be a stale UPDATE_REQUIRED (server upgraded since),
-     * which the gate rejects without a request; when the launch probe outlasts
-     * its bound, routing proceeds on the stale verdict and the background
-     * refresh records V2 later. The grid must then be reloaded so the manage
-     * affordances match the real answer instead of staying hidden for the
-     * ViewModel's lifetime.
+     * The account and profile lookups in [loadProfiles] are gated v2 calls.
+     * On launch the stored verdict can be a stale UPDATE_REQUIRED (server
+     * upgraded since), which the gate rejects without a request; when the
+     * launch probe outlasts its bound, routing proceeds on the stale verdict
+     * and the background refresh records V2 later. The grid must then be
+     * reloaded so the manage affordances match the real answer instead of
+     * staying hidden for the ViewModel's lifetime.
      */
     private fun reloadWhenUpdateRequiredLifts() {
         val contracts = authRepository?.activeServerContractFlow ?: return
@@ -162,7 +162,6 @@ class TvProfileSelectionViewModel(
             val scope = profileRepository.captureIdentityScope()
             val skipSingle = skipsSingleProfile ?: consumeSkipsSingleProfile().also { skipsSingleProfile = it }
             val user = (authRepository?.getCurrentUser() as? ApiResult.Success)?.data
-            val isAdmin = user?.role?.equals("admin", ignoreCase = true) == true
             val listed = profileRepository.listProfiles()
             // Two separate reasons to drop this response: a newer load
             // superseded it, or the identity it was fetched under is gone.
@@ -196,16 +195,20 @@ class TvProfileSelectionViewModel(
                     // picker after signing in: open it, once.
                     val only = result.data.singleOrNull()?.takeIf { skipSingle && !it.hasPin }
                     skipsSingleProfile = false
-                    if (!isAdmin) profileRepository.householdManagement.end()
+                    // The server lets the household's verified primary profile
+                    // manage it, whatever the account role, so any household
+                    // with a primary can.
+                    val canManage = result.data.householdPrimary() != null
+                    if (!canManage) profileRepository.householdManagement.end()
                     _uiState.update {
                         it.copy(
                             isLoading = false,
                             openingOnlyProfile = only != null,
                             accountName = user?.username ?: it.accountName,
                             profiles = result.data,
-                            canManageProfiles = isAdmin,
-                            isManageMode = if (isAdmin) it.isManageMode else false,
-                            deleteCandidate = if (isAdmin) it.deleteCandidate else null,
+                            canManageProfiles = canManage,
+                            isManageMode = if (canManage) it.isManageMode else false,
+                            deleteCandidate = if (canManage) it.deleteCandidate else null,
                         )
                     }
                     if (only != null) onProfileSelected(only)

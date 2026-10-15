@@ -32,7 +32,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class ProfileSelectionAdminGateTest {
+class ProfileSelectionManageGateTest {
 
     @BeforeTest
     fun setUp() {
@@ -45,11 +45,13 @@ class ProfileSelectionAdminGateTest {
     }
 
     @Test
-    fun `admin user has canManageProfiles set to true`() = runTest {
+    fun `regular account with a primary profile can manage the household`() = runTest {
         val authRepo = createAuthRepository(
-            userJson = """{"id":1,"username":"admin","email":"admin@example.com","role":"admin"}""",
+            userJson = """{"id":2,"username":"alice","email":"alice@example.com","role":"user"}""",
         )
-        val profileRepo = createProfileRepository(listOf(Profile(id = "p1", name = "Admin Profile")))
+        val profileRepo = createProfileRepository(
+            listOf(Profile(id = "p1", name = "Alice", isPrimary = true), Profile(id = "p2", name = "Kid")),
+        )
         val viewModel = ProfileSelectionViewModel(
             profileRepository = profileRepo,
             authRepository = authRepo,
@@ -60,67 +62,42 @@ class ProfileSelectionAdminGateTest {
         val loaded = viewModel.uiState.first { !it.isLoading }
 
         assertTrue(loaded.canManageProfiles)
+        viewModel.toggleManageMode()
+        assertTrue(viewModel.uiState.value.isManageMode)
     }
 
     @Test
-    fun `non-admin user has canManageProfiles set to false`() = runTest {
-        val authRepo = createAuthRepository(
-            userJson = """{"id":2,"username":"alice","email":"alice@example.com","role":"user"}""",
-        )
-        val profileRepo = createProfileRepository(listOf(Profile(id = "p1", name = "Alice Profile")))
-        val viewModel = ProfileSelectionViewModel(
-            profileRepository = profileRepo,
-            authRepository = authRepo,
-        )
-        val loaded = viewModel.uiState.first { !it.isLoading }
-
-        assertFalse(loaded.canManageProfiles)
-    }
-
-    @Test
-    fun `failed user fetch leaves canManageProfiles false`() = runTest {
+    fun `failed account fetch still allows managing a household with a primary`() = runTest {
         val authRepo = createAuthRepository(
             userJson = null,
             status = HttpStatusCode.InternalServerError,
         )
-        val profileRepo = createProfileRepository(listOf(Profile(id = "p1", name = "Profile 1")))
+        val profileRepo = createProfileRepository(listOf(Profile(id = "p1", name = "Profile 1", isPrimary = true)))
         val viewModel = ProfileSelectionViewModel(
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
         val loaded = viewModel.uiState.first { !it.isLoading }
 
-        assertFalse(loaded.canManageProfiles)
+        assertTrue(loaded.canManageProfiles)
     }
 
     @Test
-    fun `null auth repository defaults canManageProfiles to false`() = runTest {
-        val profileRepo = createProfileRepository(listOf(Profile(id = "p1", name = "Profile 1")))
-        val viewModel = ProfileSelectionViewModel(
-            profileRepository = profileRepo,
-            authRepository = null,
-        )
-        val loaded = viewModel.uiState.first { !it.isLoading }
-
-        assertFalse(loaded.canManageProfiles)
-    }
-
-    @Test
-    fun `non-admin cannot toggle manage mode or request delete`() = runTest {
+    fun `household without a primary profile cannot enter manage mode or request delete`() = runTest {
         val authRepo = createAuthRepository(
-            userJson = """{"id":2,"username":"alice","email":"alice@example.com","role":"user"}""",
+            userJson = """{"id":1,"username":"admin","email":"admin@example.com","role":"admin"}""",
         )
-        val profile = Profile(id = "p1", name = "Alice Profile")
-        val profileRepo = createProfileRepository(listOf(profile))
+        val profile = Profile(id = "p1", name = "Alice")
+        val profileRepo = createProfileRepository(listOf(profile, Profile(id = "p2", name = "Bob")))
         val viewModel = ProfileSelectionViewModel(
             profileRepository = profileRepo,
             authRepository = authRepo,
         )
-        viewModel.uiState.first { !it.isLoading }
+        val loaded = viewModel.uiState.first { !it.isLoading }
 
+        assertFalse(loaded.canManageProfiles)
         viewModel.toggleManageMode()
         assertFalse(viewModel.uiState.value.isManageMode)
-
         viewModel.requestDeleteProfile(profile)
         assertFalse(viewModel.uiState.value.deleteDialogProfile != null)
     }
@@ -157,7 +134,7 @@ class ProfileSelectionAdminGateTest {
     private fun createProfileRepository(profiles: List<Profile>): ProfileRepository {
         val jsonString = buildString {
             append("""{"items":[""")
-            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""" })
+            append(profiles.joinToString(",") { """{"id":"${it.id}","name":"${it.name}","is_primary":${it.isPrimary},"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""" })
             append("""]}""")
         }
         val engine = MockEngine {

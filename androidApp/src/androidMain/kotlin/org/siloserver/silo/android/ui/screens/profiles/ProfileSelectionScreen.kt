@@ -106,7 +106,7 @@ private val BottomGap = 20.dp
 /**
  * "Who's watching?" (silo-apple `ProfileSelectionView`): round avatars sized
  * to the household, centered between the title and small utilities (change
- * server, sign out, and for admins, manage profiles). Pressing a profile
+ * server, sign out, and manage profiles). Pressing a profile
  * tints the backdrop with that person's color; a PIN prompt opens full
  * screen over the same light.
  *
