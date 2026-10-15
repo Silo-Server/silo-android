@@ -19,6 +19,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.readByteArray
 import kotlinx.serialization.json.JsonObject
@@ -113,6 +115,12 @@ class LanServerDiscovery(
 
     /** Advances on start and stop; events from an earlier visit are dropped. */
     private var session = 0
+
+    /** Advances whenever a browse starts; events the replaced browse already queued are dropped. */
+    private var browseGeneration = 0
+
+    /** However many results are advertised, only a few addresses are probed at once. */
+    private val probeSlots = Semaphore(MAX_CONCURRENT_PROBES)
     private var browseFailed = false
 
     /** One quick restart per visit after a failed browse; later ones wait for the refresh. */
@@ -147,7 +155,7 @@ class LanServerDiscovery(
 
     private fun startBrowse(session: Int, scope: CoroutineScope) {
         browseFailed = false
-        browser.start(SessionEvents(session, scope))
+        browser.start(SessionEvents(session, ++browseGeneration, scope))
     }
 
     /**
@@ -232,7 +240,7 @@ class LanServerDiscovery(
             val attempts = if (entry.row != null) 1 else MAX_ATTEMPTS
             repeat(attempts) { attempt ->
                 if (attempt > 0) delay(RETRY_DELAY_MS)
-                val found = confirmAt(entry)
+                val found = probeSlots.withPermit { confirmAt(entry) }
                 // Replaced or removed meanwhile: the newer entry reports.
                 if (entries[key] !== entry) return@launch
                 if (found != null) {
@@ -276,9 +284,10 @@ class LanServerDiscovery(
         _servers.value = discoveredRows(entries.values.mapNotNull { entry -> entry.row?.let { it to entry.misses } })
     }
 
-    /** Routes browser callbacks onto [scope], dropping any from an earlier session. */
+    /** Routes browser callbacks onto [scope], dropping any from an earlier visit or browse. */
     private inner class SessionEvents(
         private val session: Int,
+        private val generation: Int,
         private val scope: CoroutineScope,
     ) : LanServiceBrowser.Events {
         override fun resolved(key: String, advertisement: LanAdvertisement) =
@@ -289,7 +298,9 @@ class LanServerDiscovery(
         override fun failed() = post { onBrowseFailed(session, scope) }
 
         private fun post(block: () -> Unit) {
-            scope.launch { if (this@LanServerDiscovery.session == session) block() }
+            scope.launch {
+                if (this@LanServerDiscovery.session == session && browseGeneration == generation) block()
+            }
         }
     }
 
@@ -307,6 +318,7 @@ class LanServerDiscovery(
 
         /** Addresses tried per result, so one host with many interfaces stays bounded. */
         internal const val MAX_ORIGINS = 4
+        internal const val MAX_CONCURRENT_PROBES = 4
     }
 }
 
@@ -319,6 +331,9 @@ class LanServerDiscovery(
  */
 class LanServerProbe {
     private val client: HttpClient = createPlatformHttpClient(retryOnConnectionFailure = false).config {
+        // A redirect would let an advertiser point these unasked-for requests
+        // at an address [lanOrigins] refuses, such as this device's loopback.
+        followRedirects = false
         install(HttpTimeout)
     }
 

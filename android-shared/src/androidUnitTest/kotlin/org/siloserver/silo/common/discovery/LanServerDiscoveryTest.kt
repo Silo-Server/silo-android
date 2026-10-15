@@ -241,6 +241,27 @@ class LanServerDiscoveryTest {
     }
 
     @Test
+    fun eventsFromABrowseThatWasRestartedAreDropped() = runTest(dispatcher) {
+        identities["http://192.168.1.5:8090"] = "srv-a"
+        val discovery = discovery()
+        discovery.start()
+        val failedBrowse = browser.events!!
+        failedBrowse.failed()
+        runCurrent()
+        advanceTimeBy(LanServerDiscovery.BROWSE_RETRY_DELAY_MS + 1)
+        assertEquals(2, browser.starts)
+
+        failedBrowse.resolved("a", ad("srv-a", "192.168.1.5"))
+        runCurrent()
+        assertEquals(emptyList(), discovery.servers.value)
+
+        browser.events!!.resolved("a", ad("srv-a", "192.168.1.5"))
+        runCurrent()
+        assertEquals(1, discovery.servers.value.size)
+        discovery.stop()
+    }
+
+    @Test
     fun aMovedAddressIsNotListedUnderTheOldOneWhileItIsChecked() = runTest(dispatcher) {
         val answer = CompletableDeferred<ServerIdentityProbe>()
         val discovery = LanServerDiscovery(
