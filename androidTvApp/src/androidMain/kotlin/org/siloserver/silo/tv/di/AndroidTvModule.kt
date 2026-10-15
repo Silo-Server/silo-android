@@ -383,6 +383,16 @@ val androidTvModule = module {
             identityProbe = { url -> identityApi.probeIdentity(url) },
         )
     }
+    // Silo servers on the local network, for server setup. One per screen visit.
+    single { org.siloserver.silo.common.discovery.LanServerProbe() }
+    factory {
+        val probe = get<org.siloserver.silo.common.discovery.LanServerProbe>()
+        org.siloserver.silo.common.discovery.LanServerDiscovery(
+            browser = org.siloserver.silo.common.discovery.NsdLanServiceBrowser(androidContext()),
+            probeIdentity = probe::identity,
+            fetchName = probe::name,
+        )
+    }
     // The advertised state comes from the screen that starts it: server setup
     // advertises st=setup, the sign-in screen st=login with its server's
     // identity (srv) so only phones holding that server offer it.

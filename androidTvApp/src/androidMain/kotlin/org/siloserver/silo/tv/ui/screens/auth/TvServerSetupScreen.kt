@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +25,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -40,13 +42,19 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.tv.material3.Text
 import kotlinx.coroutines.delay
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
+import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.discovery.LanServerDiscovery
 import org.siloserver.silo.common.pairing.PairingAdvertisement
 import org.siloserver.silo.common.pairing.PairingReceiver
 import org.siloserver.silo.common.pairing.PairingReceiverStatus
@@ -92,8 +100,15 @@ fun TvServerSetupScreen(
     viewModel: TvServerSetupViewModel = koinViewModel(),
     pairingReceiver: PairingReceiver = koinInject(),
     pairingAdvertiser: TvPairingAdvertiser = koinInject(),
+    discovery: LanServerDiscovery = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Silo servers on this network, listed on both pages while setup is on screen.
+    LifecycleStartEffect(discovery) {
+        discovery.start()
+        onStopOrDispose { discovery.stop() }
+    }
+    val found by discovery.servers.collectAsState()
     val pairingStatus by pairingReceiver.status.collectAsState()
     val isActivePairing = pairingStatus.isActivePairing
     var enteringAddress by rememberSaveable { mutableStateOf(false) }
@@ -190,9 +205,18 @@ fun TvServerSetupScreen(
                     onUseAlternate = pairingReceiver::useAlternateAddress,
                     onRetryAddress = pairingReceiver::retryPushedAddress,
                 )
-                SetupPage.Phone -> PhoneFirst(onEnterAddress = { enteringAddress = true })
+                SetupPage.Phone -> PhoneFirst(
+                    state = state,
+                    found = found,
+                    onPickFound = viewModel::connectTo,
+                    // A found server may be connecting; leaving now would let
+                    // its result land behind manual entry.
+                    onEnterAddress = { if (!state.isLoading) enteringAddress = true },
+                )
                 SetupPage.Address -> AddressEntry(
                     state = state,
+                    found = found,
+                    onPickFound = viewModel::connectTo,
                     onServerUrlChanged = viewModel::onServerUrlChanged,
                     onConnect = viewModel::onConnectClick,
                     // Leaving mid-probe would let a late connect pull the app on.
@@ -243,7 +267,12 @@ internal fun ClaimInitialFocus(requester: FocusRequester, isFocused: () -> Boole
 }
 
 @Composable
-private fun PhoneFirst(onEnterAddress: () -> Unit) {
+private fun PhoneFirst(
+    state: TvServerSetupUiState,
+    found: List<DiscoveredServer>,
+    onPickFound: (DiscoveredServer) -> Unit,
+    onEnterAddress: () -> Unit,
+) {
     val enterAddressFocus = remember { FocusRequester() }
     var enterAddressFocused by remember { mutableStateOf(false) }
     ClaimInitialFocus(enterAddressFocus, { enterAddressFocused }, "serverSetup.phone")
@@ -267,6 +296,10 @@ private fun PhoneFirst(onEnterAddress: () -> Unit) {
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 32.dp),
             )
+            // Servers found on this network connect with one press, above the
+            // way to type an address.
+            FoundServerRows(found, state, onPickFound, Modifier.padding(top = 9.dp))
+            state.discoveryError?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
             Row(Modifier.fillMaxWidth().padding(top = 9.dp)) {
                 TvMarqueeButton(
                     text = "Enter server address",
@@ -285,6 +318,8 @@ private fun PhoneFirst(onEnterAddress: () -> Unit) {
 @Composable
 private fun AddressEntry(
     state: TvServerSetupUiState,
+    found: List<DiscoveredServer>,
+    onPickFound: (DiscoveredServer) -> Unit,
     onServerUrlChanged: (String) -> Unit,
     onConnect: () -> Unit,
     onBack: () -> Unit,
@@ -352,11 +387,60 @@ private fun AddressEntry(
                     kind = TvMarqueeButtonKind.Plain,
                 )
             }
+            if (found.isNotEmpty()) {
+                Text(
+                    "Found nearby",
+                    color = MarqueeColors.InkTertiary,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(top = 24.dp),
+                )
+                FoundServerRows(found, state, onPickFound, Modifier.padding(top = 9.dp))
+            }
+            state.discoveryError?.let { TvMarqueeErrorText(it, Modifier.width(380.dp).padding(top = 8.dp)) }
         },
         card = {
             TvUsePhoneCard("Open Silo on a phone or tablet on the same Wi‑Fi and tap Set up. It finishes this for you.")
         },
     )
+}
+
+/**
+ * Up to two one-press rows for servers found on this network, each showing
+ * its name and address. Rows stay enabled while connecting so the focused
+ * one keeps focus; the view model ignores repeat presses. Renders nothing
+ * until a server is confirmed.
+ */
+@Composable
+private fun FoundServerRows(
+    found: List<DiscoveredServer>,
+    state: TvServerSetupUiState,
+    onPick: (DiscoveredServer) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (found.isEmpty()) return
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        found.take(2).forEach { server ->
+            // Keyed by server, so focus stays on the same server when the list re-sorts.
+            key(server.serverId) {
+                TvMarqueeButton(
+                    onClick = { onPick(server) },
+                    kind = TvMarqueeButtonKind.Glass,
+                    isLoading = state.isLoading && state.connectingServerUrl == server.url,
+                    modifier = Modifier.semantics { contentDescription = "${server.name}, ${server.detail}" },
+                ) { ink ->
+                    Text(server.name, color = ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        server.detail,
+                        color = ink.copy(alpha = 0.62f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
 }
 
 private val ServerUrlShortcuts = listOf("https://", "http://", ".com")

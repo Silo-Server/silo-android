@@ -30,6 +30,7 @@ import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.AuthApi
 import org.siloserver.silo.network.apiv2.ApiV2ProbeResult
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
@@ -233,6 +234,43 @@ class ServerSetupPersistenceTest {
 
         assertEquals(listOf("https://secure.silo"), registry.switchedTo)
         assertEquals(ServerContract.V2, registry.activeEntry.value?.contract)
+    }
+
+    @Test
+    fun foundHttpServerAsksForConsentBeforeSavingLikeATypedAddress() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = viewModelFor(tokenManager)
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertEquals("http://192.168.1.5:8090", viewModel.uiState.value.pendingCleartextUrl)
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
+        assertNull(viewModel.uiState.value.navigateTo)
+
+        viewModel.confirmCleartextConnection()
+        awaitSettled(viewModel)
+
+        assertEquals(listOf("http://192.168.1.5:8090"), tokenManager.serverUrlWrites)
+        assertEquals(ServerSetupDestination.Login(signupEnabled = true), viewModel.uiState.value.navigateTo)
+    }
+
+    @Test
+    fun foundServerFailureStaysOffTheAddressField() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = ServerSetupViewModel(
+            authRepository = repositoryFor(tokenManager),
+            cleartextConsentStore = FakeCleartextConsentStore(),
+            getSetupStatus = { ApiResult.NetworkError(IOException("gone")) },
+            getSignupStatus = { ApiResult.Success(SignupStatusResponse(enabled = true)) },
+        )
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertNull(viewModel.uiState.value.error)
+        assertEquals("Could not reach a Silo server at that address.", viewModel.uiState.value.discoveryError)
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
     }
 
     private fun viewModelFor(

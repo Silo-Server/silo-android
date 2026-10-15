@@ -2,6 +2,7 @@ package org.siloserver.silo.android.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
@@ -28,6 +29,10 @@ data class ServerSetupUiState(
     /** Destination after successful server validation. */
     val navigateTo: ServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
+    /** The found server being connected to, so its row can show progress while [isLoading]. */
+    val connectingServerUrl: String? = null,
+    /** A failure connecting to a found server; shown beside the found list, not on the address field. */
+    val discoveryError: String? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block connecting to LAN/IP servers. */
@@ -99,7 +104,7 @@ class ServerSetupViewModel(
     }
 
     fun onServerUrlChanged(url: String) {
-        _uiState.update { it.copy(serverUrl = url, error = null) }
+        _uiState.update { it.copy(serverUrl = url, error = null, discoveryError = null) }
     }
 
     fun onSchemeSelected(scheme: ServerSetupScheme) {
@@ -135,10 +140,30 @@ class ServerSetupViewModel(
             return
         }
 
+        connect(candidates, found = null)
+    }
+
+    /**
+     * Connects to a server found on the local network exactly as if its
+     * address had been typed: the same probes, and the same plain-HTTP
+     * consent before anything is saved.
+     */
+    fun connectTo(server: DiscoveredServer) {
+        if (_uiState.value.isLoading) return
+        connect(listOf(server.url), found = server)
+    }
+
+    private fun connect(candidates: List<String>, found: DiscoveredServer?) {
         viewModelScope.launch {
             pendingCleartextConnection = null
             _uiState.update {
-                it.copy(isLoading = true, error = null, pendingCleartextUrl = null)
+                it.copy(
+                    isLoading = true,
+                    error = null,
+                    discoveryError = null,
+                    pendingCleartextUrl = null,
+                    connectingServerUrl = found?.url,
+                )
             }
 
             var lastError: String? = null
@@ -147,9 +172,7 @@ class ServerSetupViewModel(
                 // server is reported as update-server, never retried on v1.
                 val probe = probeContract(candidate)
                 if (probe is ApiV2ProbeResult.UpdateServer) {
-                    _uiState.update {
-                        it.copy(isLoading = false, error = ServerContract.UPDATE_REQUIRED_MESSAGE)
-                    }
+                    fail(ServerContract.UPDATE_REQUIRED_MESSAGE, found)
                     return@launch
                 }
                 // Anything else the probe said (V2, a transient failure, or a
@@ -189,14 +212,22 @@ class ServerSetupViewModel(
                 return@launch
             }
 
-            _uiState.update {
-                it.copy(
-                    isLoading = false,
-                    error = lastError
-                        ?.takeIf { message -> message.isNotBlank() }
-                        ?.let { message -> "Could not connect: $message" }
-                        ?: "Could not reach a Silo server at that address.",
-                )
+            fail(
+                lastError
+                    ?.takeIf { message -> message.isNotBlank() }
+                    ?.let { message -> "Could not connect: $message" }
+                    ?: "Could not reach a Silo server at that address.",
+                found,
+            )
+        }
+    }
+
+    private fun fail(message: String, found: DiscoveredServer?) {
+        _uiState.update {
+            if (found == null) {
+                it.copy(isLoading = false, error = message)
+            } else {
+                it.copy(isLoading = false, discoveryError = message)
             }
         }
     }

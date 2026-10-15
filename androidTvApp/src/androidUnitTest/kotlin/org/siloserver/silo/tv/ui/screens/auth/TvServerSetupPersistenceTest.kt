@@ -27,6 +27,7 @@ import org.siloserver.silo.network.SiloJson
 import org.siloserver.silo.network.TokenManager
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.api.AuthApi
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.model.auth.SetupStatusResponse
 import org.siloserver.silo.model.auth.SignupStatusResponse
@@ -200,6 +201,25 @@ class TvServerSetupPersistenceTest {
         assertEquals(emptyList(), tokenManager.serverUrlWrites)
         assertNull(viewModel.uiState.value.navigateTo)
         assertEquals("Could not safely identify this HTTP server.", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun foundHttpServerAsksForConsentBeforeSavingLikeATypedAddress() = runTest(dispatcher) {
+        val tokenManager = RecordingTokenManager()
+        val viewModel = track(viewModelFor(tokenManager))
+
+        viewModel.connectTo(DiscoveredServer(serverId = "srv", name = "Den", url = "http://192.168.1.5:8090"))
+        awaitSettled(viewModel)
+
+        assertEquals("http://192.168.1.5:8090", viewModel.uiState.value.pendingCleartextUrl)
+        assertEquals(emptyList(), tokenManager.serverUrlWrites)
+        assertNull(viewModel.uiState.value.navigateTo)
+
+        viewModel.confirmCleartextConnection()
+        awaitSettled(viewModel)
+
+        assertEquals(listOf("http://192.168.1.5:8090"), tokenManager.serverUrlWrites)
+        assertEquals(TvServerSetupDestination.Login(signupEnabled = true), viewModel.uiState.value.navigateTo)
     }
 
     private fun viewModelFor(

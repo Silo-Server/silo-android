@@ -2,6 +2,7 @@ package org.siloserver.silo.tv.ui.screens.auth
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import org.siloserver.silo.common.discovery.DiscoveredServer
 import org.siloserver.silo.common.network.CleartextConsentStore
 import org.siloserver.silo.common.network.cleartextOrigin
 import org.siloserver.silo.model.auth.SetupStatusResponse
@@ -25,6 +26,10 @@ data class TvServerSetupUiState(
     /** Destination after a successful server probe; consumed by the screen. */
     val navigateTo: TvServerSetupDestination? = null,
     val pendingCleartextUrl: String? = null,
+    /** The found server being connected to, so its row can show progress while [isLoading]. */
+    val connectingServerUrl: String? = null,
+    /** A failure connecting to a found server; shown beside the found list, not on the address field. */
+    val discoveryError: String? = null,
 ) {
     /** True when the entered address will connect over unencrypted HTTP.
      *  Informational only — does not block LAN/IP connections. */
@@ -58,6 +63,8 @@ internal sealed class TvServerSetupProbeResult {
     data class Failure(
         val message: String,
         val serverUrl: String? = null,
+        /** Nothing answered, as opposed to a server that answered with an error. */
+        val unreachable: Boolean = false,
     ) : TvServerSetupProbeResult()
 }
 
@@ -112,7 +119,7 @@ class TvServerSetupViewModel(
     }
 
     fun onServerUrlChanged(url: String) {
-        _uiState.update { it.copy(serverUrl = url, error = null) }
+        _uiState.update { it.copy(serverUrl = url, error = null, discoveryError = null) }
     }
 
     fun onConnectClick() {
@@ -122,12 +129,31 @@ class TvServerSetupViewModel(
             _uiState.update { it.copy(error = "Enter a server URL") }
             return
         }
-        val candidates = serverSetupUrlProbeCandidates(raw)
+        connect(serverSetupUrlProbeCandidates(raw), found = null)
+    }
 
+    /**
+     * Connects to a server found on the local network exactly as if its
+     * address had been typed: the same probes, and the same plain-HTTP
+     * consent before anything is saved. Repeat presses while connecting are
+     * ignored, since the row stays focusable.
+     */
+    fun connectTo(server: DiscoveredServer) {
+        if (_uiState.value.isLoading) return
+        connect(listOf(server.url), found = server)
+    }
+
+    private fun connect(candidates: List<String>, found: DiscoveredServer?) {
         viewModelScope.launch {
             pendingCleartextConnection = null
             _uiState.update {
-                it.copy(isLoading = true, error = null, pendingCleartextUrl = null)
+                it.copy(
+                    isLoading = true,
+                    error = null,
+                    discoveryError = null,
+                    pendingCleartextUrl = null,
+                    connectingServerUrl = found?.url,
+                )
             }
 
             when (val result = probeTvServerSetupCandidates(
@@ -141,11 +167,23 @@ class TvServerSetupViewModel(
                 }
                 is TvServerSetupProbeResult.Failure -> {
                     _uiState.update {
-                        it.copy(
-                            serverUrl = result.serverUrl ?: it.serverUrl,
-                            isLoading = false,
-                            error = result.message,
-                        )
+                        if (found == null) {
+                            it.copy(
+                                serverUrl = result.serverUrl ?: it.serverUrl,
+                                isLoading = false,
+                                error = result.message,
+                            )
+                        } else {
+                            it.copy(
+                                isLoading = false,
+                                // "Check the URL" means nothing for an address nobody typed.
+                                discoveryError = if (result.unreachable) {
+                                    "Could not reach a Silo server at that address."
+                                } else {
+                                    result.message
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -290,7 +328,8 @@ internal suspend fun probeTvServerSetupCandidates(
             is ApiResult.NetworkError -> {
                 if (!isLastCandidate) continue
                 return TvServerSetupProbeResult.Failure(
-                    message = "Network error. Check the URL and try again.",
+                    message = NETWORK_ERROR_MESSAGE,
+                    unreachable = true,
                 )
             }
         }
@@ -307,9 +346,12 @@ internal suspend fun probeTvServerSetupCandidates(
     }
 
     return TvServerSetupProbeResult.Failure(
-        message = "Network error. Check the URL and try again.",
+        message = NETWORK_ERROR_MESSAGE,
+        unreachable = true,
     )
 }
+
+private const val NETWORK_ERROR_MESSAGE = "Network error. Check the URL and try again."
 
 /**
  * True when the entered address will connect over unencrypted HTTP: the probe

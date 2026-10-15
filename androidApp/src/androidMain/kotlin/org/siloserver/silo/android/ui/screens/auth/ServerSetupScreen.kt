@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.android.ui.components.marquee.MarqueeButton
@@ -67,6 +69,8 @@ import org.siloserver.silo.android.ui.components.marquee.MarqueeStage
 import org.siloserver.silo.android.ui.components.marquee.MarqueeTextField
 import org.siloserver.silo.android.ui.components.marquee.MarqueeWordmark
 import org.siloserver.silo.android.ui.components.marquee.marqueePressHaptic
+import org.siloserver.silo.common.discovery.DiscoveredServer
+import org.siloserver.silo.common.discovery.LanServerDiscovery
 import org.siloserver.silo.common.ui.marquee.MarqueeColors
 import org.siloserver.silo.common.ui.marquee.MarqueeScene
 import org.siloserver.silo.common.ui.marquee.MarqueeScrimStyle
@@ -96,8 +100,15 @@ fun ServerSetupScreen(
     viewModel: ServerSetupViewModel = koinViewModel(),
     serverRegistry: ServerRegistry = koinInject(),
     brandingCache: ServerBrandingCache = koinInject(),
+    discovery: LanServerDiscovery = koinInject(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Browse only while the screen is on: it stops in the background.
+    LifecycleStartEffect(discovery) {
+        discovery.start()
+        onStopOrDispose { discovery.stop() }
+    }
+    val found by discovery.servers.collectAsState()
     val entries by serverRegistry.entries.collectAsState()
     val recents = remember(entries) { entries.sortedByDescending { it.lastUsedAtEpochMs }.take(3) }
     var fieldFocused by remember { mutableStateOf(false) }
@@ -129,6 +140,7 @@ fun ServerSetupScreen(
         }
     }
     MarqueeErrorHaptic(state.error)
+    MarqueeErrorHaptic(state.discoveryError)
 
     var showAdvanced by rememberSaveable { mutableStateOf(false) }
 
@@ -190,8 +202,31 @@ fun ServerSetupScreen(
             modifier = Modifier.padding(top = 12.dp),
         )
 
-        // Recents are for picking before typing; while the address field has
-        // the keyboard, the field and Continue need the room.
+        // Found servers and recents are for picking before typing; while the
+        // address field has the keyboard, the field and Continue need the room.
+        // The found list renders nothing until something is confirmed, so a
+        // network without servers (or without multicast) looks unchanged.
+        if (!fieldFocused) {
+            if (found.isNotEmpty()) {
+                Text(
+                    "Found nearby",
+                    color = MarqueeColors.InkSecondary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 22.dp, start = 2.dp, bottom = 10.dp),
+                )
+                FoundServers(
+                    servers = found.take(4),
+                    connectingUrl = state.connectingServerUrl.takeIf { state.isLoading },
+                    enabled = !state.isLoading,
+                    onPick = viewModel::connectTo,
+                )
+            }
+            state.discoveryError?.let { error ->
+                MarqueeErrorText(error, Modifier.padding(top = 10.dp, start = 4.dp))
+            }
+        }
+
         if (recents.isNotEmpty() && !fieldFocused) {
             Text(
                 "Recent",
@@ -351,6 +386,48 @@ private fun RecentServers(
     enabled: Boolean,
     onPick: (ServerEntry) -> Unit,
 ) {
+    ServerPickerList {
+        servers.forEachIndexed { index, server ->
+            if (index > 0) MarqueeSeparator()
+            ServerPickerRow(
+                name = server.displayName,
+                markName = server.fetchedName,
+                markUrl = brandingCache.branding(server.url)?.markUrl,
+                detail = ServerBranding.hostLabel(server.url),
+                enabled = enabled,
+                onClick = { onPick(server) },
+            )
+        }
+    }
+}
+
+/** Servers [LanServerDiscovery] found, in the Recent list's rows. */
+@Composable
+private fun FoundServers(
+    servers: List<DiscoveredServer>,
+    connectingUrl: String?,
+    enabled: Boolean,
+    onPick: (DiscoveredServer) -> Unit,
+) {
+    ServerPickerList {
+        servers.forEachIndexed { index, server ->
+            if (index > 0) MarqueeSeparator()
+            ServerPickerRow(
+                name = server.name,
+                markName = server.name,
+                markUrl = null,
+                detail = server.detail,
+                enabled = enabled,
+                isConnecting = server.url == connectingUrl,
+                onClick = { onPick(server) },
+            )
+        }
+    }
+}
+
+/** The rounded card of server rows used by Recent and the found servers. */
+@Composable
+private fun ServerPickerList(content: @Composable () -> Unit) {
     val shape = RoundedCornerShape(16.dp)
     Column(
         Modifier
@@ -359,43 +436,56 @@ private fun RecentServers(
             .background(Color.White.copy(alpha = 0.07f))
             .border(1.dp, Color.White.copy(alpha = 0.12f), shape),
     ) {
-        servers.forEachIndexed { index, server ->
-            if (index > 0) MarqueeSeparator()
-            val host = ServerBranding.hostLabel(server.url)
-            val interaction = remember { MutableInteractionSource() }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null) { onPick(server) }
-                    .marqueePressHaptic(interaction)
-                    .semantics { contentDescription = "${server.displayName}, $host" }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                MarqueeServerMark(
-                    name = server.fetchedName,
-                    imageUrl = brandingCache.branding(server.url)?.markUrl,
-                    size = 40.dp,
-                )
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(
-                        server.displayName,
-                        color = MarqueeColors.Ink,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(host, color = MarqueeColors.InkTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MarqueeColors.InkTertiary,
-                    modifier = Modifier.size(18.dp),
-                )
+        content()
+    }
+}
+
+/** One server in a [ServerPickerList]: its mark, name and address. */
+@Composable
+private fun ServerPickerRow(
+    name: String,
+    markName: String?,
+    markUrl: String?,
+    detail: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    isConnecting: Boolean = false,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, role = Role.Button, interactionSource = interaction, indication = null, onClick = onClick)
+            .marqueePressHaptic(interaction)
+            .semantics {
+                contentDescription = "$name, $detail"
+                if (isConnecting) stateDescription = "Connecting"
             }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MarqueeServerMark(name = markName, imageUrl = markUrl, size = 40.dp)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                name,
+                color = MarqueeColors.Ink,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(detail, color = MarqueeColors.InkTertiary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (isConnecting) {
+            CircularProgressIndicator(color = MarqueeColors.Ink, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+        } else {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MarqueeColors.InkTertiary,
+                modifier = Modifier.size(18.dp),
+            )
         }
     }
 }

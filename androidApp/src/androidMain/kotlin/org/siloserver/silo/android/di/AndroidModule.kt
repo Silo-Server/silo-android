@@ -17,6 +17,9 @@ import org.siloserver.silo.common.cast.SiloCastNsdBrowser
 import org.siloserver.silo.common.pairing.PairingDeviceId
 import org.siloserver.silo.common.pairing.CompanionDeviceLoginApprover
 import org.siloserver.silo.common.pairing.CompanionPairingCoordinator
+import org.siloserver.silo.common.discovery.LanServerDiscovery
+import org.siloserver.silo.common.discovery.LanServerProbe
+import org.siloserver.silo.common.discovery.NsdLanServiceBrowser
 import org.siloserver.silo.common.pairing.CompanionPairingNsdBrowser
 import org.siloserver.silo.common.pairing.CompanionPairingServerStore
 import org.siloserver.silo.common.pairing.CompanionPairingTransportFactory
@@ -231,6 +234,16 @@ val androidModule = module {
     }
     single { SiloCastNsdBrowser(androidContext()) }
     single { CompanionPairingNsdBrowser(androidContext()) }
+    // Silo servers on the local network, for server setup. One per screen visit.
+    single { LanServerProbe() }
+    factory {
+        val probe = get<LanServerProbe>()
+        LanServerDiscovery(
+            browser = NsdLanServiceBrowser(androidContext()),
+            probeIdentity = probe::identity,
+            fetchName = probe::name,
+        )
+    }
     single<CompanionPairingServerStore> { RegistryCompanionPairingServerStore(get(), get()) }
     single<CompanionDeviceLoginApprover> {
         val authRepository = get<org.siloserver.silo.repository.AuthRepository>()
