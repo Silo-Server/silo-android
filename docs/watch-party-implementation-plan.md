@@ -442,7 +442,8 @@ reach in place reloads through the budget instead. Each seek aims ahead by the
 shortfall the previous one left once it landed (at most 3 s). A seek that
 leaves more than 1 s doubles the wait before the next, from 1 s up to 16 s;
 one that converges resets it. A member that wants to play but is still
-buffering reloads a gap above 5 s through the budget, like a playing member.
+buffering reloads a gap above 5 s through the budget, like a playing member,
+and runs a held reload once the budget allows, without waiting to play.
 
 "In place" means a native seek within the mounted item: ahead of the playhead
 only as far as it is buffered, and behind it anywhere in a seekable item, so a

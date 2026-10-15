@@ -913,13 +913,14 @@ class RoomPlaybackBinding(
 
     /**
      * Run a held Play correction once the reload budget allows, aimed at where
-     * the room is now. The Play command's own rule decides again:
+     * the room is now, for a member that is playing or wants to (still
+     * buffering toward play). The Play command's own rule decides again:
      * drift that shrank within reach of a nudge is left to the drift loop,
      * and a target that became buffered is a plain seek.
      */
     private fun retryDeferredReload(now: Long, snapshot: RoomSnapshot, obs: RoomPlayerObservation) {
         if (!reloadDeferred) return
-        if (obs.seekPending || !obs.isPlaying || obs.suspended) return
+        if (obs.seekPending || obs.suspended || !(obs.isPlaying || obs.playWhenReady)) return
         val ref = reference
         val serverNow = serverNowMs() ?: return
         if (ref == null || !ref.playing) {

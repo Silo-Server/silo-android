@@ -774,6 +774,14 @@ class RoomPlaybackBindingTest {
         command(room, "r2", TransportAction.Play, 110.0, RoomPlaybackState.Playing)
         advanceTimeBy(100)
         assertEquals(1, player.seeks.size, "an unpaced rebuild while buffering toward play")
+
+        // Still buffering when the superseded reload's ten-second backoff
+        // ends: the held correction runs, aimed at where the room is now.
+        advanceTimeBy(9_000)
+        assertEquals(1, player.seeks.size)
+        advanceTimeBy(1_500)
+        assertEquals(2, player.seeks.size, "the held correction never ran while buffering")
+        assertTrue(player.seeks.last() >= 119.0, "aimed at ${player.seeks.last()}")
     }
 
     @Test
