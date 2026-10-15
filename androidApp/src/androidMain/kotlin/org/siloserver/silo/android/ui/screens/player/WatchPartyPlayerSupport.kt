@@ -30,6 +30,16 @@ internal class MobileRoomPlayerPort(private val viewModel: PlayerViewModel) : Ro
     override fun isBuffered(sourceSeconds: Double): Boolean = viewModel.isRoomPositionBuffered(sourceSeconds)
 }
 
+/**
+ * The room seek a relative skip of [deltaSeconds] asks for from
+ * [originSeconds], kept at or after 0 and, when [durationSeconds] is known,
+ * at or before the end.
+ */
+internal fun roomSkipTarget(originSeconds: Double, deltaSeconds: Double, durationSeconds: Double): Double {
+    val target = (originSeconds + deltaSeconds).coerceAtLeast(0.0)
+    return if (durationSeconds > 0.0) target.coerceAtMost(durationSeconds) else target
+}
+
 internal fun roomPlayerState(playbackState: Int): RoomPlayerState = when (playbackState) {
     Player.STATE_BUFFERING -> RoomPlayerState.Buffering
     Player.STATE_READY -> RoomPlayerState.Ready

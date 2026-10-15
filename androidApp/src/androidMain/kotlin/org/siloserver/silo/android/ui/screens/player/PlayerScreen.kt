@@ -1937,6 +1937,7 @@ fun PlayerScreen(
                         roomSuspended = roomSuspended,
                         roomStatus = roomStatus,
                         roomPendingSeekSeconds = roomPendingSeekSeconds,
+                        roomSeekOrigin = { live -> watchParty?.relativeSeekOrigin(live) ?: live },
                         orientationLockSupported =
                             orientationLockSupported && activeTabletopPaneLayout == null,
                         alwaysShowControls = activeTabletopPaneLayout != null,

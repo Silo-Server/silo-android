@@ -13,6 +13,18 @@ class WatchPartyPlayerSupportTest {
     private val offsetTimeline = PlaybackTimeline(timelineOffsetSeconds = 600.0)
 
     @Test
+    fun roomSkipsBuildOnTheOriginAndStayInsideTheMedia() {
+        // Two quick skips: the second starts from the first one's pending target.
+        val first = roomSkipTarget(originSeconds = 100.0, deltaSeconds = 10.0, durationSeconds = 3_000.0)
+        assertEquals(110.0, first)
+        assertEquals(120.0, roomSkipTarget(originSeconds = first, deltaSeconds = 10.0, durationSeconds = 3_000.0))
+        // Never past the end or before the start; an unknown duration does not cap.
+        assertEquals(3_000.0, roomSkipTarget(originSeconds = 2_995.0, deltaSeconds = 10.0, durationSeconds = 3_000.0))
+        assertEquals(0.0, roomSkipTarget(originSeconds = 4.0, deltaSeconds = -10.0, durationSeconds = 3_000.0))
+        assertEquals(4_010.0, roomSkipTarget(originSeconds = 4_000.0, deltaSeconds = 10.0, durationSeconds = 0.0))
+    }
+
+    @Test
     fun bufferedTargetMapsSourceTimeOntoThePlayerTimeline() {
         // Player at 10 s (source 610), buffered to player 40 s (source 640).
         assertTrue(roomTargetBufferedLocally(offsetTimeline, 630.0, playerPositionSeconds = 10.0, bufferedPlayerSeconds = 40.0))

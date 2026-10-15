@@ -93,6 +93,10 @@ fun PlayerGestureHandler(
     val currentSeekEnabled by rememberUpdatedState(seekEnabled)
     val currentSkipBackSeconds by rememberUpdatedState(skipBackSeconds)
     val currentSkipForwardSeconds by rememberUpdatedState(skipForwardSeconds)
+    // The tap detector is created once (keyed on Unit): read the latest skip
+    // actions, or a double-tap runs one built from an old composition.
+    val currentOnSkipForward by rememberUpdatedState(onSkipForward)
+    val currentOnSkipBackward by rememberUpdatedState(onSkipBackward)
     // Same reason as seekEnabled: the vertical-drag coroutine is created once
     // (keyed on Unit), so read the latest dismiss gate through rememberUpdatedState
     // — otherwise a value captured while buffering would stick after playback.
@@ -193,11 +197,11 @@ fun PlayerGestureHandler(
                             // no lying flash — behave like the center band.
                             !currentSeekEnabled -> onToggleControls()
                             offset.x < skipZoneWidth -> {
-                                onSkipBackward()
+                                currentOnSkipBackward()
                                 skipFlash = SkipFlash(forward = false, seconds = currentSkipBackSeconds, nonce = ++skipFlashNonce)
                             }
                             offset.x > size.width - skipZoneWidth -> {
-                                onSkipForward()
+                                currentOnSkipForward()
                                 skipFlash = SkipFlash(forward = true, seconds = currentSkipForwardSeconds, nonce = ++skipFlashNonce)
                             }
                             else -> onToggleControls()

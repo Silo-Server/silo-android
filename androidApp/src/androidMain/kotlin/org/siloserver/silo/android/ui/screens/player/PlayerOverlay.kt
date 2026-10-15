@@ -92,6 +92,9 @@ fun PlayerOverlay(
     // This member's unanswered room seek target: skips start from it and the
     // timeline holds on it until the room's command lands.
     roomPendingSeekSeconds: Double? = null,
+    // Where a room skip starts from the live position, read at press time:
+    // the pending room seek target, else the position itself.
+    roomSeekOrigin: (Double) -> Double = { it },
     isFastForwardHoldActive: Boolean = false,
     orientationLockSupported: Boolean = true,
     alwaysShowControls: Boolean = false,
@@ -169,8 +172,10 @@ fun PlayerOverlay(
         if (seekEnabled) {
             val step = viewModel.seekIntervals.value.forwardSeconds.toDouble()
             if (inRoom) {
-                val forward = shownPosition + step
-                gatedSeek(if (state.duration > 0.0) forward.coerceAtMost(state.duration) else forward)
+                // Read at press time: a second skip before the composition
+                // shows the first one's target must still build on it.
+                val live = viewModel.uiState.value
+                gatedSeek(roomSkipTarget(roomSeekOrigin(live.position), step, live.duration))
             } else {
                 viewModel.onSkipBy(step)
             }
@@ -179,8 +184,12 @@ fun PlayerOverlay(
     val gatedSkipBackward: () -> Unit = {
         if (seekEnabled) {
             val step = viewModel.seekIntervals.value.backSeconds.toDouble()
-            if (inRoom) gatedSeek((shownPosition - step).coerceAtLeast(0.0))
-            else viewModel.onSkipBy(-step)
+            if (inRoom) {
+                val live = viewModel.uiState.value
+                gatedSeek(roomSkipTarget(roomSeekOrigin(live.position), -step, live.duration))
+            } else {
+                viewModel.onSkipBy(-step)
+            }
         }
     }
     val gatedPlayPause: () -> Unit = { if (playPauseEnabled) onPlayPause() }
