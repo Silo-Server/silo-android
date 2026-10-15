@@ -224,7 +224,7 @@ class TvEditProfileViewModel(
             _uiState.update { it.copy(error = "PIN must be 4 digits") }
             return
         }
-        if (current.access.needsLibrary) {
+        if (current.access.needsLibrary(loadedAccess, current.libraries.ids)) {
             _uiState.update { it.copy(error = CHOOSE_A_LIBRARY_MESSAGE) }
             return
         }

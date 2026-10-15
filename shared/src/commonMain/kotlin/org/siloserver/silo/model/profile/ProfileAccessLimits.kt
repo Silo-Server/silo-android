@@ -39,12 +39,23 @@ data class ProfileAccessLimits(
 
     /**
      * A restricted child with no library chosen; the forms ask for one, as iOS
-     * and the web do. Only a child is checked: the forms show these controls
-     * for a child alone, and a non-child profile set elsewhere to allow no
-     * library keeps that setting through an unrelated edit.
+     * and the web do. Only [assignable] libraries count when that list is known,
+     * since a save drops the rest (see [UpdateProfileRequest.withAccessLimits]).
+     *
+     * On an edit, pass the [loaded] limits: an allowlist the user didn't change
+     * is left as stored, so it isn't checked. Only a child is checked at all:
+     * the forms show these controls for a child alone, and a non-child profile
+     * set elsewhere to allow no library keeps that setting through an
+     * unrelated edit.
      */
-    val needsLibrary: Boolean
-        get() = isChild && libraryRestrictionsEnabled && allowedLibraryIds.isEmpty()
+    fun needsLibrary(loaded: ProfileAccessLimits? = null, assignable: Set<Int>? = null): Boolean =
+        isChild && libraryRestrictionsEnabled &&
+            (loaded == null || allowlistChangedFrom(loaded)) &&
+            allowedLibraryIds.none { assignable == null || it in assignable }
+
+    internal fun allowlistChangedFrom(loaded: ProfileAccessLimits): Boolean =
+        libraryRestrictionsEnabled != loaded.libraryRestrictionsEnabled ||
+            (libraryRestrictionsEnabled && allowedLibraryIds != loaded.allowedLibraryIds)
 
     companion object {
         fun of(profile: Profile): ProfileAccessLimits = ProfileAccessLimits(
@@ -86,8 +97,7 @@ fun UpdateProfileRequest.withAccessLimits(
 ): UpdateProfileRequest {
     val ratingChanged = limits.maxContentRating != loaded.maxContentRating
     val restrictionsChanged = limits.libraryRestrictionsEnabled != loaded.libraryRestrictionsEnabled
-    val allowlistChanged = restrictionsChanged ||
-        (limits.libraryRestrictionsEnabled && limits.allowedLibraryIds != loaded.allowedLibraryIds)
+    val allowlistChanged = limits.allowlistChangedFrom(loaded)
     val allowlist = if (limits.libraryRestrictionsEnabled) {
         limits.allowedLibraryIds.filter { assignable == null || it in assignable }.sorted()
     } else {

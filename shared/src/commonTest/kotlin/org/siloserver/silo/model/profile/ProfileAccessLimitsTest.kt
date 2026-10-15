@@ -64,9 +64,18 @@ class ProfileAccessLimitsTest {
     }
 
     @Test fun onlyARestrictedChildNeedsALibrary() {
-        assertTrue(ProfileAccessLimits().withChild(true).needsLibrary)
+        assertTrue(ProfileAccessLimits().withChild(true).needsLibrary())
         // A non-child profile set elsewhere to allow no library isn't blocked
         // from an unrelated edit by controls the form hides.
-        assertFalse(ProfileAccessLimits(libraryRestrictionsEnabled = true).needsLibrary)
+        assertFalse(ProfileAccessLimits(libraryRestrictionsEnabled = true).needsLibrary())
+    }
+
+    @Test fun aChangedAllowlistNeedsALibraryTheSaveKeeps() {
+        val stored = restrictedChild.copy(allowedLibraryIds = setOf(1, 99))
+        // Unchecking the only library the account still has leaves a deleted
+        // one, which the save would drop: the form must still ask.
+        assertTrue(stored.withLibrary(1, false).needsLibrary(stored, assignable = setOf(1)))
+        // Left as stored, the same allowlist isn't sent, so it isn't checked.
+        assertFalse(stored.copy(allowedLibraryIds = setOf(99)).needsLibrary(stored.copy(allowedLibraryIds = setOf(99)), setOf(1)))
     }
 }

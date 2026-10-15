@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,11 +127,14 @@ internal fun TvChildAccessControls(
     )
 
     // Try Again disappears once a retry succeeds; hand its focus to the list.
-    var retryFocused by remember { mutableStateOf(false) }
+    // Removing the focused button also reports a focus loss, so only a loss
+    // while the failure is still on screen (the user moved away) cancels it.
+    var retryHandoff by remember { mutableStateOf(false) }
+    val currentLibraries by rememberUpdatedState(libraries)
     val loaded = libraries is AssignableLibraries.Loaded
     LaunchedEffect(loaded) {
-        if (loaded && retryFocused) {
-            retryFocused = false
+        if (loaded && retryHandoff) {
+            retryHandoff = false
             (focus.rows.firstOrNull() ?: focus.restrict)
                 .claimFocusOrReport(target = "profile_libraries", action = "retry_loaded")
         }
@@ -157,7 +161,13 @@ internal fun TvChildAccessControls(
                 focusRequester = focus.rows.first(),
                 upFocusRequester = focus.restrict,
                 downFocusRequester = focus.submit,
-                modifier = Modifier.onFocusChanged { retryFocused = it.isFocused },
+                modifier = Modifier.onFocusChanged { state ->
+                    if (state.isFocused) {
+                        retryHandoff = true
+                    } else if (currentLibraries is AssignableLibraries.Failed) {
+                        retryHandoff = false
+                    }
+                },
                 onClick = { if (!libraries.retrying) callbacks.onRetryLibraries() },
             )
         }
