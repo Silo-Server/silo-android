@@ -11,6 +11,7 @@ import org.siloserver.silo.model.playback.PlaybackStartRequestV3
 import org.siloserver.silo.model.playback.PlaybackReplanRequestV3
 import org.siloserver.silo.model.playback.PlaybackRouteEventV3
 import org.siloserver.silo.network.*
+import org.siloserver.silo.network.localroute.stayOnSavedAddress
 
 const val SEQUENCED_PROGRESS_FEATURE = "sequenced_progress_v1"
 
@@ -102,11 +103,19 @@ class PlaybackV2Api(private val client: HttpClient, private val gate: ApiV2Gate)
         client.get("/api/v2/account/me") { authScope(scope); requireSiloAuth() }
     }
 
-    /** HTTP 201 `PlaybackDecision`, returned raw so the journal can retain the exact decision. */
-    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
+    /**
+     * HTTP 201 `PlaybackDecision`, returned raw so the journal can retain the exact decision.
+     *
+     * The server picks the session's local or remote bitrate cap from the
+     * network this request arrives through, so it takes the local route only
+     * when [allowsLocalRoute]: when the stream's media may take it too.
+     */
+    suspend fun start(scope: AuthScopeSnapshot, body: JsonObject, allowsLocalRoute: Boolean = false,
+        captureHeaders: (Map<String, String>) -> Unit = {}): ApiResult<JsonObject> =
         exchange<JsonObject, JsonObject>(HttpStatusCode.Created, {
             client.post("/api/v2/playback/start") {
                 authScope(scope); requireSiloAuth(); singleAttempt()
+                if (!allowsLocalRoute) stayOnSavedAddress()
                 contentType(ContentType.Application.Json); setBody(body)
             }.also { captureHeaders(it.identityHeaders()) }
         }) { it }

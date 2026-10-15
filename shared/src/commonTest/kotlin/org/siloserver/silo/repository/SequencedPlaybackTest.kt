@@ -12,6 +12,7 @@ import kotlinx.serialization.json.*
 import org.siloserver.silo.model.playback.*
 import org.siloserver.silo.network.*
 import org.siloserver.silo.network.apiv2.*
+import org.siloserver.silo.network.localroute.LocalRouteHeaders
 import kotlin.test.*
 
 class SequencedPlaybackTest {
@@ -80,6 +81,29 @@ class SequencedPlaybackTest {
             identity.scope = identity.scope.copy(profileId = "new-profile", identityGeneration = 2)
             assertFalse(replacementHeaders.isCurrent())
             assertEquals("profile", headers["X-Profile-Id"])
+        } finally { c.close() }
+    }
+
+    @Test fun admissionTakesTheLocalRouteOnlyWhenItsMediaMay() = runTest {
+        val marks = mutableListOf<String?>()
+        val c = client { req -> when (req.url.encodedPath) {
+            "/api/v2/playback/capabilities" -> reply(caps())
+            "/api/v2/account/me" -> reply(account)
+            "/api/v2/playback/start" -> {
+                marks += req.headers[LocalRouteHeaders.SAVED_ADDRESS]
+                reply(decision("session-${marks.size}"), HttpStatusCode.Created)
+            }
+            "/api/v2/playback/session-1" -> reply("""{"outcome":"stopped","stop_id":"$stopId"}""")
+            else -> error("Unexpected request ${req.url}")
+        } }
+        try {
+            val identity = Identity()
+            val runtime = SequencedPlayback(PlaybackV2Api(c, ApiV2Gate.Unrestricted), identity, identity, Store()) { stopId }
+            // The server caps a session for the network its admission arrived through.
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(runtime.start(request()))
+            assertIs<ApiResult.Success<PlaybackDecisionResponseV3>>(
+                runtime.start(request().copy(playbackAttemptId = "attempt-2"), allowsLocalRoute = true))
+            assertEquals(listOf("1", null), marks)
         } finally { c.close() }
     }
 

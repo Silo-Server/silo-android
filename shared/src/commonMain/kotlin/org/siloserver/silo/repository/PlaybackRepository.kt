@@ -18,8 +18,11 @@ class PlaybackRepository(private val sequenced: SequencedPlayback) {
         catch (e: Exception) { ApiResult.Error(0, "playback_storage", "Playback storage is unavailable.") }
 
     /** Starts a protocol-v3 playback attempt using the supplied client and route evidence. */
-    suspend fun startPlaybackV3(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> =
-        guarded { sequenced.start(request, expectedMetadataOwner) }
+    suspend fun startPlaybackV3(
+        request: PlaybackStartRequestV3,
+        expectedMetadataOwner: AuthScopeSnapshot? = null,
+        allowsLocalRoute: Boolean = false,
+    ): ApiResult<PlaybackDecisionResponseV3> = guarded { sequenced.start(request, expectedMetadataOwner, allowsLocalRoute) }
 
     /** Requests a replacement protocol-v3 plan for an active [sessionId]. */
     suspend fun replanPlaybackV3(

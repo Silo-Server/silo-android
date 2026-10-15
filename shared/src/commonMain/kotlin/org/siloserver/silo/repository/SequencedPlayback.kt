@@ -182,8 +182,12 @@ class SequencedPlayback(
         catch (_: IdentityChanged) { failure("identity_changed", "The metadata viewer changed before playback admission.") }
     }
 
-    /** Admission requires v2; unavailable capabilities never select a legacy transport. */
-    suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null): ApiResult<PlaybackDecisionResponseV3> = mutex.withLock {
+    /**
+     * Admission requires v2; unavailable capabilities never select a legacy transport.
+     * [allowsLocalRoute]: see [PlaybackV2Api.start].
+     */
+    suspend fun start(request: PlaybackStartRequestV3, expectedMetadataOwner: AuthScopeSnapshot? = null,
+        allowsLocalRoute: Boolean = false): ApiResult<PlaybackDecisionResponseV3> = mutex.withLock {
         withStableIdentity(null, expectedMetadataOwner, request.profileId) { guard ->
             val current = tokens.snapshotCurrentScope()
                 ?: return@withStableIdentity failure("identity_unavailable", "Playback needs an authenticated profile.")
@@ -234,15 +238,15 @@ class SequencedPlayback(
             if (load().any { it.attemptId == entry.attemptId }) scopes[entry.attemptId] = current
             // A saved attempt is uncertainty, even if its owner changes before send.
             guard()
-            sendStart(entry, current, expectedMetadataOwner = expectedMetadataOwner)
+            sendStart(entry, current, expectedMetadataOwner, allowsLocalRoute)
         }
     }
 
     private suspend fun sendStart(entry: PlaybackJournalEntry, captured: AuthScopeSnapshot,
-        expectedMetadataOwner: AuthScopeSnapshot?): ApiResult<PlaybackDecisionResponseV3> =
+        expectedMetadataOwner: AuthScopeSnapshot?, allowsLocalRoute: Boolean): ApiResult<PlaybackDecisionResponseV3> =
         withStableIdentity(entry, expectedMetadataOwner, entry.profileId) { guard ->
             var sentHeaders: Map<String, String> = emptyMap()
-            when (val result = api.start(captured, entry.start) { sentHeaders = it }) {
+            when (val result = api.start(captured, entry.start, allowsLocalRoute) { sentHeaders = it }) {
                 is ApiResult.Success -> {
                     // Persist the session before decoding a renderer plan, so invalid plans can still be stopped.
                     val session = result.data["session_id"]?.jsonPrimitive?.contentOrNull

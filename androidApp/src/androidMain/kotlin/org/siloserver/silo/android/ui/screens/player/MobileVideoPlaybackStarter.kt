@@ -57,6 +57,7 @@ internal data class MobileVideoSessionAllocation(
     val maxBitrateKbps: Int? = null,
     val expectedMetadataOwner: org.siloserver.silo.network.AuthScopeSnapshot? = null,
     val allowAlternateVersions: Boolean? = null,
+    val allowsLocalRoute: Boolean = false,
 )
 
 internal fun interface MobileVideoSessionAllocator {
@@ -304,6 +305,8 @@ internal class MobileVideoPlaybackStarter(
 
             if (!ownerCurrent() || profileId != expectedMetadataOwner.profileId || serverUrl != expectedMetadataOwner.serverUrl)
                 return failure(request.contentId, "identity_changed: The metadata viewer changed before playback admission.", diagnosticsCode = PlaybackDiagnosticsCode.START_REQUEST)
+            // Watch Party playback stays on the saved address, admission included.
+            val allowsLocalRoute = request.roomId.isNullOrBlank() && room == null
             val v3Start = when (
                 val r = sessionAllocator?.allocate(
                     MobileVideoSessionAllocation(
@@ -318,6 +321,7 @@ internal class MobileVideoPlaybackStarter(
                         maxBitrateKbps = maxBitrateKbps,
                         expectedMetadataOwner = expectedMetadataOwner,
                         allowAlternateVersions = allowAlternateVersions,
+                        allowsLocalRoute = allowsLocalRoute,
                     ),
                 ) ?: playbackSessionManager.startVideoSessionV3(
                     fileId = version.fileId,
@@ -331,6 +335,7 @@ internal class MobileVideoPlaybackStarter(
                     maxBitrateKbps = maxBitrateKbps,
                     expectedMetadataOwner = expectedMetadataOwner,
                     allowAlternateVersions = allowAlternateVersions,
+                    allowsLocalRoute = allowsLocalRoute,
                 )
             ) {
                 is ApiResult.Success -> r.data

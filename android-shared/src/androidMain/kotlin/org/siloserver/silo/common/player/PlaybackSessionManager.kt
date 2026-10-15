@@ -299,6 +299,12 @@ open class PlaybackSessionManager(
         expectedMetadataOwner: AuthScopeSnapshot? = null,
         /** False pins [fileId] through every replan (Watch Party). Null keeps the server default. */
         allowAlternateVersions: Boolean? = null,
+        /**
+         * Whether admission may take the local route: pass what the stream's
+         * media gets, since the server caps the session for the network it
+         * was admitted through. Replans keep that cap.
+         */
+        allowsLocalRoute: Boolean = false,
     ): ApiResult<VideoSessionStartV3> = contentStartMutex.withLock {
         if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
             return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
@@ -381,7 +387,7 @@ open class PlaybackSessionManager(
             )
             if (!tokenManager.acceptsMetadataOwner(expectedMetadataOwner, profileId))
                 return@withLock ApiResult.Error(0, "identity_changed", "The metadata viewer changed before playback admission.")
-            return@withLock when (val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner)) {
+            return@withLock when (val result = playbackRepository.startPlaybackV3(request, expectedMetadataOwner, allowsLocalRoute)) {
                 is ApiResult.Success -> when (val validated = result.data.validateForMedia3()) {
                     is PlaybackV3Validation.Playable -> {
                         leasedSessionId = validated.sessionId

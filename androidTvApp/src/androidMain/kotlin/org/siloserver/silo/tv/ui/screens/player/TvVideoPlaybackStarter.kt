@@ -249,6 +249,8 @@ class TvVideoPlaybackStarter(
                     deferPublication = true,
                     expectedMetadataOwner = expectedMetadataOwner,
                     allowAlternateVersions = allowAlternateVersions,
+                    // Watch Party playback stays on the saved address, admission included.
+                    allowsLocalRoute = request.roomId.isNullOrBlank() && room == null,
                 )
             ) {
                 is ApiResult.Success -> r.data
