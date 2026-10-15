@@ -1214,7 +1214,7 @@ class WatchTogetherRepository(
                         val waitedMs = (wallClockMs() - received).coerceAtLeast(0L)
                         val generation = clockEstimator.estimate.generation
                         val accepted = clockEstimator.record(sent, serverReceived, serverSent, received, monotonicNowMs() - waitedMs)
-                        // The samples were wiped: warm up again.
+                        // The samples were dropped (a clock step): warm up again.
                         if (clockEstimator.estimate.generation != generation) connectionClockSamples = 0
                         if (accepted) connectionClockSamples++
                         _clock.value = clockEstimator.estimate
@@ -1237,8 +1237,11 @@ class WatchTogetherRepository(
      * the server-time estimate so no timing work uses a stale offset.
      */
     override suspend fun checkClockContinuity(): RoomClockEstimate = stateMutex.withLock {
-        // A wall-clock step shifts the stored samples; they stay usable.
-        if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) _clock.value = clockEstimator.estimate
+        if (clockEstimator.checkContinuity(wallClockMs(), monotonicNowMs())) {
+            // The ping loop sees this at its next step and warms up again.
+            connectionClockSamples = 0
+            _clock.value = clockEstimator.estimate
+        }
         _clock.value
     }
 

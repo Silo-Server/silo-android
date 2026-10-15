@@ -352,10 +352,14 @@ ready. Room playback must not.
   attaches. Stamp pong receipt at transport ingress and fence samples by
   connection epoch. Count a round trip of -2 ms to 0 as 0 (millisecond
   truncation) and reject the rest below 0 or above 5 s. Use the offset of the
-  lowest round trip among the last 8 samples, the newest on a tie. A step in
-  the wall clock relative to the monotonic clock shifts the stored offsets by
-  the step instead of discarding them, so the estimate never goes missing. Ping on open, every 2 s until the connection has
-  supplied 4 samples, then every 15 s. Samples survive a reconnect to the same
+  lowest round trip among the last 8 samples, the newest on a tie. A new
+  sample whose offset differs from the best one's by more than half their
+  round trips plus 50 ms means a clock stepped: drop the older samples, as
+  web and Apple do. A step in the wall clock relative to the monotonic clock
+  drops every sample too; Android's monotonic clock stops in deep sleep, so
+  the step's size is not a usable correction. Either drop restarts the ping
+  warm-up. Ping on open, every 2 s until the connection has supplied 4
+  samples, then every 15 s. Samples survive a reconnect to the same
   room and clear on leave.
 - Schedule with the server-clock estimate and a monotonic delay (at most the
   5 s lead). A late Play advances its target by the elapsed server time. With

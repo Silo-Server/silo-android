@@ -197,16 +197,16 @@ class WatchPartyWireTest {
         val clock = RoomClockEstimator()
         // Offset 500, round trip 10: the best sample.
         assertTrue(clock.record(0, 505, 505, 10, monotonicNowMs = 10))
-        // Seven samples at offset 200, round trip 100.
+        // Seven samples at offset 450, round trip 100: within both error bounds.
         for (i in 1..7) {
             val t = i * 1_000L
-            assertTrue(clock.record(t, t + 250, t + 250, t + 100, monotonicNowMs = t + 100))
+            assertTrue(clock.record(t, t + 500, t + 500, t + 100, monotonicNowMs = t + 100))
         }
         assertEquals(500L, clock.estimate.offsetMs)
 
         // An eighth newer sample pushes the best one out.
-        assertTrue(clock.record(8_000, 8_250, 8_250, 8_100, monotonicNowMs = 8_100))
-        assertEquals(200L, clock.estimate.offsetMs)
+        assertTrue(clock.record(8_000, 8_500, 8_500, 8_100, monotonicNowMs = 8_100))
+        assertEquals(450L, clock.estimate.offsetMs)
         assertEquals(100L, clock.estimate.rttMs)
     }
 
@@ -220,23 +220,40 @@ class WatchPartyWireTest {
     }
 
     @Test
-    fun `a wall clock step shifts the samples instead of discarding them`() {
+    fun `a wall clock jump discards earlier samples`() {
         val clock = RoomClockEstimator()
-        // Offset 200 ms, measured with the wall clock equal to the monotonic clock.
         clock.record(0, 220, 220, 40, monotonicNowMs = 40)
+        val generation = clock.estimate.generation
+
+        // 59 s of wall time with no monotonic time: deep sleep stops
+        // Android's monotonic clock, so the step's size is not the offset's.
+        assertTrue(clock.checkContinuity(wallNowMs = 60_000, monotonicNowMs = 1_000))
+
+        assertNull(clock.estimate.offsetMs)
+        assertTrue(clock.estimate.generation > generation)
+        assertFalse(clock.checkContinuity(wallNowMs = 61_000, monotonicNowMs = 2_000))
+    }
+
+    @Test
+    fun `a sample that cannot agree with the best one drops the older samples`() {
+        val clock = RoomClockEstimator()
+        // Offset 200, round trip 40, then offset 260, round trip 100: 60 ms
+        // apart is within (40 + 100) / 2 + 50 = 120 ms, so both are kept.
+        assertTrue(clock.record(0, 220, 220, 40, monotonicNowMs = 40))
+        assertTrue(clock.record(1_000, 1_310, 1_310, 1_100, monotonicNowMs = 1_100))
         assertEquals(200L, clock.estimate.offsetMs)
         val generation = clock.estimate.generation
 
-        // The wall clock steps forward by 59 s; the server clock did not move.
-        assertTrue(clock.checkContinuity(wallNowMs = 60_000, monotonicNowMs = 1_000))
+        // Offset 5_000, round trip 100: a clock stepped. Only the new sample remains.
+        assertTrue(clock.record(2_000, 7_050, 7_050, 2_100, monotonicNowMs = 2_100))
+        assertEquals(5_000L, clock.estimate.offsetMs)
+        assertEquals(100L, clock.estimate.rttMs)
+        assertTrue(clock.estimate.generation > generation)
 
-        assertEquals(200L - 59_000L, clock.estimate.offsetMs)
-        assertEquals(generation, clock.estimate.generation)
-        assertFalse(clock.checkContinuity(wallNowMs = 61_000, monotonicNowMs = 2_000))
-
-        // Samples recorded after the step agree with the shifted ones.
-        assertTrue(clock.record(61_000, 2_220, 2_220, 61_040, monotonicNowMs = 2_040))
-        assertEquals(200L - 59_000L, clock.estimate.offsetMs)
+        // Later agreeing samples are kept alongside it.
+        assertTrue(clock.record(3_000, 8_020, 8_020, 3_040, monotonicNowMs = 3_040))
+        assertEquals(5_000L, clock.estimate.offsetMs)
+        assertEquals(40L, clock.estimate.rttMs)
     }
 
     @Test
@@ -247,9 +264,9 @@ class WatchPartyWireTest {
         assertEquals(0L, clock.estimate.rttMs)
         // -3 ms is not truncation.
         assertFalse(clock.record(2_000, 2_201, 2_201, 1_997, monotonicNowMs = 1_997))
-        // A later 0 ms sample with another offset wins the tie.
-        assertTrue(clock.record(3_000, 3_300, 3_300, 3_000, monotonicNowMs = 3_000))
-        assertEquals(300L, clock.estimate.offsetMs)
+        // A later 0 ms sample with another offset (within the step tolerance) wins the tie.
+        assertTrue(clock.record(3_000, 3_240, 3_240, 3_000, monotonicNowMs = 3_000))
+        assertEquals(240L, clock.estimate.offsetMs)
     }
 
     // ---- proof, time, ranking -----------------------------------------------------

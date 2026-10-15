@@ -1490,8 +1490,22 @@ class WatchTogetherRepositoryTest {
         job.cancel()
     }
 
+    /** Answer with a pong at [offsetMs] and an 80 ms round trip, received now. */
+    private fun TestScope.answerPing(realtime: FakeRealtime, offsetMs: Long = 200L) {
+        val wall = 1_000_000L + testScheduler.currentTime
+        realtime.events.tryEmit(
+            RoomRealtimeEvent.Pong(
+                clientSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall - 81),
+                serverReceivedAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + offsetMs - 41),
+                serverSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + offsetMs - 40),
+                clientReceivedMs = wall,
+            ),
+        )
+        runCurrent()
+    }
+
     @Test
-    fun `a clock step keeps the estimate shifted by the step and the warm-up done`() = runTest {
+    fun `a clock step drops the estimate and restarts the warm-up`() = runTest {
         var monotonicJumpMs = 0L
         val realtime = FakeRealtime()
         val r = repo(
@@ -1506,30 +1520,46 @@ class WatchTogetherRepositoryTest {
         runCurrent()
         advanceTimeBy(4_001)
         repeat(4) {
-            val wall = 1_000_000L + testScheduler.currentTime
-            realtime.events.tryEmit(
-                RoomRealtimeEvent.Pong(
-                    clientSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall - 81),
-                    serverReceivedAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 159),
-                    serverSentAt = org.siloserver.silo.util.formatEpochMillisRfc3339(wall + 160),
-                    clientReceivedMs = wall,
-                ),
-            )
-            runCurrent()
+            answerPing(realtime)
+            advanceTimeBy(2_000)
+        }
+        assertEquals(6, realtime.pings)
+        assertEquals(200L, r.clock.value.offsetMs)
+        val generation = r.clock.value.generation
+
+        // The wall clock moved a minute against the monotonic clock. Android's
+        // monotonic clock stops in deep sleep, so the step says nothing
+        // reliable about the offset: the samples go.
+        monotonicJumpMs = 60_000L
+        r.checkClockContinuity()
+        assertNull(r.clock.value.offsetMs)
+        assertTrue(r.clock.value.generation > generation)
+        advanceTimeBy(2_100)
+        assertEquals(7, realtime.pings, "the warm-up did not restart")
+        job.cancel()
+    }
+
+    @Test
+    fun `a pong that disagrees with the estimate replaces it and restarts the warm-up`() = runTest {
+        val realtime = FakeRealtime()
+        val r = repo(realtime = realtime, timing = testTiming.copy(backgroundWork = true))
+        r.createRoom(create())
+        val job = launch { r.connect("room-1") }
+        runCurrent()
+        realtime.events.emit(RoomRealtimeEvent.Opened)
+        runCurrent()
+        advanceTimeBy(4_001)
+        repeat(4) {
+            answerPing(realtime)
             advanceTimeBy(2_000)
         }
         assertEquals(6, realtime.pings)
 
-        assertEquals(200L, r.clock.value.offsetMs)
-
-        // The wall clock falls a minute behind the monotonic clock: the
-        // server is now a minute further ahead of it. Nothing is discarded,
-        // so a command arriving now still has a clock.
-        monotonicJumpMs = 60_000L
-        r.checkClockContinuity()
-        assertEquals(60_200L, r.clock.value.offsetMs)
+        // The server clock stepped by 5 s: far outside both samples' error bounds.
+        answerPing(realtime, offsetMs = 5_200L)
+        assertEquals(5_200L, r.clock.value.offsetMs)
         advanceTimeBy(2_100)
-        assertEquals(6, realtime.pings, "warm-up restarted although the samples were kept")
+        assertEquals(7, realtime.pings, "the warm-up did not restart")
         job.cancel()
     }
 
