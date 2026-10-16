@@ -4,52 +4,62 @@ import org.siloserver.silo.model.personal.UserLibrary
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.network.errorMessage
 
-/** The ceiling a profile gets when Child is turned on, as on iOS and the web. */
+/** The ceiling Child fills in when no rating was chosen, as on iOS and the web. */
 const val DEFAULT_CHILD_CONTENT_RATING = "PG"
 
 /**
- * The limits the profile forms set on a child profile: its content-rating
- * ceiling and the libraries it may see. Follows the iOS create form and the
- * web editor: turning Child on defaults the ceiling to PG and restricts
- * libraries, leaving the manager to pick at least one; turning it off clears
- * all of them.
+ * The limits the profile forms set on any profile: its content-rating ceiling
+ * and the libraries it may see. Follows the web editor, where these don't
+ * depend on Child: Child only fills in kid-safe defaults (PG, and libraries
+ * restricted so the manager picks at least one) for the limits the user hasn't
+ * set yet in this form, and turning it off clears them.
+ *
+ * [ratingTouched] and [librariesTouched] are form state, never sent: they
+ * record a choice made in this form, which Child then leaves alone.
  */
 data class ProfileAccessLimits(
     val isChild: Boolean = false,
     val maxContentRating: String? = null,
     val libraryRestrictionsEnabled: Boolean = false,
     val allowedLibraryIds: Set<Int> = emptySet(),
+    val ratingTouched: Boolean = false,
+    val librariesTouched: Boolean = false,
 ) {
-    fun withChild(child: Boolean): ProfileAccessLimits =
-        if (child) {
-            copy(
-                isChild = true,
-                maxContentRating = maxContentRating ?: DEFAULT_CHILD_CONTENT_RATING,
-                libraryRestrictionsEnabled = true,
-            )
-        } else {
-            ProfileAccessLimits()
-        }
+    fun withChild(child: Boolean): ProfileAccessLimits {
+        if (!child) return ProfileAccessLimits()
+        val fillRating = !ratingTouched && maxContentRating == null
+        val fillLibraries = !librariesTouched && !libraryRestrictionsEnabled
+        return copy(
+            isChild = true,
+            maxContentRating = if (fillRating) DEFAULT_CHILD_CONTENT_RATING else maxContentRating,
+            libraryRestrictionsEnabled = libraryRestrictionsEnabled || fillLibraries,
+            allowedLibraryIds = if (fillLibraries) emptySet() else allowedLibraryIds,
+        )
+    }
+
+    /** A null [rating] is no ceiling. */
+    fun withContentRating(rating: String?): ProfileAccessLimits =
+        copy(maxContentRating = rating, ratingTouched = true)
 
     fun withLibraryRestrictions(enabled: Boolean): ProfileAccessLimits =
-        copy(libraryRestrictionsEnabled = enabled)
+        copy(libraryRestrictionsEnabled = enabled, librariesTouched = true)
 
     fun withLibrary(id: Int, allowed: Boolean): ProfileAccessLimits =
-        copy(allowedLibraryIds = if (allowed) allowedLibraryIds + id else allowedLibraryIds - id)
+        copy(
+            allowedLibraryIds = if (allowed) allowedLibraryIds + id else allowedLibraryIds - id,
+            librariesTouched = true,
+        )
 
     /**
-     * A restricted child with no library chosen; the forms ask for one, as iOS
+     * Restricted to libraries with none chosen; the forms ask for one, as iOS
      * and the web do. Only [assignable] libraries count when that list is known,
      * since a save drops the rest (see [UpdateProfileRequest.withAccessLimits]).
      *
      * On an edit, pass the [loaded] limits: an allowlist the user didn't change
-     * is left as stored, so it isn't checked. Only a child is checked at all:
-     * the forms show these controls for a child alone, and a non-child profile
-     * set elsewhere to allow no library keeps that setting through an
-     * unrelated edit.
+     * is left as stored, so it isn't checked.
      */
     fun needsLibrary(loaded: ProfileAccessLimits? = null, assignable: Set<Int>? = null): Boolean =
-        isChild && libraryRestrictionsEnabled &&
+        libraryRestrictionsEnabled &&
             (loaded == null || allowlistChangedFrom(loaded)) &&
             allowedLibraryIds.none { assignable == null || it in assignable }
 
@@ -68,14 +78,14 @@ data class ProfileAccessLimits(
 }
 
 /** Form error shown while [ProfileAccessLimits.needsLibrary] holds. */
-const val CHOOSE_A_LIBRARY_MESSAGE = "Select at least one library for this child profile."
+const val CHOOSE_A_LIBRARY_MESSAGE = "Select at least one library for this profile."
 
 /** A new profile's access members. Create omits what it doesn't set. */
 fun CreateProfileRequest.withAccessLimits(limits: ProfileAccessLimits): CreateProfileRequest {
-    val restricted = limits.isChild && limits.libraryRestrictionsEnabled
+    val restricted = limits.libraryRestrictionsEnabled
     return copy(
         isChild = true.takeIf { limits.isChild },
-        maxContentRating = limits.maxContentRating.takeIf { limits.isChild },
+        maxContentRating = limits.maxContentRating,
         libraryRestrictionsEnabled = true.takeIf { restricted },
         allowedLibraryIds = limits.allowedLibraryIds.sorted().takeIf { restricted },
     )
@@ -119,20 +129,25 @@ fun UpdateProfileRequest.withAccessLimits(
 fun contentRatingOptions(known: List<String>, current: String?): List<String> =
     if (current == null || current in known) known else listOf(current) + known
 
+/** The rating ladder's last step: no ceiling (a null rating). */
+const val ANY_RATING_LABEL = "Any"
+
 /**
  * Whether [rating] sits under [ceiling] on the [known] scale, so the rating
- * ladder shows it as allowed too. A rating off the scale (another client's
- * value) is never under or over anything.
+ * ladder shows it as allowed too. With no ceiling every known rating is
+ * allowed. A rating off the scale (another client's value) is never under or
+ * over anything.
  */
 fun ratingIsUnderCeiling(rating: String, ceiling: String?, known: List<String>): Boolean {
     val position = known.indexOf(rating)
-    return position >= 0 && position < known.indexOf(ceiling)
+    if (position < 0) return false
+    return ceiling == null || position < known.indexOf(ceiling)
 }
 
 /** The line under the rating ladder that says what the ceiling allows. */
 fun ratingCeilingCaption(ceiling: String?): String =
     if (ceiling == null) {
-        "No rating limit. Choose one to cap what this profile can watch."
+        "Can watch titles of any rating."
     } else {
         "Can watch titles rated $ceiling and below."
     }

@@ -156,21 +156,19 @@ fun CreateProfileScreen(
                 label = "Child Profile",
                 checked = state.access.isChild,
                 onCheckedChange = viewModel::onChildToggled,
-                subtitle = "Restricts content to kid-friendly ratings",
+                subtitle = "Fills in kid-friendly limits below",
             )
 
-            // -- Rating ceiling + library allowlist (child profiles) --
-            if (state.access.isChild) {
-                Spacer(modifier = Modifier.height(16.dp))
-                ChildAccessControls(
-                    access = state.access,
-                    libraries = state.libraries,
-                    onContentRatingSelected = viewModel::onContentRatingSelected,
-                    onLibraryRestrictionsToggled = viewModel::onLibraryRestrictionsToggled,
-                    onLibraryToggled = viewModel::onLibraryToggled,
-                    onRetryLibraries = viewModel::loadLibraries,
-                )
-            }
+            // -- Rating ceiling + library allowlist (every profile, as on the web) --
+            Spacer(modifier = Modifier.height(16.dp))
+            ProfileAccessControls(
+                access = state.access,
+                libraries = state.libraries,
+                onContentRatingSelected = viewModel::onContentRatingSelected,
+                onLibraryRestrictionsToggled = viewModel::onLibraryRestrictionsToggled,
+                onLibraryToggled = viewModel::onLibraryToggled,
+                onRetryLibraries = viewModel::loadLibraries,
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 

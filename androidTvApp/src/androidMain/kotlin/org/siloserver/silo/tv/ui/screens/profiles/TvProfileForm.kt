@@ -135,7 +135,7 @@ data class TvProfileFormCallbacks(
     val onAvatarPresetSelected: (TvProfileAvatarPresets.Preset) -> Unit,
     val onAvatarShuffle: () -> Unit,
     val onChildToggled: (Boolean) -> Unit,
-    val onContentRatingSelected: (String) -> Unit,
+    val onContentRatingSelected: (String?) -> Unit,
     val onLibraryRestrictionsToggled: (Boolean) -> Unit,
     val onLibraryToggled: (Int, Boolean) -> Unit,
     val onRetryLibraries: () -> Unit,
@@ -166,7 +166,7 @@ fun TvProfileForm(
     val childFocusRequester = remember { FocusRequester() }
     val submitFocusRequester = remember { FocusRequester() }
     val access = state.access
-    val accessFocus = rememberTvChildAccessFocus(
+    val accessFocus = rememberTvProfileAccessFocus(
         access = access,
         libraries = state.libraries,
         childFocusRequester = childFocusRequester,
@@ -395,25 +395,23 @@ fun TvProfileForm(
 
                         TvSwitchRow(
                             title = "Child Profile",
-                            subtitle = "Restricts content to kid-friendly ratings",
+                            subtitle = "Fills in kid-friendly limits below",
                             isOn = access.isChild,
                             onToggle = { callbacks.onChildToggled(!access.isChild) },
                             modifier = Modifier
                                 .focusRequester(childFocusRequester)
                                 .focusProperties {
                                     up = pinFocusRequester
-                                    down = accessFocus.afterChild
+                                    down = accessFocus.rating
                                 },
                         )
 
-                        if (access.isChild) {
-                            TvChildAccessControls(
-                                access = access,
-                                libraries = state.libraries,
-                                focus = accessFocus,
-                                callbacks = callbacks,
-                            )
-                        }
+                        TvProfileAccessControls(
+                            access = access,
+                            libraries = state.libraries,
+                            focus = accessFocus,
+                            callbacks = callbacks,
+                        )
 
                         val errorText = state.error
                             ?: "Enter a profile name".takeIf { blankNameError }

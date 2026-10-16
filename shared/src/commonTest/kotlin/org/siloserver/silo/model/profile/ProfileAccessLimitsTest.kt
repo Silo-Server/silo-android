@@ -23,12 +23,21 @@ class ProfileAccessLimitsTest {
     private fun patch(limits: ProfileAccessLimits, loaded: ProfileAccessLimits, assignable: Set<Int>? = null): JsonObject =
         UpdateProfileRequest(name = "Kid").withAccessLimits(limits, loaded, assignable).toProfileUpdate().toJsonObject()
 
-    @Test fun createSendsAChildsLimitsAndOmitsThemOtherwise() {
+    @Test fun createSendsTheLimitsSetAndOmitsTheRest() {
         val child = CreateProfileRequest("Kid").withAccessLimits(ProfileAccessLimits().withChild(true).withLibrary(3, true).withLibrary(1, true))
         assertEquals(true, child.isChild)
         assertEquals(DEFAULT_CHILD_CONTENT_RATING, child.maxContentRating)
         assertEquals(true, child.libraryRestrictionsEnabled)
         assertEquals(listOf(1, 3), child.allowedLibraryIds)
+
+        // Not tied to Child, as on the web.
+        val adult = CreateProfileRequest("Teen").withAccessLimits(
+            ProfileAccessLimits().withContentRating("R").withLibraryRestrictions(true).withLibrary(2, true),
+        )
+        assertNull(adult.isChild)
+        assertEquals("R", adult.maxContentRating)
+        assertEquals(true, adult.libraryRestrictionsEnabled)
+        assertEquals(listOf(2), adult.allowedLibraryIds)
 
         val unrestricted = CreateProfileRequest("Kid").withAccessLimits(restrictedChild.withLibraryRestrictions(false))
         assertNull(unrestricted.libraryRestrictionsEnabled)
@@ -63,11 +72,24 @@ class ProfileAccessLimitsTest {
         assertEquals(JsonArray(emptyList()), body["allowed_library_ids"])
     }
 
-    @Test fun onlyARestrictedChildNeedsALibrary() {
+    @Test fun childFillsInOnlyTheLimitsNotYetChosen() {
+        val filled = ProfileAccessLimits().withChild(true)
+        assertEquals(DEFAULT_CHILD_CONTENT_RATING, filled.maxContentRating)
+        assertTrue(filled.libraryRestrictionsEnabled)
+
+        val chosen = ProfileAccessLimits().withContentRating(null).withLibraryRestrictions(false).withChild(true)
+        assertTrue(chosen.isChild)
+        assertNull(chosen.maxContentRating)
+        assertFalse(chosen.libraryRestrictionsEnabled)
+    }
+
+    @Test fun anyRestrictedProfileNeedsALibrary() {
         assertTrue(ProfileAccessLimits().withChild(true).needsLibrary())
-        // A non-child profile set elsewhere to allow no library isn't blocked
-        // from an unrelated edit by controls the form hides.
-        assertFalse(ProfileAccessLimits(libraryRestrictionsEnabled = true).needsLibrary())
+        assertTrue(ProfileAccessLimits().withLibraryRestrictions(true).needsLibrary())
+        // A profile stored elsewhere with no library allowed isn't blocked
+        // from an unrelated edit.
+        val stored = ProfileAccessLimits(libraryRestrictionsEnabled = true)
+        assertFalse(stored.needsLibrary(stored))
     }
 
     @Test fun aChangedAllowlistNeedsALibraryTheSaveKeeps() {

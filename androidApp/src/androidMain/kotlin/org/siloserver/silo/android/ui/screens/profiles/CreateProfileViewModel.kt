@@ -81,8 +81,8 @@ class CreateProfileViewModel(
         _uiState.update { it.copy(access = it.access.withChild(checked), error = null) }
     }
 
-    fun onContentRatingSelected(rating: String) {
-        _uiState.update { it.copy(access = it.access.copy(maxContentRating = rating)) }
+    fun onContentRatingSelected(rating: String?) {
+        _uiState.update { it.copy(access = it.access.withContentRating(rating)) }
     }
 
     fun onLibraryRestrictionsToggled(enabled: Boolean) {

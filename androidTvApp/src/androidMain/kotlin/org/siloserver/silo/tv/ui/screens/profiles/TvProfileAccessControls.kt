@@ -48,6 +48,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.model.profile.ANY_RATING_LABEL
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -60,21 +61,19 @@ import org.siloserver.silo.tv.ui.shell.TvLibraryTabType
 import org.siloserver.silo.tv.ui.util.visibleOnTv
 
 /**
- * D-pad links through the child limits, which sit between the Child switch
+ * D-pad links through the profile limits, which sit between the Child switch
  * and the submit pill. [restrict] is the selected "All libraries / Choose
  * libraries" option. [rows] holds one requester per library row, or one for
  * Try Again after a failed load.
  */
-internal class TvChildAccessFocus(
+internal class TvProfileAccessFocus(
     val child: FocusRequester,
     val submit: FocusRequester,
     val rating: FocusRequester,
     val restrict: FocusRequester,
     val rows: List<FocusRequester>,
-    private val isChild: Boolean,
 ) {
-    val afterChild: FocusRequester get() = if (isChild) rating else submit
-    val beforeSubmit: FocusRequester get() = if (isChild) rows.lastOrNull() ?: restrict else child
+    val beforeSubmit: FocusRequester get() = rows.lastOrNull() ?: restrict
 }
 
 /** Libraries the TV offers: book libraries stay off TV (AGENTS.md). */
@@ -82,12 +81,12 @@ private fun AssignableLibraries.shownOnTv(): List<UserLibrary> =
     (this as? AssignableLibraries.Loaded)?.libraries?.visibleOnTv().orEmpty()
 
 @Composable
-internal fun rememberTvChildAccessFocus(
+internal fun rememberTvProfileAccessFocus(
     access: ProfileAccessLimits,
     libraries: AssignableLibraries,
     childFocusRequester: FocusRequester,
     submitFocusRequester: FocusRequester,
-): TvChildAccessFocus {
+): TvProfileAccessFocus {
     val rating = remember { FocusRequester() }
     val restrict = remember { FocusRequester() }
     val rowCount = when {
@@ -96,21 +95,21 @@ internal fun rememberTvChildAccessFocus(
         else -> libraries.shownOnTv().size
     }
     val rows = remember(rowCount) { List(rowCount) { FocusRequester() } }
-    return TvChildAccessFocus(childFocusRequester, submitFocusRequester, rating, restrict, rows, access.isChild)
+    return TvProfileAccessFocus(childFocusRequester, submitFocusRequester, rating, restrict, rows)
 }
 
 private val PanelShape = RoundedCornerShape(16.dp)
 
 /**
- * A child profile's limits on TV, in one panel under the Child switch: the
- * rating ceiling as a ladder, then which libraries the profile sees. Matches
- * the phone and the iOS create form.
+ * A profile's limits on TV, in one panel under the Child switch: the rating
+ * ceiling as a ladder, then which libraries the profile sees. Shown for every
+ * profile, as on the phone and the web; Child only fills in kid-safe defaults.
  */
 @Composable
-internal fun TvChildAccessControls(
+internal fun TvProfileAccessControls(
     access: ProfileAccessLimits,
     libraries: AssignableLibraries,
-    focus: TvChildAccessFocus,
+    focus: TvProfileAccessFocus,
     callbacks: TvProfileFormCallbacks,
 ) {
     // Try Again disappears once a retry succeeds; hand its focus to the list.
@@ -216,35 +215,37 @@ internal fun TvChildAccessControls(
 }
 
 /**
- * The ratings as one connected scale. The ceiling is solid, the ratings under
- * it are tinted to show they're allowed too, and the ones above stay empty.
+ * The ratings as one connected scale, ending in Any (no ceiling). The ceiling
+ * is solid, the ratings under it are tinted to show they're allowed too, and
+ * the ones above stay empty.
  */
 @Composable
 private fun TvRatingLadder(
     access: ProfileAccessLimits,
-    focus: TvChildAccessFocus,
-    onSelected: (String) -> Unit,
+    focus: TvProfileAccessFocus,
+    onSelected: (String?) -> Unit,
 ) {
-    val ratings = contentRatingOptions(TV_CONTENT_RATINGS, access.maxContentRating)
-    // Entering the row lands on the stored rating, or the first step when none is set.
-    val entryRating = access.maxContentRating ?: ratings.first()
+    val steps: List<String?> = contentRatingOptions(TV_CONTENT_RATINGS, access.maxContentRating) + null
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        ratings.forEachIndexed { index, rating ->
+        steps.forEachIndexed { index, rating ->
+            // Entering the row lands on the selected step.
+            val isCeiling = rating == access.maxContentRating
             TvSegment(
-                label = rating,
+                label = rating ?: ANY_RATING_LABEL,
                 emphasis = when {
-                    rating == access.maxContentRating -> SegmentEmphasis.Selected
-                    ratingIsUnderCeiling(rating, access.maxContentRating, TV_CONTENT_RATINGS) -> SegmentEmphasis.Included
+                    isCeiling -> SegmentEmphasis.Selected
+                    rating != null && ratingIsUnderCeiling(rating, access.maxContentRating, TV_CONTENT_RATINGS) ->
+                        SegmentEmphasis.Included
                     else -> SegmentEmphasis.None
                 },
-                shape = ladderShape(index, ratings.lastIndex),
+                shape = ladderShape(index, steps.lastIndex),
                 onClick = { onSelected(rating) },
                 modifier = Modifier
                     .weight(1f)
-                    .then(if (rating == entryRating) Modifier.focusRequester(focus.rating) else Modifier)
+                    .then(if (isCeiling) Modifier.focusRequester(focus.rating) else Modifier)
                     .focusProperties {
                         up = focus.child
                         down = focus.restrict
@@ -258,7 +259,7 @@ private fun TvRatingLadder(
 @Composable
 private fun TvLibraryModeSwitch(
     restricted: Boolean,
-    focus: TvChildAccessFocus,
+    focus: TvProfileAccessFocus,
     onRestrictedChange: (Boolean) -> Unit,
 ) {
     Row(

@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import org.siloserver.silo.android.ui.screens.auth.AuthColors
 import org.siloserver.silo.android.ui.screens.libraries.libraryIcon
 import org.siloserver.silo.model.personal.UserLibrary
+import org.siloserver.silo.model.profile.ANY_RATING_LABEL
 import org.siloserver.silo.model.profile.AssignableLibraries
 import org.siloserver.silo.model.profile.ProfileAccessLimits
 import org.siloserver.silo.model.profile.contentRatingOptions
@@ -48,15 +49,15 @@ import org.siloserver.silo.model.profile.ratingIsUnderCeiling
 private val PanelShape = RoundedCornerShape(16.dp)
 
 /**
- * A child profile's limits, in one panel under the Child switch: the rating
- * ceiling as a ladder, then which libraries the profile sees. Follows the
- * iOS create form, which groups the same two limits in one card.
+ * A profile's limits, in one panel under the Child switch: the rating ceiling
+ * as a ladder, then which libraries the profile sees. Shown for every profile,
+ * as in the web editor; Child only fills in kid-safe defaults.
  */
 @Composable
-internal fun ChildAccessControls(
+internal fun ProfileAccessControls(
     access: ProfileAccessLimits,
     libraries: AssignableLibraries,
-    onContentRatingSelected: (String) -> Unit,
+    onContentRatingSelected: (String?) -> Unit,
     onLibraryRestrictionsToggled: (Boolean) -> Unit,
     onLibraryToggled: (Int, Boolean) -> Unit,
     onRetryLibraries: () -> Unit,
@@ -131,15 +132,17 @@ internal fun ChildAccessControls(
 }
 
 /**
- * The ratings as one connected scale. The ceiling is solid, the ratings under
- * it are tinted to show they're allowed too, and the ones above stay empty.
+ * The ratings as one connected scale, ending in Any (no ceiling). The ceiling
+ * is solid, the ratings under it are tinted to show they're allowed too, and
+ * the ones above stay empty.
  */
 @Composable
 private fun RatingLadder(
     ratings: List<String>,
     ceiling: String?,
-    onSelected: (String) -> Unit,
+    onSelected: (String?) -> Unit,
 ) {
+    val steps: List<String?> = ratings + null
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -147,14 +150,14 @@ private fun RatingLadder(
             .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        ratings.forEachIndexed { index, rating ->
+        steps.forEachIndexed { index, rating ->
             val isCeiling = rating == ceiling
-            val isAllowed = ratingIsUnderCeiling(rating, ceiling, CONTENT_RATINGS)
+            val isAllowed = rating != null && ratingIsUnderCeiling(rating, ceiling, CONTENT_RATINGS)
             val shape = RoundedCornerShape(
                 topStart = if (index == 0) 12.dp else 4.dp,
                 bottomStart = if (index == 0) 12.dp else 4.dp,
-                topEnd = if (index == ratings.lastIndex) 12.dp else 4.dp,
-                bottomEnd = if (index == ratings.lastIndex) 12.dp else 4.dp,
+                topEnd = if (index == steps.lastIndex) 12.dp else 4.dp,
+                bottomEnd = if (index == steps.lastIndex) 12.dp else 4.dp,
             )
             Box(
                 modifier = Modifier
@@ -177,8 +180,8 @@ private fun RatingLadder(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = rating,
-                    fontSize = 13.sp,
+                    text = rating ?: ANY_RATING_LABEL,
+                    fontSize = 12.sp,
                     fontWeight = if (isCeiling) FontWeight.SemiBold else FontWeight.Medium,
                     color = when {
                         isCeiling -> AuthColors.Background
