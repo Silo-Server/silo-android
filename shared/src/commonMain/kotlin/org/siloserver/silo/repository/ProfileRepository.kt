@@ -2,6 +2,7 @@ package org.siloserver.silo.repository
 
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
+import org.siloserver.silo.model.profile.ProfilesResponse
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.profile.VerifyPinResponse
 import org.siloserver.silo.network.ApiResult
@@ -39,7 +40,15 @@ open class ProfileRepository(
 ) {
     /** Lists all profiles for the current user. */
     open suspend fun listProfiles(): ApiResult<List<Profile>> =
-        profileApi.listProfiles().map { it.profiles }
+        listHousehold().map { it.profiles }
+
+    /**
+     * The profiles plus the server's household feature flags, for the profile
+     * editors: they show and send `requests_allowed` only when
+     * [ProfilesResponse.requestsAllowedSupported].
+     */
+    open suspend fun listHousehold(): ApiResult<ProfilesResponse> =
+        profileApi.listProfiles()
 
     /**
      * The picker's manage mode: management calls act as the household's primary

@@ -2,6 +2,7 @@ package org.siloserver.silo.model.feature
 
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -82,6 +83,40 @@ class RequestsFeatureStoreTest {
     }
 }
 
+class RequestsFeatureStoreBlockedMidSessionTest {
+
+    @Test
+    fun permissionDeniedFromARequestCallRefreshesTheCapability() = runTest {
+        val api = FakeRequestsApi(
+            ApiResult.Success(available()),
+            ApiResult.Success(available(allowed = false)),
+        )
+        api.discoverResult = ApiResult.Error(403, "permission_denied", "Requests are not allowed for this profile")
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository)
+        store.refresh()
+        assertTrue(store.isEnabled.value)
+
+        repository.discover()
+
+        assertFalse(store.isEnabled.value)
+    }
+
+    @Test
+    fun otherRefusalsDoNotProbe() = runTest {
+        val api = FakeRequestsApi(ApiResult.Success(available()))
+        api.discoverResult = ApiResult.Error(403, "profile_verification_required", "")
+        val repository = RequestsRepository(api)
+        val store = RequestsFeatureStore(repository)
+        store.refresh()
+
+        repository.discover()
+
+        assertTrue(store.isEnabled.value)
+        assertEquals(1, api.statusCalls)
+    }
+}
+
 private fun available(allowed: Boolean = true) =
     RequestsFeatureStatus(requestsEnabled = true, allowed = allowed, state = "available")
 
@@ -89,16 +124,19 @@ private class FakeRequestsApi(
     vararg statusResults: ApiResult<RequestsFeatureStatus>,
 ) : RequestsApi {
     private val statusResults = statusResults.toMutableList()
+    var statusCalls = 0
+    var discoverResult: ApiResult<RequestsDiscoverResponse> = ApiResult.NetworkError(IllegalStateException("not used"))
 
-    override suspend fun status(): ApiResult<RequestsFeatureStatus> =
-        if (statusResults.isNotEmpty()) {
+    override suspend fun status(): ApiResult<RequestsFeatureStatus> {
+        statusCalls++
+        return if (statusResults.isNotEmpty()) {
             statusResults.removeAt(0)
         } else {
             ApiResult.NetworkError(IllegalStateException("no fake status result"))
         }
+    }
 
-    override suspend fun discover(): ApiResult<RequestsDiscoverResponse> =
-        ApiResult.NetworkError(IllegalStateException("not used"))
+    override suspend fun discover(): ApiResult<RequestsDiscoverResponse> = discoverResult
 
     override suspend fun discoverSection(section: String, page: Int): ApiResult<RequestMediaPage> =
         ApiResult.NetworkError(IllegalStateException("not used"))

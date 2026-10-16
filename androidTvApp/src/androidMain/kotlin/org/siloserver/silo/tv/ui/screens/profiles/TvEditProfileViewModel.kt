@@ -6,6 +6,7 @@ import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.UpdateProfileRequest
 import org.siloserver.silo.model.profile.canonicalProfileQualityPreference
 import org.siloserver.silo.model.profile.hasProfileNamed
+import org.siloserver.silo.model.profile.requestsAllowedAfterChildToggle
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Mirrors the phone app's `EditProfileViewModel`. Loads an existing profile by
- * id (via [ProfileRepository.listProfiles], since the repo exposes no
+ * id (via [ProfileRepository.listHousehold], since the repo exposes no
  * getProfile(id)) and saves through [ProfileRepository.updateProfile].
  */
 data class TvEditProfileUiState(
@@ -34,6 +35,11 @@ data class TvEditProfileUiState(
     val pin: String = "",
     val qualityPreference: String? = null,
     val subtitleMode: String? = null,
+    /** Shown and sent only when the server reports `requests_allowed_supported`. */
+    val requestsAllowedSupported: Boolean = false,
+    val requestsAllowed: Boolean = true,
+    /** The manager set the requests switch by hand; Child Profile then leaves it alone. */
+    val requestsTouched: Boolean = false,
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val error: String? = null,
@@ -67,10 +73,11 @@ class TvEditProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
-            when (val result = profileRepository.listProfiles()) {
+            when (val result = profileRepository.listHousehold()) {
                 is ApiResult.Success -> {
-                    existingProfiles = result.data
-                    val profile = result.data.find { it.id == profileId }
+                    existingProfiles = result.data.profiles
+                    val profile = result.data.profiles.find { it.id == profileId }
+                    val requestsAllowedSupported = result.data.requestsAllowedSupported
                     if (profile != null) {
                         loadedHasPin = profile.hasPin
                         val preset = TvProfileAvatarPresets.parseRef(profile.avatar)
@@ -87,6 +94,9 @@ class TvEditProfileViewModel(
                                 pinEnabled = profile.hasPin,
                                 qualityPreference = profile.qualityPreference,
                                 subtitleMode = profile.subtitleMode,
+                                requestsAllowedSupported = requestsAllowedSupported,
+                                requestsAllowed = profile.requestsAllowed,
+                                requestsTouched = false,
                             )
                         }
                     } else {
@@ -158,8 +168,14 @@ class TvEditProfileViewModel(
             it.copy(
                 isChild = checked,
                 maxContentRating = if (checked && it.maxContentRating == null) "PG" else it.maxContentRating,
+                requestsAllowed = requestsAllowedAfterChildToggle(checked, it.requestsAllowed, it.requestsTouched),
+                requestsTouched = checked && it.requestsTouched,
             )
         }
+    }
+
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(requestsAllowed = allowed, requestsTouched = true) }
     }
 
     fun onContentRatingSelected(rating: String) {
@@ -228,6 +244,7 @@ class TvEditProfileViewModel(
                 maxContentRating = current.maxContentRating,
                 qualityPreference = current.qualityPreference,
                 subtitleMode = current.subtitleMode,
+                requestsAllowed = current.requestsAllowed.takeIf { current.requestsAllowedSupported },
             )
 
             when (val result = profileRepository.updateProfile(current.profileId, request)) {

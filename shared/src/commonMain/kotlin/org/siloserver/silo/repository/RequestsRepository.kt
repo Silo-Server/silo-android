@@ -68,21 +68,29 @@ class RequestsRepository(
     /** Each title's latest follow or unfollow this session, for reads that were out when it landed. */
     private val follows = mutableMapOf<RequestDetailCache.Key, RequestFollowEvent>()
 
+    /**
+     * Runs after a discovery, create, or follow call is refused with 403
+     * `permission_denied`: a household manager blocked this profile from
+     * requests while it was in use. [org.siloserver.silo.model.feature.RequestsFeatureStore]
+     * re-reads the capability here, so the Requests entry points go away.
+     */
+    internal var onPermissionDenied: (suspend () -> Unit)? = null
+
     suspend fun status(): ApiResult<RequestsFeatureStatus> = api.status()
 
-    suspend fun discover(): ApiResult<RequestsDiscoverResponse> = api.discover()
+    suspend fun discover(): ApiResult<RequestsDiscoverResponse> = gated { api.discover() }
 
     suspend fun discoverSection(section: String, page: Int = 1): ApiResult<RequestMediaPage> =
-        api.discoverSection(section, page)
+        gated { api.discoverSection(section, page) }
 
     suspend fun search(
         query: String,
         mediaType: String? = null,
         page: Int = 1,
-    ): ApiResult<RequestMediaPage> = api.search(query, mediaType, page)
+    ): ApiResult<RequestMediaPage> = gated { api.search(query, mediaType, page) }
 
     suspend fun detail(mediaType: String, tmdbId: Int): ApiResult<RequestMediaDetail> =
-        read({ fetchDetail(mediaType, tmdbId) }) { cache.store(it) }
+        gated { read({ fetchDetail(mediaType, tmdbId) }) { cache.store(it) } }
 
     suspend fun get(id: String): ApiResult<MediaRequest> = api.get(id)
 
@@ -128,17 +136,17 @@ class RequestsRepository(
     }
 
     suspend fun create(request: CreateMediaRequest): ApiResult<MediaRequest> =
-        mutate({ api.create(request) }, ::publish)
+        gated { mutate({ api.create(request) }, ::publish) }
 
     suspend fun cancel(id: String): ApiResult<MediaRequest> =
         mutate({ api.cancel(id) }, ::publish)
 
     /** Get notified when a title someone else requested becomes available. */
     suspend fun follow(mediaType: String, tmdbId: Int): ApiResult<RequestState> =
-        mutate({ api.follow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = true, state = it) }
+        gated { mutate({ api.follow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = true, state = it) } }
 
     suspend fun unfollow(mediaType: String, tmdbId: Int): ApiResult<Unit> =
-        mutate({ api.unfollow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = false, state = null) }
+        gated { mutate({ api.unfollow(mediaType, tmdbId) }) { publishFollow(mediaType, tmdbId, following = false, state = null) } }
 
     /** Warms the first rows' details so opening them lands on a finished page. */
     fun prefetch(records: List<MediaRequest>) {
@@ -153,6 +161,18 @@ class RequestsRepository(
         _lastFollow.value = null
         follows.clear()
         cache.clear()
+    }
+
+    /**
+     * A call that a profile blocked from requests is refused. Listing and
+     * cancelling its own requests stay allowed, so they are not gated.
+     */
+    private suspend inline fun <T> gated(call: () -> ApiResult<T>): ApiResult<T> {
+        val result = call()
+        if (result is ApiResult.Error && result.code == 403 && result.error == PermissionDenied) {
+            onPermissionDenied?.invoke()
+        }
+        return result
     }
 
     /**
@@ -224,6 +244,8 @@ class RequestsRepository(
     companion object {
         /** How long a complete read of [mine] answers for a page that only needs one title's record. */
         val MineFreshness: Duration = 30.seconds
+
+        private const val PermissionDenied = "permission_denied"
 
         private val SessionChanged = ApiResult.Error(0, "identity_changed", "The acting account or profile changed.")
     }

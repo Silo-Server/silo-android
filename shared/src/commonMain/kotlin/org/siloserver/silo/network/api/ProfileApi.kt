@@ -4,6 +4,7 @@ import io.ktor.client.*
 import io.ktor.client.request.*
 import io.ktor.http.*
 import org.siloserver.silo.model.profile.*
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import org.siloserver.silo.network.*
@@ -70,7 +71,12 @@ class ProfileApi(
 
     suspend fun listProfiles(): ApiResult<ProfilesResponse> =
         exchange<ProfileCollectionV2>("/api/v2/profiles", HttpMethod.Get, HttpStatusCode.OK)
-            .map { ProfilesResponse(it.items.map { profile -> profile.toProfile() }) }
+            .map {
+                ProfilesResponse(
+                    profiles = it.items.map { profile -> profile.toProfile() },
+                    requestsAllowedSupported = it.requestsAllowedSupported,
+                )
+            }
 
     suspend fun createProfile(
         request: CreateProfileRequest,
@@ -191,6 +197,7 @@ internal fun UpdateProfileRequest.toProfileUpdate(): ProfileUpdate = ProfileUpda
         "" -> Patch.Clear
         else -> Patch.Set(MaxPlaybackQuality(maxPlaybackQuality))
     },
+    requestsAllowed = Patch.ofOptional(requestsAllowed),
 )
 
 private fun clearable(value: String?): Patch<String> = when (value) {
@@ -221,9 +228,13 @@ internal fun ProfileV2.toProfile(): Profile = Profile(
     libraryRestrictionsEnabled = libraryRestrictionsEnabled,
     allowedLibraryIds = allowedLibraryIds.mapNotNull { it.toIntOrNull() },
     maxPlaybackQuality = maxPlaybackQuality.wire,
+    requestsAllowed = requestsAllowed,
     createdAt = createdAt,
     updatedAt = updatedAt,
 )
 
 @Serializable
-private data class ProfileCollectionV2(val items: List<ProfileV2>)
+private data class ProfileCollectionV2(
+    val items: List<ProfileV2>,
+    @SerialName("requests_allowed_supported") val requestsAllowedSupported: Boolean = false,
+)

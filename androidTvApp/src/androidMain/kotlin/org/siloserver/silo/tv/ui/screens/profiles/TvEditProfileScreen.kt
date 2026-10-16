@@ -62,6 +62,8 @@ fun TvEditProfileScreen(
             pin = state.pin,
             qualityPreference = state.qualityPreference,
             subtitleMode = state.subtitleMode,
+            requestsAllowedSupported = state.requestsAllowedSupported,
+            requestsAllowed = state.requestsAllowed,
             pinHelper = "New 4-Digit PIN (leave blank to keep)",
             submitLabel = "Save Changes",
             isSubmitting = state.isSaving,
@@ -79,6 +81,7 @@ fun TvEditProfileScreen(
             onPinChanged = viewModel::onPinChanged,
             onQualitySelected = viewModel::onQualitySelected,
             onSubtitleModeSelected = viewModel::onSubtitleModeSelected,
+            onRequestsAllowedToggled = viewModel::onRequestsAllowedToggled,
             onSubmit = viewModel::onSaveClick,
         ),
     )

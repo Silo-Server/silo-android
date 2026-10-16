@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import org.siloserver.silo.model.profile.CreateProfileRequest
 import org.siloserver.silo.model.profile.Profile
 import org.siloserver.silo.model.profile.hasProfileNamed
+import org.siloserver.silo.model.profile.requestsAllowedAfterChildToggle
 import org.siloserver.silo.network.ApiResult
 import org.siloserver.silo.repository.ProfileRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +29,14 @@ data class TvCreateProfileUiState(
     val pinEnabled: Boolean = false,
     val pin: String = "",
     val subtitleMode: String? = null,
+    /**
+     * Shown and sent only when the server reports `requests_allowed_supported`.
+     * Null until the household list has been read.
+     */
+    val requestsAllowedSupported: Boolean? = null,
+    val requestsAllowed: Boolean = true,
+    /** The manager set the requests switch by hand; Child Profile then leaves it alone. */
+    val requestsTouched: Boolean = false,
     val isLoading: Boolean = false,
     val error: String? = null,
     val createSuccess: Boolean = false,
@@ -45,11 +54,15 @@ class TvCreateProfileViewModel(
     private var existingProfiles: List<Profile> = emptyList()
 
     init {
-        viewModelScope.launch {
-            (profileRepository.listProfiles() as? ApiResult.Success)?.let {
-                existingProfiles = it.data
-            }
-        }
+        viewModelScope.launch { loadHousehold() }
+    }
+
+    /** Returns whether the server takes `requests_allowed`, or null when the read failed. */
+    private suspend fun loadHousehold(): Boolean? {
+        val result = profileRepository.listHousehold() as? ApiResult.Success ?: return null
+        existingProfiles = result.data.profiles
+        _uiState.update { it.copy(requestsAllowedSupported = result.data.requestsAllowedSupported) }
+        return result.data.requestsAllowedSupported
     }
 
     fun onNameChanged(value: String) {
@@ -97,8 +110,14 @@ class TvCreateProfileViewModel(
                 isChild = checked,
                 // Default to PG for child profiles.
                 maxContentRating = if (checked && it.maxContentRating == null) "PG" else it.maxContentRating,
+                requestsAllowed = requestsAllowedAfterChildToggle(checked, it.requestsAllowed, it.requestsTouched),
+                requestsTouched = checked && it.requestsTouched,
             )
         }
+    }
+
+    fun onRequestsAllowedToggled(allowed: Boolean) {
+        _uiState.update { it.copy(requestsAllowed = allowed, requestsTouched = true) }
     }
 
     fun onContentRatingSelected(rating: String) {
@@ -142,6 +161,14 @@ class TvCreateProfileViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
 
+            // Without the support answer a Kids profile would be created with
+            // requests allowed, the server's default.
+            val requestsAllowedSupported = current.requestsAllowedSupported ?: loadHousehold()
+            if (requestsAllowedSupported == null) {
+                _uiState.update { it.copy(isLoading = false, error = "Network error. Please try again.") }
+                return@launch
+            }
+
             val request = CreateProfileRequest(
                 name = current.name,
                 avatar = current.effectiveAvatarRef(),
@@ -149,6 +176,7 @@ class TvCreateProfileViewModel(
                 isChild = if (current.isChild) true else null,
                 maxContentRating = current.maxContentRating,
                 subtitleMode = current.subtitleMode,
+                requestsAllowed = current.requestsAllowed.takeIf { requestsAllowedSupported },
             )
 
             when (val result = profileRepository.createProfile(request)) {

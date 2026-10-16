@@ -109,6 +109,8 @@ data class ProfileV2(
     @SerialName("library_restrictions_enabled") val libraryRestrictionsEnabled: Boolean = false,
     @SerialName("allowed_library_ids") val allowedLibraryIds: List<String> = emptyList(),
     @SerialName("max_playback_quality") val maxPlaybackQuality: MaxPlaybackQuality = MaxPlaybackQuality("1080p"),
+    /** Absent on servers without the per-profile requests switch, where every profile may request. */
+    @SerialName("requests_allowed") val requestsAllowed: Boolean = true,
     @SerialName("created_at") val createdAt: String,
     @SerialName("updated_at") val updatedAt: String,
 )
@@ -154,6 +156,8 @@ data class ProfileUpdate(
     val libraryRestrictionsEnabled: Patch<Boolean> = Patch.Omit,
     val allowedLibraryIds: Patch<List<String>> = Patch.Omit,
     val maxPlaybackQuality: Patch<MaxPlaybackQuality> = Patch.Omit,
+    /** Not clearable; send it only to a server that reports `requests_allowed_supported`. */
+    val requestsAllowed: Patch<Boolean> = Patch.Omit,
 ) {
     fun toJsonObject(): JsonObject {
         val members = LinkedHashMap<String, JsonElement>()
@@ -184,6 +188,7 @@ data class ProfileUpdate(
         put("library_restrictions_enabled", libraryRestrictionsEnabled, bool)
         put("allowed_library_ids", allowedLibraryIds) { ids -> JsonArray(ids.map(::JsonPrimitive)) }
         put("max_playback_quality", maxPlaybackQuality) { JsonPrimitive(it.wire) }
+        put("requests_allowed", requestsAllowed, bool)
         return JsonObject(members)
     }
 }

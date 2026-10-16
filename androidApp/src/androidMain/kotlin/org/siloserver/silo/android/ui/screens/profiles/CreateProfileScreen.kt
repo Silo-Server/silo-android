@@ -51,6 +51,8 @@ import org.siloserver.silo.android.ui.screens.auth.SiloButton
 import org.siloserver.silo.android.ui.screens.auth.SiloTextField
 import org.koin.compose.viewmodel.koinViewModel
 import org.siloserver.silo.common.ui.components.ProfileAvatarRef
+import org.siloserver.silo.model.profile.PROFILE_REQUESTS_ALLOWED_HELP
+import org.siloserver.silo.model.profile.PROFILE_REQUESTS_ALLOWED_LABEL
 
 /**
  * Form for creating a new profile.
@@ -167,6 +169,16 @@ fun CreateProfileScreen(
                     selected = state.maxContentRating ?: "PG",
                     options = CONTENT_RATINGS,
                     onSelected = viewModel::onContentRatingSelected,
+                )
+            }
+
+            if (state.requestsAllowedSupported == true) {
+                Spacer(modifier = Modifier.height(24.dp))
+                SwitchRow(
+                    label = PROFILE_REQUESTS_ALLOWED_LABEL,
+                    checked = state.requestsAllowed,
+                    onCheckedChange = viewModel::onRequestsAllowedToggled,
+                    subtitle = PROFILE_REQUESTS_ALLOWED_HELP,
                 )
             }
 

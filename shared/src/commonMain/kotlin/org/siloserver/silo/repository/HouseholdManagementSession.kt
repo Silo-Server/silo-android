@@ -25,7 +25,7 @@ import org.siloserver.silo.network.api.isSameAccountAs
  *
  * A profile token is valid only for the account's access-policy revision it was
  * issued under, and the server bumps that revision whenever an update touches a
- * PIN, child flag, rating, advisory, library, or quality limit. So the first
+ * PIN, child flag, rating, advisory, library, quality, or requests limit. So the first
  * save of that kind makes the held token stale. [run] answers the resulting
  * `profile_verification_required` by asking for the primary's PIN again
  * ([reverify]), replacing the token, and retrying the call once.

@@ -68,6 +68,8 @@ import org.siloserver.silo.common.ui.components.ProfileAvatarRef
 import org.siloserver.silo.common.ui.components.isEmojiAvatar
 import org.siloserver.silo.common.ui.components.profileAvatarDisplayText
 import org.siloserver.silo.common.ui.components.rememberProfileAvatarImage
+import org.siloserver.silo.model.profile.PROFILE_REQUESTS_ALLOWED_HELP
+import org.siloserver.silo.model.profile.PROFILE_REQUESTS_ALLOWED_LABEL
 import org.siloserver.silo.tv.ui.components.TvAuroraBackdrop
 import org.siloserver.silo.tv.ui.components.TvAuroraVariant
 import org.siloserver.silo.tv.ui.components.TvHeroActionPill
@@ -119,6 +121,9 @@ data class TvProfileFormState(
     val pin: String,
     val qualityPreference: String?,
     val subtitleMode: String?,
+    /** The "Allow requests" row appears only when the server supports the switch. */
+    val requestsAllowedSupported: Boolean = false,
+    val requestsAllowed: Boolean = true,
     val pinHelper: String,
     val submitLabel: String,
     val isSubmitting: Boolean,
@@ -137,6 +142,7 @@ data class TvProfileFormCallbacks(
     val onPinChanged: (String) -> Unit,
     val onQualitySelected: (String) -> Unit,
     val onSubtitleModeSelected: (String) -> Unit,
+    val onRequestsAllowedToggled: (Boolean) -> Unit = {},
     val onSubmit: () -> Unit,
     val onCancel: (() -> Unit)? = null,
 )
@@ -158,6 +164,7 @@ fun TvProfileForm(
     val nameFocusRequester = remember { FocusRequester() }
     val pinFocusRequester = remember { FocusRequester() }
     val childFocusRequester = remember { FocusRequester() }
+    val requestsFocusRequester = remember { FocusRequester() }
     val submitFocusRequester = remember { FocusRequester() }
     val formScrollState = rememberScrollState()
     var editingTextField by remember { mutableStateOf<ProfileTextField?>(null) }
@@ -378,16 +385,33 @@ fun TvProfileForm(
                             )
                         }
 
-                        TvChildProfileRow(
+                        TvProfileToggleRow(
+                            title = "Child Profile",
+                            subtitle = "Restricts content to kid-friendly ratings",
                             isOn = state.isChild,
                             onToggle = { callbacks.onChildToggled(!state.isChild) },
                             modifier = Modifier
                                 .focusRequester(childFocusRequester)
                                 .focusProperties {
                                     up = pinFocusRequester
-                                    down = submitFocusRequester
+                                    down = if (state.requestsAllowedSupported) requestsFocusRequester else submitFocusRequester
                                 },
                         )
+
+                        if (state.requestsAllowedSupported) {
+                            TvProfileToggleRow(
+                                title = PROFILE_REQUESTS_ALLOWED_LABEL,
+                                subtitle = PROFILE_REQUESTS_ALLOWED_HELP,
+                                isOn = state.requestsAllowed,
+                                onToggle = { callbacks.onRequestsAllowedToggled(!state.requestsAllowed) },
+                                modifier = Modifier
+                                    .focusRequester(requestsFocusRequester)
+                                    .focusProperties {
+                                        up = childFocusRequester
+                                        down = submitFocusRequester
+                                    },
+                            )
+                        }
 
                         val errorText = state.error
                             ?: "Enter a profile name".takeIf { blankNameError }
@@ -404,7 +428,7 @@ fun TvProfileForm(
                             icon = Icons.Filled.Check,
                             variant = TvPillVariant.Filled,
                             focusRequester = submitFocusRequester,
-                            upFocusRequester = childFocusRequester,
+                            upFocusRequester = if (state.requestsAllowedSupported) requestsFocusRequester else childFocusRequester,
                             onClick = {
                                 when {
                                     state.isSubmitting -> Unit
@@ -794,7 +818,9 @@ private fun TvInitialsHint() {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TvChildProfileRow(
+private fun TvProfileToggleRow(
+    title: String,
+    subtitle: String,
     isOn: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -839,14 +865,14 @@ private fun TvChildProfileRow(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "Child Profile",
+                    text = title,
                     fontSize = 20.sp,
                     lineHeight = 25.sp,
                     fontWeight = FontWeight.Medium,
                     color = Color.White,
                 )
                 Text(
-                    text = "Restricts content to kid-friendly ratings",
+                    text = subtitle,
                     fontSize = 16.sp,
                     lineHeight = 20.sp,
                     color = Color.White.copy(alpha = 0.55f),

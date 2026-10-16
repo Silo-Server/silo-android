@@ -36,6 +36,8 @@ data class Profile(
     @SerialName("library_restrictions_enabled") val libraryRestrictionsEnabled: Boolean = false,
     @SerialName("allowed_library_ids") val allowedLibraryIds: List<Int>? = null,
     @SerialName("max_playback_quality") val maxPlaybackQuality: String? = null,
+    /** False when the household manager blocked this profile from requests and request discovery. */
+    @SerialName("requests_allowed") val requestsAllowed: Boolean = true,
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("updated_at") val updatedAt: String? = null
 )
@@ -67,7 +69,12 @@ data class CreateProfileRequest(
     @SerialName("auto_skip_credits") val autoSkipCredits: Boolean? = null,
     @SerialName("library_restrictions_enabled") val libraryRestrictionsEnabled: Boolean? = null,
     @SerialName("allowed_library_ids") val allowedLibraryIds: List<Int>? = null,
-    @SerialName("max_playback_quality") val maxPlaybackQuality: String? = null
+    @SerialName("max_playback_quality") val maxPlaybackQuality: String? = null,
+    /**
+     * Null omits the member (the server then allows requests). Set it only when
+     * [ProfilesResponse.requestsAllowedSupported]: older servers reject unknown members.
+     */
+    @SerialName("requests_allowed") val requestsAllowed: Boolean? = null,
 )
 
 @Serializable
@@ -87,12 +94,19 @@ data class UpdateProfileRequest(
     @SerialName("auto_skip_credits") val autoSkipCredits: Boolean? = null,
     @SerialName("library_restrictions_enabled") val libraryRestrictionsEnabled: Boolean? = null,
     @SerialName("allowed_library_ids") val allowedLibraryIds: List<Int>? = null,
-    @SerialName("max_playback_quality") val maxPlaybackQuality: String? = null
+    @SerialName("max_playback_quality") val maxPlaybackQuality: String? = null,
+    /** Null leaves it unchanged. Set it only when [ProfilesResponse.requestsAllowedSupported]. */
+    @SerialName("requests_allowed") val requestsAllowed: Boolean? = null,
 )
 
 @Serializable
 data class ProfilesResponse(
-    val profiles: List<Profile>
+    val profiles: List<Profile>,
+    /**
+     * The server stores a per-profile requests switch and accepts
+     * `requests_allowed` on create and update. Older servers reject the member.
+     */
+    val requestsAllowedSupported: Boolean = false,
 )
 
 @Serializable
@@ -130,3 +144,23 @@ fun VerifyPinResponse.authorizedProfileToken(): String? =
  */
 fun List<Profile>.householdPrimary(): Profile? =
     firstOrNull { it.isPrimary } ?: singleOrNull()
+
+/** Label and help text for the per-profile requests switch, matching the web profile editor. */
+const val PROFILE_REQUESTS_ALLOWED_LABEL = "Allow requests"
+const val PROFILE_REQUESTS_ALLOWED_HELP =
+    "Lets this profile browse titles that are not in the library and request them. " +
+        "The content rating limits those titles by their US rating only, and the " +
+        "advisory-age limit does not apply to them."
+
+/**
+ * The requests switch after the Child Profile toggle changes to [isChild],
+ * matching the web Kids preset. Request discovery browses titles outside the
+ * library, where parental controls reach only partly, so turning Child Profile
+ * on turns requests off unless the manager already set the switch by hand
+ * ([touched]). Turning it off turns requests back on; callers reset [touched].
+ */
+fun requestsAllowedAfterChildToggle(isChild: Boolean, requestsAllowed: Boolean, touched: Boolean): Boolean = when {
+    !isChild -> true
+    touched -> requestsAllowed
+    else -> false
+}

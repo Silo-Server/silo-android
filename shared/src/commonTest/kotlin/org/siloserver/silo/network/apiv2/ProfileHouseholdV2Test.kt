@@ -152,4 +152,50 @@ class ProfileHouseholdV2Test {
             assertEquals("1", tokens.snapshotCurrentScope()?.profileId)
         } finally { c.close() }
     }
+
+    @Test fun requestsSwitchDecodesWithDefaultsAndSupportFlag() = runTest {
+        var listBody = """{"items":[$profile]}"""
+        val blocked = profile.replace("\"name\":\"Reader\"", "\"name\":\"Kid\",\"requests_allowed\":false")
+        val c = client { respond(listBody, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }
+        try {
+            val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
+            // An older server: no flag, and every profile may request.
+            val old = assertIs<ApiResult.Success<ProfilesResponse>>(api.listProfiles()).data
+            assertFalse(old.requestsAllowedSupported)
+            assertTrue(old.profiles.single().requestsAllowed)
+            listBody = """{"items":[$profile,$blocked],"requests_allowed_supported":true}"""
+            val current = assertIs<ApiResult.Success<ProfilesResponse>>(api.listProfiles()).data
+            assertTrue(current.requestsAllowedSupported)
+            assertEquals(listOf(true, false), current.profiles.map { it.requestsAllowed })
+        } finally { c.close() }
+    }
+
+    @Test fun requestsAllowedIsSentOnlyWhenSet() = runTest {
+        val bodies = mutableListOf<JsonObject>()
+        val c = client {
+            bodies += SiloJson.parseToJsonElement(it.body.toByteArray().decodeToString()).jsonObject
+            val status = if (it.method == HttpMethod.Post) HttpStatusCode.Created else HttpStatusCode.OK
+            respond(profile, status, headersOf(HttpHeaders.ContentType, "application/json"))
+        }
+        try {
+            val api = ProfileApi(c, ApiV2Gate.Unrestricted, tokens)
+            api.createProfile(CreateProfileRequest("Reader"))
+            api.createProfile(CreateProfileRequest("Kid", isChild = true, requestsAllowed = false))
+            api.updateProfile("42", UpdateProfileRequest(name = "Reader"))
+            api.updateProfile("42", UpdateProfileRequest(requestsAllowed = true))
+            assertEquals(listOf(false, true, false, true), bodies.map { it.containsKey("requests_allowed") })
+            assertEquals(JsonPrimitive(false), bodies[1]["requests_allowed"])
+            assertEquals(JsonPrimitive(true), bodies[3]["requests_allowed"])
+        } finally { c.close() }
+    }
+
+    @Test fun childProfileTogglesRequestsLikeTheWebKidsPreset() {
+        // On: off unless the manager set the switch by hand.
+        assertFalse(requestsAllowedAfterChildToggle(isChild = true, requestsAllowed = true, touched = false))
+        assertTrue(requestsAllowedAfterChildToggle(isChild = true, requestsAllowed = true, touched = true))
+        assertFalse(requestsAllowedAfterChildToggle(isChild = true, requestsAllowed = false, touched = true))
+        // Off: requests come back on.
+        assertTrue(requestsAllowedAfterChildToggle(isChild = false, requestsAllowed = false, touched = false))
+        assertTrue(requestsAllowedAfterChildToggle(isChild = false, requestsAllowed = false, touched = true))
+    }
 }
