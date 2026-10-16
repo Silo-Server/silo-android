@@ -761,6 +761,88 @@ class ServerSettingsFlusherTest {
     }
 
     @Test
+    fun `a revision-gated clear below revision 18 still sends the device write it replaced`() = runTest {
+        val api = RecordingSettingsApi().apply {
+            capabilities = ApiResult.NetworkError(IllegalStateException("offline"))
+        }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        // Delay edited offline with the toggle on, then the toggle turned off.
+        flusher.enqueue("p1", syncKey, "250", serverUrl)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.flushNow()
+        assertTrue(api.calls.isEmpty())
+
+        api.manifestRevision(17)
+        flusher.flushNow()
+
+        val call = api.calls.single()
+        assertEquals(RecordingSettingsApi.Call.Kind.PUT, call.kind)
+        assertEquals(SettingScopeIdentity.profileDevice(), call.scope)
+        assertEquals(JsonPrimitive(250L), call.value)
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a revision-gated clear from revision 18 drops the device write it replaced`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(18) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+
+        flusher.enqueue("p1", syncKey, "250", serverUrl)
+        flusher.enqueueDelete("p1", syncKey, serverUrl, minRevision = 18)
+        flusher.flushNow()
+
+        assertEquals(RecordingSettingsApi.Call.Kind.DELETE, api.calls.single().kind)
+    }
+
+    @Test
+    fun `a failed timing save does not overwrite a device write sent later in the same drain`() = runTest {
+        val api = RecordingSettingsApi().apply { manifestRevision(17) }
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+
+        // Both queued before the revision was known, so they drain together.
+        flusher.enqueue("p1", syncKey, "100", serverUrl, scope = SettingWriteScope.Profile(minRevision = 18))
+        flusher.enqueue("p1", syncKey, "200", serverUrl)
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf(JsonPrimitive(100L), JsonPrimitive(200L)),
+            api.calls.map { it.value },
+            "the older value must not be replayed over the newer one",
+        )
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
+    fun `a carried-over device clear does not delete a device write sent later in the same drain`() = runTest {
+        val api = RecordingSettingsApi()
+        val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)
+        val deviceValue = SubtitleAppearance.DEFAULT.toJsonString()
+        api.failNextPuts(1, ApiResult.Error(503, "unavailable", "busy"))
+        api.failNextDeletes(1, ApiResult.Error(503, "unavailable", "busy"))
+        var edited = false
+        api.onPut = {
+            // A second profile edit, then "Only on This Device" turned on,
+            // while the first save is on the wire.
+            if (!edited) {
+                edited = true
+                flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile())
+                flusher.enqueue("p1", objectKey, deviceValue, serverUrl)
+            }
+        }
+
+        flusher.enqueue("p1", objectKey, translucentText, serverUrl, scope = SettingWriteScope.Profile(clearDevice = true))
+        flusher.flushNow()
+        advanceUntilIdle()
+
+        val last = api.calls.last()
+        assertEquals(RecordingSettingsApi.Call.Kind.PUT to SettingScopeIdentity.profileDevice(), last.kind to last.scope)
+        assertTrue(flusher.pendingKeys("p1").isEmpty())
+    }
+
+    @Test
     fun `a failed timing save that fell back to the device row does not overwrite a newer device write`() = runTest {
         val api = RecordingSettingsApi().apply { manifestRevision(17) }
         val flusher = DefaultServerSettingsFlusher(api, this, debounceMs = 200)

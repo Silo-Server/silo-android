@@ -129,11 +129,16 @@ private sealed class PendingOp {
     /**
      * Always this device's row: nothing deletes a profile-scoped value.
      * [minRevision] as in [ServerSettingsFlusher.enqueueDelete].
+     *
+     * [replacedSet] is the unsent device write this revision-gated clear took
+     * the slot of. Below [minRevision] the clear is dropped and the device row
+     * stays the value, so that write is sent instead of being lost.
      */
     data class Delete(
         override val serverUrl: String,
         override val authority: AuthScopeSnapshot?,
         val minRevision: Int = 0,
+        val replacedSet: Set? = null,
     ) : PendingOp()
 
     /** Whether sending this op deletes the device row for its key. */
@@ -212,8 +217,11 @@ class DefaultServerSettingsFlusher(
         authority: AuthScopeSnapshot?,
         minRevision: Int,
     ) {
-        scheduleDebounced(PendingKey(profileId, key, profileLevel = false)) {
-            PendingOp.Delete(serverUrl, authority, minRevision)
+        scheduleDebounced(PendingKey(profileId, key, profileLevel = false)) { existing ->
+            val replaced = (existing as? PendingOp.Delete)?.replacedSet ?: existing as? PendingOp.Set
+            val keep = minRevision > 0 && replaced != null &&
+                replaced.serverUrl == serverUrl && replaced.authority == authority
+            PendingOp.Delete(serverUrl, authority, minRevision, replacedSet = replaced.takeIf { keep })
         }
     }
 
@@ -301,15 +309,16 @@ class DefaultServerSettingsFlusher(
             // catch that case: the very pass that sent the newer op already
             // cleared `pending`.
             val retryable = LinkedHashMap<PendingKey, PendingOp>()
-            // The pass each retryable op failed in, and the last pass that
-            // handled a device-level op per (profile, key): a device intent
-            // handled after a profile save failed is newer than that save.
-            val failedInPass = HashMap<PendingKey, Int>()
-            val deviceHandledInPass = HashMap<PendingKey, Int>()
-            var pass = 0
+            // When each retryable op failed, and when a device-level op was
+            // last handled per (profile, key), counted per op rather than per
+            // pass: a device intent handled after a profile save failed is
+            // newer than that save, even later in the same snapshot.
+            val failedAt = HashMap<PendingKey, Int>()
+            val deviceHandledAt = HashMap<PendingKey, Int>()
+            var sequence = 0
             fun deviceWroteSinceFailure(composite: PendingKey): Boolean =
                 composite.profileLevel &&
-                    (deviceHandledInPass[composite.copy(profileLevel = false)] ?: 0) > (failedInPass[composite] ?: 0)
+                    (deviceHandledAt[composite.copy(profileLevel = false)] ?: 0) > (failedAt[composite] ?: 0)
             while (true) {
                 val snapshot: Map<PendingKey, PendingOp> = synchronized(lock) {
                     val copy = pending.toMap()
@@ -317,9 +326,9 @@ class DefaultServerSettingsFlusher(
                     copy
                 }
                 if (snapshot.isEmpty()) break
-                pass += 1
                 snapshot.forEach { (composite, queued) ->
-                    if (!composite.profileLevel) deviceHandledInPass[composite] = pass
+                    sequence += 1
+                    if (!composite.profileLevel) deviceHandledAt[composite] = sequence
                     // A newer op settles the slot, so it also takes over the
                     // device clear an older failed save there still owed.
                     val failedEarlier = retryable[composite]
@@ -331,7 +340,7 @@ class DefaultServerSettingsFlusher(
                     val retry = flushOne(composite.profileId, composite.key, op)
                     if (retry != null) {
                         retryable[composite] = retry
-                        failedInPass[composite] = pass
+                        failedAt[composite] = sequence
                     } else {
                         retryable.remove(composite)
                     }
@@ -448,7 +457,7 @@ class DefaultServerSettingsFlusher(
                 }
                 true -> when (op) {
                     is PendingOp.Set -> flushSet(profileId, key, op)
-                    is PendingOp.Delete -> op.takeIf { flushDelete(profileId, key, op) }
+                    is PendingOp.Delete -> flushDeleteOrReplacedSet(profileId, key, op)
                 }
             }
         } catch (t: Throwable) {
@@ -536,6 +545,21 @@ class DefaultServerSettingsFlusher(
         if (encoded !is JsonObject || SubtitleAppearance.TEXT_OPACITY_FIELD !in encoded) return encoded
         val revision = contractRevision.revisionFor(serverUrl) ?: return null
         return SubtitleAppearance.wireObjectForRevision(encoded, revision)
+    }
+
+    /**
+     * Sends a queued clear, or below its revision the device write it
+     * replaced: there the device row is the only value, so that write still
+     * has to land or the next refresh puts the old server value back.
+     */
+    private suspend fun flushDeleteOrReplacedSet(profileId: String, key: String, op: PendingOp.Delete): PendingOp? {
+        val replaced = op.replacedSet
+        if (replaced != null && op.minRevision > 0) {
+            val revision = contractRevision.revisionFor(op.serverUrl)
+                ?: return op.takeIf { failed("delete", key, "settings manifest revision unknown", retry = true) }
+            if (revision < op.minRevision) return flushSet(profileId, key, replaced)
+        }
+        return op.takeIf { flushDelete(profileId, key, op) }
     }
 
     private suspend fun flushDelete(profileId: String, key: String, op: PendingOp.Delete): Boolean {
