@@ -48,10 +48,20 @@ class PlaybackCommandDispatchTest {
         )
     }
 
+    @Test fun anAdministratorsOwnMessageReplacesTheNotice() {
+        assertEquals(
+            PlaybackAction.Stop("Server maintenance at 10"),
+            decidePlaybackAction(cmd("terminate", """{"message":"Server maintenance at 10"}""", issuedBy = "admin")),
+        )
+        assertEquals(
+            PlaybackAction.Stop(ADMIN_STOPPED_PLAYBACK_NOTICE),
+            decidePlaybackAction(cmd("stop", """{"message":" "}""", issuedBy = " Admin ")),
+        )
+    }
+
     @Test fun aStopNotIssuedByAnAdministratorIsSilent() {
         assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("stop")))
-        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("stop", issuedBy = "server")))
-        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("terminate", issuedBy = "Admin")))
+        assertEquals(PlaybackAction.Stop(), decidePlaybackAction(cmd("stop", """{"message":"hi"}""", issuedBy = "server")))
     }
 
     @Test fun serverRestartingIsIgnored() {

@@ -594,8 +594,9 @@ fun TvPlayerScreen(
     // arriving after the command finds the exit already under way.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
-            if (exitRequested) return@collect
-            notice?.let { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() }
+            if (notice != null && !exitRequested) {
+                Toast.makeText(context.applicationContext, notice, Toast.LENGTH_LONG).show()
+            }
             stopPlaybackAndExit()
         }
     }

@@ -628,8 +628,9 @@ fun PlayerScreen(
     // toast up when the exit finishes the activity.
     LaunchedEffect(Unit) {
         viewModel.remoteStopRequests.collect { notice ->
-            if (exitRequested) return@collect
-            notice?.let { Toast.makeText(context.applicationContext, it, Toast.LENGTH_LONG).show() }
+            if (notice != null && !exitRequested) {
+                Toast.makeText(context.applicationContext, notice, Toast.LENGTH_LONG).show()
+            }
             watchParty?.leave()
             exitPlayer()
         }

@@ -67,6 +67,14 @@ fun decidePlaybackAction(command: PlaybackRealtimeEvent.Command): PlaybackAction
         (command.payload[key] as? JsonPrimitive)
             ?.takeIf { !it.isString }
             ?.intOrNull
+    // Only an administrator's stop explains itself, preferring the admin's own
+    // message when the command carries one (as Apple and web do).
+    fun adminNotice(default: String): String? =
+        if (command.issuedBy?.trim()?.equals(ISSUED_BY_ADMIN, ignoreCase = true) == true) {
+            string("message")?.takeIf(String::isNotBlank) ?: default
+        } else {
+            null
+        }
 
     return when (command.name) {
         PlaybackCommandNames.Pause -> PlaybackAction.Pause
@@ -78,12 +86,8 @@ fun decidePlaybackAction(command: PlaybackRealtimeEvent.Command): PlaybackAction
                 ?.let { PlaybackAction.SeekTo(it) } ?: PlaybackAction.Reject
         PlaybackCommandNames.DisplayMessage ->
             string("message")?.let { PlaybackAction.ShowMessage(it) } ?: PlaybackAction.Reject
-        PlaybackCommandNames.Stop -> PlaybackAction.Stop(
-            ADMIN_STOPPED_PLAYBACK_NOTICE.takeIf { command.issuedBy == ISSUED_BY_ADMIN },
-        )
-        PlaybackCommandNames.Terminate -> PlaybackAction.Stop(
-            ADMIN_ENDED_PLAYBACK_NOTICE.takeIf { command.issuedBy == ISSUED_BY_ADMIN },
-        )
+        PlaybackCommandNames.Stop -> PlaybackAction.Stop(adminNotice(ADMIN_STOPPED_PLAYBACK_NOTICE))
+        PlaybackCommandNames.Terminate -> PlaybackAction.Stop(adminNotice(ADMIN_ENDED_PLAYBACK_NOTICE))
         PlaybackCommandNames.SetAudioTrack ->
             // The server's convention for "set audio by index" elsewhere is
             // `audio_track_index`; accept a bare `index` alias too.
